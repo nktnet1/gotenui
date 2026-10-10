@@ -1,16 +1,15 @@
 import urlJoin from 'url-join'
 import * as v from 'valibot'
+import { resolveConnectionTarget } from '#/lib/connection-target.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import {
   DEFAULT_MAX_REQUEST_BYTES,
-  DEMO_GOTENBERG_URL,
   ProxyInputError,
   parseAllowedBackends,
   readLimitedBody,
-  requireAllowedBackend,
   requireSameOrigin,
 } from '#/lib/proxy-policy'
-import { basicAuthHeadersForBackend, parseUpstreamBasicAuth } from '#/lib/upstream-auth.server'
+import { parseServerConnections, publicServerConnections } from '#/lib/server-connections.server'
 import { InputError, validateFiles, validatePayload } from '#/lib/validation'
 
 const serverEnvSchema = v.object({
@@ -35,7 +34,7 @@ function runtimeConfig() {
   return {
     maxBytes,
     allowed,
-    basicAuth: parseUpstreamBasicAuth(process.env, allowed),
+    ...parseServerConnections(process.env, allowed),
   }
 }
 
@@ -43,6 +42,15 @@ const safeResponseHeaders = {
   'Cache-Control': 'no-store',
   'Cross-Origin-Resource-Policy': 'same-origin',
   'X-Content-Type-Options': 'nosniff',
+}
+
+export function proxyConnectionsRequest(request: Request): Response {
+  requireSameOrigin(request)
+  const { connections } = runtimeConfig()
+  return Response.json(
+    { connections: publicServerConnections(connections) },
+    { headers: safeResponseHeaders },
+  )
 }
 
 export function proxyErrorResponse(error: unknown): Response {
@@ -87,7 +95,7 @@ async function upstreamErrorText(response: Response): Promise<string> {
   }
 }
 
-/** Requests are stateless; upstream credentials are read from server-only environment variables. */
+/** Every request resolves a validated destination and its authentication, without sessions. */
 export async function proxyConversionRequest(
   request: Request,
   fetcher: typeof fetch = fetch,
@@ -97,7 +105,7 @@ export async function proxyConversionRequest(
   if (!/^multipart\/form-data;\s*boundary=[\w-]{1,200}$/i.test(contentType)) {
     throw new ProxyInputError('Expected a multipart/form-data conversion request.')
   }
-  const { maxBytes, allowed, basicAuth } = runtimeConfig()
+  const { maxBytes, ...settings } = runtimeConfig()
   if (Number(request.headers.get('content-length') ?? 0) > maxBytes) {
     throw new ProxyInputError(`Request exceeds the ${maxBytes} byte upload limit.`, 413)
   }
@@ -131,13 +139,18 @@ export async function proxyConversionRequest(
   if (payloadCount !== 1) throw new ProxyInputError('Exactly one conversion payload is required.')
   const { operation, payload } = validatePayload(candidate)
   validateFiles(operation, files, auxiliary, maxBytes)
-  const url = requireAllowedBackend(request.headers.get('x-gotenberg-url') ?? '', allowed)
+  const { url, headers: authHeaders } = resolveConnectionTarget(
+    request,
+    settings,
+    request.headers.get('x-gotenberg-url'),
+    request.headers.get('x-gotenui-connection-id'),
+  )
   const form = createGotenbergForm(operation, payload, files, auxiliary, maxBytes)
   const upstream = await fetcher(urlJoin(url, operation.path), {
     method: 'POST',
     ...fetchOptions(request),
     body: form,
-    headers: basicAuthHeadersForBackend(url, basicAuth),
+    headers: authHeaders,
     credentials: 'omit',
   })
   if (!upstream.ok) {
@@ -161,12 +174,16 @@ export async function proxyStatusRequest(
   fetcher: typeof fetch = fetch,
 ): Promise<Response> {
   requireSameOrigin(request)
-  const candidate = new URL(request.url).searchParams.get('url') ?? DEMO_GOTENBERG_URL
-  const { allowed, basicAuth } = runtimeConfig()
-  const url = requireAllowedBackend(candidate, allowed)
+  const search = new URL(request.url).searchParams
+  const { url, headers: authHeaders } = resolveConnectionTarget(
+    request,
+    runtimeConfig(),
+    search.get('url'),
+    search.get('connection'),
+  )
   const options = {
     ...fetchOptions(request),
-    headers: basicAuthHeadersForBackend(url, basicAuth),
+    headers: authHeaders,
     credentials: 'omit' as const,
   }
   let status: ServerStatus

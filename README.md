@@ -5,9 +5,9 @@ A **stateless TanStack Start document workbench** for Gotenberg 8.x. The interfa
 ## Features
 
 - 22 Chromium, LibreOffice and PDF-engine operations, including HTML, Markdown, URL and Office conversions, screenshots, merging, metadata, bookmarks, watermarks and Factur-X.
-- Configurable Gotenberg URL in **Connection settings**, persisted only in the browser's `localStorage` (`gotenui.backend-url.v1`). Default: **https://demo.gotenberg.dev**.
+- Multiple named connections in **Connection settings**: browser profiles are saved in `localStorage` (`gotenui.connections.v1`), with automatic migration from the former `gotenui.backend-url.v1` preference. Default: **https://demo.gotenberg.dev**. Server-managed profiles are configured through environment variables, with credentials kept server-side.
 - Conversions and health/version checks call **same-origin `/api/gotenberg/*` routes**. Nitro makes server-to-server requests to Gotenberg, so **the demo requires no CORS configuration**.
-- Input validation in both browser and server, explicit destination allowlist, optional **server-side Basic Auth** for one approved Gotenberg URL, streaming conversion responses, three-minute request timeout and an in-memory activity list.
+- Input validation in both browser and server, explicit destination allowlist, independent per-connection Basic Auth or bearer-token support, with server-side credentials never exposed to browsers, streaming conversion responses, three-minute request timeout and an in-memory activity list.
 
 ## Development
 
@@ -68,7 +68,9 @@ The UI is client-rendered: there is no requirement for persistent server process
 | `GOTENUI_MAX_REQUEST_BYTES` | Maximum total multipart request size at the server. Defaults to `4200000` bytes. |
 | `GOTENBERG_BASIC_AUTH_URL` | **Server-only** exact Gotenberg base URL that should receive the credentials. Must be present in `GOTENBERG_ALLOWED_URLS`. |
 | `GOTENBERG_BASIC_AUTH_USERNAME` | **Server-only** Basic Auth username for that URL. Cannot contain `:`. |
-| `GOTENBERG_BASIC_AUTH_PASSWORD` | **Server-only** Basic Auth password for that URL. |
+| `GOTENBERG_BASIC_AUTH_PASSWORD` | **Server-only** legacy Basic Auth password for that URL; v1.0.10 requires an access key for this profile. |
+| `GOTENUI_SERVER_CONNECTIONS` | Optional server-only JSON array of named connection profiles, each with ID, name, allowed URL and optional Basic/Bearer auth. |
+| `GOTENUI_PROFILE_ACCESS_KEY` | Server-only access key (16–4096 characters). Required if any server-managed profile has credentials. |
 
 For example, to let the Settings UI select either the demo or a private Gotenberg instance:
 
@@ -76,43 +78,32 @@ For example, to let the Settings UI select either the demo or a private Gotenber
 GOTENBERG_ALLOWED_URLS=https://demo.gotenberg.dev,https://pdf.internal.example.com
 ```
 
-### Upstream Basic Auth (first authentication feature)
+### Stateless multi-instance connections (v1.0.10)
 
-If the private Gotenberg instance has `API_ENABLE_BASIC_AUTH=true` enabled, configure
-its matching username and password **only on the Gotenui server**:
+Gotenui supports **two connection types**, with no database, cookies, sessions, or persistent server storage:
+
+1. **Browser-managed:** Users add, rename, remove, and select their own profiles in Connection settings. Each profile stores only its name, URL and authentication *mode* in `localStorage`. For Basic Auth and bearer-token connections, users enter the username/password or token when switching to that connection. Secrets are held in **tab memory only** and sent to the same-origin Gotenui proxy on each request, never persisted by Gotenui. Refreshing the page requires re-entering them.
+2. **Server-managed:** Operators provide named profiles via `GOTENUI_SERVER_CONNECTIONS`. Users select a profile by ID; the proxy resolves the exact approved URL and attaches its configured Basic or bearer credentials. The browser receives only the profile ID, name and whether an access key is required; neither the upstream URL nor credentials are returned. Switching requires no redeployment.
+
+Both modes use the fixed, server-side `GOTENBERG_ALLOWED_URLS` allowlist. **Adding a browser profile cannot add a new allowed destination**; to permit more backends, update the deployment's allowlist. Redirects and arbitrary relay endpoints remain disabled.
+
+Example configuration with a public demo and two private backends:
 
 ```dotenv
-GOTENBERG_ALLOWED_URLS=https://demo.gotenberg.dev,https://pdf.internal.example.com
-GOTENBERG_BASIC_AUTH_URL=https://pdf.internal.example.com
-GOTENBERG_BASIC_AUTH_USERNAME=your-service-user
-GOTENBERG_BASIC_AUTH_PASSWORD=your-secret-password
+GOTENBERG_ALLOWED_URLS=https://demo.gotenberg.dev,https://pdf-one.example.com,https://pdf-two.example.com
+GOTENUI_PROFILE_ACCESS_KEY=replace-with-a-long-random-secret-at-least-16-chars
+GOTENUI_SERVER_CONNECTIONS=[{"id":"finance","name":"Finance PDFs","url":"https://pdf-one.example.com","auth":{"type":"basic","username":"service","password":"secret"}},{"id":"records","name":"Records PDFs","url":"https://pdf-two.example.com","auth":{"type":"bearer","token":"example-token"}}]
 ```
 
-All three `GOTENBERG_BASIC_AUTH_*` variables are optional **as a group**: setting
-only one or two is a configuration error. The auth URL is matched against the
-approved backend allowlist **including its path prefix**; credentials are sent to
-that URL's `/forms/*`, `/health` and `/version` requests only, never to the public
-demo or to another approved backend. Redirects remain disabled. The browser
-never receives these credentials, and the URL saved in `localStorage` is not
-an authentication secret.
+**Authenticated server profiles require `GOTENUI_PROFILE_ACCESS_KEY`.** Users enter this shared access key in Settings. It is sent only to the same-origin proxy in a request header and is never stored in `localStorage`, embedded in a URL, or forwarded to Gotenberg. The server compares the key in constant time. Profiles without upstream credentials can be public; if an access key is configured, it also protects those profiles. Configure a high-entropy key, use HTTPS for Gotenui, and rotate the key if compromised. The key is a shared capability, **not an individual-user login or RBAC system**. For public deployments, protect Gotenui with an identity-aware edge gateway and request limits; this app does not provide user accounts or an abuse-rate-limiter.
 
-Set the Gotenberg container's own `API_ENABLE_BASIC_AUTH=true`,
-`GOTENBERG_API_BASIC_AUTH_USERNAME` and `GOTENBERG_API_BASIC_AUTH_PASSWORD`
-to matching values. Use HTTPS between Gotenui and remotely hosted Gotenberg:
-Basic Auth is only Base64 encoded, not encrypted. For local Docker-network
-connections, isolated HTTP can be appropriate. Keep the Gotenui application
-protected by edge auth/rate limits: upstream Basic Auth alone does **not**
-restrict who can use a publicly reachable Gotenui proxy.
+The v1.0.9 `GOTENBERG_BASIC_AUTH_*` variables are still supported, but now expose an explicit `legacy-basic` server-managed profile. **A `GOTENUI_PROFILE_ACCESS_KEY` must also be configured** to make these credentials usable. Merely selecting the legacy backend URL from a browser profile no longer grants access to the server secret. This intentionally closes a credential-use bypass in publicly reachable deployments. Removing the legacy variables and using `GOTENUI_SERVER_CONNECTIONS` is recommended for new deployments.
 
-This patch supports **one credential pair for one exact approved backend**. A
-future patch can add OIDC bearer-token support and separate operational routes.
+For browser-managed Basic/Bearer credentials, user-entered secrets are forwarded only to that exact approved destination, never automatically to other profiles, and **never to the public Gotenberg demo**. Any local profile's URL or auth mode can be edited; credentials must be re-entered on each switch. Use HTTPS for private remote Gotenberg instances; Base64-encoded Basic Auth is not encryption. The app may relay privileged document operations and URL-fetching by Gotenberg itself, so follow Gotenberg's network isolation guidance.
 
+**SSR/SSRF policy:** Every selected URL must match the allowlist exactly (including path prefixes); server profile IDs cannot override URLs or authentication; client headers/cookies are never blindly forwarded; redirects are rejected; and the proxy accepts only pre-defined Gotenberg operations. Because DNS can be rebinding-prone and allowlisted hosts can point to private infrastructure, only allow backends you operate or explicitly trust, protect the proxy at the edge, and consider egress controls on the serverless runtime.
 
-**Why the allowlist?** A publicly reachable serverless proxy that forwards to arbitrary user-specified URLs would be an SSRF/open-proxy vulnerability. This implementation requires an exact, server-approved base URL, disallows URL credentials and redirects, exposes only a fixed set of Gotenberg operations, validates fields and uploaded files, and never forwards browser-supplied authentication headers or cookies. An explicit server-side Basic Auth pair is attached only to its configured destination. Browser-selected URL values are not secrets. To support a new Gotenberg host, add it to your deployment environment and redeploy/restart the server as needed.
-
-**Secure public deployments:** Protect Gotenui behind authentication and abuse/rate limits at the edge. The app itself does not implement accounts or a distributed rate limiter. Gotenberg can render URLs and load external resources, so isolate self-hosted instances and enable appropriate network/SSRF protections (including Chromium private-IP blocking when applicable). Never treat the Gotenberg instance as safe to expose directly to the internet.
-
-The proxy buffers and validates incoming multipart data in memory (up to the configured limit), then streams the upstream response back to the browser. Upload contents and results are never intentionally persisted by Gotenui. The browser retains an in-memory download preview and activity list until the tab closes. Your host, CDN or Gotenberg instance may enforce separate request limits or log requests; apply your own privacy and retention rules.
+The proxy buffers and validates incoming multipart data in memory (up to the configured limit), then streams the upstream response back to the browser. Neither uploads nor results are intentionally persisted by Gotenui. Browser download previews and activity remain in memory until the tab closes. Your host or Gotenberg may enforce separate limits or log requests.
 
 ### Request size limits
 
@@ -120,10 +111,12 @@ The browser currently caps uploaded files at **4,000,000 bytes** and the proxy c
 
 ## API contracts
 
-- `GET /api/gotenberg/status?url=<encoded-base-url>` — validates the selected backend against the server allowlist, queries Gotenberg's `/health` and `/version`, and returns a small JSON status object.
-- `POST /api/gotenberg/convert` — multipart body with one `payload` JSON field and zero or more `files` and `auxiliary` file fields. `X-Gotenberg-Url` holds the selected base URL. The server validates the payload using Valibot, looks up the operation from the fixed catalogue, reconstructs a safe Gotenberg form and streams the result. It does not accept arbitrary Gotenberg routes or webhook/download URL overrides.
+- `GET /api/gotenberg/connections` — returns only `{connections:[{id,name,requiresKey}]}` for server-managed profiles; **no URLs, passwords, or tokens**.
+- `GET /api/gotenberg/status?url=<encoded-base-url>` — status for a browser-managed URL, with optional `X-Gotenui-Upstream-Authorization` for user-supplied Basic or Bearer auth.
+- `GET /api/gotenberg/status?connection=<profile-id>` — status for a server-managed profile. Supply `X-Gotenui-Profile-Access-Key` if protected.
+- `POST /api/gotenberg/convert` — validated multipart form with `payload`, `files`, and `auxiliary` fields. Browser-managed requests supply `X-Gotenberg-Url` and optional `X-Gotenui-Upstream-Authorization`; server-managed requests supply `X-Gotenui-Connection-Id` and optional `X-Gotenui-Profile-Access-Key`. **Do not combine modes.** The proxy reconstructs approved Gotenberg multipart fields and forwards only the selected upstream auth.
 
-These API routes are **same-origin** and do not enable CORS. Requests with cross-site `Origin` or `Sec-Fetch-Site` headers are rejected. They remain reachable by server-side HTTP clients, so edge authentication and rate limits are still important.
+These routes are same-origin and do not enable CORS. Requests claiming a different `Origin` or `Sec-Fetch-Site` are rejected, but server-side HTTP clients can still access public browser-managed routes, so edge security and rate limits are essential.
 
 ## Continuous integration
 

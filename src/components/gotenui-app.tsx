@@ -29,7 +29,6 @@ import {
   RefreshCw,
   RotateCw,
   Search,
-  Server,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -38,6 +37,7 @@ import {
 } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { ConnectionManager } from '#/components/connection-manager'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
@@ -45,15 +45,25 @@ import { Label } from '#/components/ui/label'
 import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
 import { UploadZone } from '#/components/upload-zone'
-import { browserStorage, loadBackendUrl, saveBackendUrl } from '#/lib/backend-url'
+import { browserStorage } from '#/lib/backend-url'
 import { DEFAULT_BACKEND_URL } from '#/lib/config'
+import {
+  type BrowserConnection,
+  type ConnectionChoice,
+  DEFAULT_CONNECTION_ID,
+  fetchManagedConnections,
+  loadConnections,
+  type ManagedConnection,
+  makeBrowserAuthorization,
+  type SavedConnections,
+  saveConnections,
+} from '#/lib/connection-profiles'
 import {
   convertWithGotenberg,
   getGotenbergStatus,
   MAX_UPLOAD_BYTES,
   REQUEST_TIMEOUT_MS,
   type ServerStatus,
-  validatedBackend,
 } from '#/lib/gotenberg-client'
 import {
   type FieldDefinition,
@@ -155,137 +165,21 @@ function Brand({ compact = false }: { compact?: boolean }) {
   )
 }
 
-function ConnectionEditor({
-  initialUrl,
-  onSave,
-}: {
-  initialUrl: string
-  onSave: (url: string) => void
-}) {
-  const [value, setValue] = useState(initialUrl)
-  const [testing, setTesting] = useState(false)
-  const [feedback, setFeedback] = useState<string | null>(null)
-  const [isReachable, setIsReachable] = useState(false)
-  const verify = async () => {
-    setFeedback(null)
-    setTesting(true)
-    try {
-      const url = validatedBackend(value)
-      const result = await getGotenbergStatus(url, AbortSignal.timeout(7000))
-      setIsReachable(result.online)
-      setFeedback(
-        result.online
-          ? `Connected to Gotenberg ${result.version}.`
-          : (result.error ?? 'Service unavailable.'),
-      )
-    } catch (error) {
-      setIsReachable(false)
-      setFeedback(
-        error instanceof Error && error.name !== 'TimeoutError'
-          ? error.message
-          : 'Connection test timed out.',
-      )
-    } finally {
-      setTesting(false)
-    }
-  }
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    try {
-      onSave(validatedBackend(value))
-    } catch (error) {
-      setIsReachable(false)
-      setFeedback(error instanceof Error ? error.message : 'Invalid Gotenberg URL.')
-    }
-  }
-  return (
-    <form className="space-y-5" onSubmit={submit}>
-      <div className="space-y-2">
-        <Label htmlFor="gotenberg-url">Gotenberg backend URL</Label>
-        <Input
-          id="gotenberg-url"
-          type="text"
-          inputMode="url"
-          autoComplete="url"
-          autoFocus
-          spellCheck={false}
-          placeholder="https://demo.gotenberg.dev"
-          required
-          value={value}
-          onChange={(event) => {
-            setValue(event.target.value)
-            setFeedback(null)
-          }}
-          className="font-mono text-xs"
-        />
-        <p className="text-xs leading-5 text-slate-500">
-          The address is stored in this browser's local storage and sent to Gotenui's serverless
-          proxy. Your deployment must allow this address through <code>GOTENBERG_ALLOWED_URLS</code>
-          .
-        </p>
-      </div>
-      {feedback && (
-        <p
-          role="status"
-          className={cn(
-            'rounded-lg px-3 py-3 text-xs leading-5',
-            isReachable ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900',
-          )}
-        >
-          {feedback}
-        </p>
-      )}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit">Save connection</Button>
-        <Button type="button" variant="outline" disabled={testing} onClick={() => void verify()}>
-          <RefreshCw className={cn('size-4', testing && 'animate-spin')} />
-          {testing ? 'Testing…' : 'Test connection'}
-        </Button>
-      </div>
-      <p className="text-[11px] leading-5 text-slate-500">
-        Gotenui connects to Gotenberg from its server, so the demo needs no CORS configuration. Only
-        server-approved destinations work. Files are processed in memory, never persisted by
-        Gotenui.
-      </p>
-    </form>
-  )
-}
-
-function ConnectionSetup({ onSave }: { onSave: (url: string) => void }) {
-  return (
-    <div className="relative grid min-h-screen place-items-center overflow-hidden bg-[#091725] px-5 py-12">
-      <div className="login-glow pointer-events-none absolute -left-48 top-1/4 size-[500px] rounded-full" />
-      <div className="login-glow pointer-events-none absolute -right-32 bottom-0 size-[520px] rounded-full" />
-      <div className="relative w-full max-w-[520px]">
-        <div className="mb-9 flex justify-center">
-          <Brand />
-        </div>
-        <div className="rounded-[22px] border border-white/10 bg-white p-7 text-slate-900 shadow-[0_25px_90px_rgba(0,0,0,.38)] sm:p-10">
-          <div className="mb-6 flex size-12 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
-            <Server className="size-6" />
-          </div>
-          <h1 className="text-2xl font-extrabold tracking-tight">Connect to Gotenberg</h1>
-          <p className="mb-7 mt-2 text-sm leading-6 text-slate-500">
-            Use the public demo or a Gotenberg instance approved by your deployment. The UI has a
-            stateless server-side proxy and requires no login or database.
-          </p>
-          <ConnectionEditor initialUrl="" onSave={onSave} />
-        </div>
-        <p className="mt-7 text-center text-xs text-slate-400">
-          Conversions are sent through Gotenui's stateless, same-origin proxy.
-        </p>
-      </div>
-    </div>
-  )
-}
-
 function ConnectionDialog({
-  url,
-  onSave,
+  browserProfiles,
+  managedProfiles,
+  selected,
+  onApply,
+  onUpsert,
+  onRemove,
   onClose,
 }: {
-  url: string
-  onSave: (url: string) => void
+  browserProfiles: BrowserConnection[]
+  managedProfiles: ManagedConnection[]
+  selected: string
+  onApply: (id: string, username: string, secret: string, accessKey: string) => void
+  onUpsert: (profile: BrowserConnection, username: string, secret: string) => void
+  onRemove: (id: string) => void
   onClose: () => void
 }) {
   useEffect(() => {
@@ -307,7 +201,7 @@ function ConnectionDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="connection-heading"
-        className="relative w-full max-w-[520px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl sm:p-8"
+        className="relative w-full max-w-[550px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl sm:p-8"
       >
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
@@ -315,7 +209,7 @@ function ConnectionDialog({
               Connection settings
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              Switch Gotenberg instances whenever you need.
+              Switch between browser and server-managed connections.
             </p>
           </div>
           <Button
@@ -328,7 +222,14 @@ function ConnectionDialog({
             <X className="size-5" />
           </Button>
         </div>
-        <ConnectionEditor initialUrl={url} onSave={onSave} />
+        <ConnectionManager
+          browserProfiles={browserProfiles}
+          managedProfiles={managedProfiles}
+          selected={selected}
+          onApply={onApply}
+          onUpsert={onUpsert}
+          onRemove={onRemove}
+        />
       </div>
     </div>
   )
@@ -748,12 +649,12 @@ function Workbench({
   operation,
   recent,
   onCompleted,
-  backendUrl,
+  connection,
 }: {
   operation: Operation
   recent: Job[]
   onCompleted: (job: Job) => void
-  backendUrl: string
+  connection: ConnectionChoice
 }) {
   const [fields, setFields] = useState<Record<string, string | boolean>>(() =>
     operationDefaults(operation),
@@ -774,9 +675,6 @@ function Workbench({
     },
     [],
   )
-  useEffect(() => {
-    if (backendUrl) requestAbort.current?.abort()
-  }, [backendUrl])
   useEffect(() => {
     setFields(operationDefaults(operation))
     setSource(operation.input === 'markdown' ? EXAMPLE_MARKDOWN : EXAMPLE_HTML)
@@ -826,7 +724,7 @@ function Workbench({
       requestAbort.current = controller
       const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       const signal = AbortSignal.any([controller.signal, deadline])
-      const result = await convertWithGotenberg(backendUrl, candidate, files, auxFiles, signal)
+      const result = await convertWithGotenberg(connection, candidate, files, auxFiles, signal)
       if (signal.aborted) {
         if (deadline.aborted) toast.error('Gotenberg did not respond within three minutes.')
         return
@@ -1111,11 +1009,25 @@ function Workbench({
 }
 
 function Workspace({
-  backendUrl,
-  onChangeUrl,
+  connection,
+  connectionName,
+  selectedConnection,
+  connectionEpoch,
+  browserProfiles,
+  managedProfiles,
+  onApply,
+  onUpsert,
+  onRemove,
 }: {
-  backendUrl: string
-  onChangeUrl: (url: string) => void
+  connection: ConnectionChoice
+  connectionName: string
+  selectedConnection: string
+  connectionEpoch: number
+  browserProfiles: BrowserConnection[]
+  managedProfiles: ManagedConnection[]
+  onApply: (id: string, username: string, secret: string, accessKey: string) => void
+  onUpsert: (profile: BrowserConnection, username: string, secret: string) => void
+  onRemove: (id: string) => void
 }) {
   const [selectedId, setSelectedId] = useState('url-pdf')
   const [status, setStatus] = useState<ServerStatus | null>(null)
@@ -1133,7 +1045,7 @@ function Workspace({
     setStatusLoading(true)
     const timeout = window.setTimeout(() => controller.abort(), 7_000)
     try {
-      const result = await getGotenbergStatus(backendUrl, controller.signal)
+      const result = await getGotenbergStatus(connection, controller.signal)
       if (!controller.signal.aborted) setStatus(result)
     } catch {
       if (statusAbort.current === controller) {
@@ -1151,7 +1063,7 @@ function Workspace({
         setStatusLoading(false)
       }
     }
-  }, [backendUrl])
+  }, [connection])
   useEffect(() => {
     setStatus(null)
     void refreshStatus()
@@ -1162,8 +1074,12 @@ function Workspace({
       statusAbort.current = null
     }
   }, [refreshStatus])
-  const updateUrl = (url: string) => {
-    onChangeUrl(url)
+  const applyConnection = (id: string, username: string, secret: string, accessKey: string) => {
+    onApply(id, username, secret, accessKey)
+    setSettingsOpen(false)
+  }
+  const upsertConnection = (profile: BrowserConnection, username: string, secret: string) => {
+    onUpsert(profile, username, secret)
     setSettingsOpen(false)
   }
   return (
@@ -1230,10 +1146,10 @@ function Workspace({
               variant="outline"
               size="sm"
               onClick={() => setSettingsOpen(true)}
-              title={backendUrl}
+              title={connectionName}
             >
               <Settings2 className="size-4" />
-              <span className="hidden max-w-44 truncate md:inline">{backendUrl}</span>
+              <span className="hidden max-w-44 truncate md:inline">{connectionName}</span>
               <span className="md:hidden">Settings</span>
             </Button>
           </div>
@@ -1317,7 +1233,7 @@ function Workspace({
                 size="sm"
                 onClick={() => setSettingsOpen(true)}
               >
-                Edit URL
+                Manage connections
               </Button>
             </div>
           )}
@@ -1340,11 +1256,11 @@ function Workspace({
             ))}
           </div>
           <Workbench
-            key={operation.id}
+            key={`${operation.id}:${selectedConnection}:${connectionEpoch}`}
             operation={operation}
             recent={recent}
             onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
-            backendUrl={backendUrl}
+            connection={connection}
           />
           <footer className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-5 text-[11px] text-slate-400">
             <span>Gotenui · Stateless document workbench</span>
@@ -1354,8 +1270,12 @@ function Workspace({
       </div>
       {settingsOpen && (
         <ConnectionDialog
-          url={backendUrl}
-          onSave={updateUrl}
+          browserProfiles={browserProfiles}
+          managedProfiles={managedProfiles}
+          selected={selectedConnection}
+          onApply={applyConnection}
+          onUpsert={upsertConnection}
+          onRemove={onRemove}
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -1364,37 +1284,122 @@ function Workspace({
 }
 
 export function GotenuiApp() {
-  const [checking, setChecking] = useState(true)
-  const [backendUrl, setBackendUrl] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saved, setSaved] = useState<SavedConnections>(() =>
+    loadConnections(null, DEFAULT_BACKEND_URL),
+  )
+  const [managed, setManaged] = useState<ManagedConnection[]>([])
+  const [connectionEpoch, setConnectionEpoch] = useState(0)
+  // Ephemeral credentials: intentionally never serialized, cached or placed in URLs.
+  const [credentials, setCredentials] = useState({ username: '', secret: '', accessKey: '' })
   useEffect(() => {
-    const storage = browserStorage()
-    const stored = loadBackendUrl(storage)
-    const selected = stored || DEFAULT_BACKEND_URL
-    if (!stored && selected) saveBackendUrl(storage, selected)
-    setBackendUrl(selected)
-    setChecking(false)
+    const loaded = loadConnections(browserStorage(), DEFAULT_BACKEND_URL)
+    setSaved(loaded)
+    const controller = new AbortController()
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(8000)])
+    void fetchManagedConnections(signal)
+      .then((profiles) => {
+        setManaged(profiles)
+        if (
+          loaded.selected.startsWith('server:') &&
+          !profiles.some((profile) => `server:${profile.id}` === loaded.selected)
+        ) {
+          const updated = { ...loaded, selected: DEFAULT_CONNECTION_ID }
+          setSaved(updated)
+          saveConnections(browserStorage(), updated)
+          toast.warning('The previously selected server connection is no longer available.')
+        }
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted)
+          toast.error(error instanceof Error ? error.message : 'Could not load server connections.')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
   }, [])
-  const save = (url: string) => {
-    const normalized = validatedBackend(url)
-    if (!saveBackendUrl(browserStorage(), normalized)) {
-      toast.warning('Browser storage is unavailable; this connection will last for this tab only.')
-    } else {
-      toast.success('Gotenberg URL saved to local storage.')
+
+  const persist = (next: SavedConnections) => {
+    setSaved(next)
+    if (!saveConnections(browserStorage(), next)) {
+      toast.warning('Browser storage is unavailable; changes will last only in this tab.')
     }
-    setBackendUrl(normalized)
   }
-  if (checking)
+  const apply = (id: string, username: string, secret: string, accessKey: string) => {
+    if (id.startsWith('server:')) {
+      const server = managed.find((item) => item.id === id.slice(7))
+      if (!server) throw new Error('Unknown server-managed connection.')
+      if (server.requiresKey && !accessKey) throw new Error('Enter the server profile access key.')
+    } else {
+      const browser = saved.browsers.find((item) => item.id === id)
+      if (!browser) throw new Error('Unknown browser connection.')
+      makeBrowserAuthorization(browser.auth, username, secret)
+    }
+    setCredentials({ username, secret, accessKey })
+    setConnectionEpoch((value) => value + 1)
+    persist({ ...saved, selected: id })
+    toast.success('Connection selected.')
+  }
+  const upsert = (profile: BrowserConnection, username: string, secret: string) => {
+    makeBrowserAuthorization(profile.auth, username, secret)
+    const browsers = saved.browsers.some((item) => item.id === profile.id)
+      ? saved.browsers.map((item) => (item.id === profile.id ? profile : item))
+      : [...saved.browsers, profile]
+    if (browsers.length > 20) throw new Error('You can save up to 20 browser connections.')
+    setCredentials({ username, secret, accessKey: '' })
+    setConnectionEpoch((value) => value + 1)
+    persist({ browsers, selected: profile.id })
+    toast.success('Browser connection saved.')
+  }
+  const remove = (id: string) => {
+    if (id === DEFAULT_CONNECTION_ID) return
+    const browsers = saved.browsers.filter((item) => item.id !== id)
+    if (browsers.length === saved.browsers.length) return
+    setCredentials({ username: '', secret: '', accessKey: '' })
+    setConnectionEpoch((value) => value + 1)
+    persist({ browsers, selected: saved.selected === id ? DEFAULT_CONNECTION_ID : saved.selected })
+    toast.success('Connection removed.')
+  }
+
+  const server = saved.selected.startsWith('server:')
+    ? managed.find((item) => `server:${item.id}` === saved.selected)
+    : undefined
+  const browser = saved.browsers.find((item) => item.id === saved.selected)
+  const activeBrowser = browser ?? saved.browsers[0]
+  const selectionKey = server ? saved.selected : (activeBrowser?.id ?? DEFAULT_CONNECTION_ID)
+  const connection = useMemo<ConnectionChoice>(() => {
+    if (server)
+      return { kind: 'server', id: server.id, accessKey: credentials.accessKey || undefined }
+    return {
+      kind: 'browser',
+      url: activeBrowser?.url ?? DEFAULT_BACKEND_URL,
+      authorization:
+        activeBrowser?.auth && activeBrowser.auth !== 'none' && credentials.secret
+          ? makeBrowserAuthorization(activeBrowser.auth, credentials.username, credentials.secret)
+          : undefined,
+    }
+  }, [server, activeBrowser, credentials])
+
+  if (loading)
     return (
       <div className="grid min-h-screen place-items-center bg-[#0c1b2c]">
         <div className="flex items-center gap-3 text-sm font-semibold text-white">
-          <RefreshCw className="size-5 animate-spin text-sky-400" />
-          Opening Gotenui...
+          <RefreshCw className="size-5 animate-spin text-sky-400" /> Opening Gotenui...
         </div>
       </div>
     )
-  return backendUrl ? (
-    <Workspace backendUrl={backendUrl} onChangeUrl={save} />
-  ) : (
-    <ConnectionSetup onSave={save} />
+  return (
+    <Workspace
+      connection={connection}
+      connectionName={server?.name ?? activeBrowser?.name ?? 'Gotenberg demo'}
+      selectedConnection={selectionKey}
+      connectionEpoch={connectionEpoch}
+      browserProfiles={saved.browsers}
+      managedProfiles={managed}
+      onApply={apply}
+      onUpsert={upsert}
+      onRemove={remove}
+    />
   )
 }

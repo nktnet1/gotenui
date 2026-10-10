@@ -60,9 +60,10 @@ test('converts through the same-origin API, not direct-to-Gotenberg fetch', asyn
     assert.equal(requests[0]?.url, '/api/gotenberg/convert')
     assert.equal(requests[0]?.options.method, 'POST')
     assert.equal(requests[0]?.options.credentials, 'same-origin')
-    assert.deepEqual(requests[0]?.options.headers, {
-      'X-Gotenberg-Url': 'http://127.0.0.1:3000',
-    })
+    assert.equal(
+      new Headers(requests[0]?.options.headers).get('X-Gotenberg-Url'),
+      'http://127.0.0.1:3000',
+    )
     const body = requests[0]?.options.body
     assert.ok(body instanceof FormData)
     const payload = JSON.parse(String(body.get('payload')))
@@ -118,6 +119,40 @@ test('rejects SPA fallback instead of claiming an HTML page is healthy', async (
     const status = await getGotenbergStatus('http://127.0.0.1:3000')
     assert.equal(status.online, false)
     assert.match(status.error ?? '', /Unexpected token|not valid JSON|valid Gotenberg status/)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('server-managed status and conversion select the profile without leaking credentials into URLs', async () => {
+  const original = globalThis.fetch
+  const captures: { path: string; headers: Headers }[] = []
+  globalThis.fetch = async (input, options) => {
+    captures.push({ path: String(input), headers: new Headers(options?.headers) })
+    if (String(input).includes('/status'))
+      return Response.json({ online: true, version: '8.37.0', modules: [] })
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  }
+  try {
+    const connection = { kind: 'server' as const, id: 'records', accessKey: 'private-test-key' }
+    const status = await getGotenbergStatus(connection)
+    assert.equal(status.online, true)
+    const op = OPERATION_BY_ID.get('url-pdf')
+    assert.ok(op)
+    await convertWithGotenberg(
+      connection,
+      { operation: op.id, fields: { url: 'https://example.test' }, advanced: {} },
+      [],
+      [],
+      new AbortController().signal,
+    )
+    assert.equal(captures[0]?.path, '/api/gotenberg/status?connection=records')
+    assert.equal(captures[0]?.headers.get('X-Gotenui-Profile-Access-Key'), 'private-test-key')
+    assert.equal(captures[1]?.path, '/api/gotenberg/convert')
+    assert.equal(captures[1]?.headers.get('X-Gotenui-Connection-Id'), 'records')
+    assert.equal(captures[1]?.headers.get('X-Gotenui-Profile-Access-Key'), 'private-test-key')
+    assert.equal(captures[1]?.headers.has('X-Gotenberg-Url'), false)
+    assert.doesNotMatch(captures[0]?.path ?? '', /private-test-key/)
   } finally {
     globalThis.fetch = original
   }

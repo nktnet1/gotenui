@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiGotenbergConnectionsRouteImport } from './routes/api/gotenberg/connections'
 import { Route as ApiGotenbergConvertRouteImport } from './routes/api/gotenberg/convert'
 import { Route as ApiGotenbergStatusRouteImport } from './routes/api/gotenberg/status'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGotenbergConnectionsRoute = ApiGotenbergConnectionsRouteImport.update({
+  id: '/api/gotenberg/connections',
+  path: '/api/gotenberg/connections',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiGotenbergConvertRoute = ApiGotenbergConvertRouteImport.update({
@@ -31,30 +37,47 @@ const ApiGotenbergStatusRoute = ApiGotenbergStatusRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/gotenberg/connections': typeof ApiGotenbergConnectionsRoute
   '/api/gotenberg/convert': typeof ApiGotenbergConvertRoute
   '/api/gotenberg/status': typeof ApiGotenbergStatusRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/gotenberg/connections': typeof ApiGotenbergConnectionsRoute
   '/api/gotenberg/convert': typeof ApiGotenbergConvertRoute
   '/api/gotenberg/status': typeof ApiGotenbergStatusRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/gotenberg/connections': typeof ApiGotenbergConnectionsRoute
   '/api/gotenberg/convert': typeof ApiGotenbergConvertRoute
   '/api/gotenberg/status': typeof ApiGotenbergStatusRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/gotenberg/convert' | '/api/gotenberg/status'
+  fullPaths:
+    | '/'
+    | '/api/gotenberg/connections'
+    | '/api/gotenberg/convert'
+    | '/api/gotenberg/status'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/gotenberg/convert' | '/api/gotenberg/status'
-  id: '__root__' | '/' | '/api/gotenberg/convert' | '/api/gotenberg/status'
+  to:
+    | '/'
+    | '/api/gotenberg/connections'
+    | '/api/gotenberg/convert'
+    | '/api/gotenberg/status'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/gotenberg/connections'
+    | '/api/gotenberg/convert'
+    | '/api/gotenberg/status'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiGotenbergConnectionsRoute: typeof ApiGotenbergConnectionsRoute
   ApiGotenbergConvertRoute: typeof ApiGotenbergConvertRoute
   ApiGotenbergStatusRoute: typeof ApiGotenbergStatusRoute
 }
@@ -66,6 +89,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/gotenberg/connections': {
+      id: '/api/gotenberg/connections'
+      path: '/api/gotenberg/connections'
+      fullPath: '/api/gotenberg/connections'
+      preLoaderRoute: typeof ApiGotenbergConnectionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/gotenberg/convert': {
@@ -87,6 +117,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiGotenbergConnectionsRoute: ApiGotenbergConnectionsRoute,
   ApiGotenbergConvertRoute: ApiGotenbergConvertRoute,
   ApiGotenbergStatusRoute: ApiGotenbergStatusRoute,
 }

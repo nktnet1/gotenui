@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import {
+  proxyConnectionsRequest,
   proxyConversionRequest,
   proxyErrorResponse,
   proxyStatusRequest,
@@ -148,36 +149,59 @@ test('status requests use an approved local target without requiring browser COR
   assert.equal(error.status, 403)
 })
 
-test('conversions use server-side Basic Auth only for the configured backend', async () => {
+const profileKey = 'test-only-profile-access-key-123'
+function managedRequest(): Request {
+  const request = conversionRequest()
+  request.headers.delete('X-Gotenberg-Url')
+  request.headers.set('X-Gotenui-Connection-Id', 'legacy-basic')
+  request.headers.set('X-Gotenui-Profile-Access-Key', profileKey)
+  return request
+}
+function setLegacyAuth() {
   vi.stubEnv('GOTENBERG_ALLOWED_URLS', 'http://127.0.0.1:3000,https://demo.gotenberg.dev')
   vi.stubEnv('GOTENBERG_BASIC_AUTH_URL', 'http://127.0.0.1:3000')
   vi.stubEnv('GOTENBERG_BASIC_AUTH_USERNAME', 'test-user')
   vi.stubEnv('GOTENBERG_BASIC_AUTH_PASSWORD', 'test-password')
+  vi.stubEnv('GOTENUI_PROFILE_ACCESS_KEY', profileKey)
+}
+
+test('server-managed Basic Auth requires the exact profile and access key', async () => {
+  setLegacyAuth()
   const expected = `Basic ${Buffer.from('test-user:test-password').toString('base64')}`
   const fetcher: typeof fetch = async (_input, options) => {
     assert.equal(new Headers(options?.headers).get('authorization'), expected)
     assert.equal(options?.redirect, 'error')
     return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
   }
-  const converted = await proxyConversionRequest(conversionRequest(), fetcher)
-  assert.equal(converted.status, 200)
-  assert.equal(converted.headers.get('authorization'), null)
-
-  const demoFetcher: typeof fetch = async (_input, options) => {
+  assert.equal((await proxyConversionRequest(managedRequest(), fetcher)).status, 200)
+  const urlOnly = await proxyConversionRequest(conversionRequest(), async (_input, options) => {
+    // Selecting the matching URL alone cannot use environment secrets.
     assert.equal(new Headers(options?.headers).get('authorization'), null)
-    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
-  }
+    return new Response('Unauthorized', { status: 401 })
+  })
+  assert.equal(urlOnly.status, 401)
+  const wrong = managedRequest()
+  wrong.headers.set('X-Gotenui-Profile-Access-Key', 'wrong-key')
+  await assert.rejects(
+    proxyConversionRequest(wrong),
+    (error: { status?: number }) => error.status === 403,
+  )
+  const forged = managedRequest()
+  forged.headers.set('X-Gotenui-Upstream-Authorization', 'Bearer forged')
+  await assert.rejects(proxyConversionRequest(forged), /cannot override/)
+
   const demo = await proxyConversionRequest(
     conversionRequest('https://demo.gotenberg.dev'),
-    demoFetcher,
+    async (_input, options) => {
+      assert.equal(new Headers(options?.headers).get('authorization'), null)
+      return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+    },
   )
   assert.equal(demo.status, 200)
 })
 
-test('status uses Basic Auth for health and version without exposing secrets', async () => {
-  vi.stubEnv('GOTENBERG_BASIC_AUTH_URL', 'http://127.0.0.1:3000')
-  vi.stubEnv('GOTENBERG_BASIC_AUTH_USERNAME', 'test-user')
-  vi.stubEnv('GOTENBERG_BASIC_AUTH_PASSWORD', 'test-password')
+test('server-managed status forwards credentials without exposing them in JSON', async () => {
+  setLegacyAuth()
   let requests = 0
   const expected = `Basic ${Buffer.from('test-user:test-password').toString('base64')}`
   const fetcher: typeof fetch = async (input, options) => {
@@ -187,7 +211,9 @@ test('status uses Basic Auth for health and version without exposing secrets', a
     return Response.json({ status: 'up', details: {} })
   }
   const status = await proxyStatusRequest(
-    new Request(`${origin}/api/gotenberg/status?url=http%3A%2F%2F127.0.0.1%3A3000`),
+    new Request(`${origin}/api/gotenberg/status?connection=legacy-basic`, {
+      headers: { 'X-Gotenui-Profile-Access-Key': profileKey },
+    }),
     fetcher,
   )
   assert.equal(requests, 2)
@@ -196,12 +222,11 @@ test('status uses Basic Auth for health and version without exposing secrets', a
   assert.equal(status.headers.get('cache-control'), 'no-store')
 })
 
-test('upstream 401 responses are preserved without forwarding authentication headers', async () => {
-  vi.stubEnv('GOTENBERG_BASIC_AUTH_URL', 'http://127.0.0.1:3000')
-  vi.stubEnv('GOTENBERG_BASIC_AUTH_USERNAME', 'test-user')
+test('upstream 401 is preserved without leaking authentication headers', async () => {
+  setLegacyAuth()
   vi.stubEnv('GOTENBERG_BASIC_AUTH_PASSWORD', 'wrong-password')
   const response = await proxyConversionRequest(
-    conversionRequest(),
+    managedRequest(),
     async () =>
       new Response('Unauthorized', {
         status: 401,
@@ -239,4 +264,16 @@ test('browser-supplied Authorization headers are never forwarded to Gotenberg', 
     return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
   })
   assert.equal(response.status, 200)
+})
+
+test('connections metadata endpoint never leaks server URLs or credentials', async () => {
+  setLegacyAuth()
+  const response = proxyConnectionsRequest(new Request(`${origin}/api/gotenberg/connections`))
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  const body = await response.text()
+  assert.deepEqual(JSON.parse(body), {
+    connections: [{ id: 'legacy-basic', name: 'Private Gotenberg (legacy)', requiresKey: true }],
+  })
+  assert.doesNotMatch(body, /test-password|127\.0\.0\.1|Basic [A-Za-z]/)
 })

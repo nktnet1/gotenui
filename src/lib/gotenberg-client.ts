@@ -1,5 +1,6 @@
 import * as v from 'valibot'
 import { normalizeBackendUrl } from '#/lib/backend-url'
+import type { ConnectionChoice } from '#/lib/connection-profiles'
 import type { Operation } from '#/lib/operations'
 import { downloadFilename, responseExtension } from '#/lib/security'
 import {
@@ -49,14 +50,40 @@ function connectionHint(): string {
   return 'Could not reach the Gotenui API proxy. Check that TanStack Start is deployed with Nitro server functions.'
 }
 
+/** A selected connection is supplied on each request; no server session is involved. */
+function targetHeaders(connection: string | ConnectionChoice): Headers {
+  const headers = new Headers()
+  if (typeof connection === 'string') {
+    headers.set('X-Gotenberg-Url', validatedBackend(connection))
+  } else if (connection.kind === 'browser') {
+    headers.set('X-Gotenberg-Url', validatedBackend(connection.url))
+    if (connection.authorization) {
+      headers.set('X-Gotenui-Upstream-Authorization', connection.authorization)
+    }
+  } else {
+    headers.set('X-Gotenui-Connection-Id', connection.id)
+    if (connection.accessKey) headers.set('X-Gotenui-Profile-Access-Key', connection.accessKey)
+  }
+  return headers
+}
+
 /** The browser contacts only the same-origin Gotenui endpoint. */
 export async function getGotenbergStatus(
-  baseUrl: string,
+  connection: string | ConnectionChoice,
   signal?: AbortSignal,
 ): Promise<ServerStatus> {
-  const url = validatedBackend(baseUrl)
+  const headers = targetHeaders(connection)
+  const params = new URLSearchParams()
+  if (headers.has('X-Gotenui-Connection-Id')) {
+    params.set('connection', headers.get('X-Gotenui-Connection-Id') ?? '')
+    headers.delete('X-Gotenui-Connection-Id')
+  } else {
+    params.set('url', headers.get('X-Gotenberg-Url') ?? '')
+    headers.delete('X-Gotenberg-Url')
+  }
   try {
-    const response = await fetch(`/api/gotenberg/status?${new URLSearchParams({ url })}`, {
+    const response = await fetch(`/api/gotenberg/status?${params}`, {
+      headers,
       signal,
       cache: 'no-store',
       credentials: 'same-origin',
@@ -142,13 +169,13 @@ export type ConversionResult = {
 
 /** The proxy revalidates the JSON and files, and reconstructs a safe Gotenberg form. */
 export async function convertWithGotenberg(
-  baseUrl: string,
+  connection: string | ConnectionChoice,
   candidate: unknown,
   files: File[],
   auxiliary: File[],
   signal: AbortSignal,
 ): Promise<ConversionResult> {
-  const url = validatedBackend(baseUrl)
+  const headers = targetHeaders(connection)
   const { operation, payload } = validatePayload(candidate)
   // Keep fast client-side feedback; all fields and files are checked again by the server.
   validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES)
@@ -163,7 +190,7 @@ export async function convertWithGotenberg(
       body,
       signal,
       credentials: 'same-origin',
-      headers: { 'X-Gotenberg-Url': url },
+      headers,
     })
   } catch (error) {
     if (signal.aborted) throw error
