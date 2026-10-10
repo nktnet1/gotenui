@@ -49,7 +49,8 @@ export async function readLimitedBody(body: ReadableStream<Uint8Array> | null, l
       if (done) break
       size += value.byteLength
       if (size > limit) {
-        void reader.cancel().catch(() => {})
+        // Finish cancellation before releasing the lock; preserve the 413 if cancellation fails.
+        await reader.cancel().catch(() => {})
         throw new ProxyInputError(`Request exceeds the ${limit} byte upload limit.`, 413)
       }
       chunks.push(value)

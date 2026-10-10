@@ -104,10 +104,16 @@ test('malicious extra Gotenberg fields cannot bypass server validation', async (
 test('the proxy rejects cross-site requests and oversized multipart bodies', async () => {
   const form = new FormData()
   form.set('payload', 'a'.repeat(2000))
+  // Encode the multipart bytes before constructing the Request. Node 24's Undici
+  // FormData producer can throw an unhandled rejection if its stream is cancelled.
+  const encoded = new Response(form)
   const oversized = new Request(`${origin}/api/gotenberg/convert`, {
     method: 'POST',
-    headers: { 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
-    body: form,
+    headers: {
+      'Content-Type': encoded.headers.get('Content-Type') ?? '',
+      'X-Gotenberg-Url': 'http://127.0.0.1:3000',
+    },
+    body: await encoded.arrayBuffer(),
   })
   const previous = process.env.GOTENUI_MAX_REQUEST_BYTES
   process.env.GOTENUI_MAX_REQUEST_BYTES = '1024'

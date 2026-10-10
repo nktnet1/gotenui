@@ -62,3 +62,21 @@ test('reads bounded bodies and rejects oversized streams without buffering them'
   )
   await assert.rejects(readLimitedBody(null, 101), /multipart request body/)
 })
+
+test('waits for oversized body cancellation before rejecting with HTTP 413', async () => {
+  let cancellationFinished = false
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(2_000))
+    },
+    async cancel() {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      cancellationFinished = true
+    },
+  })
+  await assert.rejects(
+    readLimitedBody(body, 1_024),
+    (error: { status?: number }) => error.status === 413,
+  )
+  assert.equal(cancellationFinished, true)
+})
