@@ -1,25 +1,56 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
   <title id="title">Gotenui</title>
-  <desc id="desc">A simplified vector portrait inspired by the Gotenberg Gutenberg caricature.</desc>
+  <desc id="desc">A pure vector mascot icon inspired by the Go gopher, with a Gotenberg-style scholarly collar and press motif.</desc>
   <defs>
-    <linearGradient id="bg" x1="16" y1="16" x2="112" y2="112" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0f172a"/>
-      <stop offset="1" stop-color="#0369a1"/>
+    <linearGradient id="bg" x1="12" y1="12" x2="116" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0f172a" />
+      <stop offset="1" stop-color="#0369a1" />
     </linearGradient>
-    <linearGradient id="beard" x1="36" y1="58" x2="92" y2="108" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#f8fafc"/>
-      <stop offset="1" stop-color="#cbd5e1"/>
+    <linearGradient id="fur" x1="36" y1="28" x2="90" y2="102" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9fe3ff" />
+      <stop offset="1" stop-color="#4cc3f1" />
+    </linearGradient>
+    <linearGradient id="belly" x1="50" y1="62" x2="79" y2="111" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#effcff" />
+      <stop offset="1" stop-color="#d8f4fb" />
     </linearGradient>
   </defs>
-  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#bg)"/>
-  <path d="M24 44c7-17 23-27 40-27s33 10 40 27c-8-5-17-7-27-7H51c-10 0-19 2-27 7Z" fill="#e0f2fe"/>
-  <path d="M39 41c5-6 14-10 25-10s20 4 25 10" fill="none" stroke="#082f49" stroke-linecap="round" stroke-width="5"/>
-  <circle cx="64" cy="56" r="24" fill="#f8fafc"/>
-  <path d="M44 50c4-8 12-14 20-14s16 6 20 14" fill="#082f49"/>
-  <path d="M51 58c0-3 2-5 5-5 2 0 4 2 4 5s-2 5-4 5c-3 0-5-2-5-5Zm17 0c0-3 2-5 5-5 2 0 4 2 4 5s-2 5-4 5c-3 0-5-2-5-5Z" fill="#0f172a"/>
-  <path d="M57 70c2 2 4 3 7 3s5-1 7-3" fill="none" stroke="#0f172a" stroke-linecap="round" stroke-width="3.5"/>
-  <path d="M46 79c4-4 11-7 18-7s14 3 18 7" fill="none" stroke="#0f172a" stroke-linecap="round" stroke-width="5"/>
-  <path d="M40 78c0 22 11 34 24 34s24-12 24-34c-5 6-12 9-24 9s-19-3-24-9Z" fill="url(#beard)"/>
-  <path d="M48 84c4 5 9 7 16 7s12-2 16-7" fill="none" stroke="#94a3b8" stroke-linecap="round" stroke-width="4"/>
-  <path d="M38 81c-4 2-7 6-7 10 0 10 15 19 33 19s33-9 33-19c0-4-3-8-7-10-6 11-15 17-26 17S44 92 38 81Z" fill="#dbeafe" opacity=".4"/>
+
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#bg)" />
+
+  <circle cx="41" cy="39" r="13" fill="url(#fur)" />
+  <circle cx="87" cy="39" r="13" fill="url(#fur)" />
+  <circle cx="41" cy="40" r="6" fill="#f6c4cf" />
+  <circle cx="87" cy="40" r="6" fill="#f6c4cf" />
+
+  <path
+    d="M32 52c0-18 14-31 32-31s32 13 32 31v15c0 20-14 35-32 35S32 87 32 67V52Z"
+    fill="url(#fur)"
+  />
+  <ellipse cx="64" cy="81" rx="18" ry="16" fill="url(#belly)" />
+
+  <circle cx="51" cy="55" r="12" fill="#fff" />
+  <circle cx="77" cy="55" r="12" fill="#fff" />
+  <circle cx="53" cy="57" r="5.5" fill="#111827" />
+  <circle cx="75" cy="57" r="5.5" fill="#111827" />
+  <circle cx="55" cy="55" r="1.5" fill="#ffffff" />
+  <circle cx="77" cy="55" r="1.5" fill="#ffffff" />
+
+  <ellipse cx="64" cy="68" rx="7.5" ry="5.5" fill="#1f2937" />
+  <path d="M57 75c2.4 3.2 4.8 4.8 7 4.8 2.3 0 4.6-1.6 7-4.8" fill="none" stroke="#1f2937" stroke-linecap="round" stroke-width="3" />
+  <rect x="57.5" y="77.5" width="5" height="8" rx="1.6" fill="#ffffff" />
+  <rect x="65.5" y="77.5" width="5" height="8" rx="1.6" fill="#ffffff" />
+  <path d="M61 69.5c-2.3 0-4.2 1.8-4.2 4.1v1.4c2-1.4 4.2-2 7.2-2 3.1 0 5.2.6 7.2 2v-1.4c0-2.3-1.9-4.1-4.2-4.1h-6Z" fill="#374151" opacity=".18" />
+
+  <path d="M49 90c4.8 5.2 9.6 7.8 15 7.8 5.5 0 10.3-2.6 15-7.8" fill="none" stroke="#0b3b59" stroke-linecap="round" stroke-width="4" opacity=".55" />
+
+  <path d="M40 94l10 4 14-8 14 8 10-4-9 16H49L40 94Z" fill="#ffffff" />
+  <path d="M54 104h20" fill="none" stroke="#cbd5e1" stroke-linecap="round" stroke-width="3" />
+  <path d="M45 104h7M76 104h7" fill="none" stroke="#dbeafe" stroke-linecap="round" stroke-width="3" />
+
+  <path d="M27 99c3-4 7-6 13-6l9 17H31c-4 0-7-2-8-5-.9-2.1-.6-4.2 1-6Z" fill="#082f49" opacity=".8" />
+  <path d="M101 99c-3-4-7-6-13-6l-9 17h18c4 0 7-2 8-5 .9-2.1.6-4.2-1-6Z" fill="#082f49" opacity=".8" />
+
+  <path d="M92 26l10 10-10 10" fill="none" stroke="#e0f2fe" stroke-linecap="round" stroke-linejoin="round" stroke-width="4" opacity=".9" />
+  <path d="M100 26v20" fill="none" stroke="#e0f2fe" stroke-linecap="round" stroke-width="4" opacity=".9" />
 </svg>
