@@ -698,3 +698,90 @@ test('the proxy rejects unscoped resource credentials before making an upstream 
   await assert.rejects(proxyConversionRequest(request, fetcher), /explicit URL scope/)
   assert.equal(called, false)
 })
+
+test('rewrites inline and mismatched upstream filenames before returning a download', async () => {
+  const response = await proxyConversionRequest(
+    conversionRequest(),
+    async () =>
+      new Response('%PDF-1.7', {
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': 'inline; filename="../../invoice.html"',
+          'Set-Cookie': 'upstream=secret',
+        },
+      }),
+  )
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('content-disposition'), 'attachment; filename="invoice.pdf"')
+  assert.equal(response.headers.get('set-cookie'), null)
+  assert.equal(await response.text(), '%PDF-1.7')
+})
+
+test('uses the actual ZIP type and the requested output name for an Office archive', async () => {
+  const body = new FormData()
+  body.set(
+    'payload',
+    JSON.stringify({
+      operation: 'office-pdf',
+      fields: {},
+      advanced: {},
+      outputName: 'batch report',
+    }),
+  )
+  body.append('files', new File(['document one'], 'one.txt'))
+  body.append('files', new File(['document two'], 'two.txt'))
+  const request = new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: { Origin: origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
+    body,
+  })
+  const response = await proxyConversionRequest(
+    request,
+    async () =>
+      new Response('PK\u0003\u0004', {
+        headers: {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': 'attachment; filename="dangerous.pdf"',
+        },
+      }),
+  )
+  assert.equal(response.status, 200)
+  assert.equal(
+    response.headers.get('content-disposition'),
+    'attachment; filename="batch report.zip"',
+  )
+})
+
+test('an asynchronous acceptance never forwards upstream download headers', async () => {
+  const body = new FormData()
+  body.set(
+    'payload',
+    JSON.stringify({
+      operation: 'url-pdf',
+      fields: { url: 'https://example.com' },
+      advanced: {},
+      webhook: { url: 'https://receiver.example.com/callback' },
+    }),
+  )
+  const request = new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: { Origin: origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
+    body,
+  })
+  const response = await proxyConversionRequest(
+    request,
+    async () =>
+      new Response(null, {
+        status: 204,
+        headers: {
+          'Content-Disposition': 'inline; filename="malicious.html"',
+          'Content-Type': 'text/html',
+          'Gotenberg-Trace': 'async-job',
+        },
+      }),
+  )
+  assert.equal(response.status, 204)
+  assert.equal(response.headers.get('content-disposition'), null)
+  assert.equal(response.headers.get('content-type'), null)
+  assert.equal(response.headers.get('gotenberg-trace'), 'async-job')
+})

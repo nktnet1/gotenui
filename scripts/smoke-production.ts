@@ -114,6 +114,25 @@ const upstream = createServer(async (request, response) => {
       response.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>invalid</html>')
       return
     }
+    if (trace === 'smoke-inline-download') {
+      response
+        .writeHead(200, {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': 'inline; filename="../../invoice.html"',
+          'Set-Cookie': 'upstream=secret',
+        })
+        .end(pdf)
+      return
+    }
+    if (trace === 'smoke-mismatched-zip') {
+      response
+        .writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': 'attachment; filename="old.pdf"',
+        })
+        .end(zip)
+      return
+    }
     if (trace === 'smoke-auth-error') {
       response
         .writeHead(401, {
@@ -129,7 +148,13 @@ const upstream = createServer(async (request, response) => {
       return
     }
     if (trace === 'smoke-webhook') {
-      response.writeHead(204, { 'Gotenberg-Trace': 'fixture-webhook-accepted' }).end()
+      response
+        .writeHead(204, {
+          'Gotenberg-Trace': 'fixture-webhook-accepted',
+          'Content-Disposition': 'inline; filename="callback.html"',
+          'Content-Type': 'text/html',
+        })
+        .end()
       return
     }
     if (trace === 'smoke-oversized') {
@@ -296,7 +321,10 @@ async function run(): Promise<void> {
     assert.equal(converted.status, 200)
     assert.equal(converted.headers.get('content-type'), 'application/pdf')
     assert.equal(converted.headers.get('gotenberg-trace'), 'fixture-response-trace')
-    assert.equal(converted.headers.get('content-disposition'), 'attachment; filename="fixture.pdf"')
+    assert.equal(
+      converted.headers.get('content-disposition'),
+      'attachment; filename="release-smoke.pdf"',
+    )
     assert.equal(converted.headers.get('set-cookie'), null)
     assert.deepEqual(Buffer.from(await converted.arrayBuffer()), pdf)
     const serverRequest = seen.at(-1)
@@ -449,6 +477,38 @@ async function run(): Promise<void> {
     assert.deepEqual(Buffer.from(await office.arrayBuffer()), zip)
     checks++
 
+    const hostileName = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], { requestTrace: 'smoke-inline-download' }),
+    })
+    assert.equal(hostileName.status, 200)
+    assert.equal(
+      hostileName.headers.get('content-disposition'),
+      'attachment; filename="invoice.pdf"',
+    )
+    assert.equal(hostileName.headers.get('set-cookie'), null)
+    assert.deepEqual(Buffer.from(await hostileName.arrayBuffer()), pdf)
+    checks++
+
+    const misnamedZip = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody(
+        'office-pdf',
+        {},
+        [
+          new File(['A'], 'first.txt', { type: 'text/plain' }),
+          new File(['B'], 'second.txt', { type: 'text/plain' }),
+        ],
+        { requestTrace: 'smoke-mismatched-zip' },
+      ),
+    })
+    assert.equal(misnamedZip.status, 200)
+    assert.equal(misnamedZip.headers.get('content-disposition'), 'attachment; filename="old.zip"')
+    assert.deepEqual(Buffer.from(await misnamedZip.arrayBuffer()), zip)
+    checks++
+
     for (const [trace, expected] of [
       ['smoke-invalid-html', /unexpected conversion response/],
       ['smoke-oversized', /exceeds.*byte limit/],
@@ -504,6 +564,8 @@ async function run(): Promise<void> {
     })
     assert.equal(accepted.status, 204)
     assert.equal(accepted.headers.get('gotenberg-trace'), 'fixture-webhook-accepted')
+    assert.equal(accepted.headers.get('content-disposition'), null)
+    assert.equal(accepted.headers.get('content-type'), null)
     assert.equal(await accepted.text(), '')
     assert.equal(seen.at(-1)?.headers['gotenberg-webhook-url'], 'https://hooks.example.test/result')
     checks++

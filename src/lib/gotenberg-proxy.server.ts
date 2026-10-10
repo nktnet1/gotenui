@@ -15,6 +15,7 @@ import {
   requireSameOrigin,
 } from '#/lib/proxy-policy'
 import { verifyConversionSignature } from '#/lib/response-signature'
+import { safeAttachmentDisposition } from '#/lib/security'
 import { parseServerConnections, publicServerConnections } from '#/lib/server-connections.server'
 import { uiFeatures } from '#/lib/ui-features.server'
 import {
@@ -321,10 +322,8 @@ export async function proxyConversionRequest(
     })
   }
   const headers = new Headers(safeResponseHeaders)
-  for (const name of ['content-type', 'content-disposition', 'gotenberg-trace']) {
-    const value = upstream.headers.get(name)
-    if (value) headers.set(name, value)
-  }
+  const trace = upstream.headers.get('gotenberg-trace')
+  if (trace) headers.set('Gotenberg-Trace', trace)
   if (upstream.status === 204 || upstream.status === 202) {
     await upstream.body?.cancel().catch(() => {})
     if (!payload.webhook) {
@@ -336,7 +335,8 @@ export async function proxyConversionRequest(
     return new Response(null, { status: upstream.status, headers })
   }
   const allowedTypes = allowedConversionContentTypes(operation, payload, files)
-  const returnedType = headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
+  const upstreamContentType = upstream.headers.get('content-type')
+  const returnedType = upstreamContentType?.split(';')[0]?.trim().toLowerCase()
   if (
     upstream.status !== 200 ||
     !returnedType ||
@@ -362,6 +362,16 @@ export async function proxyConversionRequest(
     throw error
   }
   const checkedBody = await verifyConversionSignature(upstream.body, returnedType)
+  headers.set('Content-Type', upstreamContentType ?? returnedType)
+  headers.set(
+    'Content-Disposition',
+    safeAttachmentDisposition(
+      upstream.headers.get('content-disposition'),
+      operation.id,
+      returnedType,
+      payload.outputName,
+    ),
+  )
   return new Response(limitResponseStream(checkedBody, maxResponseBytes, declaredLength), {
     status: 200,
     headers,

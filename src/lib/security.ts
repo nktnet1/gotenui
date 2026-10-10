@@ -29,6 +29,41 @@ export function responseExtension(contentType: string | null): string {
   return 'bin'
 }
 
+/** Never allow an upstream gateway to choose how the browser handles a download.
+ * Gotenberg normally returns an attachment with a matching extension, but a
+ * misconfigured proxy can return `inline`, HTML filenames, or path segments.
+ * Derive the extension from the already-validated response media type instead.
+ */
+export function safeAttachmentDisposition(
+  upstreamDisposition: string | null,
+  fallbackBase: string,
+  contentType: string,
+  requestedBase?: string,
+): string {
+  const extension = responseExtension(contentType)
+  const fallback = `${fallbackBase}.${extension}`
+  const upstreamName = downloadFilename(upstreamDisposition, fallback)
+  const candidate = requestedBase ? `${requestedBase}.${extension}` : upstreamName
+  const knownExtension =
+    candidate.toLowerCase().endsWith(`.${extension}`) ||
+    (extension === 'jpeg' && candidate.toLowerCase().endsWith('.jpg'))
+  const root = knownExtension
+    ? candidate.slice(0, candidate.lastIndexOf('.'))
+    : candidate.replace(/\.[^.]*$/, '')
+  const safeRoot = root
+    .replace(/[^a-zA-Z0-9 _.()-]/g, '_')
+    .replace(/^[._ ]+|[._ ]+$/g, '')
+    .slice(0, 140 - extension.length - 1)
+    .replace(/[._ ]+$/g, '')
+  // Windows reserves these basenames even when an extension is appended.
+  const basename = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(safeRoot)
+    ? `file-${safeRoot}`
+    : safeRoot || 'download'
+  const finalExtension =
+    knownExtension && extension === 'jpeg' && /\.jpg$/i.test(candidate) ? 'jpg' : extension
+  return `attachment; filename="${basename}.${finalExtension}"`
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`

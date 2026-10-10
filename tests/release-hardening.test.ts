@@ -121,7 +121,7 @@ function conversionResult(type: string, data: string) {
   return new Response(data, {
     headers: {
       'Content-Type': `${type}; charset=binary`,
-      'Content-Disposition': `attachment; filename=upstream.${type === 'application/zip' ? 'zip' : 'pdf'}`,
+      'Content-Disposition': `attachment; filename="upstream.${type === 'application/zip' ? 'zip' : 'pdf'}"`,
       'Gotenberg-Trace': 'response-test',
     },
   })
@@ -162,7 +162,7 @@ test.each(splitSuccessCases)('split $description accepts $type', async ({ fields
   assert.equal(response.headers.get('content-type'), `${type}; charset=binary`)
   assert.equal(
     response.headers.get('content-disposition'),
-    `attachment; filename=upstream.${type === 'application/zip' ? 'zip' : 'pdf'}`,
+    `attachment; filename="upstream.${type === 'application/zip' ? 'zip' : 'pdf'}"`,
   )
   assert.equal(response.headers.get('gotenberg-trace'), 'response-test')
   assert.equal(await response.text(), data)
