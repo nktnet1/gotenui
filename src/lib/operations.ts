@@ -609,9 +609,9 @@ export const OPERATION_BY_ID = new Map(OPERATIONS.map((operation) => [operation.
 export const GROUPS: readonly OperationGroup[] = ['Convert', 'Capture', 'PDF tools']
 
 export function operationDefaults(operation: Operation): Record<string, string | boolean> {
-  return Object.fromEntries(
-    operation.fields
-      .filter((field) => field.defaultValue !== undefined)
-      .map((field) => [field.name, field.defaultValue]),
-  )
+  const defaults: Record<string, string | boolean> = {}
+  for (const field of operation.fields) {
+    if (field.defaultValue !== undefined) defaults[field.name] = field.defaultValue
+  }
+  return defaults
 }

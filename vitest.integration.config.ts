@@ -1,8 +1,7 @@
 import { defineConfig } from 'vitest/config'
-import { sourceAliases } from '#scripts/aliases'
 
 export default defineConfig({
-  resolve: { alias: sourceAliases },
+  resolve: { tsconfigPaths: true },
   test: {
     environment: 'node',
     include: ['tests/integration/*.integration.test.ts'],

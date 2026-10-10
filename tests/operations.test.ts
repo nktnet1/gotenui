@@ -27,6 +27,21 @@ test('defaults are present only for declared fields', () => {
   }
 })
 
+test('defaults omit undefined while preserving false and string values', () => {
+  const firstOperation = OPERATIONS[0]
+  assert.ok(firstOperation)
+  const operation = {
+    ...firstOperation,
+    fields: [
+      { name: 'missing', label: 'Missing', kind: 'text' as const },
+      { name: 'alsoMissing', label: 'Missing', kind: 'text' as const, defaultValue: undefined },
+      { name: 'disabled', label: 'Disabled', kind: 'toggle' as const, defaultValue: false },
+      { name: 'format', label: 'Format', kind: 'text' as const, defaultValue: 'pdf' },
+    ],
+  }
+  expect(operationDefaults(operation)).toEqual({ disabled: false, format: 'pdf' })
+})
+
 test('HTML and Markdown operations use the documented Chromium endpoints', () => {
   for (const output of ['convert', 'screenshot']) {
     for (const input of ['url', 'html', 'markdown']) {

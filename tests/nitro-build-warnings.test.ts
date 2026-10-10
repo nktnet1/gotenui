@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  filterBundledDependencyClientDirectives,
   isBundledDependencyClientDirective,
   labelDynamicChunkGroups,
 } from '#scripts/nitro-build-warnings'
@@ -52,6 +53,31 @@ describe('Nitro/Rolldown build diagnostics', () => {
         message: 'The module level directive "use server" may not be preserved',
       }),
     ).toBe(false)
+  })
+
+  it('filters known third-party directives without hiding other logs', () => {
+    const delegate = vi.fn()
+    const previousOnLog = vi.fn()
+    const handler = filterBundledDependencyClientDirectives(previousOnLog)
+    const directive = {
+      code: 'MODULE_LEVEL_DIRECTIVE',
+      message: 'The module level directive "use client" may not be preserved',
+      id: '/app/node_modules/sonner/index.mjs',
+    }
+    const unrelated = { code: 'UNRESOLVED_IMPORT', message: 'Could not resolve import' }
+
+    handler('warn', directive, delegate)
+    expect(previousOnLog).not.toHaveBeenCalled()
+    expect(delegate).not.toHaveBeenCalled()
+
+    handler('warn', unrelated, delegate)
+    expect(previousOnLog).toHaveBeenCalledTimes(1)
+    expect(previousOnLog).toHaveBeenCalledWith('warn', unrelated, delegate)
+    expect(delegate).not.toHaveBeenCalled()
+
+    filterBundledDependencyClientDirectives(undefined)('warn', unrelated, delegate)
+    expect(delegate).toHaveBeenCalledTimes(1)
+    expect(delegate).toHaveBeenCalledWith('warn', unrelated)
   })
 
   it('recognises Windows and message-only dependency locations', () => {

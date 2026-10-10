@@ -3,9 +3,8 @@ import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import react from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
 import { defineConfig } from 'vite'
-import { sourceAliases } from '#scripts/aliases'
 import {
-  isBundledDependencyClientDirective,
+  filterBundledDependencyClientDirectives,
   labelDynamicChunkGroups,
 } from '#scripts/nitro-build-warnings'
 
@@ -20,18 +19,13 @@ export default defineConfig({
         'rollup:before'(_nitro, config) {
           // Nitro creates this group; do not replace its chunking strategy.
           labelDynamicChunkGroups(config.output)
-          const previousOnLog = config.onLog
-          config.onLog = (level, log, defaultHandler) => {
-            if (isBundledDependencyClientDirective(level, log)) return
-            if (previousOnLog) return previousOnLog(level, log, defaultHandler)
-            defaultHandler(level, log)
-          }
+          config.onLog = filterBundledDependencyClientDirectives(config.onLog)
         },
       },
     }),
     tailwindcss(),
     react(),
   ],
-  resolve: { alias: sourceAliases },
+  resolve: { tsconfigPaths: true },
   server: { port: 3100, strictPort: true },
 })

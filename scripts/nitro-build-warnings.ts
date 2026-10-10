@@ -1,3 +1,5 @@
+import type { UserConfig } from 'vite'
+
 /**
  * Nitro's Vite/Rolldown build puts the SPA dependencies in its server bundle.
  * React client-boundary directives are not meaningful in this (non-RSC) bundle.
@@ -12,6 +14,26 @@ type BuildLog = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+// Type the Nitro onLog hook using the version of Rolldown bundled with Vite.
+// Nitro's `rollup:before` hook currently exposes `config` without contextual types.
+type BuildLogHandler = NonNullable<
+  NonNullable<NonNullable<UserConfig['build']>['rolldownOptions']>['onLog']
+>
+
+/** Filter only dependency client directives, preserving prior handlers and other diagnostics. */
+export function filterBundledDependencyClientDirectives(
+  previousOnLog: BuildLogHandler | undefined,
+): BuildLogHandler {
+  return (level, log, defaultHandler) => {
+    if (isBundledDependencyClientDirective(level, log)) return
+    if (previousOnLog) {
+      previousOnLog(level, log, defaultHandler)
+      return
+    }
+    defaultHandler(level, log)
+  }
 }
 
 export function isBundledDependencyClientDirective(level: string, log: BuildLog): boolean {
