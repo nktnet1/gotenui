@@ -1,2 +1,4 @@
+allowBuilds:
+  lefthook: true
 minimumReleaseAgeExclude:
   - lucide-react@1.54.0
