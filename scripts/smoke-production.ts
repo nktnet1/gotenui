@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { type ChildProcess, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { createServer } from 'node:http'
+import { createServer, type IncomingHttpHeaders, type Server } from 'node:http'
 import { dirname, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -11,10 +11,12 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = resolve(projectRoot, '.output/server/index.mjs')
 const pdf = Buffer.from('%PDF-1.7\n%Gotenui smoke test\n')
 const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00])
-const seen = []
+type UpstreamRequest = { path: string; headers: IncomingHttpHeaders; body: string }
+const seen: UpstreamRequest[] = []
+let followedRedirects = 0
 
-async function listen(server) {
-  await new Promise((resolve, reject) => {
+async function listen(server: Server): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', resolve)
   })
@@ -23,16 +25,18 @@ async function listen(server) {
   return address.port
 }
 
-async function unusedPort() {
+async function unusedPort(): Promise<number> {
   const server = createServer()
   const port = await listen(server)
-  await new Promise((resolve) => server.close(resolve))
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()))
+  })
   return port
 }
 
 const upstream = createServer(async (request, response) => {
   try {
-    if (request.url === '/health' && ['GET', 'HEAD'].includes(request.method)) {
+    if (request.url === '/health' && (request.method === 'GET' || request.method === 'HEAD')) {
       response.setHeader('Content-Type', 'application/json')
       response.end(
         request.method === 'HEAD'
@@ -45,11 +49,16 @@ const upstream = createServer(async (request, response) => {
       response.end('8.37.0')
       return
     }
+    if (request.url === '/redirect-target') {
+      followedRedirects++
+      response.writeHead(200, { 'Content-Type': 'application/pdf' }).end(pdf)
+      return
+    }
     if (!request.url?.startsWith('/forms/') || request.method !== 'POST') {
       response.writeHead(404).end()
       return
     }
-    const chunks = []
+    const chunks: Buffer[] = []
     for await (const chunk of request) chunks.push(chunk)
     const body = Buffer.concat(chunks)
     assert.ok(body.byteLength < 1_000_000, 'Smoke fixture received an unexpectedly large upload')
@@ -61,6 +70,24 @@ const upstream = createServer(async (request, response) => {
     const trace = request.headers['gotenberg-trace']
     if (trace === 'smoke-invalid-html') {
       response.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>invalid</html>')
+      return
+    }
+    if (trace === 'smoke-auth-error') {
+      response
+        .writeHead(401, {
+          'Content-Type': 'text/plain',
+          'Gotenberg-Trace': 'fixture-auth-rejected',
+          'Set-Cookie': 'private-error-cookie=secret',
+        })
+        .end('Fixture authentication rejected')
+      return
+    }
+    if (trace === 'smoke-redirect') {
+      response.writeHead(302, { Location: '/redirect-target' }).end()
+      return
+    }
+    if (trace === 'smoke-webhook') {
+      response.writeHead(204, { 'Gotenberg-Trace': 'fixture-webhook-accepted' }).end()
       return
     }
     if (trace === 'smoke-oversized') {
@@ -82,26 +109,34 @@ const upstream = createServer(async (request, response) => {
   }
 })
 
-function conversionBody(operation, fields, files = [], extras = {}) {
+function conversionBody(
+  operation: string,
+  fields: Record<string, unknown>,
+  files: File[] = [],
+  extras: Record<string, unknown> = {},
+): FormData {
   const form = new FormData()
   form.set('payload', JSON.stringify({ operation, fields, advanced: {}, ...extras }))
   for (const file of files) form.append('files', file, file.name)
   return form
 }
 
-async function get(url, options = {}) {
+async function get(url: string, options: RequestInit = {}): Promise<Response> {
   return fetch(url, { ...options, signal: AbortSignal.timeout(10_000) })
 }
 
-async function stopProcess(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return
-  const stopped = new Promise((resolve) => child.once('exit', resolve))
+async function stopProcess(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  const stopped = new Promise<void>((resolve) => child.once('exit', () => resolve()))
   child.kill('SIGTERM')
   await Promise.race([stopped, sleep(2_000)])
-  if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGKILL')
+    await Promise.race([stopped, sleep(2_000)])
+  }
 }
 
-async function waitForServer(child, url, logs) {
+async function waitForServer(child: ChildProcess, url: string, logs: () => string): Promise<void> {
   const deadline = Date.now() + 20_000
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
@@ -120,7 +155,7 @@ async function waitForServer(child, url, logs) {
   throw new Error(`Built Nitro server did not become ready: ${logs()}`)
 }
 
-async function run() {
+async function run(): Promise<void> {
   if (!existsSync(entry)) throw new Error('Missing .output/server/index.mjs; run pnpm build first.')
   const upstreamPort = await listen(upstream)
   const upstreamUrl = `http://127.0.0.1:${upstreamPort}`
@@ -152,7 +187,7 @@ async function run() {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let output = ''
-  const capture = (chunk) => {
+  const capture = (chunk: Buffer) => {
     output = `${output}${chunk.toString()}`.slice(-4_000)
   }
   child.stdout.on('data', capture)
@@ -219,6 +254,7 @@ async function run() {
     assert.equal(converted.headers.get('set-cookie'), null)
     assert.deepEqual(Buffer.from(await converted.arrayBuffer()), pdf)
     const serverRequest = seen.at(-1)
+    assert.ok(serverRequest, 'Expected a server-managed upstream request')
     assert.equal(serverRequest.path, '/forms/chromium/convert/url')
     assert.equal(serverRequest.headers.authorization, 'Bearer server-only-smoke-token')
     assert.equal(serverRequest.headers['gotenberg-output-filename'], 'release-smoke')
@@ -237,7 +273,9 @@ async function run() {
     })
     assert.equal(browser.status, 200)
     assert.deepEqual(Buffer.from(await browser.arrayBuffer()), pdf)
-    assert.equal(seen.at(-1).headers.authorization, 'Bearer browser-smoke-token')
+    const browserRequest = seen.at(-1)
+    assert.ok(browserRequest, 'Expected a browser-managed upstream request')
+    assert.equal(browserRequest.headers.authorization, 'Bearer browser-smoke-token')
     checks++
 
     const split = await get(convertUrl, {
@@ -268,7 +306,7 @@ async function run() {
     for (const [trace, expected] of [
       ['smoke-invalid-html', /unexpected conversion response/],
       ['smoke-oversized', /exceeds.*byte limit/],
-    ]) {
+    ] as const) {
       const invalid = await get(convertUrl, {
         method: 'POST',
         headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
@@ -278,6 +316,42 @@ async function run() {
       assert.match(await invalid.text(), expected)
       checks++
     }
+
+    const rejectedAuth = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], { requestTrace: 'smoke-auth-error' }),
+    })
+    assert.equal(rejectedAuth.status, 401)
+    assert.equal(rejectedAuth.headers.get('gotenberg-trace'), 'fixture-auth-rejected')
+    assert.equal(rejectedAuth.headers.get('set-cookie'), null)
+    assert.equal(await rejectedAuth.text(), 'Fixture authentication rejected')
+    checks++
+
+    const redirect = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], { requestTrace: 'smoke-redirect' }),
+    })
+    assert.equal(redirect.status, 502)
+    assert.equal(redirect.headers.get('location'), null)
+    assert.equal(followedRedirects, 0, 'Upstream redirects must never be followed')
+    assert.match(await redirect.text(), /Gotenberg proxy failed/)
+    checks++
+
+    const accepted = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], {
+        requestTrace: 'smoke-webhook',
+        webhook: { url: 'https://hooks.example.test/result', method: 'POST' },
+      }),
+    })
+    assert.equal(accepted.status, 204)
+    assert.equal(accepted.headers.get('gotenberg-trace'), 'fixture-webhook-accepted')
+    assert.equal(await accepted.text(), '')
+    assert.equal(seen.at(-1)?.headers['gotenberg-webhook-url'], 'https://hooks.example.test/result')
+    checks++
 
     const previousCount = seen.length
     for (const headers of [
@@ -306,7 +380,9 @@ async function run() {
   } finally {
     await stopProcess(child)
     upstream.closeAllConnections()
-    await new Promise((resolve) => upstream.close(resolve))
+    await new Promise<void>((resolve, reject) => {
+      upstream.close((error) => (error ? reject(error) : resolve()))
+    })
   }
 }
 

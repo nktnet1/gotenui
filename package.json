@@ -1,6 +1,6 @@
 {
   "name": "gotenui",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,7 @@
     "test:unit": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "test:smoke": "node scripts/smoke-production.mjs"
+    "test:smoke": "node scripts/smoke-production.ts"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.16",

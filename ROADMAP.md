@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.28 (non-Docker production Nitro smoke verification; v1.0.27 response compatibility retained).
+- **Baseline:** v1.0.29 (native Node.js TypeScript release smoke with additional negative/async cases; v1.0.28 deployment coverage retained).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -33,6 +33,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.26** | P1 | Automated release hardening | Done: output stream budgets, response media/status validation, gateway error tests, connection-isolation tests, CI pnpm action update, and release regression matrix. |
 | **v1.0.27** | Fix | Gotenberg response format compatibility | Fix v1.0.26 regression rejecting single-result split PDFs and ZIP outputs from multi-document processing; add unit/Docker regressions, preserve strict unexpected-format rejection. |
 | **v1.0.28** | Release | Built Nitro deployment smoke | Add a no-Docker release test for real SPA/API routing, runtime profiles, authentication isolation, PDF/ZIP compatibility, response protections and origin/allowlist enforcement; run in CI after build. |
+| **v1.0.29** | Release | TypeScript smoke and gateway contract checks | Convert the smoke runner to native Node.js 24 TypeScript, include project scripts in typechecking, and extend the built-server test for webhook acceptance, upstream authentication errors and redirect rejection. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -133,6 +134,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
 
 ## Verification and release gates
+
+**v1.0.29 smoke verification:** `pnpm test:smoke` runs `scripts/smoke-production.ts` directly with Node.js 24 (no TypeScript runner or generated script). The runner is included in `tsc --noEmit`. Additional built-server cases check 204 webhook acceptance and correlation headers without implying job completion, preservation of upstream HTTP 401 with trace but no cookie forwarding, and a same-upstream redirect target that must never be fetched. These are mocked-contract checks, not live Gotenberg validation.
 
 **v1.0.28 packaged-runtime smoke:** `pnpm test:smoke` starts the built Nitro Node server and uses an isolated local HTTP fixture in place of Gotenberg. It checks SPA/icon delivery, live Nitro API routes, runtime configuration, independent browser/server credentials, health/version, PDF/ZIP conversion responses, trace/filename headers, invalid/oversized responses, and cross-origin/allowlist rejection. CI runs this immediately after `pnpm build`. It neither executes Gotenberg conversion engines nor replaces the outstanding Docker and manual release gates.
 
