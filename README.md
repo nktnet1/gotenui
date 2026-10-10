@@ -20,14 +20,24 @@ pnpm dev
 
 Open `http://localhost:3100`. The public demo is selected immediately unless the browser has a previously saved address. Use **Connection settings** to change it. A private instance must be listed in `GOTENBERG_ALLOWED_URLS` by the deployment administrator; the browser cannot authorise a new server target on its own.
 
-Tests and tooling:
+Tests and tooling (Node.js 24+, pnpm, and Docker with a running daemon for integration tests):
 
 ```sh
 pnpm format
 pnpm check
 pnpm typecheck
-pnpm test
+pnpm test:unit         # Fast Vitest tests; no Docker or Gotenberg required
+pnpm test:integration  # Starts local Gotenberg, tests 22 processing routes, cleans up
+pnpm test              # Both suites (requires Docker)
 ```
+
+Vitest integration tests start a **disposable `gotenberg/gotenberg:8.37.0` container** on a Docker-assigned loopback port and a tiny local HTTP fixture server. The tests exercise the real `proxyConversionRequest` against the local instance, including all 22 processing routes, multipart uploads, PDF/image/ZIP/JSON responses, health, and URL allowlisting. The harness waits for `/health` and destroys the container at teardown. No fixed port or public-demo dependency is required. A missing Docker daemon **fails the suite**, rather than silently skipping it. Override the pinned test image with `GOTENBERG_TEST_IMAGE` if needed.
+
+The test setup does **not** change the application's public-demo default. Docker must support the `host-gateway` option so the container can reach the deterministic fixture page. Unit tests mock `fetch` and do not contact any remote host.
+
+### Gotenberg API coverage
+
+Gotenui exposes **all 22 documented `POST /forms/*` routes**: four conversion, three screenshot, and fifteen PDF-engine routes. It also queries `GET /health` and `GET /version` for connection status. Admin and monitoring endpoints (`/debug`, `/prometheus/metrics`, `HEAD /health`) and optional async webhook and `downloadFrom` parameters are not exposed by the workbench. Those features require separate security controls and should not be relayed by an anonymous conversion proxy.
 
 ## Vercel and other serverless providers
 

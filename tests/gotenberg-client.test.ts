@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test } from 'vitest'
 import {
   convertWithGotenberg,
   createGotenbergForm,
@@ -45,7 +45,7 @@ test('converts through the same-origin API, not direct-to-Gotenberg fetch', asyn
     const operation = OPERATION_BY_ID.get('url-pdf')
     assert.ok(operation)
     const result = await convertWithGotenberg(
-      'https://demo.gotenberg.dev',
+      'http://127.0.0.1:3000',
       {
         operation: operation.id,
         fields: { ...operationDefaults(operation), url: 'https://example.test' },
@@ -61,7 +61,7 @@ test('converts through the same-origin API, not direct-to-Gotenberg fetch', asyn
     assert.equal(requests[0]?.options.method, 'POST')
     assert.equal(requests[0]?.options.credentials, 'same-origin')
     assert.deepEqual(requests[0]?.options.headers, {
-      'X-Gotenberg-Url': 'https://demo.gotenberg.dev',
+      'X-Gotenberg-Url': 'http://127.0.0.1:3000',
     })
     const body = requests[0]?.options.body
     assert.ok(body instanceof FormData)
@@ -77,7 +77,7 @@ test('reads the JSON status from the same-origin API', async () => {
   const original = globalThis.fetch
   globalThis.fetch = async (input) => {
     const path = String(input)
-    assert.match(path, /^\/api\/gotenberg\/status\?url=https%3A%2F%2Fdemo\.gotenberg\.dev$/)
+    assert.match(path, /^\/api\/gotenberg\/status\?url=http%3A%2F%2F127\.0\.0\.1%3A3000$/)
     return Response.json({
       online: true,
       version: '8.27.0',
@@ -85,7 +85,7 @@ test('reads the JSON status from the same-origin API', async () => {
     })
   }
   try {
-    const status = await getGotenbergStatus('https://demo.gotenberg.dev')
+    const status = await getGotenbergStatus('http://127.0.0.1:3000')
     assert.equal(status.online, true)
     assert.equal(status.version, '8.27.0')
     assert.deepEqual(status.modules, [{ name: 'chromium', status: 'up' }])
@@ -115,7 +115,7 @@ test('rejects SPA fallback instead of claiming an HTML page is healthy', async (
       headers: { 'Content-Type': 'text/html' },
     })
   try {
-    const status = await getGotenbergStatus('https://demo.gotenberg.dev')
+    const status = await getGotenbergStatus('http://127.0.0.1:3000')
     assert.equal(status.online, false)
     assert.match(status.error ?? '', /Unexpected token|not valid JSON|valid Gotenberg status/)
   } finally {

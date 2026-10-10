@@ -1,6 +1,6 @@
 {
   "name": "gotenui",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,8 +10,11 @@
     "check": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-transform-types --test tests/*.test.ts",
-    "start": "node .output/server/index.mjs"
+    "test": "pnpm test:unit && pnpm test:integration",
+    "start": "node .output/server/index.mjs",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:watch": "vitest --config vitest.config.ts"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.16",
@@ -39,7 +42,8 @@
     "@vitejs/plugin-react": "^6.1.2",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
   },
   "engines": {
     "node": ">=24"

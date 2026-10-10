@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test } from 'vitest'
 import {
   DEFAULT_MAX_REQUEST_BYTES,
   DEMO_GOTENBERG_URL,

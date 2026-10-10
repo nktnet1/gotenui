@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { afterEach, beforeEach, test, vi } from 'vitest'
 import {
   proxyConversionRequest,
   proxyErrorResponse,
@@ -8,7 +8,10 @@ import {
 
 const origin = 'https://app.example.test'
 
-function conversionRequest(baseUrl = 'https://demo.gotenberg.dev', operation = 'url-pdf') {
+beforeEach(() => vi.stubEnv('GOTENBERG_ALLOWED_URLS', 'http://127.0.0.1:3000'))
+afterEach(() => vi.unstubAllEnvs())
+
+function conversionRequest(baseUrl = 'http://127.0.0.1:3000', operation = 'url-pdf') {
   const form = new FormData()
   form.set(
     'payload',
@@ -29,7 +32,7 @@ test('proxies only the operation path, revalidating fields before forwarding', a
   let forwarded = 0
   const fetcher: typeof fetch = async (input, options) => {
     forwarded++
-    assert.equal(String(input), 'https://demo.gotenberg.dev/forms/chromium/convert/url')
+    assert.equal(String(input), 'http://127.0.0.1:3000/forms/chromium/convert/url')
     assert.equal(options?.redirect, 'error')
     assert.equal(options?.credentials, 'omit')
     const form = options?.body
@@ -62,11 +65,11 @@ test('validates uploaded PDFs and forwards only Gotenberg file fields', async ()
   form.append('files', new File(['%PDF-1.7'], 'second.pdf', { type: 'application/pdf' }))
   const request = new Request(`${origin}/api/gotenberg/convert`, {
     method: 'POST',
-    headers: { 'X-Gotenberg-Url': 'https://demo.gotenberg.dev' },
+    headers: { 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
     body: form,
   })
   const fetcher: typeof fetch = async (input, options) => {
-    assert.equal(String(input), 'https://demo.gotenberg.dev/forms/pdfengines/merge')
+    assert.equal(String(input), 'http://127.0.0.1:3000/forms/pdfengines/merge')
     const body = options?.body
     assert.ok(body instanceof FormData)
     assert.equal(body.getAll('files').length, 2)
@@ -79,7 +82,7 @@ test('validates uploaded PDFs and forwards only Gotenberg file fields', async ()
 
 test('the backend cannot be changed to an unapproved host', async () => {
   await assert.rejects(
-    proxyConversionRequest(conversionRequest('http://127.0.0.1:3000')),
+    proxyConversionRequest(conversionRequest('https://not-approved.example.test')),
     (error: { status?: number }) => error.status === 403,
   )
 })
@@ -92,7 +95,7 @@ test('malicious extra Gotenberg fields cannot bypass server validation', async (
   form.set('payload', JSON.stringify(payload))
   const forbidden = new Request(`${origin}/api/gotenberg/convert`, {
     method: 'POST',
-    headers: { 'X-Gotenberg-Url': 'https://demo.gotenberg.dev' },
+    headers: { 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
     body: form,
   })
   await assert.rejects(proxyConversionRequest(forbidden), /Unsupported advanced field/)
@@ -103,7 +106,7 @@ test('the proxy rejects cross-site requests and oversized multipart bodies', asy
   form.set('payload', 'a'.repeat(2000))
   const oversized = new Request(`${origin}/api/gotenberg/convert`, {
     method: 'POST',
-    headers: { 'X-Gotenberg-Url': 'https://demo.gotenberg.dev' },
+    headers: { 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
     body: form,
   })
   const previous = process.env.GOTENUI_MAX_REQUEST_BYTES
@@ -122,12 +125,12 @@ test('the proxy rejects cross-site requests and oversized multipart bodies', asy
   await assert.rejects(proxyConversionRequest(crossSite), /Cross-origin/)
 })
 
-test('status requests use the approved demo without requiring browser CORS', async () => {
+test('status requests use an approved local target without requiring browser CORS', async () => {
   const fetcher: typeof fetch = async (input) => {
     if (String(input).endsWith('/version')) return new Response('8.27.0')
     return Response.json({ status: 'up', details: { chromium: { status: 'up' } } })
   }
-  const request = new Request(`${origin}/api/gotenberg/status?url=https%3A%2F%2Fdemo.gotenberg.dev`)
+  const request = new Request(`${origin}/api/gotenberg/status?url=http%3A%2F%2F127.0.0.1%3A3000`)
   const response = await proxyStatusRequest(request, fetcher)
   assert.deepEqual(await response.json(), {
     online: true,

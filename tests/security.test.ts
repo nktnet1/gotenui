@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test } from 'vitest'
 import { downloadFilename, formatBytes, responseExtension } from '../src/lib/security.ts'
 
 test('sanitizes filenames from untrusted Gotenberg responses', () => {
