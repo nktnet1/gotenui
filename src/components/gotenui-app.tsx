@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { RemoteInputsEditor, WebhookEditor } from '#/components/async-inputs-editor'
 import {
   ChromiumNetworkEditor,
   type CookieRow,
@@ -59,6 +60,14 @@ import { Label } from '#/components/ui/label'
 import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
 import { UploadZone } from '#/components/upload-zone'
+import {
+  emptyWebhook,
+  type RemoteInputRow,
+  remoteInputsPayload,
+  safeOutboundHost,
+  type WebhookEditorState,
+  webhookPayload,
+} from '#/lib/async-inputs'
 import { browserStorage } from '#/lib/backend-url'
 import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
 import { chromiumNetworkFields } from '#/lib/chromium-network'
@@ -161,6 +170,11 @@ type Job = {
   elapsed: number
   trace?: string
 }
+type AcceptedWebhook = {
+  status: 202 | 204
+  trace?: string
+  receiverHost: string
+}
 type Download = {
   url: string
   name: string
@@ -168,15 +182,6 @@ type Download = {
   type: string
   preview?: string
   trace?: string
-}
-
-function parseOptionalJson(text: string, label: string): unknown {
-  if (!text.trim()) return undefined
-  try {
-    return JSON.parse(text)
-  } catch {
-    throw new InputError(`${label} must be valid JSON.`)
-  }
 }
 
 function Brand({ compact = false }: { compact?: boolean }) {
@@ -513,6 +518,7 @@ function JobPanel({
   source,
   pending,
   lastDownload,
+  acceptedWebhook,
   recent,
 }: {
   operation: Operation
@@ -522,6 +528,7 @@ function JobPanel({
   source: string
   pending: boolean
   lastDownload: Download | null
+  acceptedWebhook: AcceptedWebhook | null
   recent: Job[]
 }) {
   const Icon = ICONS[operation.id] ?? FileText
@@ -600,7 +607,7 @@ function JobPanel({
           </p>
         </CardContent>
       </Card>
-      {(pending || lastDownload) && (
+      {(pending || lastDownload || acceptedWebhook) && (
         <Card>
           <CardHeader>
             <h2 className="text-sm font-bold text-slate-900">Latest result</h2>
@@ -610,6 +617,44 @@ function JobPanel({
               <div className="flex items-center gap-3 text-sm text-slate-500">
                 <RefreshCw className="size-5 animate-spin text-sky-600" />
                 Processing document...
+              </div>
+            ) : acceptedWebhook ? (
+              <div role="status" className="space-y-3 text-xs text-slate-600">
+                <p className="font-semibold text-sky-800">
+                  HTTP {acceptedWebhook.status}: accepted for asynchronous processing
+                </p>
+                <p>
+                  Gotenberg has accepted this request, but conversion and callback delivery have
+                  <strong> not</strong> been confirmed. Gotenui does not track callback history.
+                </p>
+                <p>
+                  Check your external receiver ({acceptedWebhook.receiverHost}) for completion or
+                  failure.
+                </p>
+                {acceptedWebhook.trace && (
+                  <div className="space-y-1">
+                    <p className="font-semibold text-slate-700">Gotenberg-Trace</p>
+                    <code className="block break-all rounded-lg bg-slate-100 px-3 py-2 text-[11px]">
+                      {acceptedWebhook.trace}
+                    </code>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (!navigator.clipboard?.writeText) {
+                          toast.message('Select the trace ID above to copy it.')
+                          return
+                        }
+                        void navigator.clipboard
+                          .writeText(acceptedWebhook.trace ?? '')
+                          .catch(() => toast.message('Select the trace ID above to copy it.'))
+                      }}
+                    >
+                      Copy trace ID
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : (
               lastDownload && (
@@ -724,8 +769,12 @@ function Workbench({
   const [cookies, setCookies] = useState<CookieRow[]>([])
   const [resourceHeaders, setResourceHeaders] = useState<HeaderRow[]>([])
   const nextNetworkId = useRef(0)
+  const [remoteRows, setRemoteRows] = useState<RemoteInputRow[]>([])
   const [remoteInput, setRemoteInput] = useState('')
+  const [webhookSettings, setWebhookSettings] = useState<WebhookEditorState>(emptyWebhook)
   const [webhookInput, setWebhookInput] = useState('')
+  const nextOutboundId = useRef(0)
+  const [acceptedWebhook, setAcceptedWebhook] = useState<AcceptedWebhook | null>(null)
   const [outputName, setOutputName] = useState('')
   const [requestTrace, setRequestTrace] = useState('')
   const [traceparent, setTraceparent] = useState('')
@@ -756,8 +805,11 @@ function Workbench({
     setAdvanced('')
     setCookies([])
     setResourceHeaders([])
+    setRemoteRows([])
     setRemoteInput('')
+    setWebhookSettings(emptyWebhook)
     setWebhookInput('')
+    setAcceptedWebhook(null)
     setOutputName('')
     setRequestTrace('')
     setTraceparent('')
@@ -804,7 +856,10 @@ function Workbench({
     event.preventDefault()
     if (pending) return
     setPending(true)
+    setAcceptedWebhook(null)
     try {
+      const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
+      const webhook = webhookPayload(webhookSettings, webhookInput)
       const candidate = {
         operation: operation.id,
         fields: standaloneKind
@@ -828,8 +883,8 @@ function Workbench({
             ? postProcess
             : undefined,
         advanced: parseAdvanced(advanced),
-        downloadFrom: parseOptionalJson(remoteInput, 'Remote files'),
-        webhook: parseOptionalJson(webhookInput, 'Webhook settings'),
+        downloadFrom,
+        webhook,
         outputName: outputName.trim() || undefined,
         requestTrace: requestTrace.trim() || undefined,
         traceparent: traceparent.trim() || undefined,
@@ -853,14 +908,17 @@ function Workbench({
         return
       }
       if (result.mode === 'webhook') {
+        setAcceptedWebhook({
+          status: result.status,
+          trace: result.trace,
+          receiverHost: safeOutboundHost(
+            webhook && typeof webhook === 'object' && 'url' in webhook ? String(webhook.url) : '',
+          ),
+        })
         setLastDownload(null)
         if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
         fileUrl.current = null
-        toast.success(
-          result.trace
-            ? `Gotenberg accepted the webhook job (trace ${result.trace}).`
-            : 'Gotenberg accepted the webhook job.',
-        )
+        toast.message('Gotenberg accepted the request; callback delivery is not yet confirmed.')
         return
       }
       const { blob, type, name, trace } = result
@@ -1188,46 +1246,20 @@ function Workbench({
                     pairs; enter remote inputs and webhooks separately below.
                   </p>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="remote-inputs">
-                    Remote file inputs (downloadFrom JSON array)
-                  </Label>
-                  <Textarea
-                    id="remote-inputs"
-                    rows={5}
-                    spellCheck={false}
-                    className="font-mono text-xs"
-                    placeholder={'[{"url":"https://example.com/document.docx"}]'}
-                    value={remoteInput}
-                    onChange={(event) => setRemoteInput(event.target.value)}
-                  />
-                  <p className="text-[11px] leading-5 text-slate-500">
-                    Gotenberg downloads these files itself. The URL must be reachable from your
-                    Gotenberg container and the response must include a Content-Disposition
-                    filename. For PDF merging, remote filenames retain Gotenberg's alphanumeric
-                    ordering; only local uploads follow the order above.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="webhook-settings">
-                    Asynchronous webhook delivery (JSON object)
-                  </Label>
-                  <Textarea
-                    id="webhook-settings"
-                    rows={5}
-                    spellCheck={false}
-                    className="font-mono text-xs"
-                    placeholder={
-                      '{"url":"https://example.com/hooks/success","eventsUrl":"https://example.com/hooks/events"}'
-                    }
-                    value={webhookInput}
-                    onChange={(event) => setWebhookInput(event.target.value)}
-                  />
-                  <p className="text-[11px] leading-5 text-slate-500">
-                    Send results directly from Gotenberg to your callback instead of downloading
-                    them in this browser. Use your instance's outbound URL restrictions.
-                  </p>
-                </div>
+                <RemoteInputsEditor
+                  rows={remoteRows}
+                  onChange={setRemoteRows}
+                  legacy={remoteInput}
+                  onLegacyChange={setRemoteInput}
+                  newId={() => nextOutboundId.current++}
+                />
+                <WebhookEditor
+                  value={webhookSettings}
+                  onChange={setWebhookSettings}
+                  legacy={webhookInput}
+                  onLegacyChange={setWebhookInput}
+                  newId={() => nextOutboundId.current++}
+                />
               </div>
             </details>
           </CardContent>
@@ -1265,6 +1297,7 @@ function Workbench({
         source={isSourceEditor ? source : ''}
         pending={pending}
         lastDownload={lastDownload}
+        acceptedWebhook={acceptedWebhook}
         recent={recent}
       />
       <a

@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { afterAll, beforeAll, expect, inject, test } from 'vitest'
 import {
   proxyConversionRequest,
@@ -10,6 +12,7 @@ import {
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
 import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import type { ConversionPayload } from '#/lib/validation'
+import type { CallbackReceipt } from './async-fixture-server'
 
 const backendUrl = inject('gotenbergTestUrl')
 const fixtureUrl = inject('gotenbergFixtureUrl')
@@ -50,6 +53,7 @@ function request(
     ...(overrides.footerHtml ? { footerHtml: overrides.footerHtml } : {}),
     ...(overrides.postProcess ? { postProcess: overrides.postProcess } : {}),
     ...(overrides.downloadFrom ? { downloadFrom: overrides.downloadFrom } : {}),
+    ...(overrides.webhook ? { webhook: overrides.webhook } : {}),
     ...(overrides.outputName ? { outputName: overrides.outputName } : {}),
     ...(overrides.requestTrace ? { requestTrace: overrides.requestTrace } : {}),
     ...(overrides.traceparent ? { traceparent: overrides.traceparent } : {}),
@@ -812,3 +816,156 @@ test('LibreOffice applies documented PDF viewer preferences to a real source fil
     new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
   ).toBe('%PDF-')
 }, 120_000)
+
+/** Read the disposable host-side callback log without resolving host.docker.internal on the host. */
+async function callbackReceipts(token: string, expected: (items: CallbackReceipt[]) => boolean) {
+  const local = new URL(fixtureUrl)
+  local.hostname = '127.0.0.1'
+  local.pathname = `/_gotenui_callbacks/${token}`
+  const deadline = Date.now() + 45_000
+  let items: CallbackReceipt[] = []
+  while (Date.now() < deadline) {
+    const response = await fetch(local, { cache: 'no-store' })
+    expect(response.ok).toBe(true)
+    items = (await response.json()) as CallbackReceipt[]
+    if (expected(items)) return items
+    await sleep(200)
+  }
+  throw new Error(`Expected Gotenberg callback did not arrive. Received: ${JSON.stringify(items)}`)
+}
+
+function callbackUrl(token: string, kind: 'success' | 'error' | 'events' | 'retry') {
+  const url = new URL(fixtureUrl)
+  url.pathname = `/gotenui-callbacks/${token}/${kind}`
+  return url.toString()
+}
+
+test('real downloadFrom fetches a named Office source with its per-file header', async () => {
+  const office = OPERATIONS.find((operation) => operation.id === 'office-pdf')
+  if (!office) throw new Error('Missing Office PDF route')
+  const remote = new URL(fixtureUrl)
+  remote.pathname = '/gotenui-remote/document.txt'
+  const response = await proxyConversionRequest(
+    request(office, {
+      downloadFrom: [
+        {
+          url: remote.toString(),
+          extraHttpHeaders: { 'X-Gotenui-Remote-Token': 'fixture-remote-key' },
+        },
+      ],
+    }),
+  )
+  expect(response.status).toBe(200)
+  expect(
+    new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+  ).toBe('%PDF-')
+}, 60_000)
+
+test('real downloadFrom rejects a response without Content-Disposition filename', async () => {
+  const office = OPERATIONS.find((operation) => operation.id === 'office-pdf')
+  if (!office) throw new Error('Missing Office PDF route')
+  const remote = new URL(fixtureUrl)
+  remote.pathname = '/gotenui-remote/no-filename.txt'
+  const response = await proxyConversionRequest(
+    request(office, { downloadFrom: [{ url: remote.toString() }] }),
+  )
+  expect(response.status).toBeGreaterThanOrEqual(400)
+}, 60_000)
+
+test('real async success and events callbacks are delivered after 204 acceptance', async () => {
+  const html = OPERATIONS.find((operation) => operation.id === 'html-pdf')
+  if (!html) throw new Error('Missing HTML PDF route')
+  const token = randomUUID()
+  const trace = `fixture-success-${token}`
+  const response = await proxyConversionRequest(
+    request(html, {
+      source: '<html><body>Async success test</body></html>',
+      requestTrace: trace,
+      traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+      webhook: {
+        url: callbackUrl(token, 'success'),
+        method: 'PUT',
+        eventsUrl: callbackUrl(token, 'events'),
+        extraHttpHeaders: { 'X-Gotenui-Callback-Token': 'fixture-callback-key' },
+      },
+    }),
+  )
+  expect(response.status).toBe(204)
+  expect(await response.text()).toBe('')
+  const records = await callbackReceipts(
+    token,
+    (items) =>
+      items.some((item) => item.kind === 'success') &&
+      items.some((item) => item.event === 'webhook.success'),
+  )
+  const delivered = records.find((item) => item.kind === 'success')
+  expect(delivered).toMatchObject({
+    method: 'PUT',
+    beginsPdf: true,
+    trace,
+    testHeaderPresent: true,
+  })
+  expect(delivered?.contentDisposition).toMatch(/filename/i)
+  expect(delivered?.traceparent).toContain('0123456789abcdef0123456789abcdef')
+  expect(records.find((item) => item.kind === 'events')).toMatchObject({
+    method: 'POST',
+    event: 'webhook.success',
+  })
+}, 60_000)
+
+test('real async failure delivers error JSON and a structured error event', async () => {
+  const rotate = OPERATIONS.find((operation) => operation.id === 'rotate')
+  if (!rotate) throw new Error('Missing rotate PDF route')
+  const token = randomUUID()
+  const response = await proxyConversionRequest(
+    request(
+      rotate,
+      {
+        fields: { rotateAngle: '90' },
+        webhook: {
+          url: callbackUrl(token, 'success'),
+          errorUrl: callbackUrl(token, 'error'),
+          eventsUrl: callbackUrl(token, 'events'),
+        },
+      },
+      [new File(['not a PDF'], 'corrupt.pdf', { type: 'application/pdf' })],
+    ),
+  )
+  expect(response.status).toBe(204)
+  const records = await callbackReceipts(
+    token,
+    (items) =>
+      items.some((item) => item.kind === 'error') &&
+      items.some((item) => item.event === 'webhook.error'),
+  )
+  expect(records.some((item) => item.kind === 'success')).toBe(false)
+  expect(records.find((item) => item.kind === 'error')).toMatchObject({
+    method: 'POST',
+    contentType: expect.stringContaining('application/json'),
+  })
+  expect(records.find((item) => item.kind === 'events')).toMatchObject({
+    method: 'POST',
+    event: 'webhook.error',
+  })
+}, 60_000)
+
+test('real async callbacks retry once after 503 and then issue a success event', async () => {
+  const html = OPERATIONS.find((operation) => operation.id === 'html-pdf')
+  if (!html) throw new Error('Missing HTML PDF route')
+  const token = randomUUID()
+  const response = await proxyConversionRequest(
+    request(html, {
+      source: '<html><body>Retry callback fixture</body></html>',
+      webhook: { url: callbackUrl(token, 'retry'), eventsUrl: callbackUrl(token, 'events') },
+    }),
+  )
+  expect(response.status).toBe(204)
+  const records = await callbackReceipts(
+    token,
+    (items) =>
+      items.filter((item) => item.kind === 'retry').length >= 2 &&
+      items.some((item) => item.event === 'webhook.success'),
+  )
+  expect(records.filter((item) => item.kind === 'retry')).toHaveLength(2)
+  expect(records.filter((item) => item.kind === 'retry').every((item) => item.beginsPdf)).toBe(true)
+}, 60_000)

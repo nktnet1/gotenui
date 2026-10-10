@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { promisify, styleText } from 'node:util'
 import type { TestProject } from 'vitest/node'
+import { asyncFixtureHandler } from './async-fixture-server'
 import { REMOTE_OVERLAY_PNG } from './overlay-fixture'
 
 const exec = promisify(execFile)
@@ -28,7 +29,9 @@ async function docker(...args: string[]): Promise<string> {
 }
 
 async function fixtureServer(): Promise<{ server: Server; url: string }> {
+  const handleAsync = asyncFixtureHandler()
   const server = createServer((req, res) => {
+    if (handleAsync(req, res)) return
     if (req.url === '/overlay.png') {
       res.writeHead(200, {
         'content-type': 'image/png',
@@ -118,6 +121,14 @@ export default async function setup(project: TestProject): Promise<() => Promise
       name,
       '--env',
       'API_ENABLE_BASIC_AUTH=true',
+      '--env',
+      'WEBHOOK_MAX_RETRY=2',
+      '--env',
+      'WEBHOOK_RETRY_MIN_WAIT=1s',
+      '--env',
+      'WEBHOOK_RETRY_MAX_WAIT=2s',
+      '--env',
+      'WEBHOOK_CLIENT_TIMEOUT=5s',
       '--env',
       'API_ENABLE_DEBUG_ROUTE=true',
       '--env',

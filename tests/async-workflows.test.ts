@@ -98,7 +98,7 @@ test('client treats an accepted webhook job as async, not an empty file download
       [],
       new AbortController().signal,
     )
-    assert.deepEqual(result, { mode: 'webhook', trace: undefined })
+    assert.deepEqual(result, { mode: 'webhook', trace: undefined, status: 204 })
   } finally {
     globalThis.fetch = original
   }
@@ -142,4 +142,24 @@ test('async webhook response retains custom correlation while propagating an ind
   assert.equal(response.status, 204)
   assert.equal(response.headers.get('gotenberg-trace'), 'async-42')
   assert.equal(await response.text(), '')
+})
+
+test('client displays accepted HTTP 202 separately from completed conversion responses', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 202 }))
+  try {
+    const result = await convertWithGotenberg(
+      target,
+      payloadFor('url-pdf', {
+        fields: { url: 'https://example.test' },
+        webhook: { url: 'https://hooks.example.test/success' },
+      }),
+      [],
+      [],
+      new AbortController().signal,
+    )
+    assert.deepEqual(result, { mode: 'webhook', trace: undefined, status: 202 })
+  } finally {
+    globalThis.fetch = original
+  }
 })

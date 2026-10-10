@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.24 (remote-overlay integration fixture corrected after v1.0.23).
+- **Baseline:** v1.0.25 (structured remote inputs, webhook configuration, and async acceptance UI).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -29,7 +29,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.22** | P1 | Multiple overlays | Done: repeated watermark/stamp field groups, ordered local and remote assets, validated multipart serialization and regression tests. |
 | **v1.0.23** | P2 | Advanced conversion controls | Done: typed Chromium waits, output and browser-network controls; LibreOffice password, presentation export and PDF viewer options; route-aware validation and regression tests. |
 | **v1.0.24** | Fix | Remote-overlay integration PNG | Replace corrupt fixture data and check PNG checksums in the non-Docker unit suite. |
-| **v1.0.25** | P2 | Remote-input and webhook usability | Structured editors, clear async results, and expanded real callback / download integration tests. |
+| **v1.0.25** | P2 | Remote-input and webhook usability | Done: structured and legacy editors, redacted previews, explicit async acceptance, unit tests and authored Docker callback/download tests (Docker run outstanding). |
 | **v1.0.26** | P1 | Automated release hardening | Negative security cases, edge-case responses, build/CI validation, and a final automated regression matrix. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
@@ -112,13 +112,13 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 
 #### 9. Structured remote inputs and async webhooks
 
-**Current gap:** `downloadFrom` and webhook submission work via raw JSON. Gotenui reports Gotenberg's asynchronous acceptance but does not receive, retain, or display subsequent callback history.
+**v1.0.25 status:** Structured remote-file and webhook editors now produce the same validated payload schema as before; legacy JSON remains available as an alternative. Gotenui shows acceptance and trace IDs only, not completion status or callback history. The new Docker success/error/retry/events cases await execution against the pinned image.
 
-- [ ] Replace or complement JSON textareas with repeatable remote-file entries (URL, optional headers, destination field) and webhook settings (success, error/events URLs, method, optional headers).
-- [ ] Add safe preview/redaction of sensitive fields and clear descriptions of `Content-Disposition` requirements and Gotenberg outbound URL filtering.
-- [ ] Test real remote downloads and webhook success, error, retry, and events delivery against **local, disposable callback/fixture servers**.
-- [ ] Label `204` as **accepted for asynchronous processing**, not converted or delivered. Link users to the external receiver or trace ID; do not imply that Gotenui can track completion without state.
-- [ ] Do not introduce a persistent callback inbox or background queue as an accidental dependency. If callback history becomes a requirement, design it as a separate opt-in integration.
+- [x] Replace or complement JSON textareas with repeatable remote-file entries (URL, optional headers, destination field) and webhook settings (success, error/events URLs, method, optional headers).
+- [x] Add safe preview/redaction of sensitive fields and clear descriptions of `Content-Disposition` requirements and Gotenberg outbound URL filtering.
+- [ ] **Execute** the authored real remote-download and webhook success, error, retry, and events Docker tests against a local, disposable receiver. Unit coverage of that receiver is complete; actual Gotenberg delivery remains unverified until Docker is run.
+- [x] Label `204` as **accepted for asynchronous processing**, not converted or delivered. Show the correlation ID and the external receiver host without exposing token-bearing URL paths; never imply Gotenui tracks completion.
+- [x] Do not introduce a persistent callback inbox or background queue as an accidental dependency. If callback history becomes a requirement, design it as a separate opt-in integration.
 
 ### Optional / deferred
 

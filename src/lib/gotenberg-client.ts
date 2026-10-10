@@ -241,7 +241,7 @@ export function createGotenbergForm(
 
 export type ConversionResult =
   | { mode: 'download'; blob: Blob; type: string; name: string; trace?: string }
-  | { mode: 'webhook'; trace?: string }
+  | { mode: 'webhook'; trace?: string; status: 202 | 204 }
 
 /** The proxy revalidates the JSON and files, and reconstructs a safe Gotenberg form. */
 export async function convertWithGotenberg(
@@ -286,7 +286,11 @@ export async function convertWithGotenberg(
     throw new Error(trace ? `${message} (Gotenberg trace: ${trace})` : message)
   }
   if (response.status === 202 || response.status === 204) {
-    return { mode: 'webhook', trace: response.headers.get('Gotenberg-Trace') ?? undefined }
+    return {
+      mode: 'webhook',
+      trace: response.headers.get('Gotenberg-Trace') ?? undefined,
+      status: response.status as 202 | 204,
+    }
   }
   const blob = await response.blob()
   const type =
