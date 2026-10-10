@@ -6,10 +6,18 @@ import type { ConversionPayload } from '#/lib/validation'
 
 const backendUrl = inject('gotenbergTestUrl')
 const fixtureUrl = inject('gotenbergFixtureUrl')
+const testUsername = inject('gotenbergTestUsername')
+const testPassword = inject('gotenbergTestPassword')
 const proxyOrigin = 'http://gotenui.test'
 let pdfBytes: ArrayBuffer
 let splitPdfBytes: ArrayBuffer
-let previousAllowedUrls: string | undefined
+const authEnvNames = [
+  'GOTENBERG_ALLOWED_URLS',
+  'GOTENBERG_BASIC_AUTH_URL',
+  'GOTENBERG_BASIC_AUTH_USERNAME',
+  'GOTENBERG_BASIC_AUTH_PASSWORD',
+] as const
+const previousEnv = new Map<string, string | undefined>()
 
 function request(
   operation: Operation,
@@ -125,8 +133,11 @@ async function convert(operation: Operation, forFixture = false): Promise<Respon
 }
 
 beforeAll(async () => {
-  previousAllowedUrls = process.env.GOTENBERG_ALLOWED_URLS
+  for (const name of authEnvNames) previousEnv.set(name, process.env[name])
   process.env.GOTENBERG_ALLOWED_URLS = backendUrl
+  process.env.GOTENBERG_BASIC_AUTH_URL = backendUrl
+  process.env.GOTENBERG_BASIC_AUTH_USERNAME = testUsername
+  process.env.GOTENBERG_BASIC_AUTH_PASSWORD = testPassword
   const status = await proxyStatusRequest(
     new Request(`${proxyOrigin}/api/gotenberg/status?url=${encodeURIComponent(backendUrl)}`),
   )
@@ -157,8 +168,11 @@ beforeAll(async () => {
 }, 120_000)
 
 afterAll(() => {
-  if (previousAllowedUrls === undefined) delete process.env.GOTENBERG_ALLOWED_URLS
-  else process.env.GOTENBERG_ALLOWED_URLS = previousAllowedUrls
+  for (const name of authEnvNames) {
+    const previous = previousEnv.get(name)
+    if (previous === undefined) delete process.env[name]
+    else process.env[name] = previous
+  }
 })
 
 function zipEntryCount(bytes: Uint8Array): number {
@@ -243,3 +257,42 @@ test('a single-page split returns a PDF without an unnecessary ZIP', async () =>
   const bytes = new Uint8Array(await response.arrayBuffer())
   expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
 }, 120_000)
+
+test('local Gotenberg protects conversions and version, but leaves health public', async () => {
+  const health = await fetch(`${backendUrl}/health`)
+  expect(health.status).toBe(200)
+  const version = await fetch(`${backendUrl}/version`)
+  expect(version.status).toBe(401)
+  const form = new FormData()
+  form.set('url', fixtureUrl)
+  const response = await fetch(`${backendUrl}/forms/chromium/convert/url`, {
+    method: 'POST',
+    body: form,
+    redirect: 'error',
+  })
+  expect(response.status).toBe(401)
+})
+
+test('the proxy returns an upstream 401 when the configured Basic Auth password is wrong', async () => {
+  const operation = OPERATIONS.find((value) => value.id === 'html-pdf')
+  if (!operation) throw new Error('Missing HTML conversion operation')
+  const originalPassword = process.env.GOTENBERG_BASIC_AUTH_PASSWORD
+  process.env.GOTENBERG_BASIC_AUTH_PASSWORD = 'wrong-password'
+  try {
+    const status = await proxyStatusRequest(
+      new Request(`${proxyOrigin}/api/gotenberg/status?url=${encodeURIComponent(backendUrl)}`),
+    )
+    expect(await status.json()).toMatchObject({
+      online: false,
+      error: expect.stringContaining('401'),
+    })
+    const response = await proxyConversionRequest(
+      request(operation, { source: '<!doctype html><h1>Local authenticated test</h1>' }),
+    )
+    expect(response.status).toBe(401)
+    expect(response.headers.get('www-authenticate')).toBeNull()
+  } finally {
+    if (originalPassword === undefined) delete process.env.GOTENBERG_BASIC_AUTH_PASSWORD
+    else process.env.GOTENBERG_BASIC_AUTH_PASSWORD = originalPassword
+  }
+})

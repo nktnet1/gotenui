@@ -8,12 +8,16 @@ import type { TestProject } from 'vitest/node'
 const exec = promisify(execFile)
 const image = process.env.GOTENBERG_TEST_IMAGE || 'gotenberg/gotenberg:8.37.0'
 const startupTimeoutMs = 120_000
+const testUsername = 'gotenui-integration'
+const testPassword = 'local-only-test-password'
 
 // Only the integration suite starts Docker. Unit tests never use a Gotenberg server.
 declare module 'vitest' {
   export interface ProvidedContext {
     gotenbergTestUrl: string
     gotenbergFixtureUrl: string
+    gotenbergTestUsername: string
+    gotenbergTestPassword: string
   }
 }
 
@@ -53,7 +57,12 @@ async function waitForHealth(baseUrl: string): Promise<void> {
   const deadline = Date.now() + startupTimeoutMs
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(2_000) })
+      const response = await fetch(`${baseUrl}/health`, {
+        signal: AbortSignal.timeout(2_000),
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${testUsername}:${testPassword}`).toString('base64')}`,
+        },
+      })
       if (response.ok && (await response.json()).status === 'up') return
     } catch {
       // Gotenberg boots Chromium and LibreOffice before becoming healthy.
@@ -90,6 +99,12 @@ export default async function setup(project: TestProject): Promise<() => Promise
       '--rm',
       '--name',
       name,
+      '--env',
+      'API_ENABLE_BASIC_AUTH=true',
+      '--env',
+      `GOTENBERG_API_BASIC_AUTH_USERNAME=${testUsername}`,
+      '--env',
+      `GOTENBERG_API_BASIC_AUTH_PASSWORD=${testPassword}`,
       '--add-host',
       'host.docker.internal:host-gateway',
       '--publish',
@@ -104,6 +119,8 @@ export default async function setup(project: TestProject): Promise<() => Promise
     await waitForHealth(url)
     project.provide('gotenbergTestUrl', url)
     project.provide('gotenbergFixtureUrl', html.url)
+    project.provide('gotenbergTestUsername', testUsername)
+    project.provide('gotenbergTestPassword', testPassword)
     console.info(`Local ${styleText('cyan', 'Gotenberg')} ready on ${url} (${image})`)
     return cleanup
   } catch (error) {

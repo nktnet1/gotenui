@@ -147,3 +147,96 @@ test('status requests use an approved local target without requiring browser COR
   const error = await proxyStatusRequest(notApproved).catch(proxyErrorResponse)
   assert.equal(error.status, 403)
 })
+
+test('conversions use server-side Basic Auth only for the configured backend', async () => {
+  vi.stubEnv('GOTENBERG_ALLOWED_URLS', 'http://127.0.0.1:3000,https://demo.gotenberg.dev')
+  vi.stubEnv('GOTENBERG_BASIC_AUTH_URL', 'http://127.0.0.1:3000')
+  vi.stubEnv('GOTENBERG_BASIC_AUTH_USERNAME', 'test-user')
+  vi.stubEnv('GOTENBERG_BASIC_AUTH_PASSWORD', 'test-password')
+  const expected = `Basic ${Buffer.from('test-user:test-password').toString('base64')}`
+  const fetcher: typeof fetch = async (_input, options) => {
+    assert.equal(new Headers(options?.headers).get('authorization'), expected)
+    assert.equal(options?.redirect, 'error')
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  }
+  const converted = await proxyConversionRequest(conversionRequest(), fetcher)
+  assert.equal(converted.status, 200)
+  assert.equal(converted.headers.get('authorization'), null)
+
+  const demoFetcher: typeof fetch = async (_input, options) => {
+    assert.equal(new Headers(options?.headers).get('authorization'), null)
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  }
+  const demo = await proxyConversionRequest(
+    conversionRequest('https://demo.gotenberg.dev'),
+    demoFetcher,
+  )
+  assert.equal(demo.status, 200)
+})
+
+test('status uses Basic Auth for health and version without exposing secrets', async () => {
+  vi.stubEnv('GOTENBERG_BASIC_AUTH_URL', 'http://127.0.0.1:3000')
+  vi.stubEnv('GOTENBERG_BASIC_AUTH_USERNAME', 'test-user')
+  vi.stubEnv('GOTENBERG_BASIC_AUTH_PASSWORD', 'test-password')
+  let requests = 0
+  const expected = `Basic ${Buffer.from('test-user:test-password').toString('base64')}`
+  const fetcher: typeof fetch = async (input, options) => {
+    requests++
+    assert.equal(new Headers(options?.headers).get('authorization'), expected)
+    if (String(input).endsWith('/version')) return new Response('8.37.0')
+    return Response.json({ status: 'up', details: {} })
+  }
+  const status = await proxyStatusRequest(
+    new Request(`${origin}/api/gotenberg/status?url=http%3A%2F%2F127.0.0.1%3A3000`),
+    fetcher,
+  )
+  assert.equal(requests, 2)
+  assert.deepEqual(await status.json(), { online: true, version: '8.37.0', modules: [] })
+  assert.equal(status.headers.get('authorization'), null)
+  assert.equal(status.headers.get('cache-control'), 'no-store')
+})
+
+test('upstream 401 responses are preserved without forwarding authentication headers', async () => {
+  vi.stubEnv('GOTENBERG_BASIC_AUTH_URL', 'http://127.0.0.1:3000')
+  vi.stubEnv('GOTENBERG_BASIC_AUTH_USERNAME', 'test-user')
+  vi.stubEnv('GOTENBERG_BASIC_AUTH_PASSWORD', 'wrong-password')
+  const response = await proxyConversionRequest(
+    conversionRequest(),
+    async () =>
+      new Response('Unauthorized', {
+        status: 401,
+        headers: { 'WWW-Authenticate': 'Basic realm="Gotenberg"' },
+      }),
+  )
+  assert.equal(response.status, 401)
+  assert.equal(await response.text(), 'Unauthorized')
+  assert.equal(response.headers.get('www-authenticate'), null)
+  assert.equal(response.headers.get('authorization'), null)
+})
+
+test('status rejects protected version responses even when the public health endpoint is up', async () => {
+  const fetcher: typeof fetch = async (input) => {
+    if (String(input).endsWith('/version')) return new Response('Unauthorized', { status: 401 })
+    return Response.json({ status: 'up', details: {} })
+  }
+  const response = await proxyStatusRequest(
+    new Request(`${origin}/api/gotenberg/status?url=http%3A%2F%2F127.0.0.1%3A3000`),
+    fetcher,
+  )
+  assert.deepEqual(await response.json(), {
+    online: false,
+    version: 'Unavailable',
+    modules: [],
+    error: 'Gotenberg returned HTTP 401 from /version.',
+  })
+})
+
+test('browser-supplied Authorization headers are never forwarded to Gotenberg', async () => {
+  const request = conversionRequest()
+  request.headers.set('Authorization', 'Basic forged-browser-token')
+  const response = await proxyConversionRequest(request, async (_input, options) => {
+    assert.equal(new Headers(options?.headers).get('authorization'), null)
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  })
+  assert.equal(response.status, 200)
+})

@@ -10,6 +10,7 @@ import {
   requireAllowedBackend,
   requireSameOrigin,
 } from '#/lib/proxy-policy'
+import { basicAuthHeadersForBackend, parseUpstreamBasicAuth } from '#/lib/upstream-auth.server'
 import { InputError, validateFiles, validatePayload } from '#/lib/validation'
 
 const serverEnvSchema = v.object({
@@ -30,9 +31,11 @@ function runtimeConfig() {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1024 || maxBytes > 250_000_000) {
     throw new Error('GOTENUI_MAX_REQUEST_BYTES must be between 1024 and 250000000.')
   }
+  const allowed = parseAllowedBackends(env.GOTENBERG_ALLOWED_URLS)
   return {
     maxBytes,
-    allowed: parseAllowedBackends(env.GOTENBERG_ALLOWED_URLS),
+    allowed,
+    basicAuth: parseUpstreamBasicAuth(process.env, allowed),
   }
 }
 
@@ -79,12 +82,12 @@ async function upstreamErrorText(response: Response): Promise<string> {
       `Gotenberg returned HTTP ${response.status}.`
     )
   } finally {
-    void reader.cancel().catch(() => {})
+    await reader.cancel().catch(() => {})
     reader.releaseLock()
   }
 }
 
-/** No state, credentials, arbitrary URLs or files are persisted between requests. */
+/** Requests are stateless; upstream credentials are read from server-only environment variables. */
 export async function proxyConversionRequest(
   request: Request,
   fetcher: typeof fetch = fetch,
@@ -94,7 +97,7 @@ export async function proxyConversionRequest(
   if (!/^multipart\/form-data;\s*boundary=[\w-]{1,200}$/i.test(contentType)) {
     throw new ProxyInputError('Expected a multipart/form-data conversion request.')
   }
-  const { maxBytes, allowed } = runtimeConfig()
+  const { maxBytes, allowed, basicAuth } = runtimeConfig()
   if (Number(request.headers.get('content-length') ?? 0) > maxBytes) {
     throw new ProxyInputError(`Request exceeds the ${maxBytes} byte upload limit.`, 413)
   }
@@ -134,6 +137,7 @@ export async function proxyConversionRequest(
     method: 'POST',
     ...fetchOptions(request),
     body: form,
+    headers: basicAuthHeadersForBackend(url, basicAuth),
     credentials: 'omit',
   })
   if (!upstream.ok) {
@@ -158,14 +162,16 @@ export async function proxyStatusRequest(
 ): Promise<Response> {
   requireSameOrigin(request)
   const candidate = new URL(request.url).searchParams.get('url') ?? DEMO_GOTENBERG_URL
-  const url = requireAllowedBackend(candidate, runtimeConfig().allowed)
-  const options = fetchOptions(request)
+  const { allowed, basicAuth } = runtimeConfig()
+  const url = requireAllowedBackend(candidate, allowed)
+  const options = {
+    ...fetchOptions(request),
+    headers: basicAuthHeadersForBackend(url, basicAuth),
+    credentials: 'omit' as const,
+  }
   let status: ServerStatus
   try {
-    const health = await fetcher(urlJoin(url, '/health'), {
-      ...options,
-      credentials: 'omit',
-    })
+    const health = await fetcher(urlJoin(url, '/health'), options)
     if (!health.ok) throw new Error(`Gotenberg returned HTTP ${health.status}.`)
     const parsed = v.safeParse(healthSchema, await health.json())
     if (!parsed.success) throw new Error('This URL did not return a Gotenberg health response.')
@@ -178,14 +184,19 @@ export async function proxyStatusRequest(
           : 'down',
     }))
     let version = 'Unknown'
+    let versionAuthFailure: number | undefined
     try {
-      const response = await fetcher(urlJoin(url, '/version'), {
-        ...options,
-        credentials: 'omit',
-      })
-      if (response.ok) version = (await response.text()).trim().slice(0, 80) || 'Unknown'
+      const response = await fetcher(urlJoin(url, '/version'), options)
+      if (response.status === 401 || response.status === 403) {
+        versionAuthFailure = response.status
+      } else if (response.ok) {
+        version = (await response.text()).trim().slice(0, 80) || 'Unknown'
+      }
     } catch {
-      // The version endpoint is optional. A healthy service is still usable.
+      // The version endpoint is optional, unless it explicitly rejects authentication.
+    }
+    if (versionAuthFailure !== undefined) {
+      throw new Error(`Gotenberg returned HTTP ${versionAuthFailure} from /version.`)
     }
     status = { online: true, version, modules }
   } catch (error) {
