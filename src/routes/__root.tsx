@@ -11,7 +11,7 @@ export const Route = createRootRoute({
       { title: 'Gotenui · Gotenberg workspace' },
       {
         name: 'description',
-        content: 'A static, browser-based workspace for Gotenberg document conversions.',
+        content: 'A stateless document workspace using a same-origin Gotenberg API proxy.',
       },
       { name: 'robots', content: 'noindex, nofollow' },
     ],

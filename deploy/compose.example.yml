@@ -1,5 +1,5 @@
-# An OPTIONAL local demonstration. The Gotenui application itself remains static.
-# Do not publish this directly to the public internet: the proxy exposes Gotenberg's API.
+# Local test deployment; the server-side proxy reaches Gotenberg on the Docker network.
+# Bind to localhost only unless you add authentication, HTTPS and rate limiting.
 services:
   gotenberg:
     image: gotenberg/gotenberg:8
@@ -10,7 +10,9 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+    environment:
+      GOTENBERG_ALLOWED_URLS: https://demo.gotenberg.dev,http://gotenberg:3000
     ports:
-      - "127.0.0.1:3100:80"
+      - "127.0.0.1:3100:3100"
     depends_on:
       - gotenberg

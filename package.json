@@ -1,16 +1,17 @@
 {
   "name": "gotenui",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite dev --host 0.0.0.0",
-    "build": "vite build && node scripts/prepare-static.mjs",
-    "preview": "node scripts/preview-static.mjs",
+    "build": "vite build",
+    "preview": "node .output/server/index.mjs",
     "check": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-transform-types --test tests/*.test.ts"
+    "test": "node --experimental-transform-types --test tests/*.test.ts",
+    "start": "node .output/server/index.mjs"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.16",
@@ -26,7 +27,8 @@
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0",
     "url-join": "^5.0.0",
-    "valibot": "^1.5.0"
+    "valibot": "^1.5.0",
+    "nitro": "3.0.260903-beta"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

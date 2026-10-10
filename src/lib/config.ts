@@ -9,4 +9,4 @@ const buildEnvSchema = v.object({
 const buildEnv = v.parse(buildEnvSchema, import.meta.env)
 export const DEFAULT_BACKEND_URL = buildEnv.VITE_GOTENBERG_DEFAULT_URL
   ? normalizeBackendUrl(buildEnv.VITE_GOTENBERG_DEFAULT_URL)
-  : ''
+  : 'https://demo.gotenberg.dev'

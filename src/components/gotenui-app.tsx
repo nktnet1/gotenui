@@ -43,6 +43,7 @@ import { DEFAULT_BACKEND_URL } from '../lib/config'
 import {
   convertWithGotenberg,
   getGotenbergStatus,
+  MAX_UPLOAD_BYTES,
   REQUEST_TIMEOUT_MS,
   type ServerStatus,
   validatedBackend,
@@ -208,7 +209,7 @@ function ConnectionEditor({
           autoComplete="url"
           autoFocus
           spellCheck={false}
-          placeholder="http://localhost:3000 or /gotenberg"
+          placeholder="https://demo.gotenberg.dev"
           required
           value={value}
           onChange={(event) => {
@@ -218,9 +219,9 @@ function ConnectionEditor({
           className="font-mono text-xs"
         />
         <p className="text-xs leading-5 text-slate-500">
-          Enter a URL accessible <strong>from your browser</strong>, or a same-origin reverse-proxy
-          path like <code>/gotenberg</code>. The value is saved in this browser's local storage, not
-          sent to a Gotenui server.
+          The address is stored in this browser's local storage and sent to Gotenui's serverless
+          proxy. Your deployment must allow this address through <code>GOTENBERG_ALLOWED_URLS</code>
+          .
         </p>
       </div>
       {feedback && (
@@ -242,9 +243,9 @@ function ConnectionEditor({
         </Button>
       </div>
       <p className="text-[11px] leading-5 text-slate-500">
-        Cross-origin connections require CORS on the Gotenberg-facing server. An HTTPS page cannot
-        use an insecure HTTP backend unless the browser explicitly permits it. No files are stored
-        by Gotenui.
+        Gotenui connects to Gotenberg from its server, so the demo needs no CORS configuration. Only
+        server-approved destinations work. Files are processed in memory, never persisted by
+        Gotenui.
       </p>
     </form>
   )
@@ -265,13 +266,13 @@ function ConnectionSetup({ onSave }: { onSave: (url: string) => void }) {
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight">Connect to Gotenberg</h1>
           <p className="mb-7 mt-2 text-sm leading-6 text-slate-500">
-            Configure the service you want to use. Gotenui is a fully static application, with no
-            application backend or login server.
+            Use the public demo or a Gotenberg instance approved by your deployment. The UI has a
+            stateless server-side proxy and requires no login or database.
           </p>
           <ConnectionEditor initialUrl="" onSave={onSave} />
         </div>
         <p className="mt-7 text-center text-xs text-slate-400">
-          All conversions go straight from your browser to Gotenberg.
+          Conversions are sent through Gotenui's stateless, same-origin proxy.
         </p>
       </div>
     </div>
@@ -643,8 +644,8 @@ function JobPanel({
           </div>
           <p className="flex items-start gap-2 rounded-lg bg-sky-50 px-3 py-3 text-[11px] leading-5 text-sky-800">
             <ShieldCheck className="mt-0.5 size-4 shrink-0" />
-            Your browser sends document files directly to the configured Gotenberg service. Protect
-            access to that service on your network.
+            Your uploads are sent through Gotenui's server-side proxy, with a per-job file limit of
+            {` ${formatBytes(MAX_UPLOAD_BYTES)}`}. The proxy only contacts approved Gotenberg URLs.
           </p>
         </CardContent>
       </Card>
@@ -1346,8 +1347,8 @@ function Workspace({
             backendUrl={backendUrl}
           />
           <footer className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-5 text-[11px] text-slate-400">
-            <span>Gotenui · Static document workbench</span>
-            <span>TanStack Start SPA · Connected directly to Gotenberg</span>
+            <span>Gotenui · Stateless document workbench</span>
+            <span>TanStack Start · Serverless Gotenberg proxy</span>
           </footer>
         </main>
       </div>

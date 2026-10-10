@@ -8,28 +8,25 @@ import {
   saveBackendUrl,
 } from '../src/lib/backend-url.ts'
 
-test('normalizes browser-reachable Gotenberg addresses and reverse-proxy paths', () => {
+test('normalizes absolute Gotenberg URLs, including path prefixes', () => {
   assert.equal(normalizeBackendUrl(' http://localhost:3000/ '), 'http://localhost:3000')
   assert.equal(
     normalizeBackendUrl('https://docs.example.test/api/'),
     'https://docs.example.test/api',
   )
-  assert.equal(normalizeBackendUrl('/gotenberg/'), '/gotenberg')
-  assert.equal(normalizeBackendUrl('/'), '/')
 })
 
-test('rejects credentials, opaque schemes, fragments, protocol-relative and unsafe paths', () => {
+test('rejects credentials, relative paths, opaque schemes, fragments and unsafe addresses', () => {
   for (const value of [
     '',
+    '/gotenberg',
     '//evil.test',
     'ftp://example.test',
     'javascript:alert(1)',
     'https://alice:password@example.test',
     'https://example.test/#section',
     'http://example.test/?secret=true',
-    '/gotenberg/../admin',
-    '/gotenberg?token=secret',
-    '/gotenberg\\foo',
+    'https://example.test\\@evil.test',
     'localhost:3000',
   ]) {
     assert.throws(() => normalizeBackendUrl(value), Error, value)
@@ -57,7 +54,7 @@ test('stores the selected backend per origin and survives reloads', () => {
           throw new Error('blocked')
         },
       },
-      '/gotenberg',
+      'https://demo.gotenberg.dev',
     ),
     false,
   )
@@ -66,5 +63,5 @@ test('stores the selected backend per origin and survives reloads', () => {
 test('does not crash when browser localStorage is unavailable', () => {
   assert.equal(browserStorage(), null)
   assert.equal(loadBackendUrl(null), '')
-  assert.equal(saveBackendUrl(null, '/gotenberg'), false)
+  assert.equal(saveBackendUrl(null, 'https://demo.gotenberg.dev'), false)
 })

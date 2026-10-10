@@ -28,7 +28,7 @@ test('builds Markdown multipart with Gotenberg template and local assets', async
   assert.equal(await files[1].text(), '# Hello world')
 })
 
-test('sends multipart directly to the configured endpoint and names the download locally', async () => {
+test('converts through the same-origin API, not direct-to-Gotenberg fetch', async () => {
   const original = globalThis.fetch
   const requests: { url: string; options: RequestInit }[] = []
   globalThis.fetch = async (input, options) => {
@@ -45,7 +45,7 @@ test('sends multipart directly to the configured endpoint and names the download
     const operation = OPERATION_BY_ID.get('url-pdf')
     assert.ok(operation)
     const result = await convertWithGotenberg(
-      'https://api.example.test/gotenberg',
+      'https://demo.gotenberg.dev',
       {
         operation: operation.id,
         fields: { ...operationDefaults(operation), url: 'https://example.test' },
@@ -57,35 +57,57 @@ test('sends multipart directly to the configured endpoint and names the download
       new AbortController().signal,
     )
     assert.equal(result.name, 'my-output.pdf')
-    assert.equal(requests[0]?.url, 'https://api.example.test/gotenberg/forms/chromium/convert/url')
+    assert.equal(requests[0]?.url, '/api/gotenberg/convert')
     assert.equal(requests[0]?.options.method, 'POST')
     assert.equal(requests[0]?.options.credentials, 'same-origin')
-    assert.equal(requests[0]?.options.headers, undefined)
+    assert.deepEqual(requests[0]?.options.headers, {
+      'X-Gotenberg-Url': 'https://demo.gotenberg.dev',
+    })
     const body = requests[0]?.options.body
     assert.ok(body instanceof FormData)
-    assert.equal(body.get('url'), 'https://example.test')
+    const payload = JSON.parse(String(body.get('payload')))
+    assert.equal(payload.fields.url, 'https://example.test')
+    assert.equal(body.has('url'), false)
   } finally {
     globalThis.fetch = original
   }
 })
 
-test('reports a healthy service when a proxy blocks the optional version route', async () => {
+test('reads the JSON status from the same-origin API', async () => {
   const original = globalThis.fetch
   globalThis.fetch = async (input) => {
-    if (String(input).endsWith('/version')) throw new TypeError('CORS')
-    return Response.json({ status: 'up', details: { chromium: { status: 'up' } } })
+    const path = String(input)
+    assert.match(path, /^\/api\/gotenberg\/status\?url=https%3A%2F%2Fdemo\.gotenberg\.dev$/)
+    return Response.json({
+      online: true,
+      version: '8.27.0',
+      modules: [{ name: 'chromium', status: 'up' }],
+    })
   }
   try {
-    const status = await getGotenbergStatus('/gotenberg')
+    const status = await getGotenbergStatus('https://demo.gotenberg.dev')
     assert.equal(status.online, true)
-    assert.equal(status.version, 'Unknown')
+    assert.equal(status.version, '8.27.0')
     assert.deepEqual(status.modules, [{ name: 'chromium', status: 'up' }])
   } finally {
     globalThis.fetch = original
   }
 })
 
-test('rejects static-host SPA fallback returned as a false-positive health check', async () => {
+test('reports a helpful error for rejected backends', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () =>
+    new Response('This Gotenberg URL is not approved by the server.', { status: 403 })
+  try {
+    const status = await getGotenbergStatus('https://unknown.example')
+    assert.equal(status.online, false)
+    assert.match(status.error ?? '', /not approved/)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('rejects SPA fallback instead of claiming an HTML page is healthy', async () => {
   const original = globalThis.fetch
   globalThis.fetch = async () =>
     new Response('<html>Gotenui shell</html>', {
@@ -93,9 +115,9 @@ test('rejects static-host SPA fallback returned as a false-positive health check
       headers: { 'Content-Type': 'text/html' },
     })
   try {
-    const status = await getGotenbergStatus('/gotenberg')
+    const status = await getGotenbergStatus('https://demo.gotenberg.dev')
     assert.equal(status.online, false)
-    assert.match(status.error ?? '', /not a Gotenberg health check/)
+    assert.match(status.error ?? '', /Unexpected token|not valid JSON|valid Gotenberg status/)
   } finally {
     globalThis.fetch = original
   }

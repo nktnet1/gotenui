@@ -5,7 +5,9 @@ RUN npm install --no-audit --no-fund
 COPY . .
 RUN npm run build
 
-FROM nginx:1.29-alpine
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/static/ /usr/share/nginx/html/
-EXPOSE 80
+FROM node:24-alpine
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3100
+WORKDIR /app
+COPY --from=build /app/.output ./.output
+EXPOSE 3100
+CMD ["node", ".output/server/index.mjs"]

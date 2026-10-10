@@ -1,58 +1,77 @@
 # Gotenui
 
-A **fully static** Gotenberg document workbench built with TanStack Start (SPA mode), React 19, TypeScript 7, Tailwind CSS 4, shadcn-style UI components, Valibot, url-join, Biome and Sonner. No Gotenui server, database, authentication API, or Gotenui runtime environment variables are required.
+A **stateless TanStack Start document workbench** for Gotenberg 8.x. The interface uses React 19, TypeScript 7, Tailwind CSS 4, shadcn-style components, Valibot, url-join, Biome and Sonner. Nitro runs the same-origin API routes on Vercel, another serverless provider, or a Node server. No database, session storage or persistent disk is required.
 
 ## Features
 
-- **22 Gotenberg operations**, covering Chromium URL/HTML/Markdown conversions and screenshots, LibreOffice conversions, and PDF-engine tools.
-- Browser-managed uploads, merge ordering, HTML and Markdown editors, format and layout options, advanced Gotenberg fields, downloads, and previews for images and JSON.
-- **Configurable Gotenberg base URL**, via the first-run connection screen and **Settings → Connection settings** at any time. Test the connection before or after saving.
-- The URL is stored per browser and site origin in `localStorage` under `gotenui.backend-url.v1`. Nothing needs rebuilding when the URL changes. Inputs and generated files are **not** stored in localStorage.
-- Health and version checks, file validation, error messages, cancellation and a three-minute client-side request timeout.
+- 22 Chromium, LibreOffice and PDF-engine operations, including HTML, Markdown, URL and Office conversions, screenshots, merging, metadata, bookmarks, watermarks and Factur-X.
+- Configurable Gotenberg URL in **Connection settings**, persisted only in the browser's `localStorage` (`gotenui.backend-url.v1`). Default: **https://demo.gotenberg.dev**.
+- Conversions and health/version checks call **same-origin `/api/gotenberg/*` routes**. Nitro makes server-to-server requests to Gotenberg, so **the demo requires no CORS configuration**.
+- Input validation in both browser and server, explicit destination allowlist, streaming conversion responses, three-minute request timeout and an in-memory activity list.
 
 ## Development
 
-Requires Node.js **24+** and a browser-reachable Gotenberg 8.x service.
+Requires Node.js 24+ and pnpm:
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-Visit `http://localhost:3100`. On first launch, enter `http://localhost:3000` for a Gotenberg instance accessible to **your browser**, or `/gotenberg` when you have configured the optional same-origin proxy shown below. Changing the address takes effect immediately and survives reloads. Optionally set `VITE_GOTENBERG_DEFAULT_URL` at **build time** to prepopulate a first-run backend URL; it is validated with Valibot and exposed publicly in the built JavaScript, so do not put credentials or secrets in it.
+Open `http://localhost:3100`. The public demo is selected immediately unless the browser has a previously saved address. Use **Connection settings** to change it. A private instance must be listed in `GOTENBERG_ALLOWED_URLS` by the deployment administrator; the browser cannot authorise a new server target on its own.
 
-Run `pnpm format`, `pnpm check`, `pnpm typecheck` and `pnpm test` after installing dependencies.
+Tests and tooling:
 
-## Static production build
+```sh
+pnpm format
+pnpm check
+pnpm typecheck
+pnpm test
+```
+
+## Vercel and other serverless providers
+
+TanStack Start uses **SPA shell mode for its UI**, while Nitro produces server endpoints and the server runtime. Deploy the **whole project** to Vercel (the included `vercel.json` selects `tanstack-start`) or another Nitro-compatible runtime. **Do not deploy only a `static/` directory:** the `/api/gotenberg/*` routes are required.
+
+Build and run a self-hosted Nitro server:
 
 ```sh
 pnpm build
+pnpm start
 ```
 
-**Deploy the contents of `static/`** to any static file host, CDN, object storage, Nginx, Apache, etc. The build enables TanStack Start's `spa.enabled` mode and generates an `index.html` shell; the post-build script verifies and copies the static client assets into `static/`. The rest of TanStack's build output, when present, **is not required at runtime**. `pnpm preview` starts a tiny zero-dependency static-file server for local testing.
+The server entry point is `.output/server/index.mjs`; Nitro serves the generated public assets as well. Docker and a local Docker Compose example are included; Docker uses port 3100.
 
-For Nginx, see `deploy/nginx.conf`. For Netlify, `public/_redirects` adds the index.html fallback. With a single UI route, the app doesn't require deep-link handling beyond normal SPA fallback.
+The UI is client-rendered: there is no requirement for persistent server processes, shared memory, sticky sessions, database, or disk. Each request selects a backend from the allowlist, validates the payload and files, calls Gotenberg and returns its response. Aborted requests and timeouts do not create saved jobs.
 
-The included `Dockerfile` uses a Node build stage **only at build time**; the running container is Nginx serving plain HTML, CSS and JavaScript. The optional `deploy/compose.example.yml` bundles a local Gotenberg container with that static site and is bound to `127.0.0.1` for local evaluation.
+## Configuration and security
 
-## Gotenberg connectivity, CORS and HTTPS
+| Variable | Purpose |
+| --- | --- |
+| `VITE_GOTENBERG_DEFAULT_URL` | Optional **public build-time** default for the browser. Defaults to `https://demo.gotenberg.dev`. |
+| `VITE_GOTENUI_MAX_UPLOAD_BYTES` | Optional **public build-time** upload-file size cap. Defaults to `4000000` bytes. Keep below the request-body cap. |
+| `GOTENBERG_ALLOWED_URLS` | Comma-separated **server-side allowlist** of exact Gotenberg base URLs, including path prefixes. Defaults to `https://demo.gotenberg.dev` only. |
+| `GOTENUI_MAX_REQUEST_BYTES` | Maximum total multipart request size at the server. Defaults to `4200000` bytes. |
 
-Since Gotenui has no backend, all requests (including document uploads) are sent by the **browser directly to Gotenberg**. Gotenberg generally does not enable cross-origin browser calls for you. For a Gotenberg server at another origin, configure CORS at the proxy in front of Gotenberg, including `Access-Control-Allow-Origin` for the **exact** Gotenui site origin, and appropriate `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers` if preflight is used. To read filenames or the `Gotenberg-Trace` response header cross-origin, expose `Content-Disposition, Gotenberg-Trace`. Do **not** use wildcard allow-origin for an authenticated deployment.
+For example, to let the Settings UI select either the demo or a private Gotenberg instance:
 
-**Recommended: a same-origin proxy.** Serve the static files at `https://documents.example.com`, proxy `https://documents.example.com/gotenberg/` to a Gotenberg server on a private network, and save `/gotenberg` in Connection settings. This avoids browser CORS restrictions entirely. The included Nginx config demonstrates the path mapping. It does **not** implement authentication: protect the UI and proxied Gotenberg API using your existing identity-aware proxy, private network/VPN, or equivalent.
+```dotenv
+GOTENBERG_ALLOWED_URLS=https://demo.gotenberg.dev,https://pdf.internal.example.com
+```
 
-`http://localhost:3000` in the browser means **the user's computer**, not the Docker host or CDN. If Gotenui is hosted over HTTPS, use HTTPS for the Gotenberg endpoint (or the same-origin proxy); browsers typically block mixed-content HTTP calls. Browsers may also enforce additional Private Network Access checks on requests to local IPs.
+**Why the allowlist?** A publicly reachable serverless proxy that forwards to arbitrary user-specified URLs would be an SSRF/open-proxy vulnerability. This implementation requires an exact, server-approved base URL, disallows URL credentials and redirects, exposes only a fixed set of Gotenberg operations, validates fields and uploaded files, and never forwards arbitrary headers, cookies or credentials. Browser-selected URL values are not secrets. To support a new Gotenberg host, add it to your deployment environment and redeploy/restart the server as needed.
 
-The client uses native `multipart/form-data` requests without custom request headers to reduce preflight requirements. Custom download filenames are applied **locally** when saving, not via the Gotenberg-Output-Filename header. Requests include cookies only for same-origin gateways; cross-origin requests do not include cookies or credentials.
+**Secure public deployments:** Protect Gotenui behind authentication and abuse/rate limits at the edge. The app itself does not implement accounts or a distributed rate limiter. Gotenberg can render URLs and load external resources, so isolate self-hosted instances and enable appropriate network/SSRF protections (including Chromium private-IP blocking when applicable). Never treat the Gotenberg instance as safe to expose directly to the internet.
 
-## Security and privacy
+The proxy buffers and validates incoming multipart data in memory (up to the configured limit), then streams the upstream response back to the browser. Upload contents and results are never intentionally persisted by Gotenui. The browser retains an in-memory download preview and activity list until the tab closes. Your host, CDN or Gotenberg instance may enforce separate request limits or log requests; apply your own privacy and retention rules.
 
-A static application cannot keep a backend password or enforce access control. Gotenberg is a powerful document-rendering service and **must not be publicly exposed without an authentication gateway and network restrictions**. Protect it especially against SSRF through URL rendering and unauthorized access to local network resources. The UI's file/field validation only improves usability; callers can bypass any browser restriction by calling Gotenberg themselves.
+### Request size limits
 
-The configured URL is **not a secret**. It is visible to everyone using this browser profile and site origin; do not place passwords, API keys or tokens in it. Files stay in browser memory until directly posted to Gotenberg; the UI keeps only a short in-memory activity list, and downloading files uses temporary browser object URLs. Depending on its deployment, Gotenberg or its gateways may log or cache requests: apply your own retention and privacy controls.
+The browser currently caps uploaded files at **4,000,000 bytes** and the proxy caps its entire multipart body at **4,200,000 bytes** by default. This leaves some overhead under Vercel Functions' **4.5 MB request limit**, although large form fields and generated output can still hit host limits. Vercel also applies a 4.5 MB limit to function responses; some streaming configurations behave differently. For large conversions use a Node/other hosting platform with suitable limits, then increase `VITE_GOTENUI_MAX_UPLOAD_BYTES` and `GOTENUI_MAX_REQUEST_BYTES` appropriately. The public Gotenberg demo has its own limit of **5 MB per request** and rate limit of **2 requests per second per IP**; it is intended for evaluation, not production.
 
-## API support
+## API contracts
 
-The UI covers the 22 operations described in the supplied Gotenberg 8.x API reference, including archive and accessible PDF conversion, metadata and bookmark JSON, image/PDF watermarks and stamps, attachments, and Factur-X. Chromium HTML/Markdown asset names are flat, and Markdown is wrapped with the required `index.html` template.
+- `GET /api/gotenberg/status?url=<encoded-base-url>` — validates the selected backend against the server allowlist, queries Gotenberg's `/health` and `/version`, and returns a small JSON status object.
+- `POST /api/gotenberg/convert` — multipart body with one `payload` JSON field and zero or more `files` and `auxiliary` file fields. `X-Gotenberg-Url` holds the selected base URL. The server validates the payload using Valibot, looks up the operation from the fixed catalogue, reconstructs a safe Gotenberg form and streams the result. It does not accept arbitrary Gotenberg routes or webhook/download URL overrides.
 
-Uploads are capped at 100 MiB per conversion by the UI (the Gotenberg server or gateway may have stricter limits). For safety and simplicity, `downloadFrom`, webhook endpoints and arbitrary file overrides are not part of the advanced-fields editor. No generated code, node_modules, lockfiles or build artifacts are included in the ZIP.
+These API routes are **same-origin** and do not enable CORS. Requests with cross-site `Origin` or `Sec-Fetch-Site` headers are rejected. They remain reachable by server-side HTTP clients, so edge authentication and rate limits are still important.

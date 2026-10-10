@@ -1,4 +1,3 @@
-import urlJoin from 'url-join'
 import * as v from 'valibot'
 import { normalizeBackendUrl } from './backend-url.ts'
 import type { Operation } from './operations.ts'
@@ -6,23 +5,32 @@ import { downloadFilename, responseExtension } from './security.ts'
 import { type ConversionPayload, InputError, validateFiles, validatePayload } from './validation.ts'
 
 // The browser retains input files in memory; this is an application-side safety cap.
-export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+const maxUploadSchema = v.pipe(
+  v.string(),
+  v.regex(/^\d+$/),
+  v.transform(Number),
+  v.integer(),
+  v.minValue(1),
+  v.maxValue(200_000_000),
+)
+export const MAX_UPLOAD_BYTES = v.parse(
+  maxUploadSchema,
+  import.meta.env?.VITE_GOTENUI_MAX_UPLOAD_BYTES ?? '4000000',
+)
 export const REQUEST_TIMEOUT_MS = 180_000
 
 const backendSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(2048))
-const healthSchema = v.object({
-  status: v.picklist(['up', 'down']),
-  details: v.optional(v.record(v.string(), v.unknown())),
+const serverStatusSchema = v.object({
+  online: v.boolean(),
+  version: v.string(),
+  modules: v.array(v.object({ name: v.string(), status: v.string() })),
+  error: v.optional(v.string()),
 })
 
 export function validatedBackend(input: string): string {
   const parsed = v.safeParse(backendSchema, input)
   if (!parsed.success) throw new InputError('Enter a valid Gotenberg URL.')
   return normalizeBackendUrl(parsed.output)
-}
-
-export function endpoint(baseUrl: string, path: string): string {
-  return urlJoin(validatedBackend(baseUrl), path)
 }
 
 export type ServerStatus = {
@@ -33,88 +41,57 @@ export type ServerStatus = {
 }
 
 function connectionHint(): string {
-  return 'Could not reach Gotenberg from this browser. Check the URL, HTTPS/mixed content and CORS permissions, or use a same-origin reverse proxy.'
+  return 'Could not reach the Gotenui API proxy. Check that TanStack Start is deployed with Nitro server functions.'
 }
 
-/** Requests are made by the browser, never by an application server. */
+/** The browser contacts only the same-origin Gotenui endpoint. */
 export async function getGotenbergStatus(
   baseUrl: string,
   signal?: AbortSignal,
 ): Promise<ServerStatus> {
   const url = validatedBackend(baseUrl)
   try {
-    const health = await fetch(endpoint(url, '/health'), {
+    const response = await fetch(`/api/gotenberg/status?${new URLSearchParams({ url })}`, {
       signal,
       cache: 'no-store',
       credentials: 'same-origin',
-      redirect: 'error',
     })
-    if (!health.ok) {
-      return {
-        online: false,
-        version: 'Unavailable',
-        modules: [],
-        error: `Gotenberg health check returned HTTP ${health.status}.`,
-      }
-    }
-    const raw: unknown = await health.json().catch(() => null)
-    const parsed = v.safeParse(healthSchema, raw)
-    if (!parsed.success) {
+    if (!response.ok) {
       return {
         online: false,
         version: 'Unavailable',
         modules: [],
         error:
-          'The address returned a successful response, but not a Gotenberg health check. Check the proxy path.',
+          (await response.text()).trim().slice(0, 1_500) ||
+          `Proxy returned HTTP ${response.status}.`,
       }
     }
-    if (parsed.output.status !== 'up') {
-      return {
-        online: false,
-        version: 'Unavailable',
-        modules: [],
-        error: 'Gotenberg reports unhealthy modules.',
-      }
-    }
-    const details = parsed.output.details
-    const modules =
-      details && typeof details === 'object' && !Array.isArray(details)
-        ? Object.entries(details).map(([name, value]) => ({
-            name,
-            status:
-              value && typeof value === 'object' && 'status' in value && value.status === 'up'
-                ? 'up'
-                : 'down',
-          }))
-        : []
-    let versionText = 'Unknown'
-    try {
-      const response = await fetch(endpoint(url, '/version'), {
-        signal,
-        cache: 'no-store',
-        credentials: 'same-origin',
-        redirect: 'error',
-      })
-      if (response.ok) versionText = (await response.text()).trim().slice(0, 80) || 'Unknown'
-    } catch {
-      if (signal?.aborted) throw new DOMException('Request aborted', 'AbortError')
-      // Some proxies allow /health but not /version: still show the healthy service.
-    }
-    return { online: true, version: versionText, modules }
+    const parsed = v.safeParse(serverStatusSchema, await response.json())
+    if (!parsed.success) throw new Error('The API did not return a valid Gotenberg status.')
+    return parsed.output
   } catch (error) {
     if (signal?.aborted) throw error
-    return { online: false, version: 'Unavailable', modules: [], error: connectionHint() }
+    return {
+      online: false,
+      version: 'Unavailable',
+      modules: [],
+      error:
+        error instanceof Error && error.message !== 'Failed to fetch'
+          ? error.message
+          : connectionHint(),
+    }
   }
 }
 
-/** Build the exact Gotenberg multipart form without an intermediate proxy. */
+/** Rebuild the exact Gotenberg multipart form after server-side validation. */
 export function createGotenbergForm(
   operation: Operation,
   payload: ConversionPayload,
   files: File[],
   auxiliary: File[],
+  maxBytes = MAX_UPLOAD_BYTES,
 ): FormData {
-  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES)
+  validateFiles(operation, files, auxiliary, maxBytes)
   if (operation.id === 'watermark' || operation.id === 'stamp') {
     const source = payload.fields[`${operation.id}Source`]
     const expression = payload.fields[`${operation.id}Expression`]
@@ -158,6 +135,7 @@ export type ConversionResult = {
   trace?: string
 }
 
+/** The proxy revalidates the JSON and files, and reconstructs a safe Gotenberg form. */
 export async function convertWithGotenberg(
   baseUrl: string,
   candidate: unknown,
@@ -165,17 +143,22 @@ export async function convertWithGotenberg(
   auxiliary: File[],
   signal: AbortSignal,
 ): Promise<ConversionResult> {
+  const url = validatedBackend(baseUrl)
   const { operation, payload } = validatePayload(candidate)
-  const body = createGotenbergForm(operation, payload, files, auxiliary)
+  // Keep fast client-side feedback; all fields and files are checked again by the server.
+  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES)
+  const body = new FormData()
+  body.set('payload', JSON.stringify(payload))
+  for (const file of files) body.append('files', file, file.name)
+  for (const file of auxiliary) body.append('auxiliary', file, file.name)
   let response: Response
   try {
-    // Do not send custom request headers; multipart FormData can be a CORS-simple request.
-    response = await fetch(endpoint(baseUrl, operation.path), {
+    response = await fetch('/api/gotenberg/convert', {
       method: 'POST',
       body,
       signal,
       credentials: 'same-origin',
-      redirect: 'error',
+      headers: { 'X-Gotenberg-Url': url },
     })
   } catch (error) {
     if (signal.aborted) throw error
@@ -183,7 +166,7 @@ export async function convertWithGotenberg(
   }
   if (!response.ok) {
     const detail = (await response.text()).trim().slice(0, 1_500)
-    throw new Error(detail || `Gotenberg returned HTTP ${response.status}.`)
+    throw new Error(detail || `Gotenui proxy returned HTTP ${response.status}.`)
   }
   const blob = await response.blob()
   const type =

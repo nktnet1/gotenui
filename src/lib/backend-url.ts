@@ -1,28 +1,17 @@
-/** Normalize a browser-reachable Gotenberg URL without adding credentials or secrets. */
+/** Normalize a Gotenberg base URL without accepting credentials or opaque schemes. */
 export function normalizeBackendUrl(input: string): string {
   const value = input.trim()
   if (!value || value.length > 2048) {
     throw new Error('Enter a Gotenberg URL (up to 2,048 characters).')
   }
-  if (/^\/\//.test(value)) {
-    throw new Error('Protocol-relative URLs are not supported.')
-  }
-  // Allow same-origin reverse-proxy paths such as /gotenberg.
-  if (value.startsWith('/')) {
-    if (value.includes('?') || value.includes('#') || value.includes('\\')) {
-      throw new Error('Backend paths cannot contain a query, fragment or backslash.')
-    }
-    const segments = value.split('/')
-    if (segments.some((segment) => segment === '..' || segment === '.')) {
-      throw new Error('Backend paths cannot use dot segments.')
-    }
-    return value.replace(/\/+$/, '') || '/'
+  if (!/^https?:\/\//i.test(value) || value.includes('\\')) {
+    throw new Error('Use an absolute HTTP or HTTPS Gotenberg URL.')
   }
   let parsed: URL
   try {
     parsed = new URL(value)
   } catch {
-    throw new Error('Use an absolute http(s) URL or a path like /gotenberg.')
+    throw new Error('Enter a valid absolute Gotenberg URL.')
   }
   if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
     throw new Error('The Gotenberg URL must use HTTP or HTTPS.')
