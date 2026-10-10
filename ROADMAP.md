@@ -1,10 +1,10 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.27 (correct operation-aware PDF/ZIP response validation; v1.0.26 streaming protections retained).
+- **Baseline:** v1.0.28 (non-Docker production Nitro smoke verification; v1.0.27 response compatibility retained).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
-Gotenui already exposes the 22 Gotenberg conversion, screenshot, and PDF-engine routes, along with status, health, version, debug, legacy Prometheus metrics, `downloadFrom`, and asynchronous webhook submission. **Route coverage is not the same as complete feature coverage:** some route-specific form fields, uploaded assets, and repeated multipart parameters still need first-class support. An Advanced JSON field covers some scalar options, but not additional file streams, repeated fields, or HTTP request headers.
+Gotenui already exposes the 22 Gotenberg conversion, screenshot, and PDF-engine routes, along with status, health, version, debug, legacy Prometheus metrics, `downloadFrom`, and asynchronous webhook submission. **Route coverage is not a substitute for release verification:** the feature-specific multipart, repeated-field, and request-header workflows have automated unit coverage, but real Gotenberg integration and browser/deployment checks must still be completed.
 
 ## Design constraints
 
@@ -32,6 +32,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.25** | P2 | Remote-input and webhook usability | Done: structured and legacy editors, redacted previews, explicit async acceptance, unit tests and authored Docker callback/download tests (Docker run outstanding). |
 | **v1.0.26** | P1 | Automated release hardening | Done: output stream budgets, response media/status validation, gateway error tests, connection-isolation tests, CI pnpm action update, and release regression matrix. |
 | **v1.0.27** | Fix | Gotenberg response format compatibility | Fix v1.0.26 regression rejecting single-result split PDFs and ZIP outputs from multi-document processing; add unit/Docker regressions, preserve strict unexpected-format rejection. |
+| **v1.0.28** | Release | Built Nitro deployment smoke | Add a no-Docker release test for real SPA/API routing, runtime profiles, authentication isolation, PDF/ZIP compatibility, response protections and origin/allowlist enforcement; run in CI after build. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -133,6 +134,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 
 ## Verification and release gates
 
+**v1.0.28 packaged-runtime smoke:** `pnpm test:smoke` starts the built Nitro Node server and uses an isolated local HTTP fixture in place of Gotenberg. It checks SPA/icon delivery, live Nitro API routes, runtime configuration, independent browser/server credentials, health/version, PDF/ZIP conversion responses, trace/filename headers, invalid/oversized responses, and cross-origin/allowlist rejection. CI runs this immediately after `pnpm build`. It neither executes Gotenberg conversion engines nor replaces the outstanding Docker and manual release gates.
+
 **v1.0.27 response compatibility:** Enforce operation-aware PDF/ZIP allowances for splits, multiple independent Office/PDF documents, and conversions with a split step. Keep strict HTML, JSON, image, HTTP status, size, and stream checks. Unit tests cover these outcomes; Docker rerun is required to close the release gate.
 
 **v1.0.26 automated hardening:** Successful synchronous conversion responses must be HTTP 200 with the expected PDF, image, ZIP, or JSON media type, and an actual body. Unexpected partial content and asynchronous acceptance without a webhook produce a gateway error. Nitro streams binary results with a configurable 100 MB default limit, rejects oversized declared lengths before streaming, terminates oversized undeclared streams, rejects early EOF for declared lengths, and propagates cancellation upstream. Unit coverage verifies error propagation for 400/401/403/409/5xx, stream failures, timeout/abort mapping, and independent credentials when requests overlap. GitHub Actions now uses `pnpm/setup@v3`; actual CI and Docker execution remain outstanding. The final regression matrix is in `README.md`.
@@ -143,6 +146,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [x] Cover overlapping browser-managed and server-managed proxy requests with independent credentials in unit tests.
 - [ ] Manually switch connections while a browser conversion is in flight and verify cancellation and activity state.
 - [ ] Keep destination allowlisting and origin checks in Gotenui while leaving upstream authentication to Gotenberg or an operator-controlled gateway.
+- [x] Run a built Nitro Node production smoke test against a loopback mock backend in CI, independent of Docker.
 - [ ] Run the attached Biome binary with `check --write`, project typechecking, Vitest unit/integration tests, and production build before release where dependencies and Docker are available.
 - [ ] Leave generated files such as `pnpm-lock.yaml` untouched in incremental patches; complete manual desktop/mobile and accessibility checks **after** automated coverage.
 

@@ -1,0 +1,317 @@
+import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { createServer } from 'node:http'
+import { dirname, resolve } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { fileURLToPath } from 'node:url'
+import { styleText } from 'node:util'
+
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const entry = resolve(projectRoot, '.output/server/index.mjs')
+const pdf = Buffer.from('%PDF-1.7\n%Gotenui smoke test\n')
+const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00])
+const seen = []
+
+async function listen(server) {
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string')
+  return address.port
+}
+
+async function unusedPort() {
+  const server = createServer()
+  const port = await listen(server)
+  await new Promise((resolve) => server.close(resolve))
+  return port
+}
+
+const upstream = createServer(async (request, response) => {
+  try {
+    if (request.url === '/health' && ['GET', 'HEAD'].includes(request.method)) {
+      response.setHeader('Content-Type', 'application/json')
+      response.end(
+        request.method === 'HEAD'
+          ? undefined
+          : JSON.stringify({ status: 'up', details: { chromium: { status: 'up' } } }),
+      )
+      return
+    }
+    if (request.url === '/version' && request.method === 'GET') {
+      response.end('8.37.0')
+      return
+    }
+    if (!request.url?.startsWith('/forms/') || request.method !== 'POST') {
+      response.writeHead(404).end()
+      return
+    }
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    const body = Buffer.concat(chunks)
+    assert.ok(body.byteLength < 1_000_000, 'Smoke fixture received an unexpectedly large upload')
+    seen.push({
+      path: request.url,
+      headers: request.headers,
+      body: body.toString('utf8'),
+    })
+    const trace = request.headers['gotenberg-trace']
+    if (trace === 'smoke-invalid-html') {
+      response.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>invalid</html>')
+      return
+    }
+    if (trace === 'smoke-oversized') {
+      response
+        .writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': '1025' })
+        .end(Buffer.alloc(1025))
+      return
+    }
+    const isZip = request.url === '/forms/libreoffice/convert'
+    response.writeHead(200, {
+      'Content-Type': isZip ? 'application/zip' : 'application/pdf',
+      'Content-Disposition': `attachment; filename="fixture.${isZip ? 'zip' : 'pdf'}"`,
+      'Gotenberg-Trace': 'fixture-response-trace',
+      'Set-Cookie': 'private-upstream-cookie=secret',
+    })
+    response.end(isZip ? zip : pdf)
+  } catch {
+    response.writeHead(500).end('Fixture failed')
+  }
+})
+
+function conversionBody(operation, fields, files = [], extras = {}) {
+  const form = new FormData()
+  form.set('payload', JSON.stringify({ operation, fields, advanced: {}, ...extras }))
+  for (const file of files) form.append('files', file, file.name)
+  return form
+}
+
+async function get(url, options = {}) {
+  return fetch(url, { ...options, signal: AbortSignal.timeout(10_000) })
+}
+
+async function stopProcess(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  const stopped = new Promise((resolve) => child.once('exit', resolve))
+  child.kill('SIGTERM')
+  await Promise.race([stopped, sleep(2_000)])
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+}
+
+async function waitForServer(child, url, logs) {
+  const deadline = Date.now() + 20_000
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Built Nitro server exited during startup: ${logs()}`)
+    }
+    try {
+      const response = await fetch(`${url}/api/gotenberg/connections`, {
+        signal: AbortSignal.timeout(1_000),
+      })
+      if (response.ok) return
+    } catch {
+      // Connection refused while Nitro binds its loopback listener.
+    }
+    await sleep(100)
+  }
+  throw new Error(`Built Nitro server did not become ready: ${logs()}`)
+}
+
+async function run() {
+  if (!existsSync(entry)) throw new Error('Missing .output/server/index.mjs; run pnpm build first.')
+  const upstreamPort = await listen(upstream)
+  const upstreamUrl = `http://127.0.0.1:${upstreamPort}`
+  const port = await unusedPort()
+  const origin = `http://127.0.0.1:${port}`
+  const env = {
+    ...process.env,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    NITRO_HOST: '127.0.0.1',
+    NITRO_PORT: String(port),
+    NODE_ENV: 'production',
+    GOTENBERG_ALLOWED_URLS: upstreamUrl,
+    GOTENUI_SERVER_CONNECTIONS: JSON.stringify([
+      {
+        id: 'smoke',
+        name: 'Release smoke instance',
+        url: upstreamUrl,
+        auth: { type: 'bearer', token: 'server-only-smoke-token' },
+      },
+    ]),
+    GOTENUI_SHOW_DEBUG: 'false',
+    GOTENUI_SHOW_METRICS: 'false',
+    GOTENUI_MAX_RESPONSE_BYTES: '1024',
+  }
+  const child = spawn(process.execPath, [entry], {
+    cwd: projectRoot,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let output = ''
+  const capture = (chunk) => {
+    output = `${output}${chunk.toString()}`.slice(-4_000)
+  }
+  child.stdout.on('data', capture)
+  child.stderr.on('data', capture)
+  let checks = 0
+  try {
+    await waitForServer(child, origin, () => output)
+
+    const page = await get(`${origin}/`)
+    assert.equal(page.status, 200)
+    assert.match(page.headers.get('content-type') ?? '', /^text\/html/)
+    assert.match(await page.text(), /Gotenui/)
+    checks++
+
+    const logo = await get(`${origin}/gotenui-icon.svg`)
+    assert.equal(logo.status, 200)
+    assert.match(logo.headers.get('content-type') ?? '', /image\/svg\+xml/)
+    assert.match(await logo.text(), /<svg\b/)
+    checks++
+
+    const connections = await get(`${origin}/api/gotenberg/connections`)
+    assert.equal(connections.status, 200)
+    assert.match(connections.headers.get('content-type') ?? '', /^application\/json/)
+    assert.equal(connections.headers.get('cache-control'), 'no-store')
+    const profiles = await connections.json()
+    assert.deepEqual(profiles, {
+      connections: [{ id: 'smoke', name: 'Release smoke instance' }],
+      features: { showDebug: false, showMetrics: false },
+    })
+    assert.doesNotMatch(JSON.stringify(profiles), /server-only-smoke-token|127\.0\.0\.1/)
+    checks++
+
+    const health = await get(`${origin}/api/gotenberg/health?connection=smoke`, {
+      method: 'HEAD',
+    })
+    assert.equal(health.status, 200)
+    assert.equal(health.headers.get('x-gotenui-health-probe'), '1')
+    assert.equal(await health.text(), '')
+    checks++
+
+    const status = await get(`${origin}/api/gotenberg/status?connection=smoke`)
+    assert.equal(status.status, 200)
+    const details = await status.json()
+    assert.equal(details.online, true)
+    assert.equal(details.version, '8.37.0')
+    checks++
+
+    const convertUrl = `${origin}/api/gotenberg/convert`
+    const baseFields = { url: 'https://example.test/smoke' }
+    const sameOrigin = { Origin: origin, 'Sec-Fetch-Site': 'same-origin' }
+    const pdfRequest = () => conversionBody('url-pdf', baseFields)
+    const converted = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], {
+        outputName: 'release-smoke',
+        requestTrace: 'smoke-request',
+      }),
+    })
+    assert.equal(converted.status, 200)
+    assert.equal(converted.headers.get('content-type'), 'application/pdf')
+    assert.equal(converted.headers.get('gotenberg-trace'), 'fixture-response-trace')
+    assert.equal(converted.headers.get('content-disposition'), 'attachment; filename="fixture.pdf"')
+    assert.equal(converted.headers.get('set-cookie'), null)
+    assert.deepEqual(Buffer.from(await converted.arrayBuffer()), pdf)
+    const serverRequest = seen.at(-1)
+    assert.equal(serverRequest.path, '/forms/chromium/convert/url')
+    assert.equal(serverRequest.headers.authorization, 'Bearer server-only-smoke-token')
+    assert.equal(serverRequest.headers['gotenberg-output-filename'], 'release-smoke')
+    assert.equal(serverRequest.headers['gotenberg-trace'], 'smoke-request')
+    assert.match(serverRequest.body, /name="url"/)
+    checks++
+
+    const browser = await get(convertUrl, {
+      method: 'POST',
+      headers: {
+        ...sameOrigin,
+        'X-Gotenberg-Url': upstreamUrl,
+        'X-Gotenui-Upstream-Authorization': 'Bearer browser-smoke-token',
+      },
+      body: pdfRequest(),
+    })
+    assert.equal(browser.status, 200)
+    assert.deepEqual(Buffer.from(await browser.arrayBuffer()), pdf)
+    assert.equal(seen.at(-1).headers.authorization, 'Bearer browser-smoke-token')
+    checks++
+
+    const split = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('split', { splitMode: 'intervals', splitSpan: '1' }, [
+        new File(['%PDF-1.7'], 'source.pdf', { type: 'application/pdf' }),
+      ]),
+    })
+    assert.equal(split.status, 200)
+    assert.equal(split.headers.get('content-type'), 'application/pdf')
+    assert.deepEqual(Buffer.from(await split.arrayBuffer()), pdf)
+    checks++
+
+    const office = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('office-pdf', {}, [
+        new File(['A'], 'first.txt', { type: 'text/plain' }),
+        new File(['B'], 'second.txt', { type: 'text/plain' }),
+      ]),
+    })
+    assert.equal(office.status, 200)
+    assert.equal(office.headers.get('content-type'), 'application/zip')
+    assert.deepEqual(Buffer.from(await office.arrayBuffer()), zip)
+    checks++
+
+    for (const [trace, expected] of [
+      ['smoke-invalid-html', /unexpected conversion response/],
+      ['smoke-oversized', /exceeds.*byte limit/],
+    ]) {
+      const invalid = await get(convertUrl, {
+        method: 'POST',
+        headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+        body: conversionBody('url-pdf', baseFields, [], { requestTrace: trace }),
+      })
+      assert.equal(invalid.status, 502)
+      assert.match(await invalid.text(), expected)
+      checks++
+    }
+
+    const previousCount = seen.length
+    for (const headers of [
+      { ...sameOrigin, Origin: 'https://evil.example', 'X-Gotenui-Connection-Id': 'smoke' },
+      { ...sameOrigin, 'Sec-Fetch-Site': 'cross-site', 'X-Gotenui-Connection-Id': 'smoke' },
+      { ...sameOrigin, 'X-Gotenberg-Url': 'http://127.0.0.1:1' },
+    ]) {
+      const rejected = await get(convertUrl, { method: 'POST', headers, body: pdfRequest() })
+      assert.equal(rejected.status, 403)
+      checks++
+    }
+    const conflicting = await get(convertUrl, {
+      method: 'POST',
+      headers: {
+        ...sameOrigin,
+        'X-Gotenui-Connection-Id': 'smoke',
+        'X-Gotenui-Upstream-Authorization': 'Bearer browser-smoke-token',
+      },
+      body: pdfRequest(),
+    })
+    assert.equal(conflicting.status, 400)
+    assert.equal(seen.length, previousCount, 'Rejected requests must never reach upstream')
+    checks++
+
+    console.log(`Production Nitro smoke: ${styleText('green', 'PASS')} (${checks} checks)`)
+  } finally {
+    await stopProcess(child)
+    upstream.closeAllConnections()
+    await new Promise((resolve) => upstream.close(resolve))
+  }
+}
+
+run().catch((error) => {
+  console.error(`Production Nitro smoke: ${styleText('red', 'FAIL')}`)
+  console.error(error)
+  process.exitCode = 1
+})

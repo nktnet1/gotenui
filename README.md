@@ -39,6 +39,7 @@ pnpm typecheck
 pnpm test:unit         # Fast Vitest tests; no Docker or Gotenberg required
 pnpm test:integration  # Starts local Gotenberg, tests 22 processing routes, cleans up
 pnpm test              # Both suites (requires Docker)
+pnpm build && pnpm test:smoke  # Exercise the built Nitro server with a local mock backend
 ```
 
 Vitest integration tests start a **disposable `gotenberg/gotenberg:8.37.0` container with Basic Auth enabled** on a Docker-assigned loopback port and a tiny local HTTP fixture server. The tests exercise the real `proxyConversionRequest` against the local instance, including all 22 processing routes, multipart uploads, PDF/image/ZIP/JSON responses, health, and URL allowlisting. The harness waits for `/health` and destroys the container at teardown. No fixed port or public-demo dependency is required. The suite verifies authenticated conversions for all 22 routes, rejects unauthenticated and incorrect-password requests, and checks the credential-free demo path with unit tests. It also validates upstream-authenticated local `/debug` and `/prometheus/metrics` routes, and tests direct and proxied `HEAD /health` requests. A missing Docker daemon **fails the suite**, rather than silently skipping it. Override the pinned test image with `GOTENBERG_TEST_IMAGE` if needed.
@@ -46,6 +47,8 @@ Vitest integration tests start a **disposable `gotenberg/gotenberg:8.37.0` conta
 To cover both split response types, the suite merges two locally generated PDF pages and verifies that splitting produces a ZIP with two entries. It also checks the single-page PDF response, multi-document Office and PDF/A ZIP downloads, and uploads a MINIMUM-profile XML fixture for Factur-X.
 
 The integration suite also covers single-request PDF overlays, embedded attachments, Factur-X XML during Office conversion, and remote attachments/overlays from a disposable local fixture server. It includes further Docker scenarios for remote Office downloads with explicit fetch headers, asynchronous success/error/events callbacks, and a callback that retries after a `503` response. Webhook tests use a disposable HTTP receiver and short retry intervals configured **only** on the test Gotenberg container; Gotenui itself does not receive callbacks. These new Docker cases have not yet been verified in this environment. A non-Docker unit test checks the remote overlay PNG's chunk CRCs and decompressed pixel length, because invalid PNG data produces a misleading Gotenberg "unsupported stamp source" response.
+
+The non-Docker **production smoke test** (`pnpm test:smoke`, after `pnpm build`) boots the actual `.output/server/index.mjs` on a temporary loopback port with a disposable local mock upstream. It checks the SPA and SVG, API route availability, runtime connection profiles and visibility flags, health/version, distinct browser/server credentials, PDF and ZIP downloads (including single-result split PDFs), upstream trace/filename forwarding, response size and type enforcement, origin restrictions and destination allowlisting. No external network or Gotenberg container is required. The mock tests the **built Gotenui deployment**, not Gotenberg's conversion engines; the pinned Docker suite and manual mobile/accessibility/deployment checks remain separate release gates. CI runs this smoke test immediately after the build.
 
 The test setup does **not** change the application's public-demo default. Docker must support the `host-gateway` option so the container can reach the deterministic fixture page. Unit tests mock `fetch` and do not contact any remote host.
 
@@ -161,6 +164,7 @@ The UI is client-rendered: there is no requirement for persistent server process
 | `VITE_GOTENUI_MAX_UPLOAD_BYTES` | Optional **public build-time** upload-file size cap. Defaults to `4000000` bytes. Keep below the request-body cap. |
 | `GOTENBERG_ALLOWED_URLS` | Comma-separated **server-side allowlist** of exact Gotenberg base URLs, including path prefixes. Defaults to `https://demo.gotenberg.dev` only. |
 | `GOTENUI_MAX_REQUEST_BYTES` | Maximum total multipart request size at the server. Defaults to `4200000` bytes. |
+| `GOTENUI_MAX_RESPONSE_BYTES` | Maximum converted response size, measured in streamed bytes. Defaults to `100000000` bytes. |
 | `GOTENBERG_BASIC_AUTH_URL` | **Server-only** exact Gotenberg base URL that should receive the credentials. Must be present in `GOTENBERG_ALLOWED_URLS`. |
 | `GOTENBERG_BASIC_AUTH_USERNAME` | **Server-only** Basic Auth username for that URL. Cannot contain `:`. |
 | `GOTENBERG_BASIC_AUTH_PASSWORD` | **Server-only** legacy Basic Auth password for that URL; like other server-managed credentials, it may be used by anyone allowed to access the proxy. |
@@ -221,8 +225,9 @@ These routes are same-origin and do not enable CORS. Requests claiming a differe
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on pushes, pull requests and manual dispatch. The
-**quality** job checks Biome, TypeScript, Vitest unit tests and a production build;
-it also fails if either previously reported Rolldown warning returns. The
+**quality** job checks Biome, TypeScript, Vitest unit tests, a production build,
+and the built Nitro server's local smoke test; it also fails if either previously
+reported Rolldown warning returns. The
 **integration** job invokes Vitest's Docker harness, which starts a disposable
 `gotenberg/gotenberg:8.37.0` container with a local fixture server. CI never
 contacts `demo.gotenberg.dev` to run tests.
@@ -232,7 +237,7 @@ exact pnpm version from `packageManager` in `package.json` (currently
 `pnpm@12.10.1`) automatically. Both jobs run `pnpm install --frozen-lockfile`.
 After changing dependencies, update and commit `pnpm-lock.yaml` locally before
 expecting CI to pass. The action uses Node.js 24, a cached pnpm store, and
-frozen installation; no generated lockfile is changed by v1.0.26.
+frozen installation; no generated lockfiles are changed by incremental patches.
 
 ### Automated release regression matrix
 
@@ -243,6 +248,7 @@ frozen installation; no generated lockfile is changed by v1.0.26.
 | Binary/JSON/image/ZIP media type, `202`/`204` webhook responses | Vitest proxy and async suites | Real asynchronous callback delivery with Docker |
 | Declared and undeclared output size limits, early EOF, cancellation, and timeout mapping | Vitest stream and gateway suites | Host-level buffering and timeout tests |
 | Switching server and browser connections while in flight | Vitest concurrent-proxy regression | Manual tab-level connection switch |
+| Built Nitro runtime, SPA/API routing, status/health, profile credential isolation, single-PDF split/Office ZIP response handling | `pnpm build && pnpm test:smoke` with disposable mock upstream | Real Gotenberg behaviour still requires Docker |
 | Package checks and production build warnings | Biome, TypeScript, Vitest unit tests, Vite/Nitro build | CI run on GitHub Actions |
 | Actual conversion routes, overlays and remote/webhook flows | Authored Vitest Docker suite | Must run against local pinned image; not executed in this environment |
 | Desktop, mobile, accessibility, deployment checks | — | Manual browser, mobile, accessibility and release review |

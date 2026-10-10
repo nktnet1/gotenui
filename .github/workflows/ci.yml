@@ -37,6 +37,8 @@ jobs:
             echo '::error::Vite/Nitro build warnings have regressed.'
             exit 1
           fi
+      - name: Smoke-test built Nitro deployment without Docker
+        run: pnpm test:smoke
 
   integration:
     name: Integration tests (local Gotenberg Docker)
