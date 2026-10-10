@@ -594,7 +594,7 @@ function JobPanel({
               <span className="font-semibold uppercase text-slate-700">
                 {operation.output === 'image'
                   ? 'PNG / JPEG / WebP'
-                  : operation.output === 'pdf'
+                  : operation.output === 'pdf' || operation.id === 'split'
                     ? 'PDF / ZIP'
                     : operation.output}
               </span>

@@ -2,6 +2,7 @@ import urlJoin from 'url-join'
 import * as v from 'valibot'
 import { resolveConnectionTarget } from '#/lib/connection-target.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
+import type { Operation } from '#/lib/operations'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
@@ -178,6 +179,36 @@ function expectedConversionContentType(output: string, format: string | boolean 
   }
 }
 
+/** Gotenberg chooses PDF versus ZIP based on the number of resulting documents.
+ * Keep exact media-type checks for all other routes and never accept HTML fallbacks.
+ */
+function allowedConversionContentTypes(
+  operation: Operation,
+  payload: ConversionPayload,
+  files: readonly File[],
+): readonly string[] {
+  const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
+  // Even an intervals split can produce a PDF when there is just one output.
+  // The proxy cannot know its page count without reading the input document.
+  if (operation.id === 'split') return ['application/pdf', 'application/zip']
+  if (operation.output !== 'pdf') return [primaryType]
+
+  const remoteDocuments = (payload.downloadFrom ?? []).filter(
+    (file) => !file.embedded && !file.field,
+  ).length
+  const multipleDocuments =
+    files.length + remoteDocuments > 1 &&
+    (operation.input === 'office' || (operation.input === 'pdf' && operation.id !== 'merge'))
+  const splitMode = payload.fields.splitMode ?? payload.advanced.splitMode
+  const postProcessingSplit = splitMode === 'pages' || splitMode === 'intervals'
+  // PDF tools (apart from merge) and LibreOffice return ZIP for multiple
+  // independent source documents. Conversions with a split step can also
+  // produce ZIP, whereas merged or single-result outputs remain PDF.
+  return multipleDocuments || postProcessingSplit
+    ? ['application/pdf', 'application/zip']
+    : [primaryType]
+}
+
 /** An untrusted upstream may send an incorrect or missing content-length. */
 function conversionResponseLength(header: string | null, maxBytes: number): number | undefined {
   if (header === null) return undefined
@@ -303,9 +334,14 @@ export async function proxyConversionRequest(
     }
     return new Response(null, { status: upstream.status, headers })
   }
-  const expectedType = expectedConversionContentType(operation.output, payload.fields.format)
+  const allowedTypes = allowedConversionContentTypes(operation, payload, files)
   const returnedType = headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
-  if (upstream.status !== 200 || returnedType !== expectedType || !upstream.body) {
+  if (
+    upstream.status !== 200 ||
+    !returnedType ||
+    !allowedTypes.includes(returnedType) ||
+    !upstream.body
+  ) {
     await upstream.body?.cancel().catch(() => {})
     throw new ProxyInputError('Gotenberg returned an unexpected conversion response.', 502)
   }

@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.26 (response-stream hardening, negative security coverage, and CI refresh).
+- **Baseline:** v1.0.27 (correct operation-aware PDF/ZIP response validation; v1.0.26 streaming protections retained).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -31,6 +31,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.24** | Fix | Remote-overlay integration PNG | Replace corrupt fixture data and check PNG checksums in the non-Docker unit suite. |
 | **v1.0.25** | P2 | Remote-input and webhook usability | Done: structured and legacy editors, redacted previews, explicit async acceptance, unit tests and authored Docker callback/download tests (Docker run outstanding). |
 | **v1.0.26** | P1 | Automated release hardening | Done: output stream budgets, response media/status validation, gateway error tests, connection-isolation tests, CI pnpm action update, and release regression matrix. |
+| **v1.0.27** | Fix | Gotenberg response format compatibility | Fix v1.0.26 regression rejecting single-result split PDFs and ZIP outputs from multi-document processing; add unit/Docker regressions, preserve strict unexpected-format rejection. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -131,6 +132,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
 
 ## Verification and release gates
+
+**v1.0.27 response compatibility:** Enforce operation-aware PDF/ZIP allowances for splits, multiple independent Office/PDF documents, and conversions with a split step. Keep strict HTML, JSON, image, HTTP status, size, and stream checks. Unit tests cover these outcomes; Docker rerun is required to close the release gate.
 
 **v1.0.26 automated hardening:** Successful synchronous conversion responses must be HTTP 200 with the expected PDF, image, ZIP, or JSON media type, and an actual body. Unexpected partial content and asynchronous acceptance without a webhook produce a gateway error. Nitro streams binary results with a configurable 100 MB default limit, rejects oversized declared lengths before streaming, terminates oversized undeclared streams, rejects early EOF for declared lengths, and propagates cancellation upstream. Unit coverage verifies error propagation for 400/401/403/409/5xx, stream failures, timeout/abort mapping, and independent credentials when requests overlap. GitHub Actions now uses `pnpm/setup@v3`; actual CI and Docker execution remain outstanding. The final regression matrix is in `README.md`.
 

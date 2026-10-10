@@ -15,11 +15,14 @@ afterEach(() => vi.unstubAllEnvs())
 
 function requestFor(
   operation = 'url-pdf',
-  fields: Record<string, string> = { url: 'https://example.test' },
+  fields: Record<string, string | boolean> = { url: 'https://example.test' },
   headers: Record<string, string> = {},
+  files: File[] = [],
+  additional: Record<string, unknown> = {},
 ) {
   const body = new FormData()
-  body.set('payload', JSON.stringify({ operation, fields, advanced: {} }))
+  body.set('payload', JSON.stringify({ operation, fields, advanced: {}, ...additional }))
+  for (const file of files) body.append('files', file, file.name)
   return new Request(`${origin}/api/gotenberg/convert`, {
     method: 'POST',
     headers: { Origin: origin, 'X-Gotenberg-Url': backend, ...headers },
@@ -108,6 +111,121 @@ test('screenshots must return the selected image content type', async () => {
     async () => new Response('PNG', { headers: { 'Content-Type': 'image/png' } }),
   ).catch(proxyErrorResponse)
   assert.equal(mismatch.status, 502)
+})
+
+function inputPdf(name: string) {
+  return new File(['%PDF-1.7'], name, { type: 'application/pdf' })
+}
+
+function conversionResult(type: string, data: string) {
+  return new Response(data, {
+    headers: {
+      'Content-Type': `${type}; charset=binary`,
+      'Content-Disposition': `attachment; filename=upstream.${type === 'application/zip' ? 'zip' : 'pdf'}`,
+      'Gotenberg-Trace': 'response-test',
+    },
+  })
+}
+
+const splitSuccessCases: {
+  description: string
+  fields: Record<string, string | boolean>
+  type: string
+  data: string
+}[] = [
+  {
+    description: 'single-result intervals',
+    fields: { splitMode: 'intervals', splitSpan: '1' },
+    type: 'application/pdf',
+    data: '%PDF-1.7',
+  },
+  {
+    description: 'multiple-result intervals',
+    fields: { splitMode: 'intervals', splitSpan: '1' },
+    type: 'application/zip',
+    data: 'PK\u0003\u0004',
+  },
+  {
+    description: 'unified page ranges',
+    fields: { splitMode: 'pages', splitSpan: '1', splitUnify: true },
+    type: 'application/pdf',
+    data: '%PDF-1.7',
+  },
+]
+
+test.each(splitSuccessCases)('split $description accepts $type', async ({ fields, type, data }) => {
+  const response = await proxyConversionRequest(
+    requestFor('split', fields, {}, [inputPdf('source.pdf')]),
+    async () => conversionResult(type, data),
+  )
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('content-type'), `${type}; charset=binary`)
+  assert.equal(
+    response.headers.get('content-disposition'),
+    `attachment; filename=upstream.${type === 'application/zip' ? 'zip' : 'pdf'}`,
+  )
+  assert.equal(response.headers.get('gotenberg-trace'), 'response-test')
+  assert.equal(await response.text(), data)
+})
+
+test.each([
+  ['split', { splitMode: 'intervals', splitSpan: '1' }, [inputPdf('source.pdf')]],
+  ['merge', {}, [inputPdf('one.pdf'), inputPdf('two.pdf')]],
+  ['url-pdf', { url: 'https://example.test' }, []],
+] as const)('rejects a disallowed ZIP/HTML response for %s', async (operation, fields, files) => {
+  const invalidType = operation === 'split' ? 'text/html' : 'application/zip'
+  const response = await proxyConversionRequest(
+    requestFor(operation, fields, {}, [...files]),
+    async () => conversionResult(invalidType, '<html>not a conversion</html>'),
+  ).catch(proxyErrorResponse)
+  assert.equal(response.status, 502)
+  assert.match(await response.text(), /unexpected conversion response/)
+})
+
+test.each([
+  ['office-pdf', {}, ['one.txt', 'two.txt']],
+  ['pdfa', { pdfa: 'PDF/A-2b' }, ['one.pdf', 'two.pdf']],
+  ['rotate', { rotateAngle: '90' }, ['one.pdf', 'two.pdf']],
+] as const)('accepts ZIP for multiple %s documents', async (operation, fields, names) => {
+  const uploads = names.map((name) =>
+    name.endsWith('.pdf') ? inputPdf(name) : new File(['office text'], name),
+  )
+  const response = await proxyConversionRequest(
+    requestFor(operation, fields, {}, uploads),
+    async () => conversionResult('application/zip', 'PK\u0003\u0004'),
+  )
+  assert.equal(response.headers.get('content-type')?.split(';')[0], 'application/zip')
+  assert.equal(await response.text(), 'PK\u0003\u0004')
+})
+
+test('remote primary documents count towards multi-document ZIP responses', async () => {
+  const response = await proxyConversionRequest(
+    requestFor('office-pdf', {}, {}, [new File(['office text'], 'one.txt')], {
+      downloadFrom: [{ url: 'https://files.example.test/two.txt' }],
+    }),
+    async () => conversionResult('application/zip', 'PK\u0003\u0004'),
+  )
+  assert.equal(response.headers.get('content-type')?.split(';')[0], 'application/zip')
+})
+
+test('embedded remote attachments do not permit ZIP as an ordinary single PDF conversion', async () => {
+  const response = await proxyConversionRequest(
+    requestFor('office-pdf', {}, {}, [new File(['office text'], 'one.txt')], {
+      downloadFrom: [{ url: 'https://files.example.test/attachment.txt', field: 'embedded' }],
+    }),
+    async () => conversionResult('application/zip', 'PK\u0003\u0004'),
+  ).catch(proxyErrorResponse)
+  assert.equal(response.status, 502)
+})
+
+test('PDF conversion with a requested post-processing split may return ZIP', async () => {
+  const response = await proxyConversionRequest(
+    requestFor('url-pdf', { url: 'https://example.test' }, {}, [], {
+      advanced: { splitMode: 'intervals', splitSpan: '1' },
+    }),
+    async () => conversionResult('application/zip', 'PK\u0003\u0004'),
+  )
+  assert.equal(response.headers.get('content-type')?.split(';')[0], 'application/zip')
 })
 
 test('rejects successful non-200 conversions and acceptance without a webhook', async () => {

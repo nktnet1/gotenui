@@ -296,6 +296,36 @@ test('a single-page split returns a PDF without an unnecessary ZIP', async () =>
   expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
 }, 120_000)
 
+// Multi-document routes produce ZIP rather than PDF, even though a single
+// document uses the same endpoint with a PDF result.
+test.each([
+  { id: 'office-pdf', filenames: ['first.txt', 'second.txt'] },
+  { id: 'pdfa', filenames: ['first.pdf', 'second.pdf'] },
+])(
+  '$id accepts multiple documents as a ZIP result',
+  async ({ id, filenames }) => {
+    const fields: Record<string, string> = id === 'pdfa' ? { pdfa: 'PDF/A-2b' } : {}
+    const operation = OPERATIONS.find((value) => value.id === id)
+    if (!operation) throw new Error(`Missing ${id} operation`)
+    const files = filenames.map((name) =>
+      name.endsWith('.pdf')
+        ? pdfFile(name)
+        : new File(['Gotenui multi-document conversion'], name, { type: 'text/plain' }),
+    )
+    const response = await proxyConversionRequest(request(operation, { fields }, files))
+    if (!response.ok) {
+      throw new Error(
+        `${id} multi-document conversion failed: ${response.status} ${await response.text()}`,
+      )
+    }
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    expect(new TextDecoder().decode(bytes.subarray(0, 2))).toBe('PK')
+    expect(zipEntryCount(bytes)).toBe(2)
+  },
+  120_000,
+)
+
 test('local Gotenberg protects conversions and version, but leaves health public', async () => {
   const health = await fetch(`${backendUrl}/health`)
   expect(health.status).toBe(200)
