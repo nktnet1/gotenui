@@ -430,7 +430,10 @@ export async function proxyStatusRequest(
   let status: ServerStatus
   try {
     const health = await fetcher(urlJoin(url, '/health'), options)
-    if (!health.ok) throw new StatusProbeError(`Gotenberg returned HTTP ${health.status}.`)
+    if (!health.ok) {
+      await health.body?.cancel().catch(() => {})
+      throw new StatusProbeError(`Gotenberg returned HTTP ${health.status}.`)
+    }
     let healthPayload: unknown
     try {
       healthPayload = JSON.parse(await boundedStatusText(health, 128_000))
@@ -456,8 +459,12 @@ export async function proxyStatusRequest(
       const response = await fetcher(urlJoin(url, '/version'), options)
       if (response.status === 401 || response.status === 403) {
         versionAuthFailure = response.status
+        await response.body?.cancel().catch(() => {})
       } else if (response.ok) {
         version = (await boundedStatusText(response, 1_024)).trim().slice(0, 80) || 'Unknown'
+      } else {
+        // The optional version probe must not retain an unread upstream response.
+        await response.body?.cancel().catch(() => {})
       }
     } catch {
       // The version endpoint is optional, unless it explicitly rejects authentication.

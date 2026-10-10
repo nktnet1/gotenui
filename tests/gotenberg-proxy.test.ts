@@ -300,6 +300,71 @@ test('status rejects protected version responses even when the public health end
   })
 })
 
+test.each([401, 503])(
+  'status cancels rejected health HTTP %i without requesting the version',
+  async (code) => {
+    let cancelled = false
+    let versionRequests = 0
+    const failureBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('private upstream error'))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const response = await proxyStatusRequest(
+      new Request(`${origin}/api/gotenberg/status?url=http%3A%2F%2F127.0.0.1%3A3000`),
+      async (input) => {
+        if (String(input).endsWith('/version')) versionRequests++
+        return new Response(failureBody, { status: code })
+      },
+    )
+    assert.deepEqual(await response.json(), {
+      online: false,
+      version: 'Unavailable',
+      modules: [],
+      error: `Gotenberg returned HTTP ${code}.`,
+    })
+    assert.equal(versionRequests, 0)
+    assert.equal(cancelled, true, 'Rejected health response must release its upstream reader')
+  },
+)
+
+test.each([401, 403, 404, 503])(
+  'status cancels rejected version HTTP %i without leaking its response',
+  async (code) => {
+    let cancelled = false
+    const versionBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('private upstream error'))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const response = await proxyStatusRequest(
+      new Request(`${origin}/api/gotenberg/status?url=http%3A%2F%2F127.0.0.1%3A3000`),
+      async (input) =>
+        String(input).endsWith('/version')
+          ? new Response(versionBody, { status: code })
+          : Response.json({ status: 'up', details: {} }),
+    )
+    assert.deepEqual(
+      await response.json(),
+      code === 401 || code === 403
+        ? {
+            online: false,
+            version: 'Unavailable',
+            modules: [],
+            error: `Gotenberg returned HTTP ${code} from /version.`,
+          }
+        : { online: true, version: 'Unknown', modules: [] },
+    )
+    assert.equal(cancelled, true, 'Rejected version response must release its upstream reader')
+  },
+)
+
 test('browser-supplied Authorization headers are never forwarded to Gotenberg', async () => {
   const request = conversionRequest()
   request.headers.set('Authorization', 'Basic forged-browser-token')
