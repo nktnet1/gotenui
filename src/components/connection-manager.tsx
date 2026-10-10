@@ -127,7 +127,7 @@ export function ConnectionManager({
             id="connection-choice"
             value={draftId}
             onChange={(event) => choose(event.target.value)}
-            className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm"
+            className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
           >
             {browserProfiles.map((profile) => (
               <option key={profile.id} value={profile.id}>
@@ -174,7 +174,7 @@ export function ConnectionManager({
               placeholder="https://pdf.example.com"
               onChange={(e) => setUrl(e.target.value)}
             />
-            <p className="text-xs leading-5 text-slate-500">
+            <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
               Only URLs approved by the server's <code>GOTENBERG_ALLOWED_URLS</code> can be used.
             </p>
           </div>
@@ -182,7 +182,7 @@ export function ConnectionManager({
             <Label htmlFor="connection-auth">Authentication</Label>
             <select
               id="connection-auth"
-              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
+              className="h-10 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
               value={mode}
               onChange={(e) => {
                 setMode(e.target.value as BrowserConnection['auth'])
@@ -217,7 +217,7 @@ export function ConnectionManager({
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
               />
-              <p className="text-xs leading-5 text-slate-500">
+              <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
                 Credentials stay in this tab's memory, never in localStorage. Re-enter them after
                 refreshing or switching connections.
               </p>
@@ -225,16 +225,21 @@ export function ConnectionManager({
           )}
         </>
       ) : server ? (
-        <p className="rounded-lg bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-600">
+        <p className="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-3 py-3 text-xs leading-5 text-slate-600 dark:text-slate-300">
           This connection is configured by the deployment. Its address and upstream credentials are
           not exposed to the browser. Anyone with access to Gotenui can use the configured
           credentials for this profile.
         </p>
       ) : (
-        <p className="text-xs text-amber-700">This server connection is no longer available.</p>
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          This server connection is no longer available.
+        </p>
       )}
       {feedback && (
-        <p role="status" className="rounded-lg bg-slate-100 px-3 py-3 text-xs text-slate-800">
+        <p
+          role="status"
+          className="rounded-lg bg-slate-100 dark:bg-slate-800 px-3 py-3 text-xs text-slate-800 dark:text-slate-100"
+        >
           {feedback}
         </p>
       )}
@@ -242,13 +247,13 @@ export function ConnectionManager({
         <Button type="submit" disabled={!isBrowser && !server}>
           {isBrowser ? 'Save and use' : 'Use connection'}
         </Button>
-        <Button type="button" variant="outline" disabled={testing} onClick={() => void test()}>
+        <Button type="button" variant="accent" disabled={testing} onClick={() => void test()}>
           {testing ? 'Testing…' : 'Test connection'}
         </Button>
         {canDelete && existing && (
           <Button
             type="button"
-            variant="outline"
+            variant="destructive-outline"
             onClick={() => {
               onRemove(existing.id)
               choose(DEFAULT_CONNECTION_ID)
@@ -258,7 +263,7 @@ export function ConnectionManager({
           </Button>
         )}
       </div>
-      <p className="text-[11px] leading-5 text-slate-500">
+      <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
         Gotenui uses a stateless server-side proxy. Browser profile names and URLs are saved
         locally; user-entered secrets stay in tab memory. Server-managed credentials remain in the
         deployment environment.

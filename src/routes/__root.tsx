@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { Toaster } from 'sonner'
+import { ColorThemeProvider, useColorTheme } from '#/components/color-theme-provider'
 import appCss from '#/styles.css?url'
 
 export const Route = createRootRoute({
@@ -38,10 +39,17 @@ function Document({ children }: { children: ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        {children}
-        <Toaster position="bottom-right" richColors closeButton />
+        <ColorThemeProvider>
+          {children}
+          <ThemeToaster />
+        </ColorThemeProvider>
         <Scripts />
       </body>
     </html>
   )
+}
+
+function ThemeToaster() {
+  const { theme } = useColorTheme()
+  return <Toaster theme={theme} position="bottom-right" richColors closeButton />
 }

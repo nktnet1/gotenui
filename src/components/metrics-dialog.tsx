@@ -93,20 +93,23 @@ export function MetricsDialog({ connection, connectionName, onClose }: Props) {
         tabIndex={-1}
         aria-modal="true"
         aria-labelledby="metrics-heading"
-        className="relative w-full max-w-[850px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl sm:p-8"
+        className="relative w-full max-w-[850px] rounded-2xl bg-white dark:bg-slate-900 p-6 text-slate-900 dark:text-slate-100 shadow-2xl sm:p-8"
       >
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <h2 id="metrics-heading" className="flex items-center gap-2 text-lg font-extrabold">
-              <ChartNoAxesColumn className="size-5 text-sky-700" /> Prometheus metrics
+              <ChartNoAxesColumn className="size-5 text-sky-700 dark:text-sky-300" /> Prometheus
+              metrics
             </h2>
-            <p className="mt-1 text-xs text-slate-500">Selected instance: {connectionName}</p>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Selected instance: {connectionName}
+            </p>
           </div>
           <Button type="button" variant="ghost" size="icon" aria-label="Close" onClick={onClose}>
             <X className="size-5" />
           </Button>
         </div>
-        <div className="mb-5 flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-950">
+        <div className="mb-5 flex gap-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/50 p-4 text-xs leading-5 text-amber-950 dark:text-amber-100">
           <ShieldAlert className="size-5 shrink-0" />
           <p>
             Metrics may reveal internal instance details. Gotenui relies on the selected Gotenberg
@@ -121,13 +124,16 @@ export function MetricsDialog({ connection, connectionName, onClose }: Props) {
           </Button>
         </form>
         {error && (
-          <p role="alert" className="mt-4 rounded-lg bg-rose-50 px-3 py-3 text-xs text-rose-800">
+          <p
+            role="alert"
+            className="mt-4 rounded-lg bg-rose-50 dark:bg-rose-950/50 px-3 py-3 text-xs text-rose-800 dark:text-rose-200"
+          >
             {error}
           </p>
         )}
         {metrics !== null && (
           <div className="mt-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300">
               <span>
                 {summary?.families ?? 0} metric families · {summary?.samples ?? 0} samples
               </span>

@@ -14,9 +14,10 @@ See [ROADMAP.md](ROADMAP.md) for the remaining feature gaps, priorities, and pro
 - Multiple named connections in **Connection settings**: browser profiles are saved in `localStorage` (`gotenui.connections.v1`), with automatic migration from the former `gotenui.backend-url.v1` preference. Default: **https://demo.gotenberg.dev**. Server-managed profiles are configured through environment variables, with credentials kept server-side.
 - Conversions and health/version checks call **same-origin `/api/gotenberg/*` routes**. Nitro makes server-to-server requests to Gotenberg, so **the demo requires no CORS configuration**.
 - Input validation in both browser and server, explicit destination allowlist, independent per-connection Basic Auth or bearer-token support, with server-side credentials never exposed to browsers, streaming conversion responses, three-minute request timeout and an in-memory activity list.
-- Optional debug JSON (`GET /debug`) and legacy Prometheus metrics (`GET /prometheus/metrics`) for the selected instance. Gotenberg controls access; runtime `GOTENUI_SHOW_DEBUG` / `GOTENUI_SHOW_METRICS` flags hide the UI options without disabling the APIs.
-- A lightweight **Probe** button sends an authenticated, same-origin `HEAD /api/gotenberg/health` request to check Gotenberg without downloading a JSON body. HTTP 200 means healthy and 503 means unhealthy. The existing full status check remains responsible for verifying credentials against `/version`. Full status polling requires upstream HTTP 200 for successful health/version bodies, cancels unread non-200 responses, and rejects malformed or incomplete diagnostic response lengths, avoiding retained streams and false healthy reports during repeated checks.
-- Keyboard-focused connection, debug and metrics dialogs: initial focus, Tab/Shift+Tab containment, Escape dismissal and focus restoration. The mobile navigation drawer uses the same focus handling and is hidden from tab navigation when closed.
+- A persistent light/dark appearance toggle in the workspace header; defaults to the system colour scheme until a choice is saved in browser `localStorage` (`gotenui.color-theme.v1`). Only the visual preference is stored, never Gotenberg credentials or documents. Buttons and form controls have distinct light/dark contrast states.
+- Optional debug JSON (`GET /debug`) and legacy Prometheus metrics (`GET /prometheus/metrics`) within **Diagnostics** for the selected instance. Gotenberg controls access; `GOTENUI_SHOW_DEBUG` / `GOTENUI_SHOW_METRICS` hide only their respective actions without disabling the API routes.
+- The **Run health probe** action inside Diagnostics sends an authenticated, same-origin `HEAD /api/gotenberg/health` request to check Gotenberg without downloading a JSON body. HTTP 200 means healthy and 503 means unhealthy. The existing full status check remains responsible for verifying credentials against `/version`. Full status polling requires upstream HTTP 200 for successful health/version bodies, cancels unread non-200 responses, and rejects malformed or incomplete diagnostic response lengths, avoiding retained streams and false healthy reports during repeated checks.
+- Keyboard-focused connection, diagnostics and metrics dialogs: initial focus, Tab/Shift+Tab containment, Escape dismissal and focus restoration. The mobile navigation drawer uses the same focus handling and is hidden from tab navigation when closed.
 
 ## Development
 
@@ -133,7 +134,7 @@ All post-processing files use the existing bounded same-origin Nitro proxy and t
 
 ## Debug diagnostics and Prometheus metrics (Gotenberg-controlled)
 
-Gotenui no longer implements a separate administrator access key for diagnostics or metrics. Select **Diagnostics** in the header to request the selected instance's `/debug` JSON; from that dialog, open **Prometheus metrics**. If debug is hidden while metrics are shown, a standalone Metrics button appears in the header. The same selected connection's upstream Basic/Bearer authentication is forwarded to Gotenberg, and upstream `401`/`403` responses are respected.
+Gotenui no longer implements a separate administrator access key for diagnostics or metrics. Select **Diagnostics** in the header to run the lightweight `HEAD /health` probe, regardless of the debug/metrics visibility flags. When `GOTENUI_SHOW_DEBUG=true`, the same dialog offers **Read debug info** (`/debug`); when `GOTENUI_SHOW_METRICS=true`, it offers **Prometheus metrics**. The redundant debug warning panel has been removed; the security trade-off remains documented here. The same selected connection's upstream Basic/Bearer authentication is forwarded to Gotenberg, and upstream `401`/`403` responses are respected.
 
 **Runtime UI visibility flags**, read by the server on each connection-settings request:
 
@@ -180,7 +181,7 @@ The UI is client-rendered: there is no requirement for persistent server process
 | `GOTENBERG_BASIC_AUTH_USERNAME` | **Server-only** Basic Auth username for that URL. Cannot contain `:`. |
 | `GOTENBERG_BASIC_AUTH_PASSWORD` | **Server-only** legacy Basic Auth password for that URL; like other server-managed credentials, it may be used by anyone allowed to access the proxy. |
 | `GOTENUI_SERVER_CONNECTIONS` | Optional server-only JSON array of named connection profiles, each with ID, name, allowed URL and optional Basic/Bearer auth. |
-| `GOTENUI_SHOW_DEBUG` | Optional server-only runtime flag (`true` or `false`, default `true`) controlling visibility of the Debug diagnostics option. Does **not** disable the API. |
+| `GOTENUI_SHOW_DEBUG` | Optional server-only runtime flag (`true` or `false`, default `true`) controlling visibility of **Read debug info** within Diagnostics. Does **not** disable the API. |
 | `GOTENUI_SHOW_METRICS` | Optional server-only runtime flag (`true` or `false`, default `true`) controlling visibility of Prometheus metrics. Does **not** disable the API. |
 
 For example, to let the Settings UI select either the demo or a private Gotenberg instance:

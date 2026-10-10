@@ -83,10 +83,12 @@ export function MarkdownAssetsEditor({
     }
   }
   return (
-    <section className="space-y-5 rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+    <section className="space-y-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 p-4">
       <div>
-        <h3 className="text-sm font-semibold text-slate-800">Markdown documents and template</h3>
-        <p className="mt-1 text-xs leading-5 text-slate-500">
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+          Markdown documents and template
+        </h3>
+        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
           Gotenberg renders Markdown files in the order of the toHTML calls in index.html. Generated
           templates follow the source order shown here; custom templates control their own order.
         </p>
@@ -111,7 +113,7 @@ export function MarkdownAssetsEditor({
         >
           <FilePlus2 className="size-4" /> Add Markdown source
         </Button>
-        <label className="cursor-pointer rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100">
+        <label className="cursor-pointer rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700">
           Import .md files
           <input
             type="file"
@@ -129,9 +131,14 @@ export function MarkdownAssetsEditor({
         </label>
       </div>
       {sources.map((file, index) => (
-        <div key={file.id} className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
+        <div
+          key={file.id}
+          className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3"
+        >
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-slate-700">Source {index + 2}</span>
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+              Source {index + 2}
+            </span>
             <div className="flex items-center gap-1">
               <Button
                 type="button"
@@ -182,7 +189,7 @@ export function MarkdownAssetsEditor({
           />
         </div>
       ))}
-      <div className="space-y-3 border-t border-slate-200 pt-4">
+      <div className="space-y-3 border-t border-slate-200 dark:border-slate-700 pt-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <Label htmlFor="markdown-template">index.html template</Label>
           <div className="flex flex-wrap items-center gap-2">
@@ -216,7 +223,10 @@ export function MarkdownAssetsEditor({
           onChange={(event) => onCustomTemplateChange(event.target.value)}
           className="font-mono text-xs"
         />
-        <Label htmlFor="markdown-template-file" className="text-xs text-slate-500">
+        <Label
+          htmlFor="markdown-template-file"
+          className="text-xs text-slate-500 dark:text-slate-400"
+        >
           Or load a custom HTML template
         </Label>
         <Input
@@ -230,7 +240,7 @@ export function MarkdownAssetsEditor({
             void importTemplate(file)
           }}
         />
-        <p className="text-xs leading-5 text-slate-500">
+        <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
           Each Markdown file needs a matching <code>{'{{ toHTML "filename.md" }}'}</code> call.
           Assets must be referenced by their filename, not a directory path.
         </p>

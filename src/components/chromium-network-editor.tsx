@@ -29,10 +29,12 @@ export function ChromiumNetworkEditor({
     onHeadersChange(headers.map((item, i) => (i === index ? { ...item, ...changes } : item)))
 
   return (
-    <section className="space-y-5 rounded-lg border border-slate-200 bg-white p-4">
+    <section className="space-y-5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
       <div>
-        <h3 className="text-sm font-semibold text-slate-800">Chromium website authentication</h3>
-        <p className="mt-1 text-xs leading-5 text-slate-500">
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+          Chromium website authentication
+        </h3>
+        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
           Optional cookies and resource headers are sent by Chromium to the pages and assets it
           loads, not as HTTP headers from the browser to Gotenberg. Gotenberg controls outbound URL
           access. Keep credentials scoped to the intended host and use HTTPS.
@@ -40,7 +42,9 @@ export function ChromiumNetworkEditor({
       </div>
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-semibold text-slate-700">Cookies ({cookies.length}/20)</p>
+          <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+            Cookies ({cookies.length}/20)
+          </p>
           <Button
             type="button"
             variant="outline"
@@ -68,7 +72,7 @@ export function ChromiumNetworkEditor({
         {cookies.map((cookie, index) => (
           <div
             key={cookie.id}
-            className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/50 p-3"
+            className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 p-3"
           >
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -129,11 +133,11 @@ export function ChromiumNetworkEditor({
                 />
                 <Label htmlFor={`${id}-cookie-http-${index}`}>HTTP only</Label>
               </div>
-              <label className="flex items-center gap-2 text-xs text-slate-600">
+              <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
                 SameSite
                 <select
                   aria-label={`Cookie ${index + 1} SameSite`}
-                  className="rounded-md border border-slate-200 bg-white px-2 py-1"
+                  className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1"
                   value={cookie.sameSite}
                   onChange={(event) =>
                     updateCookie(index, {
@@ -160,9 +164,9 @@ export function ChromiumNetworkEditor({
           </div>
         ))}
       </div>
-      <div className="space-y-3 border-t border-slate-100 pt-4">
+      <div className="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-4">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-semibold text-slate-700">
+          <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
             Resource headers ({headers.length}/20)
           </p>
           <Button
@@ -177,16 +181,18 @@ export function ChromiumNetworkEditor({
             <Plus className="size-3.5" /> Add header
           </Button>
         </div>
-        <p className="text-xs leading-5 text-slate-500">
+        <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
           Each header needs an explicit URL-matching regular expression. For example,
-          <code className="ml-1 rounded bg-slate-100 px-1">^https://portal\.example\.com/</code>.
-          This avoids accidentally sending tokens to third-party fonts, scripts, or images. Do not
+          <code className="ml-1 rounded bg-slate-100 dark:bg-slate-800 px-1">
+            ^https://portal\.example\.com/
+          </code>
+          . This avoids accidentally sending tokens to third-party fonts, scripts, or images. Do not
           put credentials in an unscoped Advanced JSON field.
         </p>
         {headers.map((header, index) => (
           <div
             key={header.id}
-            className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/50 p-3"
+            className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 p-3"
           >
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">

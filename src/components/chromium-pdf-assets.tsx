@@ -36,10 +36,12 @@ export function ChromiumPdfAssets({
   onFooterChange,
 }: Props) {
   return (
-    <section className="space-y-4 border-t border-slate-100 pt-5">
+    <section className="space-y-4 border-t border-slate-100 dark:border-slate-800 pt-5">
       <div>
-        <h3 className="text-sm font-semibold text-slate-800">Custom PDF header and footer</h3>
-        <p className="mt-1 text-xs leading-5 text-slate-500">
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+          Custom PDF header and footer
+        </h3>
+        <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
           Optional complete HTML documents, sent as header.html and footer.html. Gotenberg renders
           them in a separate Chromium context: inline CSS and base64-encoded images only. External
           resources and JavaScript do not work. Allow enough top/bottom page margin to avoid
@@ -68,7 +70,7 @@ export function ChromiumPdfAssets({
                 onChange={(event) => onChange(event.target.value)}
                 className="font-mono text-xs"
               />
-              <Label htmlFor={`${id}-file`} className="text-xs text-slate-500">
+              <Label htmlFor={`${id}-file`} className="text-xs text-slate-500 dark:text-slate-400">
                 Or load {label.toLowerCase()} from an HTML file
               </Label>
               <Input

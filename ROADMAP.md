@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.40 (complete PDF version-header and response-prefix length checks).
+- **Baseline:** v1.0.41 (diagnostics grouping, clearer actions, and light/dark appearance).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -45,7 +45,14 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.38** | Release | Diagnostic response integrity | Reject malformed and mismatched uncompressed Content-Length values on health/version, debug and metrics responses; maintain body-size caps, compressed-body compatibility and cancellation tests. |
 | **v1.0.39** | Release | Diagnostic HTTP status compatibility | Reject successful-looking partial or unexpected 2xx upstream diagnostic responses; require HTTP 200 for health, version, debug and legacy metrics, cancelling unread bodies. Add unit and built Nitro smoke regressions. |
 | **v1.0.40** | Fix | Conversion prefix integrity | Reject incomplete/invalid PDF version headers and declared uncompressed response lengths shorter than the binary signature or bytes already read for signature validation, before sending download headers. Retain PDF 1.x/2.0 compatibility and streaming. |
+| **v1.0.41** | Usability | Diagnostics, button visibility and dark mode | Group the HEAD health probe inside always-accessible Diagnostics, keep debug and metrics actions independently gated, remove redundant debug warning, improve action contrast, and add an accessible persistent light/dark toggle. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
+
+### v1.0.41 appearance and diagnostics
+
+The header now has a light/dark toggle that defaults to the operating system preference and stores an explicit override in browser `localStorage` (`gotenui.color-theme.v1`). Sonner notifications and the native form colour scheme follow the same selection. Appearance settings are client-only and independent of connection profiles, server credentials, or uploads. An accent **Test connection** action and tinted secondary/danger buttons are more distinguishable on both backgrounds.
+
+The **Diagnostics** dialog is always reachable and contains the selected connection's authenticated `HEAD /health` probe, even when both optional diagnostic feature flags are false. Debug JSON and legacy metrics remain separately gated by their respective UI flags, and the redundant debug warning banner is removed. The upstream authentication and proxy security contract is unchanged. Non-browser Vitest coverage checks saved appearance preferences, control contrast classes, and conditional diagnostic action visibility. **Visual desktop/mobile and assistive-technology verification remains outstanding.**
 
 ### P0 — Correctness and request contracts
 

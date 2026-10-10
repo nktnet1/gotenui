@@ -24,6 +24,7 @@ import {
   Layers3,
   LockKeyhole,
   Menu,
+  Moon,
   PanelLeftClose,
   Play,
   RefreshCw,
@@ -32,6 +33,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Sun,
   WandSparkles,
   X,
 } from 'lucide-react'
@@ -44,8 +46,9 @@ import {
   type HeaderRow,
 } from '#/components/chromium-network-editor'
 import { ChromiumPdfAssets } from '#/components/chromium-pdf-assets'
+import { useColorTheme } from '#/components/color-theme-provider'
 import { ConnectionManager } from '#/components/connection-manager'
-import { DebugDialog } from '#/components/debug-dialog'
+import { DiagnosticsDialog } from '#/components/diagnostics-dialog'
 import { MarkdownAssetsEditor, type MarkdownSource } from '#/components/markdown-assets-editor'
 import { MetricsDialog } from '#/components/metrics-dialog'
 import {
@@ -89,7 +92,6 @@ import {
   convertWithGotenberg,
   getGotenbergStatus,
   MAX_UPLOAD_BYTES,
-  probeGotenbergHealth,
   REQUEST_TIMEOUT_MS,
   type ServerStatus,
 } from '#/lib/gotenberg-client'
@@ -239,14 +241,14 @@ function ConnectionDialog({
         tabIndex={-1}
         aria-modal="true"
         aria-labelledby="connection-heading"
-        className="relative w-full max-w-[550px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl sm:p-8"
+        className="relative w-full max-w-[550px] rounded-2xl bg-white dark:bg-slate-900 p-6 text-slate-900 dark:text-slate-100 shadow-2xl sm:p-8"
       >
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h2 id="connection-heading" className="text-lg font-extrabold tracking-tight">
               Connection settings
             </h2>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               Switch between browser and server-managed connections.
             </p>
           </div>
@@ -350,7 +352,7 @@ function Sidebar({
         </div>
         <div className="px-4 pt-5">
           <div className="relative">
-            <Search className="absolute top-2.5 left-3 size-4 text-slate-500" />
+            <Search className="absolute top-2.5 left-3 size-4 text-slate-500 dark:text-slate-400" />
             <input
               aria-label="Search operations"
               type="search"
@@ -370,7 +372,7 @@ function Sidebar({
             if (items.length === 0) return null
             return (
               <div key={group} className="mb-5">
-                <p className="mb-2 px-3 text-[10px] font-extrabold tracking-[.16em] text-slate-500 uppercase">
+                <p className="mb-2 px-3 text-[10px] font-extrabold tracking-[.16em] text-slate-500 dark:text-slate-400 uppercase">
                   {group}
                 </p>
                 <div className="space-y-0.5">
@@ -396,7 +398,9 @@ function Sidebar({
                         <Icon
                           className={cn(
                             'size-4 shrink-0',
-                            active ? 'text-sky-400' : 'text-slate-500 group-hover:text-slate-300',
+                            active
+                              ? 'text-sky-400'
+                              : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-300',
                           )}
                         />
                         <span className="flex-1 truncate">{operation.title}</span>
@@ -430,7 +434,7 @@ function Sidebar({
                   : 'Checking connection...'}
               </p>
             </div>
-            <Activity className="size-4 text-slate-500" />
+            <Activity className="size-4 text-slate-500 dark:text-slate-400" />
           </div>
           <button
             type="button"
@@ -458,12 +462,14 @@ function FieldControl({
   const id = useId()
   if (field.kind === 'toggle')
     return (
-      <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50/50 px-3.5 py-3">
+      <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 px-3.5 py-3">
         <div>
           <Label htmlFor={id} className="cursor-pointer">
             {field.label}
           </Label>
-          {field.description && <p className="mt-1 text-xs text-slate-500">{field.description}</p>}
+          {field.description && (
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{field.description}</p>
+          )}
         </div>
         <Switch id={id} checked={value === true} onCheckedChange={onChange} />
       </div>
@@ -472,13 +478,13 @@ function FieldControl({
     <div className="space-y-2">
       <Label htmlFor={id}>
         {field.label}
-        {field.required && <span className="ml-1 text-red-500">*</span>}
+        {field.required && <span className="ml-1 text-red-500 dark:text-red-400">*</span>}
       </Label>
       {field.kind === 'select' ? (
         <div className="relative">
           <select
             id={id}
-            className="h-11 w-full appearance-none rounded-lg border border-slate-200 bg-white px-3.5 pr-9 text-sm text-slate-900 outline-none focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-100"
+            className="h-11 w-full appearance-none rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 pr-9 text-sm text-slate-900 dark:text-slate-100 outline-none focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-100 dark:focus-visible:ring-sky-900"
             value={String(value ?? '')}
             onChange={(event) => onChange(event.target.value)}
             required={field.required}
@@ -525,7 +531,9 @@ function FieldControl({
           required={field.required}
         />
       )}
-      {field.description && <p className="text-xs text-slate-500">{field.description}</p>}
+      {field.description && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">{field.description}</p>
+      )}
     </div>
   )
 }
@@ -557,34 +565,38 @@ function JobPanel({
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Settings2 className="size-4 text-sky-600" />
-            <h2 className="text-sm font-bold text-slate-900">Job overview</h2>
+            <Settings2 className="size-4 text-sky-600 dark:text-sky-400" />
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">Job overview</h2>
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="flex items-center gap-3">
-            <div className="flex size-11 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+            <div className="flex size-11 items-center justify-center rounded-xl bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400">
               <Icon className="size-5" />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-900">{operation.title}</p>
-              <p className="mt-0.5 text-xs text-slate-500">{operation.group}</p>
+              <p className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                {operation.title}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{operation.group}</p>
             </div>
           </div>
-          <div className="space-y-3 border-t border-slate-100 pt-4">
+          <div className="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-4">
             <div className="flex justify-between gap-4 text-xs">
-              <span className="text-slate-500">Method</span>
-              <span className="font-mono font-semibold text-slate-700">POST</span>
+              <span className="text-slate-500 dark:text-slate-400">Method</span>
+              <span className="font-mono font-semibold text-slate-700 dark:text-slate-200">
+                POST
+              </span>
             </div>
             <div className="space-y-1">
-              <span className="text-xs text-slate-500">Gotenberg endpoint</span>
-              <code className="block break-all rounded-lg bg-slate-100 px-3 py-2.5 text-[11px] leading-5 text-slate-700">
+              <span className="text-xs text-slate-500 dark:text-slate-400">Gotenberg endpoint</span>
+              <code className="block break-all rounded-lg bg-slate-100 dark:bg-slate-800 px-3 py-2.5 text-[11px] leading-5 text-slate-700 dark:text-slate-200">
                 {operation.path}
               </code>
             </div>
             <div className="flex justify-between gap-4 text-xs">
-              <span className="text-slate-500">Files selected</span>
-              <span className="font-semibold text-slate-700">
+              <span className="text-slate-500 dark:text-slate-400">Files selected</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-200">
                 {files.length +
                   auxFiles.length +
                   (postFiles.embeds?.length ?? 0) +
@@ -594,8 +606,8 @@ function JobPanel({
               </span>
             </div>
             <div className="flex justify-between gap-4 text-xs">
-              <span className="text-slate-500">Upload size</span>
-              <span className="font-semibold text-slate-700">
+              <span className="text-slate-500 dark:text-slate-400">Upload size</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-200">
                 {formatBytes(
                   [
                     ...files,
@@ -610,8 +622,8 @@ function JobPanel({
               </span>
             </div>
             <div className="flex justify-between gap-4 text-xs">
-              <span className="text-slate-500">Target output</span>
-              <span className="font-semibold uppercase text-slate-700">
+              <span className="text-slate-500 dark:text-slate-400">Target output</span>
+              <span className="font-semibold uppercase text-slate-700 dark:text-slate-200">
                 {operation.output === 'image'
                   ? 'PNG / JPEG / WebP'
                   : operation.output === 'pdf' || operation.id === 'split'
@@ -620,7 +632,7 @@ function JobPanel({
               </span>
             </div>
           </div>
-          <p className="flex items-start gap-2 rounded-lg bg-sky-50 px-3 py-3 text-[11px] leading-5 text-sky-800">
+          <p className="flex items-start gap-2 rounded-lg bg-sky-50 dark:bg-sky-950/50 px-3 py-3 text-[11px] leading-5 text-sky-800 dark:text-sky-300">
             <ShieldCheck className="mt-0.5 size-4 shrink-0" />
             Your uploads are sent through Gotenui's server-side proxy, with a per-job file limit of
             {` ${formatBytes(MAX_UPLOAD_BYTES)}`}. The proxy only contacts approved Gotenberg URLs.
@@ -630,17 +642,17 @@ function JobPanel({
       {(pending || lastDownload || acceptedWebhook) && (
         <Card>
           <CardHeader>
-            <h2 className="text-sm font-bold text-slate-900">Latest result</h2>
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">Latest result</h2>
           </CardHeader>
           <CardContent>
             {pending ? (
-              <div className="flex items-center gap-3 text-sm text-slate-500">
-                <RefreshCw className="size-5 animate-spin text-sky-600" />
+              <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
+                <RefreshCw className="size-5 animate-spin text-sky-600 dark:text-sky-400" />
                 Processing document...
               </div>
             ) : acceptedWebhook ? (
-              <div role="status" className="space-y-3 text-xs text-slate-600">
-                <p className="font-semibold text-sky-800">
+              <div role="status" className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+                <p className="font-semibold text-sky-800 dark:text-sky-300">
                   HTTP {acceptedWebhook.status}: accepted for asynchronous processing
                 </p>
                 <p>
@@ -653,8 +665,10 @@ function JobPanel({
                 </p>
                 {acceptedWebhook.trace && (
                   <div className="space-y-1">
-                    <p className="font-semibold text-slate-700">Gotenberg-Trace</p>
-                    <code className="block break-all rounded-lg bg-slate-100 px-3 py-2 text-[11px]">
+                    <p className="font-semibold text-slate-700 dark:text-slate-200">
+                      Gotenberg-Trace
+                    </p>
+                    <code className="block break-all rounded-lg bg-slate-100 dark:bg-slate-800 px-3 py-2 text-[11px]">
                       {acceptedWebhook.trace}
                     </code>
                     <Button
@@ -680,21 +694,21 @@ function JobPanel({
               lastDownload && (
                 <>
                   <div className="mb-4 flex items-center gap-3">
-                    <div className="flex size-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                    <div className="flex size-10 items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400">
                       <Check className="size-5" />
                     </div>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-slate-900">
+                      <p className="truncate text-sm font-bold text-slate-900 dark:text-slate-100">
                         {lastDownload.name}
                       </p>
-                      <p className="mt-0.5 text-xs text-slate-500">
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                         {formatBytes(lastDownload.size)} · Ready
                       </p>
                     </div>
                   </div>
                   {lastDownload.type.startsWith('image/') && (
                     <img
-                      className="mb-4 max-h-52 w-full rounded-lg border border-slate-100 object-contain"
+                      className="mb-4 max-h-52 w-full rounded-lg border border-slate-100 dark:border-slate-800 object-contain"
                       src={lastDownload.url}
                       alt="Latest screenshot"
                     />
@@ -726,17 +740,21 @@ function JobPanel({
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Clock3 className="size-4 text-slate-500" />
-            <h2 className="text-sm font-bold text-slate-900">Session activity</h2>
+            <Clock3 className="size-4 text-slate-500 dark:text-slate-400" />
+            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              Session activity
+            </h2>
           </div>
         </CardHeader>
         <CardContent>
           {recent.length === 0 ? (
             <div className="py-3 text-center">
-              <div className="mx-auto mb-3 flex size-10 items-center justify-center rounded-full bg-slate-100">
+              <div className="mx-auto mb-3 flex size-10 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
                 <FileDown className="size-4 text-slate-400" />
               </div>
-              <p className="text-xs font-semibold text-slate-700">Nothing processed yet</p>
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                Nothing processed yet
+              </p>
               <p className="mt-1 text-xs text-slate-400">Your recent jobs will appear here.</p>
             </div>
           ) : (
@@ -745,7 +763,9 @@ function JobPanel({
                 <li key={job.id} className="flex items-start gap-2.5">
                   <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold text-slate-800">{job.name}</p>
+                    <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">
+                      {job.name}
+                    </p>
                     <p className="mt-0.5 text-[11px] text-slate-400">
                       {job.operation} · {(job.elapsed / 1000).toFixed(1)}s · {formatBytes(job.size)}
                     </p>
@@ -988,16 +1008,18 @@ function Workbench({
           <CardHeader>
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <div className="mb-2 flex items-center gap-2 text-[11px] font-bold tracking-[.1em] text-sky-700 uppercase">
+                <div className="mb-2 flex items-center gap-2 text-[11px] font-bold tracking-[.1em] text-sky-700 dark:text-sky-300 uppercase">
                   <span className="size-1.5 rounded-full bg-sky-500" />
                   Step 01 / Your input
                 </div>
-                <h2 className="text-base font-extrabold text-slate-900">Source document</h2>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
+                <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                  Source document
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
                   Provide the content you want Gotenberg to process.
                 </p>
               </div>
-              <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                 {hasUpload ? (
                   <FileUp className="size-5" />
                 ) : isSourceEditor ? (
@@ -1044,7 +1066,7 @@ function Workbench({
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <Label htmlFor="source-editor">{sourceExtension} source</Label>
-                  <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] font-semibold text-slate-500">
+                  <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-1 font-mono text-[10px] font-semibold text-slate-500 dark:text-slate-400">
                     {operation.input === 'html' ? 'index.html' : markdownName}
                   </span>
                 </div>
@@ -1056,7 +1078,7 @@ function Workbench({
                   onChange={(event) => setSource(event.target.value)}
                   className="min-h-72 resize-y bg-[#0d1e2e] p-5 font-mono text-xs leading-6 text-sky-100 focus-visible:border-sky-500"
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   {operation.input === 'html'
                     ? 'HTML renders with Chromium, including inline CSS and scripts.'
                     : 'Edit this Markdown document, then add more named sources or customize its HTML template below.'}
@@ -1097,12 +1119,14 @@ function Workbench({
         </Card>
         <Card>
           <CardHeader>
-            <div className="mb-2 flex items-center gap-2 text-[11px] font-bold tracking-[.1em] text-sky-700 uppercase">
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-bold tracking-[.1em] text-sky-700 dark:text-sky-300 uppercase">
               <span className="size-1.5 rounded-full bg-sky-500" />
               Step 02 / Configure
             </div>
-            <h2 className="text-base font-extrabold text-slate-900">Output settings</h2>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
+            <h2 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+              Output settings
+            </h2>
+            <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
               Fine-tune how your output should look and behave.
             </p>
           </CardHeader>
@@ -1122,7 +1146,7 @@ function Workbench({
                   ))}
               </div>
             ) : !standaloneKind ? (
-              <p className="rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-500">
+              <p className="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
                 This operation works with its default settings.
               </p>
             ) : null}
@@ -1154,7 +1178,7 @@ function Workbench({
                 onFilesChange={setPostFiles}
               />
             )}
-            <div className="space-y-2 border-t border-slate-100 pt-5">
+            <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-5">
               <Label htmlFor="output-filename">
                 Output filename <span className="font-normal text-slate-400">(optional)</span>
               </Label>
@@ -1165,24 +1189,24 @@ function Workbench({
                 placeholder={`e.g. ${operation.id}-result (without extension)`}
                 maxLength={100}
               />
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 {operation.output === 'json'
                   ? 'Names the browser download. Gotenberg metadata responses do not support the output filename header.'
                   : 'Sets Gotenberg-Output-Filename and the browser download name. Gotenberg adds the extension automatically; leave blank for its default.'}
               </p>
             </div>
             <details
-              className="group rounded-xl border border-slate-200 bg-slate-50/50"
+              className="group rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40"
               open={undefined}
             >
-              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-4 text-sm font-semibold text-slate-700 marker:hidden">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-4 text-sm font-semibold text-slate-700 dark:text-slate-200 marker:hidden">
                 <span className="flex items-center gap-2">
-                  <Settings2 className="size-4 text-slate-500" />
+                  <Settings2 className="size-4 text-slate-500 dark:text-slate-400" />
                   Advanced options
                 </span>
                 <ChevronDown className="size-4 text-slate-400 transition-transform group-open:rotate-180" />
               </summary>
-              <div className="space-y-5 border-t border-slate-200 px-4 py-5">
+              <div className="space-y-5 border-t border-slate-200 dark:border-slate-700 px-4 py-5">
                 {advancedFields.length > 0 && (
                   <div className="grid gap-4 sm:grid-cols-2">
                     {advancedFields.map((field) => (
@@ -1204,7 +1228,7 @@ function Workbench({
                     newId={() => nextNetworkId.current++}
                   />
                 )}
-                <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
+                <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
                   <div>
                     <Label htmlFor="request-trace">Gotenberg request ID (optional)</Label>
                     <Input
@@ -1215,7 +1239,7 @@ function Workbench({
                       placeholder="e.g. invoice-batch-42"
                       className="mt-2 font-mono text-xs"
                     />
-                    <p className="mt-1 text-xs text-slate-500">
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       Gotenberg-Trace identifies a request in upstream logs and webhook callbacks.
                       It is not a distributed trace ID.
                     </p>
@@ -1230,7 +1254,7 @@ function Workbench({
                       placeholder="00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
                       className="mt-2 font-mono text-xs"
                     />
-                    <p className="mt-1 text-xs text-slate-500">
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       Continue an OpenTelemetry trace on Gotenberg 8.34+. Do not paste a secret or
                       unrelated identifier here.
                     </p>
@@ -1245,7 +1269,7 @@ function Workbench({
                       placeholder="vendor=value"
                       className="mt-2 font-mono text-xs"
                     />
-                    <p className="mt-1 text-xs text-slate-500">
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                       Optional vendor context; requires a valid traceparent.
                     </p>
                   </div>
@@ -1261,7 +1285,7 @@ function Workbench({
                     value={advanced}
                     onChange={(event) => setAdvanced(event.target.value)}
                   />
-                  <p className="text-[11px] leading-5 text-slate-500">
+                  <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
                     Use this for documented options not shown above. Enter flat JSON key/value
                     pairs; enter remote inputs and webhooks separately below.
                   </p>
@@ -1284,8 +1308,8 @@ function Workbench({
             </details>
           </CardContent>
         </Card>
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-          <div className="flex items-center gap-2 text-xs text-slate-500">
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-5 py-4 shadow-sm">
+          <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
             <ShieldCheck className="size-4 text-emerald-500" />
             <span>Processing through the same-origin Gotenui proxy</span>
           </div>
@@ -1324,7 +1348,7 @@ function Workbench({
         href={docsUrl}
         target="_blank"
         rel="noreferrer noopener"
-        className="flex items-center gap-2 text-xs font-semibold text-sky-700 hover:text-sky-900 xl:col-span-2"
+        className="flex items-center gap-2 text-xs font-semibold text-sky-700 dark:text-sky-300 hover:text-sky-900 dark:hover:text-sky-200 xl:col-span-2"
       >
         <ExternalLink className="size-4" />
         Review official Gotenberg documentation for {operation.title}
@@ -1364,10 +1388,9 @@ function Workspace({
   const operation = OPERATION_BY_ID.get(selectedId) ?? (OPERATIONS[0] as Operation)
   const Icon = ICONS[operation.id] ?? FileText
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [debugOpen, setDebugOpen] = useState(false)
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const { theme, toggleTheme } = useColorTheme()
   const [metricsOpen, setMetricsOpen] = useState(false)
-  const [probeLoading, setProbeLoading] = useState(false)
-  const probeAbort = useRef<AbortController | null>(null)
   const statusAbort = useRef<AbortController | null>(null)
   const refreshStatus = useCallback(async () => {
     statusAbort.current?.abort()
@@ -1395,31 +1418,6 @@ function Workspace({
       }
     }
   }, [connection])
-  const probeHealth = useCallback(async () => {
-    probeAbort.current?.abort()
-    const controller = new AbortController()
-    probeAbort.current = controller
-    setProbeLoading(true)
-    try {
-      const healthy = await probeGotenbergHealth(
-        connection,
-        AbortSignal.any([controller.signal, AbortSignal.timeout(7_000)]),
-      )
-      if (!controller.signal.aborted) {
-        if (healthy) toast.success('Gotenberg health probe returned 200 (healthy).')
-        else toast.warning('Gotenberg health probe returned 503 (unhealthy).')
-      }
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        toast.error(error instanceof Error ? error.message : 'Health probe failed.')
-      }
-    } finally {
-      if (probeAbort.current === controller) {
-        probeAbort.current = null
-        setProbeLoading(false)
-      }
-    }
-  }, [connection])
   useEffect(() => {
     setStatus(null)
     void refreshStatus()
@@ -1428,8 +1426,6 @@ function Workspace({
       window.clearInterval(timer)
       statusAbort.current?.abort()
       statusAbort.current = null
-      probeAbort.current?.abort()
-      probeAbort.current = null
     }
   }, [refreshStatus])
   const applyConnection = (id: string, username: string, secret: string) => {
@@ -1441,7 +1437,7 @@ function Workspace({
     setSettingsOpen(false)
   }
   return (
-    <div className="min-h-screen bg-[#f6f8fb] text-slate-900">
+    <div className="min-h-screen bg-[#f6f8fb] dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       <Sidebar
         selectedId={selectedId}
         onSelect={setSelectedId}
@@ -1454,7 +1450,7 @@ function Workspace({
         setMobileOpen={setMobileOpen}
       />
       <div className="min-h-screen lg:pl-[270px]">
-        <header className="sticky top-0 z-20 flex h-[72px] items-center justify-between gap-3 border-b border-slate-200/80 bg-white/95 px-5 backdrop-blur-xl md:px-9">
+        <header className="sticky top-0 z-20 flex h-[72px] items-center justify-between gap-3 border-b border-slate-200/80 dark:border-slate-700/80 bg-white/95 dark:bg-slate-900/95 px-5 backdrop-blur-xl md:px-9">
           <div className="flex min-w-0 items-center gap-3">
             <Button
               type="button"
@@ -1468,17 +1464,21 @@ function Workspace({
             >
               <Menu className="size-5" />
             </Button>
-            <span className="truncate text-xs font-semibold text-slate-500">Workspace</span>
+            <span className="truncate text-xs font-semibold text-slate-500 dark:text-slate-400">
+              Workspace
+            </span>
             <span className="text-slate-300">/</span>
-            <span className="truncate text-xs font-bold text-slate-900">{operation.group}</span>
+            <span className="truncate text-xs font-bold text-slate-900 dark:text-slate-100">
+              {operation.group}
+            </span>
           </div>
           <div className="flex items-center gap-2.5">
             <div
               className={cn(
                 'hidden items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold sm:flex',
                 status?.online
-                  ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
-                  : 'border-amber-100 bg-amber-50 text-amber-700',
+                  ? 'border-emerald-100 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
+                  : 'border-amber-100 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
               )}
             >
               <span
@@ -1503,43 +1503,28 @@ function Workspace({
             >
               <RefreshCw className={cn('size-4', statusLoading && 'animate-spin')} />
             </Button>
-            <span className="mx-1 h-5 w-px bg-slate-200" />
+            <span className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
-              onClick={() => void probeHealth()}
-              disabled={probeLoading}
-              aria-label="Probe Gotenberg HEAD health"
-              title="Probe HEAD /health (200 healthy, 503 unhealthy)"
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
             >
-              <Activity className={cn('size-4', probeLoading && 'animate-pulse')} />
-              <span className="hidden md:inline">Probe</span>
+              {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+              <span className="hidden xl:inline">{theme === 'dark' ? 'Light' : 'Dark'}</span>
             </Button>
-            {features.showDebug && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setDebugOpen(true)}
-                aria-label="Open debug diagnostics"
-              >
-                <Braces className="size-4" />
-                <span className="hidden md:inline">Diagnostics</span>
-              </Button>
-            )}
-            {!features.showDebug && features.showMetrics && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setMetricsOpen(true)}
-                aria-label="Open Prometheus metrics"
-              >
-                <Activity className="size-4" />
-                <span className="hidden md:inline">Metrics</span>
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDiagnosticsOpen(true)}
+              aria-label="Open diagnostics"
+            >
+              <Activity className="size-4" />
+              <span className="hidden md:inline">Diagnostics</span>
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -1549,26 +1534,26 @@ function Workspace({
             >
               <Settings2 className="size-4" />
               <span className="hidden max-w-44 truncate md:inline">{connectionName}</span>
-              <span className="md:hidden">Settings</span>
+              <span className="hidden sm:inline md:hidden">Settings</span>
             </Button>
           </div>
         </header>
         <main className="mx-auto max-w-[1390px] px-5 pt-8 pb-14 md:px-9 md:pt-10">
           <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
             <div className="max-w-2xl">
-              <p className="mb-3 flex items-center gap-2 text-[11px] font-extrabold tracking-[.16em] text-sky-700 uppercase">
+              <p className="mb-3 flex items-center gap-2 text-[11px] font-extrabold tracking-[.16em] text-sky-700 dark:text-sky-300 uppercase">
                 <Sparkles className="size-3.5" />
                 Document operations
               </p>
               <div className="flex items-center gap-3">
-                <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-sky-100 bg-sky-50 text-sky-600">
+                <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-sky-100 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400">
                   <Icon className="size-6" />
                 </div>
-                <h1 className="text-[29px] font-extrabold tracking-[-.04em] text-slate-950 sm:text-[36px]">
+                <h1 className="text-[29px] font-extrabold tracking-[-.04em] text-slate-950 dark:text-white sm:text-[36px]">
                   {operation.title}
                 </h1>
               </div>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-slate-500">
+              <p className="mt-3 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
                 {operation.summary} Configure your output and let Gotenberg take care of the rest.
               </p>
             </div>
@@ -1576,7 +1561,7 @@ function Workspace({
               href="https://gotenberg.dev/docs/getting-started/routes"
               target="_blank"
               rel="noreferrer noopener"
-              className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 text-xs font-bold text-slate-600 dark:text-slate-300 shadow-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-700"
             >
               <FileText className="size-4" />
               API reference
@@ -1584,12 +1569,14 @@ function Workspace({
             </a>
           </div>
           <div className="mb-7 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-slate-200/80 bg-white px-4 py-4 shadow-sm">
+            <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-900 px-4 py-4 shadow-sm">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500">Connection</span>
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  Connection
+                </span>
                 <Activity className="size-4 text-slate-400" />
               </div>
-              <p className="mt-2 flex items-center gap-2 text-base font-extrabold text-slate-900">
+              <p className="mt-2 flex items-center gap-2 text-base font-extrabold text-slate-900 dark:text-slate-100">
                 <span
                   className={cn(
                     'size-2 rounded-full',
@@ -1599,21 +1586,25 @@ function Workspace({
                 {status?.online ? 'Operational' : statusLoading ? 'Checking' : 'Unavailable'}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200/80 bg-white px-4 py-4 shadow-sm">
+            <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-900 px-4 py-4 shadow-sm">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500">Gotenberg version</span>
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  Gotenberg version
+                </span>
                 <Layers3 className="size-4 text-slate-400" />
               </div>
-              <p className="mt-2 truncate text-base font-extrabold text-slate-900">
+              <p className="mt-2 truncate text-base font-extrabold text-slate-900 dark:text-slate-100">
                 {status?.version ?? '—'}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200/80 bg-white px-4 py-4 shadow-sm">
+            <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-900 px-4 py-4 shadow-sm">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500">Modules healthy</span>
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  Modules healthy
+                </span>
                 <CheckCircle2 className="size-4 text-slate-400" />
               </div>
-              <p className="mt-2 text-base font-extrabold text-slate-900">
+              <p className="mt-2 text-base font-extrabold text-slate-900 dark:text-slate-100">
                 {status?.modules.length
                   ? `${status.modules.filter((module) => module.status === 'up').length} / ${status.modules.length}`
                   : '—'}
@@ -1623,9 +1614,11 @@ function Workspace({
           {status?.error && (
             <div
               role="status"
-              className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"
+              className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/50 px-4 py-3"
             >
-              <p className="max-w-3xl text-xs leading-5 text-amber-900">{status.error}</p>
+              <p className="max-w-3xl text-xs leading-5 text-amber-900 dark:text-amber-200">
+                {status.error}
+              </p>
               <Button
                 type="button"
                 variant="outline"
@@ -1637,7 +1630,9 @@ function Workspace({
             </div>
           )}
           <div className="mb-6 flex flex-wrap items-center gap-2">
-            <p className="mr-1 text-xs font-bold text-slate-500">Quick access</p>
+            <p className="mr-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+              Quick access
+            </p>
             {OPERATIONS.filter((item) => item.featured).map((item) => (
               <button
                 key={item.id}
@@ -1646,8 +1641,8 @@ function Workspace({
                 className={cn(
                   'cursor-pointer rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors',
                   selectedId === item.id
-                    ? 'border-sky-200 bg-sky-50 text-sky-700'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:text-sky-700',
+                    ? 'border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-200 dark:hover:border-sky-700 hover:text-sky-700 dark:hover:text-sky-300',
                 )}
               >
                 {item.title}
@@ -1661,21 +1656,22 @@ function Workspace({
             onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
             connection={connection}
           />
-          <footer className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-5 text-[11px] text-slate-400">
+          <footer className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 dark:border-slate-700 pt-5 text-[11px] text-slate-400">
             <span>Gotenui · Stateless document workbench</span>
             <span>TanStack Start · Serverless Gotenberg proxy</span>
           </footer>
         </main>
       </div>
-      {features.showDebug && debugOpen && (
-        <DebugDialog
+      {diagnosticsOpen && (
+        <DiagnosticsDialog
           connection={connection}
           connectionName={connectionName}
-          onClose={() => setDebugOpen(false)}
+          onClose={() => setDiagnosticsOpen(false)}
+          showDebug={features.showDebug}
           onOpenMetrics={
             features.showMetrics
               ? () => {
-                  setDebugOpen(false)
+                  setDiagnosticsOpen(false)
                   setMetricsOpen(true)
                 }
               : undefined

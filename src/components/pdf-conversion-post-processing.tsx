@@ -76,24 +76,26 @@ export function OverlayGroupsEditor({
     )
   }
   return (
-    <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <section className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-800 capitalize">{kind}s</h3>
-          <p className="mt-1 text-xs text-slate-500">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 capitalize">
+            {kind}s
+          </h3>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Applied top to bottom, {kind === 'watermark' ? 'behind' : 'over'} the page content.
           </p>
         </div>
         <button
           type="button"
           disabled={rows.length >= 10}
-          className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+          className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 px-3 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40"
           onClick={() => change([...rows, defaultOverlay(kind)])}
         >
           <Plus className="size-4" /> Add {kind}
         </button>
       </div>
-      <p className="text-xs leading-5 text-slate-500">
+      <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
         Image/PDF entries need one local upload or a matching downloadFrom entry. Remote files
         precede local uploads of the same type; each remote response must provide the filename
         entered here through Content-Disposition.
@@ -108,10 +110,10 @@ export function OverlayGroupsEditor({
           return (
             <li
               key={identities.current[index]}
-              className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+              className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/50 p-3"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 className="text-xs font-semibold text-slate-700 capitalize">
+                <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-200 capitalize">
                   {kind} {index + 1}
                 </h4>
                 <div className="flex gap-1">
@@ -119,7 +121,7 @@ export function OverlayGroupsEditor({
                     type="button"
                     aria-label={`Move ${kind} ${index + 1} up`}
                     disabled={index === 0}
-                    className="rounded-md p-2 text-slate-600 hover:bg-slate-200 disabled:opacity-30"
+                    className="rounded-md p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30"
                     onClick={() =>
                       change(
                         moved(rows, index, index - 1),
@@ -134,7 +136,7 @@ export function OverlayGroupsEditor({
                     type="button"
                     aria-label={`Move ${kind} ${index + 1} down`}
                     disabled={index === rows.length - 1}
-                    className="rounded-md p-2 text-slate-600 hover:bg-slate-200 disabled:opacity-30"
+                    className="rounded-md p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30"
                     onClick={() =>
                       change(
                         moved(rows, index, index + 1),
@@ -149,7 +151,7 @@ export function OverlayGroupsEditor({
                     type="button"
                     aria-label={`Remove ${kind} ${index + 1}`}
                     disabled={rows.length <= minimum}
-                    className="rounded-md p-2 text-slate-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-30"
+                    className="rounded-md p-2 text-slate-600 dark:text-slate-300 hover:bg-red-50 dark:hover:bg-red-950/60 hover:text-red-700 dark:hover:text-red-300 disabled:opacity-30"
                     onClick={() =>
                       change(
                         rows.filter((_, position) => position !== index),
@@ -167,7 +169,7 @@ export function OverlayGroupsEditor({
                 <select
                   id={`${id}-${index}-source`}
                   value={row.source}
-                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
+                  className="h-10 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
                   onChange={(event) => {
                     const source = event.target.value as OverlaySettings['source']
                     update({
@@ -255,12 +257,12 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
   const id = useId()
   const update = (patch: Partial<PdfPostProcess>) => onChange({ ...value, ...patch })
   return (
-    <details className="rounded-xl border border-slate-200 bg-slate-50/50">
-      <summary className="cursor-pointer px-4 py-4 text-sm font-semibold text-slate-700">
+    <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40">
+      <summary className="cursor-pointer px-4 py-4 text-sm font-semibold text-slate-700 dark:text-slate-200">
         PDF post-processing (optional)
       </summary>
-      <div className="space-y-5 border-t border-slate-200 px-4 py-5">
-        <p className="text-xs leading-5 text-slate-600">
+      <div className="space-y-5 border-t border-slate-200 dark:border-slate-700 px-4 py-5">
+        <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
           Apply PDF-engine features as part of this conversion. Gotenberg processes the document in
           a single request; no intermediate PDF is stored in Gotenui.
         </p>
@@ -283,8 +285,10 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
             />
           )
         })}
-        <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-slate-800">PDF attachments</h3>
+        <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            PDF attachments
+          </h3>
           <UploadZone
             label="Embed files"
             description="Attach files to the resulting PDF, not the HTML or Office source. Remote attachments use downloadFrom field: embedded. PDF/A-3 supports attachments; PDF/A-1/2 do not."
@@ -304,9 +308,11 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
             />
           </div>
         </div>
-        <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-slate-800">Factur-X / ZUGFeRD invoice</h3>
-          <p className="text-xs text-slate-500">
+        <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            Factur-X / ZUGFeRD invoice
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             Requires a local CII XML invoice and a conformance level. Gotenberg generates a PDF/A-3
             e-invoice automatically; do not choose PDF/A-1 or PDF/A-2 above. Requires a compatible
             PDF engine.
@@ -325,7 +331,7 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
                 })
                 if (!level) onFilesChange({ ...files, facturxXml: undefined })
               }}
-              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
+              className="h-10 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
             >
               <option value="">Not enabled</option>
               {(['MINIMUM', 'BASIC WL', 'BASIC', 'EN 16931', 'EXTENDED', 'XRECHNUNG'] as const).map(
@@ -351,7 +357,7 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
                   <Label htmlFor={`${id}-facturx-type`}>Document type</Label>
                   <select
                     id={`${id}-facturx-type`}
-                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
+                    className="h-10 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
                     value={value.facturxDocumentType ?? ''}
                     onChange={(event) =>
                       update({
@@ -385,7 +391,7 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
             </>
           )}
         </div>
-        <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
+        <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
           <div className="space-y-1.5">
             <Label htmlFor={`${id}-metadata`}>PDF metadata JSON (optional)</Label>
             <Textarea
@@ -406,9 +412,11 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
             />
           </div>
         </div>
-        <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
-          <h3 className="text-sm font-semibold text-slate-800">Encrypt result</h3>
-          <p className="text-xs text-slate-500">
+        <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            Encrypt result
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             Passwords are used only for this request. PDF/A and encryption cannot be combined.
             Restrictions require a password and depend on your PDF engine.
           </p>
@@ -434,7 +442,7 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
               />
             </div>
           </div>
-          <p className="text-xs text-slate-500">Permissions (on by default)</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Permissions (on by default)</p>
           <div className="grid gap-3 sm:grid-cols-2">
             {permissions.map(([key, description]) => (
               <div key={key} className="flex items-center justify-between gap-3">

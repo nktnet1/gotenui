@@ -4,15 +4,23 @@ import type * as React from 'react'
 import { cn } from '#/lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-200',
+  'inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-200 dark:focus-visible:ring-sky-900',
   {
     variants: {
       variant: {
-        default: 'bg-sky-600 text-white shadow-[0_6px_18px_rgba(2,132,199,.20)] hover:bg-sky-700',
-        secondary: 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
-        ghost: 'text-slate-500 hover:bg-slate-100 hover:text-slate-900',
-        outline: 'border border-slate-200 bg-transparent text-slate-700 hover:bg-slate-100',
+        default:
+          'bg-sky-600 text-white shadow-[0_6px_18px_rgba(2,132,199,.20)] hover:bg-sky-700 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400',
+        secondary:
+          'border border-slate-300 bg-slate-100 text-slate-900 hover:bg-slate-200 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700',
+        ghost:
+          'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white',
+        outline:
+          'border border-slate-300 bg-slate-50 text-slate-800 shadow-sm hover:border-sky-300 hover:bg-sky-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-sky-600 dark:hover:bg-slate-700',
+        accent:
+          'border border-sky-300 bg-sky-100 text-sky-900 shadow-sm hover:bg-sky-200 dark:border-sky-600 dark:bg-sky-950 dark:text-sky-200 dark:hover:bg-sky-900',
         destructive: 'bg-red-600 text-white hover:bg-red-700',
+        'destructive-outline':
+          'border border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-200 dark:hover:bg-rose-900',
       },
       size: {
         default: 'h-10 px-4 py-2',

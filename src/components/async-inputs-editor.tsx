@@ -29,7 +29,7 @@ function ExtraHeaders({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-medium text-slate-700">
+        <p className="text-xs font-medium text-slate-700 dark:text-slate-200">
           Optional outbound headers ({rows.length}/20)
         </p>
         <Button
@@ -79,7 +79,7 @@ function ExtraHeaders({
         </div>
       ))}
       {rows.length > 0 && (
-        <p className="text-[11px] text-slate-500">
+        <p className="text-[11px] text-slate-500 dark:text-slate-400">
           Header values are sent to the destination, never shown in previews or saved by Gotenui.
         </p>
       )}
@@ -110,11 +110,13 @@ export function RemoteInputsEditor({
     onChange(changed)
   }
   return (
-    <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <section className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-slate-800">Remote file inputs</h3>
-          <p className="mt-1 text-xs text-slate-500">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            Remote file inputs
+          </h3>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Gotenberg fetches files from these URLs directly.
           </p>
         </div>
@@ -131,10 +133,12 @@ export function RemoteInputsEditor({
       {rows.map((row, index) => (
         <div
           key={row.id}
-          className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+          className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/50 p-3"
         >
           <div className="flex items-center justify-between gap-2">
-            <h4 className="text-xs font-semibold text-slate-700">Remote file {index + 1}</h4>
+            <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+              Remote file {index + 1}
+            </h4>
             <div className="flex items-center gap-1">
               <Button
                 type="button"
@@ -182,7 +186,7 @@ export function RemoteInputsEditor({
             <Label htmlFor={`${id}-remote-field-${row.id}`}>Destination field</Label>
             <select
               id={`${id}-remote-field-${row.id}`}
-              className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800"
+              className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100"
               value={row.field}
               onChange={(event) =>
                 update(index, { field: event.target.value as RemoteInputRow['field'] })
@@ -201,21 +205,21 @@ export function RemoteInputsEditor({
             context={`remote file ${index + 1}`}
           />
           {row.url && (
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
               Preview: {safeOutboundHost(row.url)} · {row.field || 'regular input'} ·{' '}
               {row.headers.length} header(s) (values hidden)
             </p>
           )}
         </div>
       ))}
-      <p className="text-[11px] leading-5 text-slate-500">
+      <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
         Each download response <strong>must</strong> include Content-Disposition with a filename and
         a valid Content-Type. Gotenberg must be able to reach the URL and allow it through its
         outbound filtering. Watermark/stamp filenames must match their editor expressions; remote
         overlays precede local overlays of that type. Remote merge files are sorted by filename by
         Gotenberg.
       </p>
-      <details className="text-xs text-slate-600">
+      <details className="text-xs text-slate-600 dark:text-slate-300">
         <summary className="cursor-pointer font-semibold">
           Legacy downloadFrom JSON (optional)
         </summary>
@@ -255,11 +259,13 @@ export function WebhookEditor({
   const id = useId()
   const update = (patch: Partial<WebhookEditorState>) => onChange({ ...value, ...patch })
   return (
-    <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <section className="space-y-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-slate-800">Asynchronous webhook delivery</h3>
-          <p className="mt-1 text-xs text-slate-500">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            Asynchronous webhook delivery
+          </h3>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Gotenberg sends output to your external receiver.
           </p>
         </div>
@@ -271,7 +277,7 @@ export function WebhookEditor({
         />
       </div>
       {value.enabled && (
-        <div className="space-y-3 border-t border-slate-100 pt-3">
+        <div className="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-3">
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px]">
             <div className="space-y-1">
               <Label htmlFor={`${id}-success-url`}>Success callback URL (required)</Label>
@@ -289,7 +295,7 @@ export function WebhookEditor({
               <Label htmlFor={`${id}-success-method`}>Method</Label>
               <select
                 id={`${id}-success-method`}
-                className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800"
+                className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100"
                 value={value.method}
                 onChange={(event) =>
                   update({ method: event.target.value as WebhookEditorState['method'] })
@@ -320,7 +326,7 @@ export function WebhookEditor({
               <Label htmlFor={`${id}-error-method`}>Method</Label>
               <select
                 id={`${id}-error-method`}
-                className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 disabled:opacity-50"
+                className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100 disabled:opacity-50"
                 value={value.errorMethod}
                 disabled={!value.errorUrl.trim()}
                 onChange={(event) =>
@@ -344,7 +350,7 @@ export function WebhookEditor({
               autoComplete="off"
               maxLength={2048}
             />
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
               Events always use POST. Configure an error or events URL to receive failure details.
             </p>
           </div>
@@ -354,13 +360,13 @@ export function WebhookEditor({
             newId={newId}
             context="webhook"
           />
-          <p className="text-[11px] text-slate-500">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
             Preview: success {safeOutboundHost(value.url)} · error{' '}
             {value.errorUrl ? safeOutboundHost(value.errorUrl) : 'not set'} · events{' '}
             {value.eventsUrl ? safeOutboundHost(value.eventsUrl) : 'not set'} ·{' '}
             {value.headers.length} header(s) (values hidden)
           </p>
-          <p className="text-[11px] leading-5 text-slate-500">
+          <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
             HTTP 204 means accepted for asynchronous processing, <strong>not</strong> converted or
             delivered. Gotenui has no callback inbox or status history. Check your external receiver
             and use the Gotenberg-Trace ID for diagnosis. Gotenberg retries connection errors, 429
@@ -368,7 +374,7 @@ export function WebhookEditor({
           </p>
         </div>
       )}
-      <details className="text-xs text-slate-600">
+      <details className="text-xs text-slate-600 dark:text-slate-300">
         <summary className="cursor-pointer font-semibold">Legacy webhook JSON (optional)</summary>
         <div className="mt-2 space-y-1">
           <Label htmlFor={`${id}-webhook-json`}>Raw webhook settings — alternative to editor</Label>
