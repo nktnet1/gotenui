@@ -757,3 +757,58 @@ test.each(['url-pdf', 'office-pdf'])(
   },
   120_000,
 )
+
+// Requires the pinned local Gotenberg 8.37 instance; intentionally excluded from Chat-mode runs.
+test('Chromium accepts advanced print, wait and accessibility fields on a real conversion', async () => {
+  const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
+  if (!operation) throw new Error('Missing HTML conversion')
+  const response = await proxyConversionRequest(
+    request(operation, {
+      source: '<!doctype html><html><body><h1 id="app-ready">Advanced Chromium</h1></body></html>',
+      fields: {
+        singlePage: true,
+        preferCssPageSize: true,
+        waitForSelector: '#app-ready',
+        generateTaggedPdf: true,
+        generateDocumentOutline: true,
+      },
+    }),
+  )
+  if (!response.ok)
+    throw new Error(`Chromium advanced: ${response.status} ${await response.text()}`)
+  expect(response.headers.get('content-type')).toContain('application/pdf')
+  expect(
+    new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+  ).toBe('%PDF-')
+}, 120_000)
+
+test('LibreOffice applies documented PDF viewer preferences to a real source file', async () => {
+  const operation = OPERATIONS.find(({ id }) => id === 'office-pdf')
+  if (!operation) throw new Error('Missing Office conversion')
+  const response = await proxyConversionRequest(
+    request(
+      operation,
+      {
+        fields: {
+          exportBookmarks: true,
+          updateIndexes: true,
+          exportFormFields: true,
+          initialView: '1',
+          initialPage: '1',
+          magnification: '4',
+          zoom: '125',
+          pageLayout: '2',
+          displayPDFDocumentTitle: true,
+          hideViewerToolbar: true,
+        },
+      },
+      [new File(['Gotenui advanced Office export'], 'document.txt', { type: 'text/plain' })],
+    ),
+  )
+  if (!response.ok)
+    throw new Error(`LibreOffice advanced: ${response.status} ${await response.text()}`)
+  expect(response.headers.get('content-type')).toContain('application/pdf')
+  expect(
+    new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+  ).toBe('%PDF-')
+}, 120_000)

@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.22 (repeated ordered watermarks and stamps implemented).
+- **Baseline:** v1.0.24 (remote-overlay integration fixture corrected after v1.0.23).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -27,9 +27,10 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.20** | P1 | Chromium document assets | Done: named header/footer HTML parts, Markdown templates and ordered multi-file sources with collision validation and tests. |
 | **v1.0.21** | P1 | Conversion plus PDF post-processing | Done: per-conversion watermark/stamp, attachments, Factur-X, metadata, flattening and encryption with typed upload fields and validation. |
 | **v1.0.22** | P1 | Multiple overlays | Done: repeated watermark/stamp field groups, ordered local and remote assets, validated multipart serialization and regression tests. |
-| **v1.0.23** | P2 | Advanced conversion controls | First-class commonly used Chromium and LibreOffice options with accurate defaults and validation. |
-| **v1.0.24** | P2 | Remote-input and webhook usability | Structured editors, clear async results, and expanded real callback / download integration tests. |
-| **v1.0.25** | P1 | Automated release hardening | Negative security cases, edge-case responses, build/CI validation, and a final automated regression matrix. |
+| **v1.0.23** | P2 | Advanced conversion controls | Done: typed Chromium waits, output and browser-network controls; LibreOffice password, presentation export and PDF viewer options; route-aware validation and regression tests. |
+| **v1.0.24** | Fix | Remote-overlay integration PNG | Replace corrupt fixture data and check PNG checksums in the non-Docker unit suite. |
+| **v1.0.25** | P2 | Remote-input and webhook usability | Structured editors, clear async results, and expanded real callback / download integration tests. |
+| **v1.0.26** | P1 | Automated release hardening | Negative security cases, edge-case responses, build/CI validation, and a final automated regression matrix. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -89,25 +90,25 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [x] Add repeatable overlay groups with add, remove, and reorder controls.
 - [x] Serialize **repeated multipart fields with `FormData.append`**, not a flat object using `FormData.set`.
 - [x] Match local and `downloadFrom` overlay assets to their corresponding entries and prevent ambiguous file ordering (remote-first per overlay type).
-- [x] Test mixed text/image/PDF overlays, missing assets, and their application order with unit tests and deferred Docker integration cases.
+- [x] Test mixed text/image/PDF overlays, missing assets, and their application order with unit tests and Docker integration cases. The remote PNG fixture was repaired in v1.0.24 after real Gotenberg runs exposed a bad IDAT checksum; full Docker re-verification remains outstanding in this environment.
 
 ### P2 — Advanced controls and usability
 
 #### 7. Common Chromium options
 
-**Current gap:** Basic page sizing, printing, waiting, and screenshots are available. Less common options are not consistently exposed as typed controls and may require Advanced JSON.
+**v1.0.23 status:** Chromium PDF and screenshot operations now expose route-aware waits and browser network settings; PDF routes additionally expose one-page rendering, CSS sizing and tagged/outlined output. Browser cookie/header inputs are validated before becoming multipart form fields, and proxy HTTP headers remain isolated.
 
-- [ ] Prioritise `singlePage`, `preferCssPageSize`, `waitForSelector` / `waitForExpression`, cookies, supported extra HTTP headers, and tagged-PDF/accessibility controls after checking exact applicability by route.
-- [ ] Provide typed validation, clear defaults, and relevant hints. Respect Chromium route differences and server-enforced URL restrictions.
-- [ ] Test representative options without accidentally forwarding sensitive browser headers to Gotenberg.
+- [x] Prioritise `singlePage`, `preferCssPageSize`, `waitForSelector` / `waitForExpression`, cookies, supported extra HTTP headers, and tagged-PDF/accessibility controls after checking exact applicability by route.
+- [x] Provide typed validation, clear defaults, and relevant hints. Respect Chromium route differences and server-enforced URL restrictions.
+- [x] Test representative options without accidentally forwarding sensitive browser headers to Gotenberg.
 
 #### 8. Common LibreOffice options
 
-**Current gap:** Orientation, sheet handling, blank pages, notes, and archival/accessibility options exist in the UI, but additional supported form fields are primarily accessible through Advanced JSON.
+**v1.0.23 status:** Office conversion supports source-file opening passwords, presentation notes/slides export, bookmarks/index/form-field settings and PDF viewer options with upstream defaults. Source passwords remain separate from output encryption.
 
-- [ ] Add source-document password input, appropriate presentation export options, PDF viewer preferences, and other frequently used export controls.
-- [ ] Keep source-opening passwords distinct from output-PDF encryption settings; do not persist passwords or log them.
-- [ ] Document format-specific behaviour and test representative Office/PDF fixtures.
+- [x] Add source-document password input, appropriate presentation export options, PDF viewer preferences, and other frequently used export controls.
+- [x] Keep source-opening passwords distinct from output-PDF encryption settings; do not persist passwords or log them.
+- [x] Document format-specific behaviour and test representative Office/PDF fixtures.
 
 #### 9. Structured remote inputs and async webhooks
 

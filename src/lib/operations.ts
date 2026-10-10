@@ -14,6 +14,9 @@ export type FieldDefinition = {
   options?: readonly string[]
   min?: number
   max?: number
+  integer?: boolean
+  optionLabels?: Readonly<Record<string, string>>
+  customEditor?: boolean
 }
 
 export type AuxiliaryUpload = {
@@ -53,6 +56,51 @@ const pdfua: FieldDefinition = {
   kind: 'toggle',
   advanced: true,
 }
+const chromiumWait: FieldDefinition[] = [
+  {
+    name: 'waitDelay',
+    label: 'Wait before rendering',
+    kind: 'text',
+    placeholder: '2s',
+    advanced: true,
+    description:
+      'Optional fallback delay. For dynamic pages prefer waiting for an element or JavaScript expression.',
+  },
+  {
+    name: 'waitForSelector',
+    label: 'Wait for CSS selector',
+    kind: 'text',
+    placeholder: '#app-ready',
+    advanced: true,
+    description: 'Render when this element appears in the page. Leave blank to disable.',
+  },
+  {
+    name: 'waitForExpression',
+    label: 'Wait for JavaScript expression',
+    kind: 'text',
+    placeholder: 'window.ready === true',
+    advanced: true,
+    description:
+      'Render after this expression evaluates to true; expressions run in the target page.',
+  },
+  {
+    name: 'userAgent',
+    label: 'Browser User-Agent',
+    kind: 'text',
+    advanced: true,
+    description: 'Overrides the User-Agent used by Chromium to fetch resources.',
+  },
+]
+const chromiumNetwork: FieldDefinition[] = [
+  { name: 'cookies', label: 'Browser cookies', kind: 'json', advanced: true, customEditor: true },
+  {
+    name: 'extraHttpHeaders',
+    label: 'Browser resource headers',
+    kind: 'json',
+    advanced: true,
+    customEditor: true,
+  },
+]
 const chromePdf: FieldDefinition[] = [
   {
     name: 'paperWidth',
@@ -70,6 +118,35 @@ const chromePdf: FieldDefinition[] = [
   },
   { name: 'landscape', label: 'Landscape orientation', kind: 'toggle' },
   { name: 'printBackground', label: 'Print background graphics', kind: 'toggle' },
+  {
+    name: 'singlePage',
+    label: 'Fit content on one long page',
+    kind: 'toggle',
+    advanced: true,
+    description: 'Overrides paper height and PDF page-range settings.',
+  },
+  {
+    name: 'preferCssPageSize',
+    label: 'Prefer CSS @page size',
+    kind: 'toggle',
+    advanced: true,
+    description:
+      'Use the page dimensions defined by the document instead of Gotenberg paper settings.',
+  },
+  {
+    name: 'generateTaggedPdf',
+    label: 'Generate accessible structure tags',
+    kind: 'toggle',
+    advanced: true,
+    description: 'Include logical document structure for assistive technologies.',
+  },
+  {
+    name: 'generateDocumentOutline',
+    label: 'Create PDF outline from headings',
+    kind: 'toggle',
+    advanced: true,
+    description: 'Create bookmarks from headings; Gotenberg also enables tagged PDF output.',
+  },
   { name: 'marginTop', label: 'Top margin', kind: 'text', advanced: true },
   { name: 'marginRight', label: 'Right margin', kind: 'text', advanced: true },
   { name: 'marginBottom', label: 'Bottom margin', kind: 'text', advanced: true },
@@ -90,13 +167,8 @@ const chromePdf: FieldDefinition[] = [
     placeholder: '1',
     advanced: true,
   },
-  {
-    name: 'waitDelay',
-    label: 'Wait for dynamic content',
-    kind: 'text',
-    placeholder: '2s',
-    advanced: true,
-  },
+  ...chromiumWait,
+  ...chromiumNetwork,
   { ...pdfa },
   { ...pdfua },
 ]
@@ -136,6 +208,8 @@ const screenshot: FieldDefinition[] = [
   { name: 'clip', label: 'Clip to viewport', kind: 'toggle', advanced: true },
   { name: 'selector', label: 'CSS selector', kind: 'text', advanced: true },
   { name: 'omitBackground', label: 'Transparent background', kind: 'toggle', advanced: true },
+  ...chromiumWait,
+  ...chromiumNetwork,
 ]
 const sourceUrl: FieldDefinition = {
   name: 'url',
@@ -196,7 +270,171 @@ export const OPERATIONS: readonly Operation[] = [
       { name: 'landscape', label: 'Landscape orientation', kind: 'toggle' },
       { name: 'singlePageSheets', label: 'Single page per sheet', kind: 'toggle' },
       { name: 'skipEmptyPages', label: 'Skip blank pages', kind: 'toggle', advanced: true },
-      { name: 'exportNotes', label: 'Export presentation notes', kind: 'toggle', advanced: true },
+      {
+        name: 'exportNotes',
+        label: 'Export presentation notes',
+        kind: 'toggle',
+        advanced: true,
+        description: 'Presentation documents (Impress).',
+      },
+      {
+        name: 'exportNotesPages',
+        label: 'Export slide notes pages',
+        kind: 'toggle',
+        advanced: true,
+        description: 'Impress only.',
+      },
+      {
+        name: 'exportOnlyNotesPages',
+        label: 'Export only notes pages',
+        kind: 'toggle',
+        advanced: true,
+        description: 'Requires Export slide notes pages.',
+      },
+      {
+        name: 'exportHiddenSlides',
+        label: 'Include hidden presentation slides',
+        kind: 'toggle',
+        advanced: true,
+        description: 'Impress only.',
+      },
+      {
+        name: 'exportPlaceholders',
+        label: 'Show placeholder fields',
+        kind: 'toggle',
+        advanced: true,
+      },
+      {
+        name: 'password',
+        label: 'Source document opening password',
+        kind: 'password',
+        advanced: true,
+        description:
+          'Unlocks the uploaded Office document. Not the output PDF encryption password; never stored.',
+      },
+      {
+        name: 'nativePageRanges',
+        label: 'Document page ranges',
+        kind: 'text',
+        advanced: true,
+        placeholder: '1-3,5',
+        description: 'Pages printed from each source file independently.',
+      },
+      {
+        name: 'updateIndexes',
+        label: 'Update document indexes',
+        kind: 'toggle',
+        defaultValue: true,
+        advanced: true,
+        description: 'Gotenberg default: enabled. Updating a table of contents may change links.',
+      },
+      {
+        name: 'exportBookmarks',
+        label: 'Export document bookmarks',
+        kind: 'toggle',
+        defaultValue: true,
+        advanced: true,
+        description: 'Gotenberg default: enabled; requires source heading styles or bookmarks.',
+      },
+      {
+        name: 'exportBookmarksToPdfDestination',
+        label: 'Export named bookmark destinations',
+        kind: 'toggle',
+        advanced: true,
+      },
+      {
+        name: 'exportFormFields',
+        label: 'Export interactive form fields',
+        kind: 'toggle',
+        defaultValue: true,
+        advanced: true,
+        description:
+          'Gotenberg default: enabled. Turn off to flatten Office form fields during conversion.',
+      },
+      {
+        name: 'initialView',
+        label: 'Initial PDF sidebar',
+        kind: 'select',
+        options: ['0', '1', '2'],
+        optionLabels: { '0': 'None (default)', '1': 'Document outline', '2': 'Page thumbnails' },
+        advanced: true,
+      },
+      {
+        name: 'initialPage',
+        label: 'Initial PDF page',
+        kind: 'number',
+        integer: true,
+        min: 1,
+        max: 100000,
+        advanced: true,
+        placeholder: '1',
+      },
+      {
+        name: 'magnification',
+        label: 'Initial PDF magnification',
+        kind: 'select',
+        options: ['0', '1', '2', '3', '4'],
+        optionLabels: {
+          '0': 'Default',
+          '1': 'Fit page',
+          '2': 'Fit width',
+          '3': 'Fit visible',
+          '4': 'Custom zoom',
+        },
+        advanced: true,
+      },
+      {
+        name: 'zoom',
+        label: 'Viewer zoom percentage',
+        kind: 'number',
+        integer: true,
+        min: 1,
+        max: 1000,
+        advanced: true,
+        placeholder: '100',
+        description: 'Used when Initial PDF magnification is Custom zoom.',
+      },
+      {
+        name: 'pageLayout',
+        label: 'Initial PDF page layout',
+        kind: 'select',
+        options: ['0', '1', '2', '3'],
+        optionLabels: { '0': 'Default', '1': 'Single page', '2': 'One column', '3': 'Two columns' },
+        advanced: true,
+      },
+      {
+        name: 'firstPageOnLeft',
+        label: 'First page on left',
+        kind: 'toggle',
+        advanced: true,
+        description: 'Applies to two-column page layout.',
+      },
+      {
+        name: 'displayPDFDocumentTitle',
+        label: 'Display document title in PDF viewer',
+        kind: 'toggle',
+        defaultValue: true,
+        advanced: true,
+      },
+      {
+        name: 'openInFullScreenMode',
+        label: 'Open PDF in full screen',
+        kind: 'toggle',
+        advanced: true,
+      },
+      {
+        name: 'hideViewerToolbar',
+        label: 'Hide PDF viewer toolbar',
+        kind: 'toggle',
+        advanced: true,
+      },
+      {
+        name: 'hideViewerMenubar',
+        label: 'Hide PDF viewer menu bar',
+        kind: 'toggle',
+        advanced: true,
+      },
+      { name: 'centerWindow', label: 'Centre viewer window', kind: 'toggle', advanced: true },
       pdfa,
       pdfua,
     ],

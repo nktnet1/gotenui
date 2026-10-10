@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { promisify, styleText } from 'node:util'
 import type { TestProject } from 'vitest/node'
+import { REMOTE_OVERLAY_PNG } from './overlay-fixture'
 
 const exec = promisify(execFile)
 const image = process.env.GOTENBERG_TEST_IMAGE || 'gotenberg/gotenberg:8.37.0'
@@ -29,17 +30,11 @@ async function docker(...args: string[]): Promise<string> {
 async function fixtureServer(): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
     if (req.url === '/overlay.png') {
-      // One-pixel valid PNG for exercising downloadFrom's overlay field routing.
       res.writeHead(200, {
         'content-type': 'image/png',
         'content-disposition': 'attachment; filename="remote-overlay.png"',
       })
-      res.end(
-        Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nv1EAAAAASUVORK5CYII=',
-          'base64',
-        ),
-      )
+      res.end(REMOTE_OVERLAY_PNG)
       return
     }
     if (req.url === '/attachment') {

@@ -630,3 +630,71 @@ test('proxy rejects repeated files that do not match the declared overlay rows',
     /exactly one local or remote watermark/,
   )
 })
+
+test('Chromium resource authentication stays in validated multipart fields, not proxy HTTP headers', async () => {
+  const settings = {
+    cookies: JSON.stringify([
+      { name: 'session', value: 'browser-secret', domain: 'example.test', secure: true },
+    ]),
+    extraHttpHeaders: JSON.stringify({
+      Authorization: 'Bearer site-secret;scope=^https://example\\.test/',
+    }),
+  }
+  const body = new FormData()
+  body.set(
+    'payload',
+    JSON.stringify({
+      operation: 'url-pdf',
+      fields: { url: 'https://example.test/', ...settings },
+      advanced: {},
+    }),
+  )
+  const input = new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: {
+      origin,
+      'X-Gotenberg-Url': 'http://127.0.0.1:3000',
+      Cookie: 'gotenui-browser-cookie=not-for-upstream',
+      Authorization: 'Bearer not-for-upstream',
+    },
+    body,
+  })
+  const fetcher: typeof fetch = async (_url, options) => {
+    const headers = new Headers(options?.headers)
+    assert.equal(headers.get('cookie'), null)
+    assert.equal(headers.get('authorization'), null)
+    assert.equal(headers.get('extraHttpHeaders'), null)
+    const form = options?.body
+    assert.ok(form instanceof FormData)
+    assert.equal(form.get('cookies'), settings.cookies)
+    assert.equal(form.get('extraHttpHeaders'), settings.extraHttpHeaders)
+    assert.equal(form.has('payload'), false)
+    return new Response('%PDF-1.7', { headers: { 'content-type': 'application/pdf' } })
+  }
+  assert.equal((await proxyConversionRequest(input, fetcher)).status, 200)
+})
+
+test('the proxy rejects unscoped resource credentials before making an upstream request', async () => {
+  const form = new FormData()
+  form.set(
+    'payload',
+    JSON.stringify({
+      operation: 'html-pdf',
+      fields: { extraHttpHeaders: JSON.stringify({ Authorization: 'Bearer not-scoped' }) },
+      advanced: {},
+      source: '<html><body>Credentials test</body></html>',
+    }),
+  )
+  const request = new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: { origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
+    body: form,
+  })
+  let called = false
+  const fetcher: typeof fetch = async () => {
+    called = true
+    return new Response('%PDF-1.7')
+  }
+  await assert.rejects(proxyConversionRequest(request, fetcher), /explicit URL scope/)
+  assert.equal(called, false)
+})

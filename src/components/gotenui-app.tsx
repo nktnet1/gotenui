@@ -37,6 +37,11 @@ import {
 } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import {
+  ChromiumNetworkEditor,
+  type CookieRow,
+  type HeaderRow,
+} from '#/components/chromium-network-editor'
 import { ChromiumPdfAssets } from '#/components/chromium-pdf-assets'
 import { ConnectionManager } from '#/components/connection-manager'
 import { DebugDialog } from '#/components/debug-dialog'
@@ -56,6 +61,7 @@ import { Textarea } from '#/components/ui/textarea'
 import { UploadZone } from '#/components/upload-zone'
 import { browserStorage } from '#/lib/backend-url'
 import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
+import { chromiumNetworkFields } from '#/lib/chromium-network'
 import { DEFAULT_BACKEND_URL } from '#/lib/config'
 import {
   type BrowserConnection,
@@ -455,7 +461,7 @@ function FieldControl({
             {!field.required && <option value="">Default / not set</option>}
             {field.options?.map((option) => (
               <option key={option} value={option}>
-                {option}
+                {field.optionLabels?.[option] ?? option}
               </option>
             ))}
           </select>
@@ -486,7 +492,7 @@ function FieldControl({
           }
           min={field.min}
           max={field.max}
-          step={field.kind === 'number' ? 'any' : undefined}
+          step={field.kind === 'number' ? (field.integer ? 1 : 'any') : undefined}
           autoComplete={field.kind === 'password' ? 'new-password' : undefined}
           placeholder={field.placeholder}
           value={String(value ?? '')}
@@ -715,6 +721,9 @@ function Workbench({
   const [files, setFiles] = useState<File[]>([])
   const [auxFiles, setAuxFiles] = useState<File[]>([])
   const [advanced, setAdvanced] = useState('')
+  const [cookies, setCookies] = useState<CookieRow[]>([])
+  const [resourceHeaders, setResourceHeaders] = useState<HeaderRow[]>([])
+  const nextNetworkId = useRef(0)
   const [remoteInput, setRemoteInput] = useState('')
   const [webhookInput, setWebhookInput] = useState('')
   const [outputName, setOutputName] = useState('')
@@ -745,6 +754,8 @@ function Workbench({
     setFiles([])
     setAuxFiles([])
     setAdvanced('')
+    setCookies([])
+    setResourceHeaders([])
     setRemoteInput('')
     setWebhookInput('')
     setOutputName('')
@@ -766,13 +777,16 @@ function Workbench({
       }
     : undefined
   const basicFields = standaloneKind ? [] : operation.fields.filter((field) => !field.advanced)
-  const advancedFields = standaloneKind ? [] : operation.fields.filter((field) => field.advanced)
+  const advancedFields = standaloneKind
+    ? []
+    : operation.fields.filter((field) => field.advanced && !field.customEditor)
   const hasUpload = operation.input === 'pdf' || operation.input === 'office'
   const isSourceEditor = operation.input === 'html' || operation.input === 'markdown'
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
   const operationHasFileAssets = isSourceEditor
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
   const hasPostProcessing = PDF_CONVERSION_IDS.has(operation.id)
+  const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
   const docsUrl = `https://gotenberg.dev/docs/${operation.docs}`
 
   const updateField = (name: string, value: string | boolean) =>
@@ -793,7 +807,11 @@ function Workbench({
     try {
       const candidate = {
         operation: operation.id,
-        fields: standaloneKind ? {} : fields,
+        fields: standaloneKind
+          ? {}
+          : hasChromiumNetwork
+            ? { ...fields, ...chromiumNetworkFields(cookies, resourceHeaders) }
+            : fields,
         source: isSourceEditor ? source : undefined,
         markdownName: operation.input === 'markdown' ? markdownName : undefined,
         markdownFiles:
@@ -1098,6 +1116,15 @@ function Workbench({
                       />
                     ))}
                   </div>
+                )}
+                {hasChromiumNetwork && (
+                  <ChromiumNetworkEditor
+                    cookies={cookies}
+                    onCookiesChange={setCookies}
+                    headers={resourceHeaders}
+                    onHeadersChange={setResourceHeaders}
+                    newId={() => nextNetworkId.current++}
+                  />
                 )}
                 <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
                   <div>

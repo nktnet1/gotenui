@@ -669,6 +669,216 @@ export function validateFiles(
   }
 }
 
+/** These are Chromium browser-request settings, not incoming proxy request headers. */
+function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', value: unknown): void {
+  if (typeof value !== 'string') throw new InputError(`Chromium ${name} must be JSON text.`)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new InputError(`Chromium ${name} must be valid JSON.`)
+  }
+  if (name === 'cookies') {
+    if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 20) {
+      throw new InputError('Chromium cookies must be a JSON array of 1 to 20 entries.')
+    }
+    for (const cookie of parsed) {
+      if (!cookie || typeof cookie !== 'object' || Array.isArray(cookie)) {
+        throw new InputError('Each Chromium cookie must be an object.')
+      }
+      const entry = cookie as Record<string, unknown>
+      if (
+        Object.keys(entry).some(
+          (key) =>
+            !['name', 'value', 'domain', 'path', 'secure', 'httpOnly', 'sameSite'].includes(key),
+        )
+      ) {
+        throw new InputError('Unsupported Chromium cookie property.')
+      }
+      if (
+        typeof entry.name !== 'string' ||
+        !/^[a-z0-9!#$%&'*+.^_`|~-]{1,128}$/i.test(entry.name) ||
+        typeof entry.value !== 'string' ||
+        entry.value.length > 2048 ||
+        [...entry.value].some(
+          (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === ';',
+        ) ||
+        typeof entry.domain !== 'string' ||
+        entry.domain.length > 253 ||
+        !/^\.?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(
+          entry.domain,
+        ) ||
+        (entry.path !== undefined &&
+          (typeof entry.path !== 'string' ||
+            !entry.path.startsWith('/') ||
+            entry.path.length > 512 ||
+            /[\r\n]/.test(entry.path))) ||
+        (entry.secure !== undefined && typeof entry.secure !== 'boolean') ||
+        (entry.httpOnly !== undefined && typeof entry.httpOnly !== 'boolean') ||
+        (entry.sameSite !== undefined &&
+          !['Strict', 'Lax', 'None'].includes(String(entry.sameSite)))
+      ) {
+        throw new InputError(
+          'Chromium cookie requires a valid name, value, domain and optional attributes.',
+        )
+      }
+      if (entry.sameSite === 'None' && entry.secure !== true) {
+        throw new InputError('SameSite=None cookies require the HTTPS-only (secure) flag.')
+      }
+    }
+    return
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new InputError('Chromium resource headers must be a JSON object.')
+  }
+  const entries = Object.entries(parsed)
+  if (entries.length < 1 || entries.length > 20) {
+    throw new InputError('Chromium resource headers must contain 1 to 20 entries.')
+  }
+  const names = new Set<string>()
+  for (const [key, headerValue] of entries) {
+    const lower = key.toLowerCase()
+    if (
+      !/^[A-Za-z][A-Za-z0-9-]{0,79}$/.test(key) ||
+      names.has(lower) ||
+      [
+        'host',
+        'cookie',
+        'set-cookie',
+        'connection',
+        'content-length',
+        'transfer-encoding',
+        'upgrade',
+        'te',
+        'trailer',
+      ].includes(lower) ||
+      lower.startsWith('proxy-')
+    ) {
+      throw new InputError('Invalid or unsafe Chromium resource header name.')
+    }
+    names.add(lower)
+    if (
+      typeof headerValue !== 'string' ||
+      !headerValue ||
+      headerValue.length > 2000 ||
+      /[\r\n]/.test(headerValue)
+    ) {
+      throw new InputError('Invalid Chromium resource header value.')
+    }
+    const index = headerValue.indexOf(';scope=')
+    if (index !== headerValue.lastIndexOf(';scope=')) {
+      throw new InputError('Chromium resource header must contain at most one URL scope.')
+    }
+    if (index < 0) {
+      if (/authorization|token|secret|key|credential|auth/i.test(key)) {
+        throw new InputError(
+          'Authentication headers require an explicit URL scope to avoid credential disclosure.',
+        )
+      }
+      continue
+    }
+    const scope = headerValue.slice(index + ';scope='.length)
+    if (!headerValue.slice(0, index) || !scope || scope.length > 256 || scope.trim() !== scope) {
+      throw new InputError(
+        'Chromium resource header scope must be a non-empty regex (max 256 characters).',
+      )
+    }
+    try {
+      new RegExp(scope)
+    } catch {
+      throw new InputError('Invalid Chromium resource header scope regular expression.')
+    }
+  }
+}
+
+function validateConversionOptions(operation: Operation, payload: ConversionPayload): void {
+  const chromium = operation.path.startsWith('/forms/chromium/')
+  const office = operation.id === 'office-pdf'
+  const chromiumPdf = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
+  const chromiumOnly = [
+    'cookies',
+    'extraHttpHeaders',
+    'waitForSelector',
+    'waitForExpression',
+    'userAgent',
+    'singlePage',
+    'preferCssPageSize',
+    'generateDocumentOutline',
+    'generateTaggedPdf',
+  ]
+  const chromiumPdfOnly = [
+    'singlePage',
+    'preferCssPageSize',
+    'generateTaggedPdf',
+    'generateDocumentOutline',
+  ]
+  const officeOnly = [
+    'password',
+    'exportOnlyNotesPages',
+    'exportNotesPages',
+    'exportHiddenSlides',
+    'exportPlaceholders',
+    'exportBookmarks',
+    'updateIndexes',
+    'exportFormFields',
+    'initialView',
+    'initialPage',
+    'magnification',
+    'zoom',
+    'pageLayout',
+    'firstPageOnLeft',
+    'displayPDFDocumentTitle',
+    'openInFullScreenMode',
+    'hideViewerToolbar',
+    'hideViewerMenubar',
+    'centerWindow',
+  ]
+  for (const name of Object.keys(payload.advanced)) {
+    if (
+      (!chromium && chromiumOnly.includes(name)) ||
+      (!chromiumPdf && chromiumPdfOnly.includes(name)) ||
+      (!office && officeOnly.includes(name))
+    ) {
+      throw new InputError(`Advanced field ${name} is not supported for ${operation.title}.`)
+    }
+  }
+  if (chromium) {
+    for (const name of ['cookies', 'extraHttpHeaders'] as const) {
+      const value = payload.fields[name]
+      if (value !== undefined && value !== '') validateChromiumNetworkField(name, value)
+    }
+    for (const name of ['waitForSelector', 'waitForExpression', 'userAgent'] as const) {
+      const value = payload.fields[name]
+      if (
+        typeof value === 'string' &&
+        (value.trim().length === 0 ||
+          value.length > (name === 'waitForExpression' ? 5000 : 500) ||
+          (name === 'userAgent' && /[\r\n]/.test(value)))
+      ) {
+        throw new InputError(`Invalid Chromium ${name} value.`)
+      }
+    }
+  }
+  if (office) {
+    if (payload.fields.exportOnlyNotesPages === true && payload.fields.exportNotesPages !== true) {
+      throw new InputError('Export only notes pages requires Export slide notes pages.')
+    }
+    if (payload.fields.firstPageOnLeft === true && payload.fields.pageLayout !== '3') {
+      throw new InputError('First page on left requires the two-column PDF page layout.')
+    }
+    if (
+      payload.fields.zoom !== undefined &&
+      payload.fields.zoom !== '' &&
+      payload.fields.magnification !== '4'
+    ) {
+      throw new InputError('Custom PDF zoom requires Custom zoom magnification.')
+    }
+    if (typeof payload.fields.password === 'string' && payload.fields.password.length > 1024) {
+      throw new InputError('Source document password is too long.')
+    }
+  }
+}
+
 export function validatePayload(input: unknown): {
   payload: ConversionPayload
   operation: Operation
@@ -703,7 +913,8 @@ export function validatePayload(input: unknown): {
         if (
           !Number.isFinite(n) ||
           (field.min !== undefined && n < field.min) ||
-          (field.max !== undefined && n > field.max)
+          (field.max !== undefined && n > field.max) ||
+          (field.integer === true && !Number.isInteger(n))
         ) {
           throw new InputError(`${field.label} is outside its permitted range.`)
         }
@@ -741,6 +952,7 @@ export function validatePayload(input: unknown): {
     throw new InputError('Enter some source content first.')
   }
   validateChromiumDocuments(operation, payload)
+  validateConversionOptions(operation, payload)
   validatePostProcessSettings(operation, payload)
   if (PDF_CONVERSION_IDS.has(operation.id) || operation.id === 'pdfa') {
     const pdfa = payload.fields.pdfa ?? payload.advanced.pdfa
