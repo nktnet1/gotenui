@@ -14,6 +14,8 @@ const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00])
 type UpstreamRequest = { path: string; headers: IncomingHttpHeaders; body: string }
 const seen: UpstreamRequest[] = []
 let followedRedirects = 0
+let cancelledUpstreams = 0
+let cancelledPendingUpstreams = 0
 
 async function listen(server: Server): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -68,6 +70,40 @@ const upstream = createServer(async (request, response) => {
       body: body.toString('utf8'),
     })
     const trace = request.headers['gotenberg-trace']
+    if (trace === 'smoke-pending-headers') {
+      // Cancellation before the first upstream response byte must also abort fetch.
+      const timer = setTimeout(() => {
+        response.writeHead(200, { 'Content-Type': 'application/pdf' }).end(pdf)
+      }, 10_000)
+      response.on('close', () => {
+        clearTimeout(timer)
+        if (!response.writableEnded) cancelledPendingUpstreams++
+      })
+      return
+    }
+    if (trace === 'smoke-held-stream') {
+      // Keep the upstream PDF stream open until the browser cancels the download.
+      response.writeHead(200, { 'Content-Type': 'application/pdf' })
+      response.write(pdf)
+      const timer = setTimeout(() => response.end(pdf), 10_000)
+      response.on('close', () => {
+        clearTimeout(timer)
+        if (!response.writableEnded) cancelledUpstreams++
+      })
+      return
+    }
+    if (trace === 'smoke-truncated') {
+      response.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Length': String(pdf.length + 25),
+      })
+      response.end(pdf)
+      return
+    }
+    if (trace === 'smoke-overlap-server' || trace === 'smoke-overlap-browser') {
+      // Both browser and server-managed requests remain in flight together.
+      await sleep(150)
+    }
     if (trace === 'smoke-invalid-html') {
       response.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>invalid</html>')
       return
@@ -122,7 +158,11 @@ function conversionBody(
 }
 
 async function get(url: string, options: RequestInit = {}): Promise<Response> {
-  return fetch(url, { ...options, signal: AbortSignal.timeout(10_000) })
+  const timeout = AbortSignal.timeout(10_000)
+  return fetch(url, {
+    ...options,
+    signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
+  })
 }
 
 async function stopProcess(child: ChildProcess): Promise<void> {
@@ -276,6 +316,106 @@ async function run(): Promise<void> {
     const browserRequest = seen.at(-1)
     assert.ok(browserRequest, 'Expected a browser-managed upstream request')
     assert.equal(browserRequest.headers.authorization, 'Bearer browser-smoke-token')
+    checks++
+
+    const [serverOverlap, browserOverlap] = await Promise.all([
+      get(convertUrl, {
+        method: 'POST',
+        headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+        body: conversionBody('url-pdf', baseFields, [], { requestTrace: 'smoke-overlap-server' }),
+      }),
+      get(convertUrl, {
+        method: 'POST',
+        headers: {
+          ...sameOrigin,
+          'X-Gotenberg-Url': upstreamUrl,
+          'X-Gotenui-Upstream-Authorization': 'Bearer browser-smoke-token',
+        },
+        body: conversionBody('url-pdf', baseFields, [], { requestTrace: 'smoke-overlap-browser' }),
+      }),
+    ])
+    assert.equal(serverOverlap.status, 200)
+    assert.equal(browserOverlap.status, 200)
+    await Promise.all([serverOverlap.arrayBuffer(), browserOverlap.arrayBuffer()])
+    const overlapped = seen.filter((item) =>
+      ['smoke-overlap-server', 'smoke-overlap-browser'].includes(
+        String(item.headers['gotenberg-trace']),
+      ),
+    )
+    assert.equal(overlapped.length, 2)
+    assert.equal(
+      overlapped.find((item) => item.headers['gotenberg-trace'] === 'smoke-overlap-server')?.headers
+        .authorization,
+      'Bearer server-only-smoke-token',
+    )
+    assert.equal(
+      overlapped.find((item) => item.headers['gotenberg-trace'] === 'smoke-overlap-browser')
+        ?.headers.authorization,
+      'Bearer browser-smoke-token',
+    )
+    checks++
+
+    const pendingAbort = new AbortController()
+    const waiting = get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], { requestTrace: 'smoke-pending-headers' }),
+      signal: pendingAbort.signal,
+    })
+    // Observe the rejection immediately, even when startup fails before the assertion.
+    void waiting.catch(() => {})
+    const pendingDeadline = Date.now() + 3_000
+    while (
+      !seen.some((item) => item.headers['gotenberg-trace'] === 'smoke-pending-headers') &&
+      Date.now() < pendingDeadline
+    ) {
+      await sleep(40)
+    }
+    assert.ok(
+      seen.some((item) => item.headers['gotenberg-trace'] === 'smoke-pending-headers'),
+      'Pending request must reach the upstream before cancellation',
+    )
+    const pendingStarted = Date.now()
+    pendingAbort.abort()
+    await assert.rejects(waiting)
+    assert.ok(Date.now() - pendingStarted < 5_000, 'Abort must not wait for the 10s timeout')
+    const pendingCloseDeadline = Date.now() + 3_000
+    while (cancelledPendingUpstreams === 0 && Date.now() < pendingCloseDeadline) await sleep(40)
+    assert.equal(
+      cancelledPendingUpstreams,
+      1,
+      'Cancelling a pending client request must stop the upstream request',
+    )
+    checks++
+
+    const streamAbort = new AbortController()
+    const held = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], { requestTrace: 'smoke-held-stream' }),
+      signal: streamAbort.signal,
+    })
+    assert.equal(held.status, 200)
+    const heldReader = held.body?.getReader()
+    assert.ok(heldReader)
+    const firstChunk = await heldReader.read()
+    assert.ok(firstChunk.value?.length)
+    const streamingStarted = Date.now()
+    streamAbort.abort()
+    await assert.rejects(heldReader.read())
+    assert.ok(Date.now() - streamingStarted < 5_000, 'Stream abort must be prompt')
+    const abortDeadline = Date.now() + 3_000
+    while (cancelledUpstreams === 0 && Date.now() < abortDeadline) await sleep(40)
+    assert.equal(cancelledUpstreams, 1, 'Closing a client download must cancel the upstream stream')
+    checks++
+
+    const truncated = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], { requestTrace: 'smoke-truncated' }),
+    })
+    assert.equal(truncated.status, 200)
+    await assert.rejects(truncated.arrayBuffer(), /terminated|truncated|aborted|failed|error/i)
     checks++
 
     const split = await get(convertUrl, {
