@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiGotenbergConnectionsRouteImport } from './routes/api/gotenberg/connections'
 import { Route as ApiGotenbergConvertRouteImport } from './routes/api/gotenberg/convert'
 import { Route as ApiGotenbergDebugRouteImport } from './routes/api/gotenberg/debug'
+import { Route as ApiGotenbergHealthRouteImport } from './routes/api/gotenberg/health'
 import { Route as ApiGotenbergStatusRouteImport } from './routes/api/gotenberg/status'
 
 const IndexRoute = IndexRouteImport.update({
@@ -35,6 +36,11 @@ const ApiGotenbergDebugRoute = ApiGotenbergDebugRouteImport.update({
   path: '/api/gotenberg/debug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiGotenbergHealthRoute = ApiGotenbergHealthRouteImport.update({
+  id: '/api/gotenberg/health',
+  path: '/api/gotenberg/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiGotenbergStatusRoute = ApiGotenbergStatusRouteImport.update({
   id: '/api/gotenberg/status',
   path: '/api/gotenberg/status',
@@ -46,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/api/gotenberg/connections': typeof ApiGotenbergConnectionsRoute
   '/api/gotenberg/convert': typeof ApiGotenbergConvertRoute
   '/api/gotenberg/debug': typeof ApiGotenbergDebugRoute
+  '/api/gotenberg/health': typeof ApiGotenbergHealthRoute
   '/api/gotenberg/status': typeof ApiGotenbergStatusRoute
 }
 export interface FileRoutesByTo {
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/api/gotenberg/connections': typeof ApiGotenbergConnectionsRoute
   '/api/gotenberg/convert': typeof ApiGotenbergConvertRoute
   '/api/gotenberg/debug': typeof ApiGotenbergDebugRoute
+  '/api/gotenberg/health': typeof ApiGotenbergHealthRoute
   '/api/gotenberg/status': typeof ApiGotenbergStatusRoute
 }
 export interface FileRoutesById {
@@ -61,6 +69,7 @@ export interface FileRoutesById {
   '/api/gotenberg/connections': typeof ApiGotenbergConnectionsRoute
   '/api/gotenberg/convert': typeof ApiGotenbergConvertRoute
   '/api/gotenberg/debug': typeof ApiGotenbergDebugRoute
+  '/api/gotenberg/health': typeof ApiGotenbergHealthRoute
   '/api/gotenberg/status': typeof ApiGotenbergStatusRoute
 }
 export interface FileRouteTypes {
@@ -70,6 +79,7 @@ export interface FileRouteTypes {
     | '/api/gotenberg/connections'
     | '/api/gotenberg/convert'
     | '/api/gotenberg/debug'
+    | '/api/gotenberg/health'
     | '/api/gotenberg/status'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -77,6 +87,7 @@ export interface FileRouteTypes {
     | '/api/gotenberg/connections'
     | '/api/gotenberg/convert'
     | '/api/gotenberg/debug'
+    | '/api/gotenberg/health'
     | '/api/gotenberg/status'
   id:
     | '__root__'
@@ -84,6 +95,7 @@ export interface FileRouteTypes {
     | '/api/gotenberg/connections'
     | '/api/gotenberg/convert'
     | '/api/gotenberg/debug'
+    | '/api/gotenberg/health'
     | '/api/gotenberg/status'
   fileRoutesById: FileRoutesById
 }
@@ -92,6 +104,7 @@ export interface RootRouteChildren {
   ApiGotenbergConnectionsRoute: typeof ApiGotenbergConnectionsRoute
   ApiGotenbergConvertRoute: typeof ApiGotenbergConvertRoute
   ApiGotenbergDebugRoute: typeof ApiGotenbergDebugRoute
+  ApiGotenbergHealthRoute: typeof ApiGotenbergHealthRoute
   ApiGotenbergStatusRoute: typeof ApiGotenbergStatusRoute
 }
 
@@ -125,6 +138,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGotenbergDebugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/gotenberg/health': {
+      id: '/api/gotenberg/health'
+      path: '/api/gotenberg/health'
+      fullPath: '/api/gotenberg/health'
+      preLoaderRoute: typeof ApiGotenbergHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/gotenberg/status': {
       id: '/api/gotenberg/status'
       path: '/api/gotenberg/status'
@@ -140,6 +160,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiGotenbergConnectionsRoute: ApiGotenbergConnectionsRoute,
   ApiGotenbergConvertRoute: ApiGotenbergConvertRoute,
   ApiGotenbergDebugRoute: ApiGotenbergDebugRoute,
+  ApiGotenbergHealthRoute: ApiGotenbergHealthRoute,
   ApiGotenbergStatusRoute: ApiGotenbergStatusRoute,
 }
 export const routeTree = rootRouteImport

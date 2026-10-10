@@ -45,6 +45,9 @@ const safeResponseHeaders = {
   'X-Content-Type-Options': 'nosniff',
 }
 
+// Distinguish a real HEAD probe from a static host's 200 SPA fallback.
+const healthProbeHeaders = { ...safeResponseHeaders, 'X-Gotenui-Health-Probe': '1' }
+
 export function proxyConnectionsRequest(request: Request): Response {
   requireSameOrigin(request)
   const { connections } = runtimeConfig()
@@ -226,6 +229,41 @@ export async function proxyStatusRequest(
     }
   }
   return Response.json(status, { headers: safeResponseHeaders })
+}
+
+/** Forward the lightweight Gotenberg HEAD /health probe without buffering a response body. */
+export async function proxyHeadHealthRequest(
+  request: Request,
+  fetcher: typeof fetch = fetch,
+): Promise<Response> {
+  requireSameOrigin(request)
+  if (request.method !== 'HEAD') {
+    throw new ProxyInputError('Health probes must use HEAD.', 405)
+  }
+  const search = new URL(request.url).searchParams
+  const { url, headers: authHeaders } = resolveConnectionTarget(
+    request,
+    runtimeConfig(),
+    search.get('url'),
+    search.get('connection'),
+  )
+  const upstream = await fetcher(urlJoin(url, '/health'), {
+    method: 'HEAD',
+    ...fetchOptions(request),
+    headers: authHeaders,
+    credentials: 'omit',
+  })
+  // Gotenberg reports 200 or 503. Forward an authentication failure for diagnostic
+  // purposes; unexpected responses are gateway errors, not healthy probes.
+  const status = [200, 503, 401, 403].includes(upstream.status) ? upstream.status : 502
+  await upstream.body?.cancel().catch(() => {})
+  return new Response(null, { status, headers: healthProbeHeaders })
+}
+
+/** HEAD error responses must never include the text body used by other routes. */
+export function proxyHeadErrorResponse(error: unknown): Response {
+  const result = proxyErrorResponse(error)
+  return new Response(null, { status: result.status, headers: healthProbeHeaders })
 }
 
 /** Debug is opt-in and requires an independent admin key, even for anonymous instances. */

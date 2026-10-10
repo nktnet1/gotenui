@@ -63,6 +63,7 @@ import {
   convertWithGotenberg,
   getGotenbergStatus,
   MAX_UPLOAD_BYTES,
+  probeGotenbergHealth,
   REQUEST_TIMEOUT_MS,
   type ServerStatus,
 } from '#/lib/gotenberg-client'
@@ -1039,6 +1040,8 @@ function Workspace({
   const Icon = ICONS[operation.id] ?? FileText
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [debugOpen, setDebugOpen] = useState(false)
+  const [probeLoading, setProbeLoading] = useState(false)
+  const probeAbort = useRef<AbortController | null>(null)
   const statusAbort = useRef<AbortController | null>(null)
   const refreshStatus = useCallback(async () => {
     statusAbort.current?.abort()
@@ -1066,6 +1069,31 @@ function Workspace({
       }
     }
   }, [connection])
+  const probeHealth = useCallback(async () => {
+    probeAbort.current?.abort()
+    const controller = new AbortController()
+    probeAbort.current = controller
+    setProbeLoading(true)
+    try {
+      const healthy = await probeGotenbergHealth(
+        connection,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(7_000)]),
+      )
+      if (!controller.signal.aborted) {
+        if (healthy) toast.success('Gotenberg health probe returned 200 (healthy).')
+        else toast.warning('Gotenberg health probe returned 503 (unhealthy).')
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        toast.error(error instanceof Error ? error.message : 'Health probe failed.')
+      }
+    } finally {
+      if (probeAbort.current === controller) {
+        probeAbort.current = null
+        setProbeLoading(false)
+      }
+    }
+  }, [connection])
   useEffect(() => {
     setStatus(null)
     void refreshStatus()
@@ -1074,6 +1102,8 @@ function Workspace({
       window.clearInterval(timer)
       statusAbort.current?.abort()
       statusAbort.current = null
+      probeAbort.current?.abort()
+      probeAbort.current = null
     }
   }, [refreshStatus])
   const applyConnection = (id: string, username: string, secret: string, accessKey: string) => {
@@ -1143,6 +1173,18 @@ function Workspace({
               <RefreshCw className={cn('size-4', statusLoading && 'animate-spin')} />
             </Button>
             <span className="mx-1 h-5 w-px bg-slate-200" />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => void probeHealth()}
+              disabled={probeLoading}
+              aria-label="Probe Gotenberg HEAD health"
+              title="Probe HEAD /health (200 healthy, 503 unhealthy)"
+            >
+              <Activity className={cn('size-4', probeLoading && 'animate-pulse')} />
+              <span className="hidden md:inline">Probe</span>
+            </Button>
             <Button
               type="button"
               variant="ghost"

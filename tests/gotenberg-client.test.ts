@@ -5,6 +5,7 @@ import {
   createGotenbergForm,
   getGotenbergDebug,
   getGotenbergStatus,
+  probeGotenbergHealth,
 } from '#/lib/gotenberg-client'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
 import { validatePayload } from '#/lib/validation'
@@ -190,6 +191,64 @@ test('debug client rejects SPA fallbacks and exposes disabled-route errors', asy
     await assert.rejects(getGotenbergDebug('http://127.0.0.1:3000', 'key'), /did not return JSON/)
     globalThis.fetch = async () => new Response('Debug not enabled', { status: 404 })
     await assert.rejects(getGotenbergDebug('http://127.0.0.1:3000', 'key'), /Debug not enabled/)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('HEAD health probe uses only the same-origin API and distinguishes 200 from 503', async () => {
+  const original = globalThis.fetch
+  const calls: { url: string; options: RequestInit }[] = []
+  globalThis.fetch = async (input, options) => {
+    calls.push({ url: String(input), options: options ?? {} })
+    return new Response(null, {
+      status: calls.length === 1 ? 200 : 503,
+      headers: { 'X-Gotenui-Health-Probe': '1' },
+    })
+  }
+  try {
+    assert.equal(await probeGotenbergHealth('http://127.0.0.1:3000'), true)
+    assert.equal(await probeGotenbergHealth('http://127.0.0.1:3000'), false)
+    assert.equal(calls[0]?.url, '/api/gotenberg/health?url=http%3A%2F%2F127.0.0.1%3A3000')
+    assert.equal(calls[0]?.options.method, 'HEAD')
+    assert.equal(calls[0]?.options.credentials, 'same-origin')
+    assert.equal(calls[0]?.options.cache, 'no-store')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('HEAD health probe selects server-managed connection without embedding secrets in URL', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async (input, options) => {
+    assert.equal(String(input), '/api/gotenberg/health?connection=private')
+    assert.equal(options?.method, 'HEAD')
+    const headers = new Headers(options?.headers)
+    assert.equal(headers.get('X-Gotenui-Profile-Access-Key'), 'unit-test-key')
+    assert.equal(headers.get('X-Gotenberg-Url'), null)
+    return new Response(null, { status: 200, headers: { 'X-Gotenui-Health-Probe': '1' } })
+  }
+  try {
+    assert.equal(
+      await probeGotenbergHealth({ kind: 'server', id: 'private', accessKey: 'unit-test-key' }),
+      true,
+    )
+    globalThis.fetch = async () => new Response(null, { status: 403 })
+    await assert.rejects(probeGotenbergHealth('http://127.0.0.1:3000'), /HTTP 403/)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('HEAD health rejects a static SPA fallback masquerading as a healthy server', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () =>
+    new Response(null, { status: 200, headers: { 'Content-Type': 'text/html' } })
+  try {
+    await assert.rejects(
+      probeGotenbergHealth('http://127.0.0.1:3000'),
+      /did not reach the Gotenui API/,
+    )
   } finally {
     globalThis.fetch = original
   }

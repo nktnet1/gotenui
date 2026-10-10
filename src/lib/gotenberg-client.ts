@@ -67,11 +67,11 @@ function targetHeaders(connection: string | ConnectionChoice): Headers {
   return headers
 }
 
-/** The browser contacts only the same-origin Gotenui endpoint. */
-export async function getGotenbergStatus(
-  connection: string | ConnectionChoice,
-  signal?: AbortSignal,
-): Promise<ServerStatus> {
+/** Use the same target selection for full GET status and lightweight HEAD probes. */
+function statusTarget(connection: string | ConnectionChoice): {
+  headers: Headers
+  params: URLSearchParams
+} {
   const headers = targetHeaders(connection)
   const params = new URLSearchParams()
   if (headers.has('X-Gotenui-Connection-Id')) {
@@ -81,6 +81,15 @@ export async function getGotenbergStatus(
     params.set('url', headers.get('X-Gotenberg-Url') ?? '')
     headers.delete('X-Gotenberg-Url')
   }
+  return { headers, params }
+}
+
+/** The browser contacts only the same-origin Gotenui endpoint. */
+export async function getGotenbergStatus(
+  connection: string | ConnectionChoice,
+  signal?: AbortSignal,
+): Promise<ServerStatus> {
+  const { headers, params } = statusTarget(connection)
   try {
     const response = await fetch(`/api/gotenberg/status?${params}`, {
       headers,
@@ -113,6 +122,36 @@ export async function getGotenbergStatus(
           : connectionHint(),
     }
   }
+}
+
+/** Probe HEAD /health without a response body; 503 means unhealthy, not a network failure. */
+export async function probeGotenbergHealth(
+  connection: string | ConnectionChoice,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const { headers, params } = statusTarget(connection)
+  let response: Response
+  try {
+    response = await fetch(`/api/gotenberg/health?${params}`, {
+      method: 'HEAD',
+      headers,
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal,
+    })
+  } catch (error) {
+    if (signal?.aborted) throw error
+    throw new Error(connectionHint())
+  }
+  if (
+    (response.status === 200 || response.status === 503) &&
+    response.headers.get('x-gotenui-health-probe') !== '1'
+  ) {
+    throw new Error('Health probe did not reach the Gotenui API. Check the Nitro deployment.')
+  }
+  if (response.status === 200) return true
+  if (response.status === 503) return false
+  throw new Error(`Health probe returned HTTP ${response.status}. Check the selected connection.`)
 }
 
 /** Rebuild the exact Gotenberg multipart form after server-side validation. */

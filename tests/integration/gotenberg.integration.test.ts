@@ -3,6 +3,7 @@ import { afterAll, beforeAll, expect, inject, test } from 'vitest'
 import {
   proxyConversionRequest,
   proxyDebugRequest,
+  proxyHeadHealthRequest,
   proxyStatusRequest,
 } from '#/lib/gotenberg-proxy.server'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
@@ -288,6 +289,46 @@ test('local Gotenberg protects conversions and version, but leaves health public
   })
   expect(response.status).toBe(401)
 })
+
+test('HEAD health probes the local Gotenberg container without a body or demo requests', async () => {
+  const direct = await fetch(`${backendUrl}/health`, { method: 'HEAD' })
+  expect(direct.status).toBe(200)
+  expect(await direct.text()).toBe('')
+
+  const selected = await proxyHeadHealthRequest(
+    new Request(`${proxyOrigin}/api/gotenberg/health?connection=legacy-basic`, {
+      method: 'HEAD',
+      headers: {
+        Origin: proxyOrigin,
+        'X-Gotenui-Profile-Access-Key': 'local-test-profile-access-key-123',
+      },
+    }),
+  )
+  expect(selected.status).toBe(200)
+  expect(selected.body).toBeNull()
+  expect(await selected.text()).toBe('')
+  expect(selected.headers.get('cache-control')).toBe('no-store')
+  expect(selected.headers.get('x-gotenui-health-probe')).toBe('1')
+  expect(selected.headers.get('authorization')).toBeNull()
+
+  // The upstream health endpoint is public even when conversion requires Basic Auth.
+  const browser = await proxyHeadHealthRequest(
+    new Request(`${proxyOrigin}/api/gotenberg/health?url=${encodeURIComponent(backendUrl)}`, {
+      method: 'HEAD',
+      headers: { Origin: proxyOrigin },
+    }),
+  )
+  expect(browser.status).toBe(200)
+  expect(browser.body).toBeNull()
+
+  await expect(
+    proxyHeadHealthRequest(
+      new Request(`${proxyOrigin}/api/gotenberg/health?url=https://unapproved.example.test`, {
+        method: 'HEAD',
+      }),
+    ),
+  ).rejects.toMatchObject({ status: 403 })
+}, 120_000)
 
 test('the proxy returns an upstream 401 when the configured Basic Auth password is wrong', async () => {
   const operation = OPERATIONS.find((value) => value.id === 'html-pdf')
