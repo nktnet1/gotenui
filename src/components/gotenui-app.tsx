@@ -39,6 +39,7 @@ import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { toast } from 'sonner'
 import { ConnectionManager } from '#/components/connection-manager'
 import { DebugDialog } from '#/components/debug-dialog'
+import { MetricsDialog } from '#/components/metrics-dialog'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
@@ -1040,6 +1041,7 @@ function Workspace({
   const Icon = ICONS[operation.id] ?? FileText
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [debugOpen, setDebugOpen] = useState(false)
+  const [metricsOpen, setMetricsOpen] = useState(false)
   const [probeLoading, setProbeLoading] = useState(false)
   const probeAbort = useRef<AbortController | null>(null)
   const statusAbort = useRef<AbortController | null>(null)
@@ -1327,6 +1329,17 @@ function Workspace({
           connection={connection}
           connectionName={connectionName}
           onClose={() => setDebugOpen(false)}
+          onOpenMetrics={() => {
+            setDebugOpen(false)
+            setMetricsOpen(true)
+          }}
+        />
+      )}
+      {metricsOpen && (
+        <MetricsDialog
+          connection={connection}
+          connectionName={connectionName}
+          onClose={() => setMetricsOpen(false)}
         />
       )}
       {settingsOpen && (

@@ -3,6 +3,7 @@ import * as v from 'valibot'
 import { resolveConnectionTarget } from '#/lib/connection-target.server'
 import { requireDebugAccess } from '#/lib/debug-access.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
+import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
   DEFAULT_MAX_REQUEST_BYTES,
   ProxyInputError,
@@ -264,6 +265,88 @@ export async function proxyHeadHealthRequest(
 export function proxyHeadErrorResponse(error: unknown): Response {
   const result = proxyErrorResponse(error)
   return new Response(null, { status: result.status, headers: healthProbeHeaders })
+}
+
+/** Metrics are privileged diagnostics; the browser never gets a general-purpose GET relay. */
+export async function proxyMetricsRequest(
+  request: Request,
+  fetcher: typeof fetch = fetch,
+): Promise<Response> {
+  requireSameOrigin(request)
+  if (request.method !== 'POST') {
+    throw new ProxyInputError('Metrics requests must use POST.', 405)
+  }
+  // Reuse the same administrator key as /debug: neither route is public.
+  requireDebugAccess(request, process.env.GOTENUI_DEBUG_ACCESS_KEY)
+  const { url, headers: authHeaders } = resolveConnectionTarget(
+    request,
+    runtimeConfig(),
+    request.headers.get('x-gotenberg-url'),
+    request.headers.get('x-gotenui-connection-id'),
+  )
+  const upstream = await fetcher(urlJoin(url, '/prometheus/metrics'), {
+    method: 'GET',
+    ...fetchOptions(request),
+    headers: authHeaders,
+    credentials: 'omit',
+  })
+  if (!upstream.ok) {
+    await upstream.body?.cancel().catch(() => {})
+    const message =
+      upstream.status === 404
+        ? 'The legacy Gotenberg Prometheus endpoint is unavailable. Check PROMETHEUS_METRICS_PATH or configure OpenTelemetry instead.'
+        : upstream.status === 401 || upstream.status === 403
+          ? 'Gotenberg rejected authentication for its metrics endpoint.'
+          : `Gotenberg returned HTTP ${upstream.status} from /prometheus/metrics.`
+    return new Response(message, {
+      status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
+      headers: { ...safeResponseHeaders, 'Content-Type': 'text/plain; charset=utf-8' },
+    })
+  }
+
+  const MAX_METRICS_RESPONSE_BYTES = 2_000_000
+  const declaredSize = Number(upstream.headers.get('content-length') ?? 0)
+  if (declaredSize > MAX_METRICS_RESPONSE_BYTES) {
+    await upstream.body?.cancel().catch(() => {})
+    throw new ProxyInputError('Gotenberg metrics response exceeds the 2 MB limit.', 502)
+  }
+  const contentType = upstream.headers.get('content-type')?.toLowerCase() ?? ''
+  if (
+    !contentType.startsWith('text/plain') &&
+    !contentType.startsWith('application/openmetrics-text')
+  ) {
+    await upstream.body?.cancel().catch(() => {})
+    throw new ProxyInputError('Gotenberg metrics did not return Prometheus text.', 502)
+  }
+  if (!upstream.body) {
+    throw new ProxyInputError('Gotenberg returned an empty metrics response.', 502)
+  }
+  let bytes: Uint8Array
+  try {
+    bytes = await readLimitedBody(upstream.body, MAX_METRICS_RESPONSE_BYTES)
+  } catch (error) {
+    if (error instanceof ProxyInputError && error.status === 413) {
+      throw new ProxyInputError('Gotenberg metrics response exceeds the 2 MB limit.', 502)
+    }
+    throw error
+  }
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new ProxyInputError('Gotenberg metrics did not contain valid UTF-8.', 502)
+  }
+  if (!isPrometheusMetrics(text)) {
+    throw new ProxyInputError('Gotenberg returned an unexpected metrics response.', 502)
+  }
+  return new Response(text, {
+    status: 200,
+    headers: {
+      ...safeResponseHeaders,
+      'Content-Type': 'text/plain; charset=utf-8',
+      'X-Gotenui-Metrics': '1',
+    },
+  })
 }
 
 /** Debug is opt-in and requires an independent admin key, even for anonymous instances. */

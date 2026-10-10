@@ -1,4 +1,4 @@
-import { Braces, RefreshCw, ShieldAlert, X } from 'lucide-react'
+import { Braces, ChartNoAxesColumn, RefreshCw, ShieldAlert, X } from 'lucide-react'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
@@ -10,9 +10,10 @@ type Props = {
   connection: ConnectionChoice
   connectionName: string
   onClose: () => void
+  onOpenMetrics: () => void
 }
 
-export function DebugDialog({ connection, connectionName, onClose }: Props) {
+export function DebugDialog({ connection, connectionName, onClose, onOpenMetrics }: Props) {
   const [key, setKey] = useState('')
   const [details, setDetails] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -92,6 +93,14 @@ export function DebugDialog({ connection, connectionName, onClose }: Props) {
             dialog, are not saved, and disappear when you close it. The Gotenberg instance must also
             have API_ENABLE_DEBUG_ROUTE=true.
           </p>
+        </div>
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs text-slate-600">
+            Need performance counters instead of runtime configuration?
+          </p>
+          <Button type="button" variant="outline" size="sm" onClick={onOpenMetrics}>
+            <ChartNoAxesColumn className="size-4" /> Prometheus metrics
+          </Button>
         </div>
         <form onSubmit={(event) => void inspect(event)} className="flex flex-wrap items-end gap-3">
           <div className="min-w-0 flex-1 space-y-2">

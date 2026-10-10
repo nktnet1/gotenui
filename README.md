@@ -8,7 +8,7 @@ A **stateless TanStack Start document workbench** for Gotenberg 8.x. The interfa
 - Multiple named connections in **Connection settings**: browser profiles are saved in `localStorage` (`gotenui.connections.v1`), with automatic migration from the former `gotenui.backend-url.v1` preference. Default: **https://demo.gotenberg.dev**. Server-managed profiles are configured through environment variables, with credentials kept server-side.
 - Conversions and health/version checks call **same-origin `/api/gotenberg/*` routes**. Nitro makes server-to-server requests to Gotenberg, so **the demo requires no CORS configuration**.
 - Input validation in both browser and server, explicit destination allowlist, independent per-connection Basic Auth or bearer-token support, with server-side credentials never exposed to browsers, streaming conversion responses, three-minute request timeout and an in-memory activity list.
-- Optional, **admin-key-protected** debug diagnostics for the selected instance (`GET /debug` upstream). The viewer is explicitly invoked and never stores the administrator key or response.
+- Optional **admin-key-protected** debug JSON (`GET /debug`) and read-only legacy Prometheus metrics (`GET /prometheus/metrics`) for the selected instance. Neither viewer persists credentials or output.
 - A lightweight **Probe** button sends an authenticated, same-origin `HEAD /api/gotenberg/health` request to check Gotenberg without downloading a JSON body. HTTP 200 means healthy and 503 means unhealthy. The existing full status check remains responsible for verifying credentials against `/version`.
 
 ## Development
@@ -35,7 +35,7 @@ pnpm test:integration  # Starts local Gotenberg, tests 22 processing routes, cle
 pnpm test              # Both suites (requires Docker)
 ```
 
-Vitest integration tests start a **disposable `gotenberg/gotenberg:8.37.0` container with Basic Auth enabled** on a Docker-assigned loopback port and a tiny local HTTP fixture server. The tests exercise the real `proxyConversionRequest` against the local instance, including all 22 processing routes, multipart uploads, PDF/image/ZIP/JSON responses, health, and URL allowlisting. The harness waits for `/health` and destroys the container at teardown. No fixed port or public-demo dependency is required. The suite verifies authenticated conversions for all 22 routes, rejects unauthenticated and incorrect-password requests, and checks the credential-free demo path with unit tests. It also validates the protected local `/debug` route with a separate Gotenui admin key, and tests direct and proxied `HEAD /health` requests. A missing Docker daemon **fails the suite**, rather than silently skipping it. Override the pinned test image with `GOTENBERG_TEST_IMAGE` if needed.
+Vitest integration tests start a **disposable `gotenberg/gotenberg:8.37.0` container with Basic Auth enabled** on a Docker-assigned loopback port and a tiny local HTTP fixture server. The tests exercise the real `proxyConversionRequest` against the local instance, including all 22 processing routes, multipart uploads, PDF/image/ZIP/JSON responses, health, and URL allowlisting. The harness waits for `/health` and destroys the container at teardown. No fixed port or public-demo dependency is required. The suite verifies authenticated conversions for all 22 routes, rejects unauthenticated and incorrect-password requests, and checks the credential-free demo path with unit tests. It also validates the protected local `/debug` and `/prometheus/metrics` routes using a Gotenui admin key, and tests direct and proxied `HEAD /health` requests. A missing Docker daemon **fails the suite**, rather than silently skipping it. Override the pinned test image with `GOTENBERG_TEST_IMAGE` if needed.
 
 To cover both split response types, the suite merges two locally generated PDF pages and verifies that splitting produces a ZIP with two entries. It also checks the single-page PDF response and uploads a MINIMUM-profile XML fixture for Factur-X.
 
@@ -43,7 +43,7 @@ The test setup does **not** change the application's public-demo default. Docker
 
 ### Gotenberg API coverage
 
-Gotenui exposes **all 22 documented `POST /forms/*` routes**: four conversion, three screenshot, and fifteen PDF-engine routes. It queries `GET /health` and `GET /version` for detailed connection status, and exposes `HEAD /health` through `HEAD /api/gotenberg/health` for a no-body health probe. The privileged `GET /debug` endpoint is available through `POST /api/gotenberg/debug`, but only when `GOTENUI_DEBUG_ACCESS_KEY` is configured and supplied. Prometheus metrics and optional async webhook and `downloadFrom` parameters are not yet exposed.
+Gotenui exposes **all 22 documented `POST /forms/*` routes**: four conversion, three screenshot, and fifteen PDF-engine routes. It queries `GET /health` and `GET /version` for detailed connection status, and exposes `HEAD /health` through `HEAD /api/gotenberg/health` for a no-body health probe. The privileged `GET /debug` endpoint is available through `POST /api/gotenberg/debug`, but only when `GOTENUI_DEBUG_ACCESS_KEY` is configured and supplied. Legacy Prometheus text metrics (`GET /prometheus/metrics` upstream) are available through the protected `POST /api/gotenberg/metrics` endpoint. Optional async webhook and `downloadFrom` parameters are not yet exposed. OpenTelemetry exporters are configured on Gotenberg itself, not through Gotenui.
 
 ## Protected debug diagnostics
 
@@ -52,6 +52,14 @@ To inspect a Gotenberg instance, first configure a separate **32+ character** `G
 Use **Diagnostics** in the workbench header, enter the Gotenui admin key (not your Gotenberg password), and inspect the selected connection's read-only JSON. The UI sends the admin key only to Gotenui's same-origin proxy, and forwards only the selected connection's upstream credentials to Gotenberg. No secret or response is saved to `localStorage`, a database or a server session. Results and credentials are cleared when the dialog closes; all responses are `Cache-Control: no-store`. The endpoint enforces the existing exact backend allowlist and limits returned debug JSON to 1 MB.
 
 A disabled local Gotenui admin key produces HTTP 404, an incorrect key HTTP 403, and an upstream Gotenberg without `API_ENABLE_DEBUG_ROUTE` HTTP 404. The local integration suite enables the debug route only on its disposable authenticated Gotenberg container, and never contacts the public demo.
+
+## Protected Prometheus metrics (legacy)
+
+Select **Diagnostics → Prometheus metrics** in the workbench header and enter the same **32+ character** `GOTENUI_DEBUG_ACCESS_KEY` used for debug diagnostics. This server-only key is required even when the chosen Gotenberg instance permits anonymous access. The proxy sends a `GET /prometheus/metrics` request using that profile's upstream Basic/Bearer credentials and returns only bounded, UTF-8, Prometheus text. The browser can filter, copy or download this response without saving it to `localStorage`, a cookie or a server-side session. Maximum response size is **2 MB**. The endpoint refuses redirects, unknown hosts, invalid media types, and unexpected responses. Leaving the key unset disables both debug and metrics access (HTTP 404).
+
+**Deprecation:** Gotenberg has deprecated its legacy `/prometheus/metrics` module since **8.29.0**. It remains available in the pinned **8.37.0** integration image, but new monitoring installations should configure Gotenberg's **OpenTelemetry exporter** (`OTEL_METRICS_EXPORTER=otlp` to send metrics to an external collector, or `OTEL_METRICS_EXPORTER=prometheus` to expose a separate scrape server, usually `:9464/metrics`). The OTEL exporter is **not** the same endpoint or port as `/prometheus/metrics`, and Gotenui deliberately does not proxy arbitrary collector hosts or management APIs. See [Gotenberg telemetry](https://gotenberg.dev/docs/telemetry).
+
+Only the default legacy endpoint path is supported. If a Gotenberg instance changes `PROMETHEUS_METRICS_PATH`, restore the default to use this panel. This is an **on-demand admin viewer**, not a scheduled metrics collector, production monitoring database, or substitute for your normal Prometheus/OTEL scrape infrastructure.
 
 ## Vercel and other serverless providers
 
@@ -81,6 +89,7 @@ The UI is client-rendered: there is no requirement for persistent server process
 | `GOTENBERG_BASIC_AUTH_PASSWORD` | **Server-only** legacy Basic Auth password for that URL; v1.0.10 requires an access key for this profile. |
 | `GOTENUI_SERVER_CONNECTIONS` | Optional server-only JSON array of named connection profiles, each with ID, name, allowed URL and optional Basic/Bearer auth. |
 | `GOTENUI_PROFILE_ACCESS_KEY` | Server-only access key (16–4096 characters). Required if any server-managed profile has credentials. |
+| `GOTENUI_DEBUG_ACCESS_KEY` | Optional server-only admin key (32–4096 characters) for both debug JSON and legacy Prometheus metrics. If unset, both endpoints are disabled. |
 
 For example, to let the Settings UI select either the demo or a private Gotenberg instance:
 
@@ -125,6 +134,8 @@ The browser currently caps uploaded files at **4,000,000 bytes** and the proxy c
 - `GET /api/gotenberg/status?url=<encoded-base-url>` — status for a browser-managed URL, with optional `X-Gotenui-Upstream-Authorization` for user-supplied Basic or Bearer auth.
 - `GET /api/gotenberg/status?connection=<profile-id>` — status for a server-managed profile. Supply `X-Gotenui-Profile-Access-Key` if protected.
 - `HEAD /api/gotenberg/health?url=<encoded-base-url>` or `?connection=<profile-id>` — lightweight, **bodyless** upstream `HEAD /health` probe. Uses the same browser credential header or protected server-profile access key as the corresponding status request. Returns **200** for healthy, **503** for unhealthy, **401/403** for upstream authentication/authorisation failures, or **502/504** for unexpected gateway failures/timeouts. A browser-managed URL not on the allowlist is rejected with **403**. Never forwards upstream cookies or headers; includes an `X-Gotenui-Health-Probe: 1` header so the browser can reject a static-host SPA fallback. Because Gotenberg's own `/health` can be public even when document operations require Basic Auth, use the full status endpoint to check credentials and version.
+- `POST /api/gotenberg/debug` — read-only JSON from upstream `GET /debug`, requires `X-Gotenui-Debug-Access-Key` and the normal connection selector and credentials.
+- `POST /api/gotenberg/metrics` — bounded Prometheus exposition from upstream `GET /prometheus/metrics`, requires `X-Gotenui-Debug-Access-Key` and the normal connection selector and credentials. On success returns `text/plain; charset=utf-8` with `X-Gotenui-Metrics: 1`; protects against static SPA fallback, and does not forward upstream cookies or authentication challenges.
 - `POST /api/gotenberg/convert` — validated multipart form with `payload`, `files`, and `auxiliary` fields. Browser-managed requests supply `X-Gotenberg-Url` and optional `X-Gotenui-Upstream-Authorization`; server-managed requests supply `X-Gotenui-Connection-Id` and optional `X-Gotenui-Profile-Access-Key`. **Do not combine modes.** The proxy reconstructs approved Gotenberg multipart fields and forwards only the selected upstream auth.
 
 These routes are same-origin and do not enable CORS. Requests claiming a different `Origin` or `Sec-Fetch-Site` are rejected, but server-side HTTP clients can still access public browser-managed routes, so edge security and rate limits are essential.

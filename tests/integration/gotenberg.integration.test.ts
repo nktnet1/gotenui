@@ -4,6 +4,7 @@ import {
   proxyConversionRequest,
   proxyDebugRequest,
   proxyHeadHealthRequest,
+  proxyMetricsRequest,
   proxyStatusRequest,
 } from '#/lib/gotenberg-proxy.server'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
@@ -416,4 +417,35 @@ test('debug diagnostics return real JSON from the authenticated local Gotenberg 
   const wrong = request.clone()
   wrong.headers.set('X-Gotenui-Debug-Access-Key', 'invalid-key')
   await expect(proxyDebugRequest(wrong)).rejects.toMatchObject({ status: 403 })
+}, 120_000)
+
+test('legacy Prometheus metrics are read from local Docker through the protected proxy', async () => {
+  const request = new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
+    method: 'POST',
+    headers: {
+      Origin: proxyOrigin,
+      'X-Gotenui-Connection-Id': 'legacy-basic',
+      'X-Gotenui-Profile-Access-Key': 'local-test-profile-access-key-123',
+      'X-Gotenui-Debug-Access-Key': 'local-test-debug-admin-key-1234567890',
+    },
+  })
+  const response = await proxyMetricsRequest(request)
+  if (!response.ok) throw new Error(`Metrics failed: ${response.status} ${await response.text()}`)
+  expect(response.headers.get('content-type')).toContain('text/plain')
+  expect(response.headers.get('cache-control')).toBe('no-store')
+  expect(response.headers.get('x-gotenui-metrics')).toBe('1')
+  expect(response.headers.get('authorization')).toBeNull()
+  const text = await response.text()
+  expect(text).toContain('# HELP ')
+  expect(text).toContain('# TYPE ')
+  expect(text.length).toBeGreaterThan(100)
+
+  const missingKey = request.clone()
+  missingKey.headers.delete('X-Gotenui-Debug-Access-Key')
+  await expect(proxyMetricsRequest(missingKey)).rejects.toMatchObject({ status: 403 })
+  const unapproved = request.clone()
+  unapproved.headers.delete('X-Gotenui-Connection-Id')
+  unapproved.headers.delete('X-Gotenui-Profile-Access-Key')
+  unapproved.headers.set('X-Gotenberg-Url', 'https://unapproved.example.test')
+  await expect(proxyMetricsRequest(unapproved)).rejects.toMatchObject({ status: 403 })
 }, 120_000)

@@ -293,3 +293,39 @@ export async function getGotenbergDebug(
   }
   return data as Record<string, unknown>
 }
+
+/** Request bounded, admin-only legacy Prometheus metrics from the selected instance. */
+export async function getGotenbergMetrics(
+  connection: string | ConnectionChoice,
+  adminKey: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!adminKey) throw new InputError('Enter the Gotenui diagnostics access key.')
+  const headers = targetHeaders(connection)
+  headers.set('X-Gotenui-Debug-Access-Key', adminKey)
+  let response: Response
+  try {
+    response = await fetch('/api/gotenberg/metrics', {
+      method: 'POST',
+      headers,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal,
+    })
+  } catch (error) {
+    if (signal?.aborted) throw error
+    throw new Error(connectionHint())
+  }
+  if (!response.ok) {
+    throw new Error(
+      (await response.text()).trim().slice(0, 500) || `Metrics returned HTTP ${response.status}.`,
+    )
+  }
+  if (
+    response.headers.get('x-gotenui-metrics') !== '1' ||
+    !response.headers.get('content-type')?.toLowerCase().startsWith('text/plain')
+  ) {
+    throw new Error('Metrics did not reach the Gotenui API. Check the Nitro deployment.')
+  }
+  return response.text()
+}
