@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { afterAll, beforeAll, expect, inject, test } from 'vitest'
 import { proxyConversionRequest, proxyStatusRequest } from '../../src/lib/gotenberg-proxy.server.ts'
 import { OPERATIONS, type Operation, operationDefaults } from '../../src/lib/operations.ts'
@@ -7,6 +8,7 @@ const backendUrl = inject('gotenbergTestUrl')
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const proxyOrigin = 'http://gotenui.test'
 let pdfBytes: ArrayBuffer
+let splitPdfBytes: ArrayBuffer
 let previousAllowedUrls: string | undefined
 
 function request(
@@ -62,7 +64,11 @@ function inputFor(operation: Operation): {
       )
       break
     case 'pdf':
-      files.push(pdfFile())
+      files.push(
+        operation.id === 'split'
+          ? new File([splitPdfBytes], 'two-pages.pdf', { type: 'application/pdf' })
+          : pdfFile(),
+      )
       if (operation.id === 'merge') files.push(pdfFile('second.pdf'))
       break
   }
@@ -97,12 +103,7 @@ function inputFor(operation: Operation): {
       fields.facturxConformanceLevel = 'MINIMUM'
       auxiliary.push(
         new File(
-          [
-            '<?xml version="1.0" encoding="utf-8"?>',
-            '<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100">',
-            '<rsm:ExchangedDocument><ram:ID xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100">GOTENUI-1</ram:ID></rsm:ExchangedDocument>',
-            '</rsm:CrossIndustryInvoice>',
-          ].join(''),
+          [readFileSync(new URL('./fixtures/factur-x-minimum.xml', import.meta.url), 'utf8')],
           'invoice.xml',
           { type: 'application/xml' },
         ),
@@ -139,12 +140,42 @@ beforeAll(async () => {
     throw new Error(`Fixture generation failed: ${response.status} ${await response.text()}`)
   pdfBytes = await response.arrayBuffer()
   expect(new TextDecoder().decode(new Uint8Array(pdfBytes).subarray(0, 5))).toBe('%PDF-')
+
+  // Merge two single-page documents into a deterministic two-page split input.
+  // Splitting the original single-page fixture returns a PDF, not a ZIP.
+  const merge = OPERATIONS.find((operation) => operation.id === 'merge')
+  if (!merge) throw new Error('Missing PDF merge operation')
+  const merged = await proxyConversionRequest(
+    request(merge, {}, [pdfFile('page-one.pdf'), pdfFile('page-two.pdf')]),
+  )
+  if (!merged.ok) {
+    throw new Error(`Split fixture generation failed: ${merged.status} ${await merged.text()}`)
+  }
+  expect(merged.headers.get('content-type')).toContain('application/pdf')
+  splitPdfBytes = await merged.arrayBuffer()
+  expect(new TextDecoder().decode(new Uint8Array(splitPdfBytes).subarray(0, 5))).toBe('%PDF-')
 }, 120_000)
 
 afterAll(() => {
   if (previousAllowedUrls === undefined) delete process.env.GOTENBERG_ALLOWED_URLS
   else process.env.GOTENBERG_ALLOWED_URLS = previousAllowedUrls
 })
+
+function zipEntryCount(bytes: Uint8Array): number {
+  // ZIP end-of-central-directory stores the number of entries at offset 10.
+  // Search backwards because ZIP files can have a trailing comment.
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  for (
+    let offset = bytes.length - 22;
+    offset >= Math.max(0, bytes.length - 22 - 65_535);
+    offset--
+  ) {
+    if (view.getUint32(offset, true) !== 0x06054b50) continue
+    const commentLength = view.getUint16(offset + 20, true)
+    if (offset + 22 + commentLength === bytes.length) return view.getUint16(offset + 10, true)
+  }
+  throw new Error('Missing ZIP end-of-central-directory record')
+}
 
 // Drive each UI operation through the real server-side proxy into the local Docker instance.
 // No mocks and no network calls to demo.gotenberg.dev are used in this suite.
@@ -168,6 +199,10 @@ test.each(OPERATIONS)(
       case 'zip':
         expect(type).toBe('application/zip')
         expect(new TextDecoder().decode(bytes.subarray(0, 2))).toBe('PK')
+        if (operation.id === 'split') {
+          // The two-page fixture must produce two separate PDF entries, not just a ZIP header.
+          expect(zipEntryCount(bytes)).toBe(2)
+        }
         break
       case 'json':
         expect(type).toBe('application/json')
@@ -194,3 +229,17 @@ test('the local proxy still rejects unapproved destinations', async () => {
   })
   await expect(proxyConversionRequest(rejected)).rejects.toMatchObject({ status: 403 })
 })
+
+test('a single-page split returns a PDF without an unnecessary ZIP', async () => {
+  const operation = OPERATIONS.find((value) => value.id === 'split')
+  if (!operation) throw new Error('Missing PDF split operation')
+  const response = await proxyConversionRequest(
+    request(operation, { fields: { splitMode: 'intervals', splitSpan: '1' } }, [pdfFile()]),
+  )
+  if (!response.ok) {
+    throw new Error(`Single-page split failed: ${response.status} ${await response.text()}`)
+  }
+  expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
+}, 120_000)
