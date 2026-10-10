@@ -7,7 +7,7 @@ import {
   readLimitedBody,
   requireAllowedBackend,
   requireSameOrigin,
-} from '../src/lib/proxy-policy.ts'
+} from '#/lib/proxy-policy'
 
 test('the only default proxy target is the public demo', () => {
   assert.equal(DEFAULT_MAX_REQUEST_BYTES, 4_200_000)

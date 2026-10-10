@@ -4,9 +4,9 @@ import {
   convertWithGotenberg,
   createGotenbergForm,
   getGotenbergStatus,
-} from '../src/lib/gotenberg-client.ts'
-import { OPERATION_BY_ID, operationDefaults } from '../src/lib/operations.ts'
-import { validatePayload } from '../src/lib/validation.ts'
+} from '#/lib/gotenberg-client'
+import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
+import { validatePayload } from '#/lib/validation'
 
 test('builds Markdown multipart with Gotenberg template and local assets', async () => {
   const operation = OPERATION_BY_ID.get('markdown-pdf')

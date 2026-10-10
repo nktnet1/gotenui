@@ -1,11 +1,11 @@
 {
   "name": "gotenui",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --host 0.0.0.0",
-    "build": "vite build",
+    "dev": "vite dev --configLoader native --host 0.0.0.0",
+    "build": "vite build --configLoader native",
     "preview": "node .output/server/index.mjs",
     "check": "biome check .",
     "format": "biome check --write .",
@@ -48,5 +48,9 @@
   "packageManager": "pnpm@12.10.1",
   "engines": {
     "node": ">=24"
+  },
+  "imports": {
+    "#/*": "./src/*",
+    "#scripts/*": "./scripts/*.ts"
   }
 }

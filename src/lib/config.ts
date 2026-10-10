@@ -1,5 +1,5 @@
 import * as v from 'valibot'
-import { normalizeBackendUrl } from './backend-url.ts'
+import { normalizeBackendUrl } from '#/lib/backend-url'
 
 // Entirely public, build-time configuration: never store passwords or tokens here.
 const buildEnvSchema = v.object({

@@ -1,4 +1,4 @@
-import { normalizeBackendUrl } from './backend-url.ts'
+import { normalizeBackendUrl } from '#/lib/backend-url'
 
 export const DEMO_GOTENBERG_URL = 'https://demo.gotenberg.dev'
 export const DEFAULT_MAX_REQUEST_BYTES = 4_200_000

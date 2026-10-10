@@ -1,6 +1,6 @@
 import urlJoin from 'url-join'
 import * as v from 'valibot'
-import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from './gotenberg-client.ts'
+import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import {
   DEFAULT_MAX_REQUEST_BYTES,
   DEMO_GOTENBERG_URL,
@@ -9,8 +9,8 @@ import {
   readLimitedBody,
   requireAllowedBackend,
   requireSameOrigin,
-} from './proxy-policy.ts'
-import { InputError, validateFiles, validatePayload } from './validation.ts'
+} from '#/lib/proxy-policy'
+import { InputError, validateFiles, validatePayload } from '#/lib/validation'
 
 const serverEnvSchema = v.object({
   GOTENBERG_ALLOWED_URLS: v.optional(v.pipe(v.string(), v.maxLength(20_000))),

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { downloadFilename, formatBytes, responseExtension } from '../src/lib/security.ts'
+import { downloadFilename, formatBytes, responseExtension } from '#/lib/security'
 
 test('sanitizes filenames from untrusted Gotenberg responses', () => {
   assert.equal(

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { expect, test } from 'vitest'
-import { GROUPS, OPERATION_BY_ID, OPERATIONS, operationDefaults } from '../src/lib/operations.ts'
+import { GROUPS, OPERATION_BY_ID, OPERATIONS, operationDefaults } from '#/lib/operations'
 
 test('all operation identifiers and Gotenberg endpoints are unique', () => {
   assert.equal(OPERATIONS.length, 22)

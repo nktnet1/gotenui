@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { afterAll, beforeAll, expect, inject, test } from 'vitest'
-import { proxyConversionRequest, proxyStatusRequest } from '../../src/lib/gotenberg-proxy.server.ts'
-import { OPERATIONS, type Operation, operationDefaults } from '../../src/lib/operations.ts'
-import type { ConversionPayload } from '../../src/lib/validation.ts'
+import { proxyConversionRequest, proxyStatusRequest } from '#/lib/gotenberg-proxy.server'
+import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
+import type { ConversionPayload } from '#/lib/validation'
 
 const backendUrl = inject('gotenbergTestUrl')
 const fixtureUrl = inject('gotenbergFixtureUrl')

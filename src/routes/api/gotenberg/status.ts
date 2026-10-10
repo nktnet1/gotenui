@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { proxyErrorResponse, proxyStatusRequest } from '../../../lib/gotenberg-proxy.server'
+import { proxyErrorResponse, proxyStatusRequest } from '#/lib/gotenberg-proxy.server'
 
 export const Route = createFileRoute('/api/gotenberg/status')({
   server: {

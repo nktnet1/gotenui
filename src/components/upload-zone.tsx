@@ -1,8 +1,8 @@
 import { ArrowDown, ArrowUp, FileText, UploadCloud, X } from 'lucide-react'
 import { useId, useRef, useState } from 'react'
-import { formatBytes } from '../lib/security'
-import { cn } from '../lib/utils'
-import { Button } from './ui/button'
+import { Button } from '#/components/ui/button'
+import { formatBytes } from '#/lib/security'
+import { cn } from '#/lib/utils'
 
 interface UploadZoneProps {
   label: string

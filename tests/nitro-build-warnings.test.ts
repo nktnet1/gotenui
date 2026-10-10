@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isBundledDependencyClientDirective,
   labelDynamicChunkGroups,
-} from '../scripts/nitro-build-warnings'
+} from '#scripts/nitro-build-warnings'
 
 describe('Nitro/Rolldown build diagnostics', () => {
   it('labels function-named groups without changing their behaviour', () => {

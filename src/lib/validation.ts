@@ -1,5 +1,5 @@
 import * as v from 'valibot'
-import { OPERATION_BY_ID, type Operation } from './operations.ts'
+import { OPERATION_BY_ID, type Operation } from '#/lib/operations'
 
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])

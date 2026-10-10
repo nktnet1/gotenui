@@ -30,13 +30,13 @@ jobs:
         run: pnpm typecheck
       - name: Unit tests
         run: pnpm test:unit
-      - name: Build without known Rolldown warnings
+      - name: Build with native Vite config without known warnings
         shell: bash
         run: |
           set -o pipefail
           pnpm build 2>&1 | tee build.log
-          if grep -E '\[MODULE_LEVEL_DIRECTIVE\]|output\.codeSplitting\.groups\[[0-9]+\]\.name.*function' build.log; then
-            echo '::error::Rolldown build warnings have regressed.'
+          if grep -E '\[MODULE_LEVEL_DIRECTIVE\]|output\.codeSplitting\.groups\[[0-9]+\]\.name.*function|unsupported by.*configLoader' build.log; then
+            echo '::error::Vite/Nitro build warnings have regressed.'
             exit 1
           fi
 

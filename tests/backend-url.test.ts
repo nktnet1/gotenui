@@ -6,7 +6,7 @@ import {
   loadBackendUrl,
   normalizeBackendUrl,
   saveBackendUrl,
-} from '../src/lib/backend-url.ts'
+} from '#/lib/backend-url'
 
 test('normalizes absolute Gotenberg URLs, including path prefixes', () => {
   assert.equal(normalizeBackendUrl(' http://localhost:3000/ '), 'http://localhost:3000')

@@ -9,12 +9,11 @@
     "skipLibCheck": true,
     "noEmit": true,
     "isolatedModules": true,
-    "allowImportingTsExtensions": true,
     "allowJs": false,
     "types": ["node", "vite/client"],
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "#/*": ["./src/*"],
+      "#scripts/*": ["./scripts/*"]
     }
   },
   "include": ["src", "tests", "vite.config.ts", "vitest.config.ts", "vitest.integration.config.ts"]

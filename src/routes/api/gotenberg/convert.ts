@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { proxyConversionRequest, proxyErrorResponse } from '../../../lib/gotenberg-proxy.server'
+import { proxyConversionRequest, proxyErrorResponse } from '#/lib/gotenberg-proxy.server'
 
 export const Route = createFileRoute('/api/gotenberg/convert')({
   server: {

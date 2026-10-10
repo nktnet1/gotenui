@@ -38,8 +38,15 @@ import {
 } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { browserStorage, loadBackendUrl, saveBackendUrl } from '../lib/backend-url'
-import { DEFAULT_BACKEND_URL } from '../lib/config'
+import { Button } from '#/components/ui/button'
+import { Card, CardContent, CardHeader } from '#/components/ui/card'
+import { Input } from '#/components/ui/input'
+import { Label } from '#/components/ui/label'
+import { Switch } from '#/components/ui/switch'
+import { Textarea } from '#/components/ui/textarea'
+import { UploadZone } from '#/components/upload-zone'
+import { browserStorage, loadBackendUrl, saveBackendUrl } from '#/lib/backend-url'
+import { DEFAULT_BACKEND_URL } from '#/lib/config'
 import {
   convertWithGotenberg,
   getGotenbergStatus,
@@ -47,7 +54,7 @@ import {
   REQUEST_TIMEOUT_MS,
   type ServerStatus,
   validatedBackend,
-} from '../lib/gotenberg-client'
+} from '#/lib/gotenberg-client'
 import {
   type FieldDefinition,
   GROUPS,
@@ -55,17 +62,10 @@ import {
   OPERATIONS,
   type Operation,
   operationDefaults,
-} from '../lib/operations'
-import { formatBytes } from '../lib/security'
-import { cn } from '../lib/utils'
-import { InputError, parseAdvanced } from '../lib/validation'
-import { Button } from './ui/button'
-import { Card, CardContent, CardHeader } from './ui/card'
-import { Input } from './ui/input'
-import { Label } from './ui/label'
-import { Switch } from './ui/switch'
-import { Textarea } from './ui/textarea'
-import { UploadZone } from './upload-zone'
+} from '#/lib/operations'
+import { formatBytes } from '#/lib/security'
+import { cn } from '#/lib/utils'
+import { InputError, parseAdvanced } from '#/lib/validation'
 
 const ICONS: Record<string, LucideIcon> = {
   'url-pdf': Globe2,

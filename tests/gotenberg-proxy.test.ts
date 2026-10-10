@@ -4,7 +4,7 @@ import {
   proxyConversionRequest,
   proxyErrorResponse,
   proxyStatusRequest,
-} from '../src/lib/gotenberg-proxy.server.ts'
+} from '#/lib/gotenberg-proxy.server'
 
 const origin = 'https://app.example.test'
 

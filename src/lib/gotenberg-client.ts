@@ -1,8 +1,13 @@
 import * as v from 'valibot'
-import { normalizeBackendUrl } from './backend-url.ts'
-import type { Operation } from './operations.ts'
-import { downloadFilename, responseExtension } from './security.ts'
-import { type ConversionPayload, InputError, validateFiles, validatePayload } from './validation.ts'
+import { normalizeBackendUrl } from '#/lib/backend-url'
+import type { Operation } from '#/lib/operations'
+import { downloadFilename, responseExtension } from '#/lib/security'
+import {
+  type ConversionPayload,
+  InputError,
+  validateFiles,
+  validatePayload,
+} from '#/lib/validation'
 
 // The browser retains input files in memory; this is an application-side safety cap.
 const maxUploadSchema = v.pipe(
