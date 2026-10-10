@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.21 (conversion plus single-request PDF post-processing implemented).
+- **Baseline:** v1.0.22 (repeated ordered watermarks and stamps implemented).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -26,7 +26,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.19** | Fix | Metadata assertion typecheck | Fix Node.js assertion matcher typing in the request-metadata regression test; no runtime behaviour change. |
 | **v1.0.20** | P1 | Chromium document assets | Done: named header/footer HTML parts, Markdown templates and ordered multi-file sources with collision validation and tests. |
 | **v1.0.21** | P1 | Conversion plus PDF post-processing | Done: per-conversion watermark/stamp, attachments, Factur-X, metadata, flattening and encryption with typed upload fields and validation. |
-| **v1.0.22** | P1 | Multiple overlays | Repeated watermark/stamp field groups, ordered supporting files, and correct multipart serialization. |
+| **v1.0.22** | P1 | Multiple overlays | Done: repeated watermark/stamp field groups, ordered local and remote assets, validated multipart serialization and regression tests. |
 | **v1.0.23** | P2 | Advanced conversion controls | First-class commonly used Chromium and LibreOffice options with accurate defaults and validation. |
 | **v1.0.24** | P2 | Remote-input and webhook usability | Structured editors, clear async results, and expanded real callback / download integration tests. |
 | **v1.0.25** | P1 | Automated release hardening | Negative security cases, edge-case responses, build/CI validation, and a final automated regression matrix. |
@@ -80,16 +80,16 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [x] Avoid two conversions or a server-side job store when Gotenberg can do the work in one request.
 - [x] Test representative Chromium and LibreOffice conversion-plus-processing scenarios; check incompatible and missing inputs.
 
-**v1.0.21 status:** The four PDF conversion workbenches now offer one watermark and stamp each, multiple local or remote attachments, a local Factur-X XML file, metadata, flattening, and password/permissions controls in one upstream request. PDF/A/UA remain available in Advanced options. The proxy preserves the dedicated multipart fields and rejects invalid source/option combinations. Local Docker regression tests have been added for conversions and remote attachments, but were not executed for this patch (Docker deliberately excluded). Repeated overlays remain for v1.0.22.
+**v1.0.21 status:** The four PDF conversion workbenches gained one watermark and stamp each, multiple local or remote attachments, a local Factur-X XML file, metadata, flattening, and password/permissions controls in one upstream request. PDF/A/UA remain in Advanced options. The proxy validates the dedicated multipart fields. **v1.0.22** extends the overlays to repeated ordered groups, including the standalone watermark/stamp PDF tools. Docker regression cases are included for later execution (Docker deliberately excluded).
 
 #### 6. Multiple ordered watermarks and stamps
 
-**Current gap:** Each operation currently has a single watermark/stamp configuration. Gotenberg accepts repeated `*Source`, `*Expression`, `*Pages`, and `*Options` form fields and consumes corresponding uploaded overlay files in order.
+**Prior gap:** Each operation had a single watermark/stamp configuration. Gotenberg accepts repeated `*Source`, `*Expression`, `*Pages`, and `*Options` form fields and consumes corresponding uploaded overlay files in order.
 
-- [ ] Add repeatable overlay groups with add, remove, and reorder controls.
-- [ ] Serialize **repeated multipart fields with `FormData.append`**, not a flat object using `FormData.set`.
-- [ ] Match local and `downloadFrom` overlay assets to their corresponding entries and prevent ambiguous file ordering.
-- [ ] Test mixed text/image/PDF overlays, missing assets, and their application order.
+- [x] Add repeatable overlay groups with add, remove, and reorder controls.
+- [x] Serialize **repeated multipart fields with `FormData.append`**, not a flat object using `FormData.set`.
+- [x] Match local and `downloadFrom` overlay assets to their corresponding entries and prevent ambiguous file ordering (remote-first per overlay type).
+- [x] Test mixed text/image/PDF overlays, missing assets, and their application order with unit tests and deferred Docker integration cases.
 
 ### P2 — Advanced controls and usability
 

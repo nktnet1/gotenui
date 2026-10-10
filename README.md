@@ -8,7 +8,7 @@ See [ROADMAP.md](ROADMAP.md) for the remaining feature gaps, priorities, and pro
 
 - 22 Chromium, LibreOffice and PDF-engine operations, including HTML, Markdown, URL and Office conversions, screenshots, merging, metadata, bookmarks, watermarks and Factur-X.
 - Custom Chromium PDF headers/footers and multi-file Markdown templates, with editable/importable HTML and named, reorderable Markdown sources.
-- Single-request PDF conversion plus watermark/stamp overlays, attachments, Factur-X XML, metadata, flattening and encryption.
+- Single-request PDF conversion plus ordered watermark/stamp overlays, attachments, Factur-X XML, metadata, flattening and encryption.
 - Optional remote-file `downloadFrom` inputs and asynchronous Gotenberg webhook delivery, validated server-side and forwarded through the same-origin proxy.
 - Pure vector `public/gotenui-icon.svg`, used as the in-app mark and browser favicon.
 - Multiple named connections in **Connection settings**: browser profiles are saved in `localStorage` (`gotenui.connections.v1`), with automatic migration from the former `gotenui.backend-url.v1` preference. Default: **https://demo.gotenberg.dev**. Server-managed profiles are configured through environment variables, with credentials kept server-side.
@@ -73,21 +73,23 @@ The **Markdown to PDF** and **Markdown screenshot** workbenches retain their edi
 
 All Chromium HTML, Markdown and asset files share **one flat Gotenberg directory**: reference stylesheets and images by basename (for example `style.css`), not absolute paths or subdirectories. Markdown sources have unique case-insensitive `.md` names; reserved filenames, missing template references, empty Markdown sources and asset name collisions are rejected before proxying. Existing one-file Markdown conversions retain their previous request contract. These editors and imports are per-tab, in-memory only; no state is added to the server or stored between sessions.
 
-## PDF post-processing during conversion (v1.0.21)
+## Ordered watermarks, stamps and conversion post-processing (v1.0.22)
 
 The **Website to PDF**, **HTML to PDF**, **Markdown to PDF**, and **Office to PDF** workbenches include an optional **PDF post-processing** editor. Gotenui sends these options to the **same** Gotenberg conversion endpoint rather than converting a PDF twice or storing an intermediate result. Screenshot operations do not support PDF-engine post-processing; PDF tools retain their own dedicated controls.
 
 | Feature | Gotenberg form fields | Upload part / remote input |
 | --- | --- | --- |
-| Text, image, or PDF watermark | `watermarkSource`, `watermarkExpression`, optional `watermarkPages` and `watermarkOptions` | `watermark` (one local image/PDF); or `downloadFrom` with `field: "watermark"` |
-| Text, image, or PDF stamp | `stampSource`, `stampExpression`, optional `stampPages` and `stampOptions` | `stamp` (one local image/PDF); or `downloadFrom` with `field: "stamp"` |
+| Ordered text, image, or PDF watermarks | Repeated `watermarkSource`, `watermarkExpression`, `watermarkPages`, `watermarkOptions` (parallel fields) | Repeated `watermark` file parts; or `downloadFrom` with `field: "watermark"` |
+| Ordered text, image, or PDF stamps | Repeated `stampSource`, `stampExpression`, `stampPages`, `stampOptions` (parallel fields) | Repeated `stamp` file parts; or `downloadFrom` with `field: "stamp"` |
 | Embedded attachments | Optional `embedsMetadata` JSON keyed by **exact** attachment filenames | Repeated `embeds` file parts; or `downloadFrom` with `field: "embedded"` |
 | Factur-X / ZUGFeRD | Required `facturxConformanceLevel`, optional `facturxDocumentType` and `facturxVersion` | **One local XML file** as `facturxXml` (not a source or regular attachment; remote descriptors do not support this field) |
 | Metadata and flattening | `metadata` (JSON), `flatten` | No extra files |
 | Passwords and permissions | `userPassword`, `ownerPassword`, optional `allowPrinting`, `allowCopying`, `allowModifying`, `allowAnnotating`, `allowFillingForms`, `allowAssembling` | No extra files |
 | PDF/A and PDF/UA | Existing `pdfa`, `pdfua` fields in **Advanced options** | No extra files |
 
-One watermark and one stamp are supported in this patch, each with optional page ranges and PDF-engine-specific JSON options. Repeated ordered overlays are scheduled separately. Select **Text** to enter content, or **Image/PDF** to select exactly one matching local file. For remote overlays, use Advanced `downloadFrom` JSON. Gotenberg requires the remote server to provide a `Content-Disposition` filename and applies its own outbound URL restrictions. Enter the exact remote filename in the editor (required for image/PDF overlays). Remote attachments likewise use a remote descriptor, not a Gotenui upload.
+The **Watermark PDFs** and **Stamp PDFs** tools, as well as all four PDF conversion workbenches, support up to **10 ordered entries per overlay type** with add, remove, and move-up/down controls. Each entry independently selects **Text**, **Image**, or **PDF**, with optional page ranges and PDF-engine-specific JSON options. Gotenui sends the repeated scalar fields with `FormData.append`, including empty `Pages`/`Options` placeholders to keep each field list aligned; images and PDFs are submitted as repeated, correctly ordered multipart uploads. Older API clients using the original single `watermark`/`stamp` setting remain supported for conversion routes.
+
+To reference a remote overlay, use Advanced `downloadFrom` JSON with its `field` set to `"watermark"` or `"stamp"`, and enter the expected `Content-Disposition` filename in the corresponding editor row. **Within each overlay type, remote image/PDF rows must come before local image/PDF rows**: Gotenberg downloads remote files before it processes local multipart uploads. Text rows can appear anywhere. Remote responses must provide their expected filename through `Content-Disposition`, and Gotenberg enforces its own outbound URL restrictions. Filename matching is checked for local files and validated for safe, unique names; remote filenames are confirmed only by Gotenberg at download time. Remote attachments likewise use a remote descriptor, not a Gotenui upload.
 
 **Compatibility constraints:** PDF/A and PDF encryption are mutually exclusive. PDF/A-1b/2b cannot contain attachments; use PDF/A-3b (or let Factur-X generate PDF/A-3). PDF/A-1b combined with PDF/UA is not supported. Factur-X and attachment metadata require a compatible PDF engine (QPDF is recommended). Local embedded filenames must be unique, and `embedsMetadata` keys must match them exactly; Gotenui can validate this when no remote attachments are supplied. When combining PDF/A and metadata writing, the upstream converter can overwrite some standard metadata fields. Permission restrictions require a user or owner password and remain PDF-viewer-dependent.
 

@@ -28,6 +28,20 @@ async function docker(...args: string[]): Promise<string> {
 
 async function fixtureServer(): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
+    if (req.url === '/overlay.png') {
+      // One-pixel valid PNG for exercising downloadFrom's overlay field routing.
+      res.writeHead(200, {
+        'content-type': 'image/png',
+        'content-disposition': 'attachment; filename="remote-overlay.png"',
+      })
+      res.end(
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nv1EAAAAASUVORK5CYII=',
+          'base64',
+        ),
+      )
+      return
+    }
     if (req.url === '/attachment') {
       res.writeHead(200, {
         'content-type': 'text/plain',

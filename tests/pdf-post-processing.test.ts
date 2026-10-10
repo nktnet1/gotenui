@@ -366,3 +366,259 @@ describe('Single-request PDF post-processing', () => {
     )
   })
 })
+
+describe('Ordered, repeated watermark and stamp groups (v1.0.22)', () => {
+  const watermarkPdf = new File(['%PDF-1.7'], 'background.pdf', { type: 'application/pdf' })
+  const stampLogo = new File(['PNG DATA'], 'approved.png', { type: 'image/png' })
+
+  test.each(['url-pdf', 'html-pdf', 'markdown-pdf', 'office-pdf'])(
+    '%s serializes every parallel field and preserves mixed text/image/PDF ordering',
+    (id) => {
+      const result = form(
+        id,
+        {
+          postProcess: {
+            watermarks: [
+              { source: 'text', expression: 'DRAFT', options: '{"opacity":0.1}' },
+              { source: 'image', expression: 'logo.png', pages: '1, 3' },
+              { source: 'pdf', expression: 'background.pdf', options: '{"scale":0.5}' },
+            ],
+            stamps: [
+              { source: 'pdf', expression: 'foreground.pdf' },
+              { source: 'text', expression: 'REVIEWED', pages: '2' },
+              { source: 'image', expression: 'approved.png' },
+            ],
+          },
+        },
+        {
+          // Deliberately submit the uploads out of order; Gotenui sorts by overlay row.
+          watermark: [watermarkPdf, logo],
+          stamp: [stampLogo, new File(['PDF'], 'foreground.pdf')],
+        },
+      )
+      assert.deepEqual(result.getAll('watermarkSource'), ['text', 'image', 'pdf'])
+      assert.deepEqual(result.getAll('watermarkExpression'), [
+        'DRAFT',
+        'logo.png',
+        'background.pdf',
+      ])
+      assert.deepEqual(result.getAll('watermarkPages'), ['', '1, 3', ''])
+      assert.deepEqual(result.getAll('watermarkOptions'), ['{"opacity":0.1}', '', '{"scale":0.5}'])
+      assert.deepEqual(result.getAll('stampSource'), ['pdf', 'text', 'image'])
+      assert.deepEqual(result.getAll('stampExpression'), [
+        'foreground.pdf',
+        'REVIEWED',
+        'approved.png',
+      ])
+      assert.deepEqual(result.getAll('stampPages'), ['', '2', ''])
+      assert.deepEqual(result.getAll('stampOptions'), ['', '', ''])
+      assert.deepEqual(
+        (result.getAll('watermark') as File[]).map((file) => file.name),
+        ['logo.png', 'background.pdf'],
+      )
+      assert.deepEqual(
+        (result.getAll('stamp') as File[]).map((file) => file.name),
+        ['foreground.pdf', 'approved.png'],
+      )
+      assert.equal(
+        result.getAll('files').length,
+        id === 'markdown-pdf' ? 2 : id === 'url-pdf' ? 0 : 1,
+      )
+    },
+  )
+
+  test.each(['watermark', 'stamp'])(
+    'standalone %s tool uses the same ordered groups without legacy fields',
+    (kind) => {
+      const plural = kind === 'watermark' ? 'watermarks' : 'stamps'
+      const result = form(
+        kind,
+        {
+          fields: {},
+          postProcess: {
+            [plural]: [
+              { source: 'text', expression: 'FIRST' },
+              { source: 'pdf', expression: 'background.pdf' },
+              { source: 'text', expression: 'LAST', pages: '1' },
+            ],
+          },
+        },
+        { [kind]: [watermarkPdf] },
+        [new File(['%PDF-1.7'], 'source.pdf')],
+      )
+      assert.deepEqual(result.getAll(`${kind}Source`), ['text', 'pdf', 'text'])
+      assert.deepEqual(result.getAll(`${kind}Expression`), ['FIRST', 'background.pdf', 'LAST'])
+      assert.equal((result.get(kind) as File).name, 'background.pdf')
+      assert.deepEqual(result.getAll(`${kind}Pages`), ['', '', '1'])
+    },
+  )
+
+  test('retains v1.0.21 single-overlay serialization and rejects single/plural collisions', () => {
+    const original = form(
+      'url-pdf',
+      { postProcess: { watermark: { source: 'image' } } },
+      { watermark: logo },
+    )
+    assert.deepEqual(original.getAll('watermarkSource'), ['image'])
+    assert.deepEqual(original.getAll('watermarkExpression'), ['logo.png'])
+    assert.throws(
+      () =>
+        form('url-pdf', {
+          postProcess: {
+            watermark: { source: 'text', expression: 'OLD' },
+            watermarks: [{ source: 'text', expression: 'NEW' }],
+          },
+        }),
+      /not both/,
+    )
+  })
+
+  test('accepts multiple remote inputs ordered before local uploads and rejects reversed ordering', () => {
+    const downloadFrom = [
+      { url: 'https://assets.example/one.png', field: 'watermark' },
+      { url: 'https://assets.example/two.pdf', field: 'watermark' },
+    ]
+    const rows = [
+      { source: 'text', expression: 'TITLE' },
+      { source: 'image', expression: 'one.png' },
+      { source: 'pdf', expression: 'two.pdf' },
+      { source: 'image', expression: 'logo.png' },
+    ]
+    const valid = form(
+      'url-pdf',
+      { postProcess: { watermarks: rows }, downloadFrom },
+      { watermark: [logo] },
+    )
+    assert.deepEqual(valid.getAll('watermarkSource'), ['text', 'image', 'pdf', 'image'])
+    assert.deepEqual(JSON.parse(String(valid.get('downloadFrom'))), downloadFrom)
+    assert.equal((valid.get('watermark') as File).name, 'logo.png')
+    assert.throws(
+      () =>
+        form(
+          'url-pdf',
+          { postProcess: { watermarks: [rows[3], rows[1], rows[2]] }, downloadFrom },
+          { watermark: [logo] },
+        ),
+      /Remote watermark overlays must precede local uploads/,
+    )
+  })
+
+  test('rejects unused remote overlays and filenames colliding with a source PDF', () => {
+    assert.throws(
+      () =>
+        form('url-pdf', {
+          postProcess: { metadata: '{"Author":"Gotenui"}' },
+          downloadFrom: [{ url: 'https://assets.example/unused.png', field: 'watermark' }],
+        }),
+      /watermark downloadFrom requires matching watermark settings/,
+    )
+    assert.throws(
+      () =>
+        form(
+          'stamp',
+          {
+            fields: {},
+            postProcess: { stamps: [{ source: 'text', expression: 'OK' }] },
+            downloadFrom: [{ url: 'https://assets.example/unused.png', field: 'stamp' }],
+          },
+          {},
+          [new File(['PDF bytes'], 'original.pdf')],
+        ),
+      /exactly one local or remote stamp|Text stamp must not include/,
+    )
+    assert.throws(
+      () =>
+        form(
+          'stamp',
+          {
+            fields: {},
+            postProcess: { stamps: [{ source: 'pdf', expression: 'source.pdf' }] },
+          },
+          { stamp: [new File(['pdf'], 'source.pdf')] },
+          [new File(['pdf'], 'source.pdf')],
+        ),
+      /Overlay filename collides with an input or asset/,
+    )
+  })
+
+  test('rejects missing, duplicate, wrongly typed, and excess overlay assets', () => {
+    assert.throws(
+      () =>
+        form('url-pdf', {
+          postProcess: { watermarks: [{ source: 'image', expression: 'one.png' }] },
+        }),
+      /exactly one local or remote watermark/,
+    )
+    assert.throws(
+      () =>
+        form(
+          'url-pdf',
+          {
+            postProcess: {
+              watermarks: [
+                { source: 'image', expression: 'logo.png' },
+                { source: 'image', expression: 'logo.png' },
+              ],
+            },
+          },
+          { watermark: [logo, logo] },
+        ),
+      /Duplicate watermark upload filename|Duplicate overlay filename/,
+    )
+    assert.throws(
+      () =>
+        form(
+          'url-pdf',
+          { postProcess: { stamps: [{ source: 'pdf', expression: 'image.png' }] } },
+          { stamp: [logo] },
+        ),
+      /source type/,
+    )
+    assert.throws(
+      () =>
+        form('url-pdf', {
+          postProcess: {
+            stamps: Array.from({ length: 11 }, () => ({ source: 'text', expression: 'X' })),
+          },
+        }),
+      /10/,
+    )
+    assert.throws(
+      () =>
+        form('url-pdf', {
+          postProcess: { stamps: [{ source: 'text', expression: 'X', options: '[]' }] },
+        }),
+      /JSON object/,
+    )
+    assert.throws(
+      () =>
+        form('url-pdf', {
+          postProcess: { stamps: [{ source: 'text', expression: 'X', pages: '1;2' }] },
+        }),
+      /pages must/,
+    )
+    assert.throws(
+      () =>
+        form(
+          'stamp',
+          {
+            fields: {},
+            postProcess: { stamps: [{ source: 'text', expression: 'DRAFT' }], metadata: '{}' },
+          },
+          {},
+          [new File(['pdf'], 'source.pdf')],
+        ),
+      /accepts only ordered stamps/,
+    )
+    assert.throws(
+      () =>
+        form(
+          'watermark',
+          { postProcess: { watermarks: [{ source: 'text', expression: 'W' }] } },
+          {},
+          [new File(['pdf'], 'source.pdf')],
+        ),
+      /not both/,
+    )
+  })
+})

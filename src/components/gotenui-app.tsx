@@ -42,7 +42,11 @@ import { ConnectionManager } from '#/components/connection-manager'
 import { DebugDialog } from '#/components/debug-dialog'
 import { MarkdownAssetsEditor, type MarkdownSource } from '#/components/markdown-assets-editor'
 import { MetricsDialog } from '#/components/metrics-dialog'
-import { PdfConversionPostProcessing } from '#/components/pdf-conversion-post-processing'
+import {
+  defaultOverlay,
+  OverlayGroupsEditor,
+  PdfConversionPostProcessing,
+} from '#/components/pdf-conversion-post-processing'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
@@ -82,6 +86,8 @@ import {
   operationDefaults,
 } from '#/lib/operations'
 import {
+  type OverlayKind,
+  overlayUploads,
   PDF_CONVERSION_IDS,
   type PdfPostProcess,
   type PostProcessFiles,
@@ -549,8 +555,8 @@ function JobPanel({
                 {files.length +
                   auxFiles.length +
                   (postFiles.embeds?.length ?? 0) +
-                  Number(Boolean(postFiles.watermark)) +
-                  Number(Boolean(postFiles.stamp)) +
+                  overlayUploads(postFiles, 'watermark').length +
+                  overlayUploads(postFiles, 'stamp').length +
                   Number(Boolean(postFiles.facturxXml))}
               </span>
             </div>
@@ -562,9 +568,9 @@ function JobPanel({
                     ...files,
                     ...auxFiles,
                     ...(postFiles.embeds ?? []),
-                    ...[postFiles.watermark, postFiles.stamp, postFiles.facturxXml].filter(
-                      (file): file is File => file !== undefined,
-                    ),
+                    ...overlayUploads(postFiles, 'watermark'),
+                    ...overlayUploads(postFiles, 'stamp'),
+                    ...(postFiles.facturxXml ? [postFiles.facturxXml] : []),
                   ].reduce((sum, file) => sum + file.size, 0) +
                     new TextEncoder().encode(source).byteLength,
                 )}
@@ -751,8 +757,16 @@ function Workbench({
       fileUrl.current = null
     }
   }, [operation])
-  const basicFields = operation.fields.filter((field) => !field.advanced)
-  const advancedFields = operation.fields.filter((field) => field.advanced)
+  const standaloneKind: OverlayKind | undefined =
+    operation.id === 'watermark' || operation.id === 'stamp' ? operation.id : undefined
+  const overlayProperty = standaloneKind === 'watermark' ? 'watermarks' : 'stamps'
+  const activeStandaloneSettings: PdfPostProcess | undefined = standaloneKind
+    ? {
+        [overlayProperty]: postProcess[overlayProperty] ?? [defaultOverlay(standaloneKind)],
+      }
+    : undefined
+  const basicFields = standaloneKind ? [] : operation.fields.filter((field) => !field.advanced)
+  const advancedFields = standaloneKind ? [] : operation.fields.filter((field) => field.advanced)
   const hasUpload = operation.input === 'pdf' || operation.input === 'office'
   const isSourceEditor = operation.input === 'html' || operation.input === 'markdown'
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
@@ -779,7 +793,7 @@ function Workbench({
     try {
       const candidate = {
         operation: operation.id,
-        fields,
+        fields: standaloneKind ? {} : fields,
         source: isSourceEditor ? source : undefined,
         markdownName: operation.input === 'markdown' ? markdownName : undefined,
         markdownFiles:
@@ -790,8 +804,9 @@ function Workbench({
           operation.input === 'markdown' ? (markdownTemplate ?? undefined) : undefined,
         headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
         footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
-        postProcess:
-          hasPostProcessing && Object.values(postProcess).some((value) => value !== undefined)
+        postProcess: standaloneKind
+          ? activeStandaloneSettings
+          : hasPostProcessing && Object.values(postProcess).some((value) => value !== undefined)
             ? postProcess
             : undefined,
         advanced: parseAdvanced(advanced),
@@ -972,7 +987,7 @@ function Workbench({
                 multiple={true}
               />
             )}
-            {operation.auxiliary && (
+            {operation.auxiliary && !standaloneKind && (
               <UploadZone
                 label={operation.auxiliary.label}
                 description={operation.auxiliary.description}
@@ -1010,10 +1025,22 @@ function Workbench({
                     />
                   ))}
               </div>
-            ) : (
+            ) : !standaloneKind ? (
               <p className="rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-500">
                 This operation works with its default settings.
               </p>
+            ) : null}
+            {standaloneKind && activeStandaloneSettings && (
+              <OverlayGroupsEditor
+                kind={standaloneKind}
+                rows={activeStandaloneSettings[overlayProperty] ?? []}
+                onRowsChange={(rows) => setPostProcess({ [overlayProperty]: rows })}
+                files={overlayUploads(postFiles, standaloneKind)}
+                onFilesChange={(uploads) =>
+                  setPostFiles({ ...postFiles, [standaloneKind]: uploads })
+                }
+                minimum={1}
+              />
             )}
             {hasPdfHeaderFooter && (
               <ChromiumPdfAssets

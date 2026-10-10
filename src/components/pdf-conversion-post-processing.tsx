@@ -1,10 +1,19 @@
-import { useId } from 'react'
+import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import { useId, useRef } from 'react'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
 import { UploadZone } from '#/components/upload-zone'
-import type { OverlaySettings, PdfPostProcess, PostProcessFiles } from '#/lib/pdf-post-processing'
+import {
+  configuredOverlays,
+  OVERLAY_KINDS,
+  type OverlayKind,
+  type OverlaySettings,
+  overlayUploads,
+  type PdfPostProcess,
+  type PostProcessFiles,
+} from '#/lib/pdf-post-processing'
 
 type Props = {
   value: PdfPostProcess
@@ -22,122 +31,223 @@ const permissions = [
   ['allowAssembling', 'Page assembly'],
 ] as const
 
-function OverlayEditor({
+export function defaultOverlay(kind: OverlayKind): OverlaySettings {
+  return { source: 'text', expression: kind === 'stamp' ? 'APPROVED' : 'CONFIDENTIAL' }
+}
+
+function moved<T>(items: T[], from: number, to: number): T[] {
+  const copy = [...items]
+  const [item] = copy.splice(from, 1)
+  if (item !== undefined) copy.splice(to, 0, item)
+  return copy
+}
+
+/** One list controls both the repeated scalar fields and the corresponding local file order. */
+export function OverlayGroupsEditor({
   kind,
-  value,
-  onChange,
-  file,
-  onFileChange,
+  rows,
+  onRowsChange,
+  files,
+  onFilesChange,
+  minimum = 0,
 }: {
-  kind: 'watermark' | 'stamp'
-  value: OverlaySettings | undefined
-  onChange: (value: OverlaySettings | undefined) => void
-  file: File | undefined
-  onFileChange: (file: File | undefined) => void
+  kind: OverlayKind
+  rows: OverlaySettings[]
+  onRowsChange: (rows: OverlaySettings[]) => void
+  files: File[]
+  onFilesChange: (files: File[]) => void
+  minimum?: number
 }) {
   const id = useId()
-  const enabled = value !== undefined
-  const update = (patch: Partial<OverlaySettings>) => value && onChange({ ...value, ...patch })
+  const identities = useRef<string[]>([])
+  const nextIdentity = useRef(0)
+  while (identities.current.length < rows.length) {
+    identities.current.push(String(nextIdentity.current++))
+  }
+  identities.current.length = rows.length
+  const change = (next: OverlaySettings[], nextFiles = files, nextIds?: string[]) => {
+    if (nextIds) identities.current = nextIds
+    onRowsChange(next)
+    // Filter removed assets and order the remaining ones by their visible rows.
+    onFilesChange(
+      next.flatMap((row) =>
+        row.source === 'text' ? [] : nextFiles.filter((file) => file.name === row.expression),
+      ),
+    )
+  }
   return (
-    <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
-      <div className="flex items-center justify-between gap-4">
+    <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Label htmlFor={id} className="capitalize">
-            {kind}
-          </Label>
+          <h3 className="text-sm font-semibold text-slate-800 capitalize">{kind}s</h3>
           <p className="mt-1 text-xs text-slate-500">
-            {kind === 'watermark' ? 'Behind the page content.' : 'On top of the page content.'}
+            Applied top to bottom, {kind === 'watermark' ? 'behind' : 'over'} the page content.
           </p>
         </div>
-        <Switch
-          id={id}
-          checked={enabled}
-          onCheckedChange={(checked) => {
-            onChange(
-              checked
-                ? { source: 'text', expression: kind === 'stamp' ? 'APPROVED' : 'CONFIDENTIAL' }
-                : undefined,
-            )
-            onFileChange(undefined)
-          }}
-        />
+        <button
+          type="button"
+          disabled={rows.length >= 10}
+          className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+          onClick={() => change([...rows, defaultOverlay(kind)])}
+        >
+          <Plus className="size-4" /> Add {kind}
+        </button>
       </div>
-      {value && (
-        <div className="space-y-4 border-t border-slate-100 pt-4">
-          <div className="space-y-1.5">
-            <Label htmlFor={`${id}-source`}>Source</Label>
-            <select
-              id={`${id}-source`}
-              value={value.source}
-              onChange={(event) => {
-                const source = event.target.value as OverlaySettings['source']
-                onChange({ source, expression: source === 'text' ? 'CONFIDENTIAL' : '' })
-                onFileChange(undefined)
-              }}
-              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
+      <p className="text-xs leading-5 text-slate-500">
+        Image/PDF entries need one local upload or a matching downloadFrom entry. Remote files
+        precede local uploads of the same type; each remote response must provide the filename
+        entered here through Content-Disposition.
+      </p>
+      <ol className="space-y-3">
+        {rows.map((row, index) => {
+          const file = files.find((entry) => entry.name === row.expression)
+          const update = (patch: Partial<OverlaySettings>) =>
+            change(
+              rows.map((entry, position) => (position === index ? { ...entry, ...patch } : entry)),
+            )
+          return (
+            <li
+              key={identities.current[index]}
+              className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3"
             >
-              <option value="text">Text</option>
-              <option value="image">Image</option>
-              <option value="pdf">PDF</option>
-            </select>
-          </div>
-          {value.source === 'text' ? (
-            <div className="space-y-1.5">
-              <Label htmlFor={`${id}-text`}>Overlay text</Label>
-              <Input
-                id={`${id}-text`}
-                value={value.expression ?? ''}
-                onChange={(event) => update({ expression: event.target.value })}
-              />
-            </div>
-          ) : (
-            <>
-              <UploadZone
-                label={`${kind} ${value.source.toUpperCase()} file`}
-                description="Choose one local file, or provide a remote downloadFrom entry with its field set to the overlay type."
-                files={file ? [file] : []}
-                onChange={(chosen) => {
-                  onFileChange(chosen[0])
-                  update({ expression: chosen[0]?.name ?? '' })
-                }}
-                accept={value.source === 'pdf' ? '.pdf,application/pdf' : 'image/*'}
-              />
-              {!file && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-xs font-semibold text-slate-700 capitalize">
+                  {kind} {index + 1}
+                </h4>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    aria-label={`Move ${kind} ${index + 1} up`}
+                    disabled={index === 0}
+                    className="rounded-md p-2 text-slate-600 hover:bg-slate-200 disabled:opacity-30"
+                    onClick={() =>
+                      change(
+                        moved(rows, index, index - 1),
+                        files,
+                        moved(identities.current, index, index - 1),
+                      )
+                    }
+                  >
+                    <ArrowUp className="size-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${kind} ${index + 1} down`}
+                    disabled={index === rows.length - 1}
+                    className="rounded-md p-2 text-slate-600 hover:bg-slate-200 disabled:opacity-30"
+                    onClick={() =>
+                      change(
+                        moved(rows, index, index + 1),
+                        files,
+                        moved(identities.current, index, index + 1),
+                      )
+                    }
+                  >
+                    <ArrowDown className="size-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${kind} ${index + 1}`}
+                    disabled={rows.length <= minimum}
+                    className="rounded-md p-2 text-slate-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-30"
+                    onClick={() =>
+                      change(
+                        rows.filter((_, position) => position !== index),
+                        files,
+                        identities.current.filter((_, position) => position !== index),
+                      )
+                    }
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`${id}-${index}-source`}>Source</Label>
+                <select
+                  id={`${id}-${index}-source`}
+                  value={row.source}
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"
+                  onChange={(event) => {
+                    const source = event.target.value as OverlaySettings['source']
+                    update({
+                      source,
+                      expression: source === 'text' ? defaultOverlay(kind).expression : '',
+                    })
+                  }}
+                >
+                  <option value="text">Text</option>
+                  <option value="image">Image</option>
+                  <option value="pdf">PDF</option>
+                </select>
+              </div>
+              {row.source === 'text' ? (
                 <div className="space-y-1.5">
-                  <Label htmlFor={`${id}-remote-name`}>Remote filename (required)</Label>
+                  <Label htmlFor={`${id}-${index}-text`}>Overlay text</Label>
                   <Input
-                    id={`${id}-remote-name`}
-                    value={value.expression ?? ''}
+                    id={`${id}-${index}-text`}
+                    value={row.expression ?? ''}
                     onChange={(event) => update({ expression: event.target.value })}
-                    placeholder="From the remote Content-Disposition header"
                   />
                 </div>
+              ) : (
+                <>
+                  <UploadZone
+                    label={`${kind} ${row.source.toUpperCase()} file`}
+                    description="Choose a local file, or enter the filename of a remote download below."
+                    files={file ? [file] : []}
+                    onChange={(chosen) => {
+                      const nextFiles = files.filter((item) => item !== file)
+                      if (chosen[0]) nextFiles.push(chosen[0])
+                      change(
+                        rows.map((entry, position) =>
+                          position === index
+                            ? { ...entry, expression: chosen[0]?.name ?? '' }
+                            : entry,
+                        ),
+                        nextFiles,
+                      )
+                    }}
+                    accept={row.source === 'pdf' ? '.pdf,application/pdf' : 'image/*'}
+                  />
+                  {!file && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`${id}-${index}-remote-name`}>Remote filename</Label>
+                      <Input
+                        id={`${id}-${index}-remote-name`}
+                        value={row.expression ?? ''}
+                        placeholder="Filename in remote Content-Disposition"
+                        onChange={(event) => update({ expression: event.target.value })}
+                      />
+                    </div>
+                  )}
+                </>
               )}
-            </>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor={`${id}-pages`}>Pages (optional)</Label>
-            <Input
-              id={`${id}-pages`}
-              value={value.pages ?? ''}
-              onChange={(event) => update({ pages: event.target.value })}
-              placeholder="1-3, 5"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor={`${id}-options`}>PDF-engine options JSON (optional)</Label>
-            <Textarea
-              id={`${id}-options`}
-              rows={3}
-              className="font-mono text-xs"
-              value={value.options ?? ''}
-              placeholder={'{"opacity":0.25,"rotation":45}'}
-              onChange={(event) => update({ options: event.target.value })}
-            />
-          </div>
-        </div>
-      )}
-    </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`${id}-${index}-pages`}>Pages (optional)</Label>
+                <Input
+                  id={`${id}-${index}-pages`}
+                  value={row.pages ?? ''}
+                  placeholder="1-3, 5"
+                  onChange={(event) => update({ pages: event.target.value })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`${id}-${index}-options`}>PDF-engine options JSON (optional)</Label>
+                <Textarea
+                  id={`${id}-${index}-options`}
+                  rows={3}
+                  className="font-mono text-xs"
+                  value={row.options ?? ''}
+                  placeholder={'{"opacity":0.25,"rotation":45}'}
+                  onChange={(event) => update({ options: event.target.value })}
+                />
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    </section>
   )
 }
 
@@ -154,16 +264,25 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
           Apply PDF-engine features as part of this conversion. Gotenberg processes the document in
           a single request; no intermediate PDF is stored in Gotenui.
         </p>
-        {(['watermark', 'stamp'] as const).map((kind) => (
-          <OverlayEditor
-            key={kind}
-            kind={kind}
-            value={value[kind]}
-            onChange={(overlay) => update({ [kind]: overlay })}
-            file={files[kind]}
-            onFileChange={(file) => onFilesChange({ ...files, [kind]: file })}
-          />
-        ))}
+        {OVERLAY_KINDS.map((kind) => {
+          const plural = kind === 'watermark' ? 'watermarks' : 'stamps'
+          return (
+            <OverlayGroupsEditor
+              key={kind}
+              kind={kind}
+              rows={configuredOverlays(value, kind)}
+              onRowsChange={(rows) => {
+                const next = { ...value }
+                delete next[kind]
+                if (rows.length) next[plural] = rows
+                else delete next[plural]
+                onChange(next)
+              }}
+              files={overlayUploads(files, kind)}
+              onFilesChange={(uploads) => onFilesChange({ ...files, [kind]: uploads })}
+            />
+          )
+        })}
         <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
           <h3 className="text-sm font-semibold text-slate-800">PDF attachments</h3>
           <UploadZone

@@ -356,3 +356,51 @@ test('browser sends named post-processing uploads only to the same-origin proxy'
     globalThis.fetch = original
   }
 })
+
+test('the browser preserves repeated local overlay files while sending only validated settings as JSON', async () => {
+  const original = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async (_url, options) => {
+    calls++
+    const body = options?.body
+    assert.ok(body instanceof FormData)
+    const metadata = JSON.parse(String(body.get('payload')))
+    assert.equal(metadata.operation, 'url-pdf')
+    assert.deepEqual(
+      metadata.postProcess.watermarks.map((entry: { source: string }) => entry.source),
+      ['text', 'image', 'pdf'],
+    )
+    assert.deepEqual(
+      (body.getAll('watermark') as File[]).map((file) => file.name),
+      ['logo.png', 'underlay.pdf'],
+    )
+    assert.equal(body.has('watermarkSource'), false)
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  }
+  try {
+    await convertWithGotenberg(
+      'http://127.0.0.1:3000',
+      {
+        operation: 'url-pdf',
+        fields: { url: 'https://example.test' },
+        advanced: {},
+        postProcess: {
+          watermarks: [
+            { source: 'text', expression: 'REVIEW' },
+            { source: 'image', expression: 'logo.png' },
+            { source: 'pdf', expression: 'underlay.pdf' },
+          ],
+        },
+      },
+      [],
+      [],
+      new AbortController().signal,
+      {
+        watermark: [new File(['PNG'], 'logo.png'), new File(['PDF'], 'underlay.pdf')],
+      },
+    )
+  } finally {
+    globalThis.fetch = original
+  }
+  assert.equal(calls, 1)
+})

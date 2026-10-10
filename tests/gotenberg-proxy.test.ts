@@ -513,7 +513,7 @@ test('routes conversion post-processing files through the named fields without e
   assert.equal(response.status, 200)
 })
 
-test('rejects duplicate overlay file fields and unsupported file destinations before forwarding', async () => {
+test('rejects excess overlay file fields and unsupported file destinations before forwarding', async () => {
   for (const fields of [
     [
       ['watermark', 'one.png'],
@@ -541,7 +541,92 @@ test('rejects duplicate overlay file fields and unsupported file destinations be
       proxyConversionRequest(request, async () => {
         throw new Error('Must not call upstream')
       }),
-      /Only one watermark|unsupported fields/,
+      /exactly one local or remote watermark|unsupported fields/,
     )
   }
+})
+
+test('proxy preserves ordered overlay groups and repeats file parts without accepting arbitrary headers', async () => {
+  const form = new FormData()
+  form.set(
+    'payload',
+    JSON.stringify({
+      operation: 'url-pdf',
+      fields: { url: 'https://example.test' },
+      advanced: {},
+      postProcess: {
+        watermarks: [
+          { source: 'text', expression: 'FIRST', options: '{"rotation":0}' },
+          { source: 'image', expression: 'a.png' },
+          { source: 'pdf', expression: 'b.pdf', pages: '2' },
+        ],
+        stamps: [
+          { source: 'text', expression: 'READY' },
+          { source: 'image', expression: 'seal.png' },
+        ],
+      },
+    }),
+  )
+  form.append('watermark', new File(['PDF'], 'b.pdf'))
+  form.append('watermark', new File(['PNG'], 'a.png'))
+  form.append('stamp', new File(['PNG'], 'seal.png'))
+  const request = new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: { origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
+    body: form,
+  })
+  request.headers.set('X-Untrusted-Overlay', 'malicious')
+  let forwarded = 0
+  const response = await proxyConversionRequest(request, async (target, init) => {
+    forwarded++
+    assert.equal(String(target), 'http://127.0.0.1:3000/forms/chromium/convert/url')
+    assert.equal(new Headers(init?.headers).has('X-Untrusted-Overlay'), false)
+    const outgoing = init?.body
+    assert.ok(outgoing instanceof FormData)
+    assert.deepEqual(outgoing.getAll('watermarkSource'), ['text', 'image', 'pdf'])
+    assert.deepEqual(outgoing.getAll('watermarkExpression'), ['FIRST', 'a.png', 'b.pdf'])
+    assert.deepEqual(outgoing.getAll('watermarkPages'), ['', '', '2'])
+    assert.deepEqual(outgoing.getAll('watermarkOptions'), ['{"rotation":0}', '', ''])
+    assert.deepEqual(outgoing.getAll('stampSource'), ['text', 'image'])
+    assert.deepEqual(outgoing.getAll('stampExpression'), ['READY', 'seal.png'])
+    assert.deepEqual(
+      (outgoing.getAll('watermark') as File[]).map((file) => file.name),
+      ['a.png', 'b.pdf'],
+    )
+    assert.deepEqual(
+      (outgoing.getAll('stamp') as File[]).map((file) => file.name),
+      ['seal.png'],
+    )
+    assert.equal(outgoing.has('payload'), false)
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  })
+  assert.equal(forwarded, 1)
+  assert.equal(response.status, 200)
+})
+
+test('proxy rejects repeated files that do not match the declared overlay rows', async () => {
+  const form = new FormData()
+  form.set(
+    'payload',
+    JSON.stringify({
+      operation: 'watermark',
+      fields: {},
+      advanced: {},
+      postProcess: { watermarks: [{ source: 'image', expression: 'logo.png' }] },
+    }),
+  )
+  form.append('files', new File(['PDF'], 'source.pdf'))
+  form.append('watermark', new File(['PNG'], 'logo.png'))
+  form.append('watermark', new File(['PNG'], 'other.png'))
+  const request = new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: { origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
+    body: form,
+  })
+  await assert.rejects(
+    proxyConversionRequest(request, async () => {
+      throw new Error('Rejected requests must not reach Gotenberg.')
+    }),
+    /exactly one local or remote watermark/,
+  )
 })

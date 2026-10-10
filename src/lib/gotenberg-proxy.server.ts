@@ -177,8 +177,16 @@ export async function proxyConversionRequest(
       (key === 'watermark' || key === 'stamp' || key === 'facturxXml') &&
       value instanceof File
     ) {
-      if (postFiles[key]) throw new ProxyInputError(`Only one ${key} file may be uploaded.`)
-      postFiles[key] = value
+      if (key === 'facturxXml') {
+        if (postFiles.facturxXml)
+          throw new ProxyInputError('Only one facturxXml file may be uploaded.')
+        postFiles.facturxXml = value
+      } else {
+        const uploads = postFiles[key]
+        postFiles[key] = uploads
+          ? [...(Array.isArray(uploads) ? uploads : [uploads]), value]
+          : [value]
+      }
     } else {
       throw new ProxyInputError('The multipart request contains unsupported fields.')
     }

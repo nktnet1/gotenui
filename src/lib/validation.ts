@@ -6,7 +6,10 @@ import {
 } from '#/lib/chromium-documents'
 import { OPERATION_BY_ID, type Operation } from '#/lib/operations'
 import {
+  configuredOverlays,
   countPostProcessFiles,
+  OVERLAY_KINDS,
+  overlayUploads,
   PDF_CONVERSION_IDS,
   type PostProcessFiles,
   pdfPostProcessSchema,
@@ -243,16 +246,32 @@ function validateAsyncInputs(payload: ConversionPayload): void {
 function validatePostProcessSettings(operation: Operation, payload: ConversionPayload): void {
   const settings = payload.postProcess
   if (!settings) return
-  if (!PDF_CONVERSION_IDS.has(operation.id)) {
+  const isConversion = PDF_CONVERSION_IDS.has(operation.id)
+  const standalone = operation.id === 'watermark' || operation.id === 'stamp'
+  if (!isConversion && !standalone) {
     throw new InputError('PDF post-processing is supported only on PDF conversion operations.')
+  }
+  if (standalone) {
+    const permitted = operation.id === 'watermark' ? 'watermarks' : 'stamps'
+    if (!settings[permitted]?.length || Object.keys(settings).some((key) => key !== permitted)) {
+      throw new InputError(`The ${operation.id} tool accepts only ordered ${permitted} settings.`)
+    }
+  }
+  for (const kind of OVERLAY_KINDS) {
+    const plural = kind === 'watermark' ? 'watermarks' : 'stamps'
+    if (settings[kind] && settings[plural]) {
+      throw new InputError(`Choose either a single ${kind} or ordered ${plural}, not both.`)
+    }
   }
   const submitted = Object.keys(settings).filter(
     (key) => settings[key as keyof typeof settings] !== undefined,
   )
   const keys = new Set<string>()
   for (const key of submitted) {
-    if (key === 'watermark' || key === 'stamp') {
-      for (const suffix of ['Source', 'Expression', 'Pages', 'Options']) keys.add(`${key}${suffix}`)
+    if (['watermark', 'stamp', 'watermarks', 'stamps'].includes(key)) {
+      const kind = key.startsWith('watermark') ? 'watermark' : 'stamp'
+      for (const suffix of ['Source', 'Expression', 'Pages', 'Options'])
+        keys.add(`${kind}${suffix}`)
     } else keys.add(key)
   }
   for (const key of keys) {
@@ -277,16 +296,17 @@ function validatePostProcessSettings(operation: Operation, payload: ConversionPa
   ) {
     throw new InputError('PDF permissions require a user or owner password.')
   }
-  for (const kind of ['watermark', 'stamp'] as const) {
-    const overlay = settings[kind]
-    if (!overlay) continue
-    if (overlay.source === 'text' && !overlay.expression?.trim()) {
-      throw new InputError(`${kind} text cannot be empty.`)
+  for (const kind of OVERLAY_KINDS) {
+    for (const [index, overlay] of configuredOverlays(settings, kind).entries()) {
+      const label = `${kind} ${index + 1}`
+      if (overlay.source === 'text' && !overlay.expression?.trim()) {
+        throw new InputError(`${kind} text cannot be empty (${label}).`)
+      }
+      if (overlay.pages && !/^\d+(?:-\d+)?(?:\s*,\s*\d+(?:-\d+)?)*$/.test(overlay.pages)) {
+        throw new InputError(`${kind} pages must be page numbers or ranges, e.g. 1-3, 5.`)
+      }
+      if (overlay.options) requireJsonObject(overlay.options, `${label} options`)
     }
-    if (overlay.pages && !/^\d+(?:-\d+)?(?:\s*,\s*\d+(?:-\d+)?)*$/.test(overlay.pages)) {
-      throw new InputError(`${kind} pages must be page numbers or ranges, e.g. 1-3, 5.`)
-    }
-    if (overlay.options) requireJsonObject(overlay.options, `${kind} options`)
   }
   if (settings.metadata) requireJsonObject(settings.metadata, 'PDF metadata')
   if (settings.embedsMetadata) {
@@ -333,10 +353,16 @@ function validatePostProcessFiles(
   currentBytes: number,
 ): void {
   const settings = payload?.postProcess
-  if (!settings && (files.watermark || files.stamp || files.facturxXml)) {
+  if (
+    !settings &&
+    (overlayUploads(files, 'watermark').length ||
+      overlayUploads(files, 'stamp').length ||
+      files.facturxXml)
+  ) {
     throw new InputError('Overlay and Factur-X uploads require post-processing settings.')
   }
-  if (!PDF_CONVERSION_IDS.has(operation.id) && countPostProcessFiles(files)) {
+  const standalone = operation.id === 'watermark' || operation.id === 'stamp'
+  if (!PDF_CONVERSION_IDS.has(operation.id) && !standalone && countPostProcessFiles(files)) {
     throw new InputError('PDF processing files are supported only on PDF conversion operations.')
   }
   const remote = remoteCounts(payload)
@@ -344,9 +370,15 @@ function validatePostProcessFiles(
   if (countPostProcessFiles(files) > 20 || embedded.length + remote.embedded > 20) {
     throw new InputError('At most 20 post-processing files or attachments are supported.')
   }
-  const postFiles = [files.watermark, files.stamp, ...embedded, files.facturxXml].filter(
-    (file): file is File => file !== undefined,
-  )
+  if (standalone && (embedded.length || files.facturxXml)) {
+    throw new InputError('Standalone overlays cannot embed files or add Factur-X XML.')
+  }
+  const postFiles = [
+    ...overlayUploads(files, 'watermark'),
+    ...overlayUploads(files, 'stamp'),
+    ...embedded,
+    files.facturxXml,
+  ].filter((file): file is File => file !== undefined)
   let total = currentBytes
   const embeddedNames = new Set<string>()
   for (const file of postFiles) {
@@ -378,33 +410,86 @@ function validatePostProcessFiles(
   ) {
     throw new InputError('PDF/A-1b and PDF/A-2b do not support embedded attachments. Use PDF/A-3b.')
   }
-  for (const kind of ['watermark', 'stamp'] as const) {
-    const local = files[kind]
-    const count = Number(Boolean(local)) + remote[kind]
-    const overlay = settings?.[kind]
-    if (!overlay) {
-      if (local) throw new InputError(`${kind} upload requires ${kind} settings.`)
+  const allNames = new Set<string>()
+  for (const kind of OVERLAY_KINDS) {
+    const uploads = overlayUploads(files, kind)
+    const rows = settings ? configuredOverlays(settings, kind) : []
+    const remoteCount = remote[kind]
+    if (!rows.length) {
+      if (uploads.length) throw new InputError(`${kind} upload requires ${kind} settings.`)
+      // Only the original standalone tools may use a remote auxiliary file without
+      // a postProcess group. Do not silently download unused overlay assets.
+      if (remoteCount && !(standalone && operation.id === kind && !settings)) {
+        throw new InputError(`${kind} downloadFrom requires matching ${kind} settings.`)
+      }
       continue
     }
-    if (overlay.source === 'text') {
-      if (count) throw new InputError(`Text ${kind} must not include an image or PDF upload.`)
-    } else {
-      if (count !== 1) throw new InputError(`Provide exactly one local or remote ${kind} file.`)
-      if (!local && !overlay.expression?.trim()) {
-        throw new InputError(`${kind} requires the remote file's Content-Disposition filename.`)
+    const expectedFiles = rows.filter((row) => row.source !== 'text').length
+    if (uploads.length + remoteCount !== expectedFiles) {
+      if (rows.every((row) => row.source === 'text')) {
+        throw new InputError(`Text ${kind} must not include an image or PDF upload.`)
       }
-      const ext = local?.name.match(extension)?.[0]?.toLowerCase()
+      throw new InputError(
+        `Provide exactly one local or remote ${kind} file per image/PDF overlay.`,
+      )
+    }
+    const localByName = new Map<string, File>()
+    const localCaseFolded = new Set<string>()
+    for (const file of uploads) {
+      const key = file.name.toLowerCase()
+      if (localCaseFolded.has(key))
+        throw new InputError(`Duplicate ${kind} upload filename: ${file.name}`)
+      localCaseFolded.add(key)
+      localByName.set(file.name, file)
+    }
+    const usedLocal = new Set<string>()
+    let assignedRemote = 0
+    let seenLocal = false
+    for (const [index, overlay] of rows.entries()) {
+      if (overlay.source === 'text') continue
+      // One legacy v1.0.21 upload may omit the filename expression.
+      const expression =
+        overlay.expression?.trim() ||
+        (rows.length === 1 && uploads.length === 1 && !remoteCount ? uploads[0]?.name : '')
+      if (!expression) {
+        throw new InputError(
+          `${kind} requires the remote file's Content-Disposition filename or a local upload.`,
+        )
+      }
+      safeFilename(expression)
+      const key = expression.toLowerCase()
+      if (allNames.has(key)) throw new InputError(`Duplicate overlay filename: ${expression}`)
+      allNames.add(key)
+      const ext = expression.match(extension)?.[0]?.toLowerCase()
       if (
-        local &&
         !(overlay.source === 'pdf'
           ? ext === '.pdf'
           : ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.tif', '.tiff'].includes(ext ?? ''))
       ) {
         throw new InputError(`${kind} source type does not match the uploaded file extension.`)
       }
-      if (local && overlay.expression && overlay.expression !== local.name) {
-        throw new InputError(`${kind} expression must match the uploaded filename.`)
+      if (localByName.has(expression)) {
+        usedLocal.add(expression)
+        seenLocal = true
+      } else {
+        if (!remoteCount && uploads.length) {
+          throw new InputError(`${kind} expression must match the uploaded filename.`)
+        }
+        if (seenLocal) {
+          throw new InputError(
+            `Remote ${kind} overlays must precede local uploads because Gotenberg downloads remote assets first.`,
+          )
+        }
+        assignedRemote++
       }
+      if (assignedRemote > remoteCount) {
+        throw new InputError(`No remote ${kind} downloadFrom file matches overlay ${index + 1}.`)
+      }
+    }
+    if (usedLocal.size !== uploads.length || assignedRemote !== remoteCount) {
+      throw new InputError(
+        `${kind} uploaded and remote assets must each match one overlay filename.`,
+      )
     }
   }
   if (files.facturxXml && !/\.xml$/i.test(files.facturxXml.name)) {
@@ -547,8 +632,29 @@ export function validateFiles(
       throw new InputError('Stamp and watermark files must be images or PDFs.')
     }
   }
+  if (
+    (operation.id === 'watermark' || operation.id === 'stamp') &&
+    payload?.postProcess &&
+    auxiliary.length
+  ) {
+    throw new InputError('Use the ordered overlay editor instead of the legacy auxiliary upload.')
+  }
   validatePostProcessFiles(operation, payload, postFiles, maxBytes, total)
-  if (operation.id === 'watermark' || operation.id === 'stamp') {
+  if (payload?.postProcess) {
+    for (const kind of OVERLAY_KINDS) {
+      const rows = configuredOverlays(payload.postProcess, kind)
+      const uploads = overlayUploads(postFiles, kind)
+      for (const row of rows) {
+        if (row.source === 'text') continue
+        const filename =
+          row.expression || (rows.length === 1 && uploads.length === 1 ? uploads[0]?.name : '')
+        if (filename && names.has(filename.toLowerCase())) {
+          throw new InputError(`Overlay filename collides with an input or asset: ${filename}`)
+        }
+      }
+    }
+  }
+  if ((operation.id === 'watermark' || operation.id === 'stamp') && !payload?.postProcess) {
     const source = payload?.fields[`${operation.id}Source`]
     const expression = payload?.fields[`${operation.id}Expression`]
     if (source === 'text' && auxiliary.length + remoteAux > 0) {
@@ -611,8 +717,12 @@ export function validatePayload(input: unknown): {
       }
     }
   }
+  const orderedStandalone =
+    (operation.id === 'watermark' && Boolean(payload.postProcess?.watermarks?.length)) ||
+    (operation.id === 'stamp' && Boolean(payload.postProcess?.stamps?.length))
   for (const field of operation.fields) {
     if (
+      !orderedStandalone &&
       field.required &&
       (payload.fields[field.name] === '' || payload.fields[field.name] === undefined)
     ) {

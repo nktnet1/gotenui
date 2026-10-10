@@ -8,7 +8,7 @@ import {
   proxyStatusRequest,
 } from '#/lib/gotenberg-proxy.server'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
-import type { PostProcessFiles } from '#/lib/pdf-post-processing'
+import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import type { ConversionPayload } from '#/lib/validation'
 
 const backendUrl = inject('gotenbergTestUrl')
@@ -36,7 +36,11 @@ function request(
 ): Request {
   const payload: ConversionPayload = {
     operation: operation.id,
-    fields: { ...operationDefaults(operation), ...overrides.fields },
+    fields:
+      (operation.id === 'watermark' && overrides.postProcess?.watermarks) ||
+      (operation.id === 'stamp' && overrides.postProcess?.stamps)
+        ? (overrides.fields ?? {})
+        : { ...operationDefaults(operation), ...overrides.fields },
     advanced: overrides.advanced ?? {},
     ...(overrides.source ? { source: overrides.source } : {}),
     ...(overrides.markdownName ? { markdownName: overrides.markdownName } : {}),
@@ -55,8 +59,9 @@ function request(
   body.set('payload', JSON.stringify(payload))
   for (const file of inputFiles) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
-  if (postFiles.watermark) body.append('watermark', postFiles.watermark, postFiles.watermark.name)
-  if (postFiles.stamp) body.append('stamp', postFiles.stamp, postFiles.stamp.name)
+  for (const kind of OVERLAY_KINDS) {
+    for (const file of overlayUploads(postFiles, kind)) body.append(kind, file, file.name)
+  }
   for (const file of postFiles.embeds ?? []) body.append('embeds', file, file.name)
   if (postFiles.facturxXml)
     body.append('facturxXml', postFiles.facturxXml, postFiles.facturxXml.name)
@@ -675,3 +680,80 @@ test('Gotenberg downloads a remote attachment into a new Chromium PDF', async ()
     new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
   ).toBe('%PDF-')
 }, 120_000)
+
+test.each(['watermark', 'stamp'] as const)(
+  'real %s route applies ordered text, remote image and local PDF overlays',
+  async (kind) => {
+    const operation = OPERATIONS.find((item) => item.id === kind)
+    if (!operation) throw new Error(`Missing ${kind} operation`)
+    const plural = kind === 'watermark' ? 'watermarks' : 'stamps'
+    const remoteUrl = new URL('/overlay.png', fixtureUrl).href
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        {
+          fields: {},
+          postProcess: {
+            [plural]: [
+              { source: 'text', expression: 'FIRST' },
+              { source: 'image', expression: 'remote-overlay.png' },
+              { source: 'pdf', expression: 'overlay.pdf' },
+              { source: 'text', expression: 'LAST', pages: '1' },
+            ],
+          },
+          downloadFrom: [{ url: remoteUrl, field: kind }],
+        },
+        [pdfFile()],
+        [],
+        { [kind]: [new File([pdfBytes], 'overlay.pdf', { type: 'application/pdf' })] },
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(
+        `${kind} ordered overlays failed: ${response.status} ${await response.text()}`,
+      )
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(
+      new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+    ).toBe('%PDF-')
+  },
+  120_000,
+)
+
+test.each(['url-pdf', 'office-pdf'])(
+  'real %s conversion handles repeated watermark and stamp fields together',
+  async (id) => {
+    const operation = OPERATIONS.find((item) => item.id === id)
+    if (!operation) throw new Error(`Missing ${id} operation`)
+    const inputs = inputFor(operation)
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        {
+          ...inputs.overrides,
+          postProcess: {
+            watermarks: [
+              { source: 'text', expression: 'INTERNAL' },
+              { source: 'pdf', expression: 'watermark.pdf' },
+            ],
+            stamps: [
+              { source: 'text', expression: 'APPROVED' },
+              { source: 'text', expression: 'VERSION 2', pages: '1' },
+            ],
+          },
+        },
+        inputs.files,
+        [],
+        { watermark: [new File([pdfBytes], 'watermark.pdf', { type: 'application/pdf' })] },
+      ),
+    )
+    if (!response.ok)
+      throw new Error(`${id} repeated overlays failed: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(
+      new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+    ).toBe('%PDF-')
+  },
+  120_000,
+)

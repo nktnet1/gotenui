@@ -4,7 +4,13 @@ import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-d
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import type { Operation } from '#/lib/operations'
-import { type PostProcessFiles, postProcessFormFields } from '#/lib/pdf-post-processing'
+import {
+  OVERLAY_KINDS,
+  orderedOverlayUploads,
+  overlayUploads,
+  type PostProcessFiles,
+  postProcessFormFields,
+} from '#/lib/pdf-post-processing'
 import { downloadFilename, responseExtension } from '#/lib/security'
 import {
   type ConversionPayload,
@@ -218,11 +224,15 @@ export function createGotenbergForm(
   }
   if (payload.postProcess) {
     for (const [name, value] of postProcessFormFields(payload.postProcess, postFiles)) {
-      form.set(name, value)
+      form.append(name, value)
     }
   }
-  if (postFiles.watermark) form.append('watermark', postFiles.watermark, postFiles.watermark.name)
-  if (postFiles.stamp) form.append('stamp', postFiles.stamp, postFiles.stamp.name)
+  for (const kind of OVERLAY_KINDS) {
+    const uploads = payload.postProcess
+      ? orderedOverlayUploads(payload.postProcess, postFiles, kind)
+      : overlayUploads(postFiles, kind)
+    for (const file of uploads) form.append(kind, file, file.name)
+  }
   for (const file of postFiles.embeds ?? []) form.append('embeds', file, file.name)
   if (postFiles.facturxXml)
     form.append('facturxXml', postFiles.facturxXml, postFiles.facturxXml.name)
@@ -250,8 +260,9 @@ export async function convertWithGotenberg(
   body.set('payload', JSON.stringify(payload))
   for (const file of files) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
-  if (postFiles.watermark) body.append('watermark', postFiles.watermark, postFiles.watermark.name)
-  if (postFiles.stamp) body.append('stamp', postFiles.stamp, postFiles.stamp.name)
+  for (const kind of OVERLAY_KINDS) {
+    for (const file of overlayUploads(postFiles, kind)) body.append(kind, file, file.name)
+  }
   for (const file of postFiles.embeds ?? []) body.append('embeds', file, file.name)
   if (postFiles.facturxXml)
     body.append('facturxXml', postFiles.facturxXml, postFiles.facturxXml.name)
