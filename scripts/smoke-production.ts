@@ -129,6 +129,13 @@ const upstream = createServer(async (request, response) => {
         .end('<html>proxy fallback</html>')
       return
     }
+    if (trace === 'smoke-pdf-missing-version') {
+      // Previously accepted as a PDF because the first five magic bytes match.
+      response
+        .writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': '5' })
+        .end('%PDF-')
+      return
+    }
     if (trace === 'smoke-invalid-html') {
       response.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>invalid</html>')
       return
@@ -595,6 +602,17 @@ async function run(): Promise<void> {
     })
     assert.equal(mislabeled.status, 502)
     assert.match(await mislabeled.text(), /does not match its declared file type/)
+    checks++
+
+    const missingVersion = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], {
+        requestTrace: 'smoke-pdf-missing-version',
+      }),
+    })
+    assert.equal(missingVersion.status, 502)
+    assert.match(await missingVersion.text(), /inconsistent response length|file type/)
     checks++
 
     const rejectedAuth = await get(convertUrl, {

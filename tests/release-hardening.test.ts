@@ -354,7 +354,7 @@ test('body larger than the stream limit rejects the download and cancels upstrea
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const first = new Uint8Array(800)
-      first.set(new TextEncoder().encode('%PDF-'))
+      first.set(new TextEncoder().encode('%PDF-1.7'))
       controller.enqueue(first)
       controller.enqueue(new Uint8Array(300))
     },
@@ -373,16 +373,16 @@ test('body larger than the stream limit rejects the download and cancels upstrea
 
 test('unexpected early EOF rejects a declared-length conversion instead of downloading a truncated file', async () => {
   const response = await proxyConversionRequest(requestFor(), async () =>
-    pdfResponse('%PDF-', { 'Content-Length': '9' }),
+    pdfResponse('%PDF-1.7', { 'Content-Length': '12' }),
   )
   await assert.rejects(response.text(), /truncated conversion response/)
 })
 
 test('exact-length responses succeed without buffering in the proxy', async () => {
   const response = await proxyConversionRequest(requestFor(), async () =>
-    pdfResponse('%PDF-', { 'Content-Length': '5' }),
+    pdfResponse('%PDF-1.7', { 'Content-Length': '8' }),
   )
-  assert.equal(await response.text(), '%PDF-')
+  assert.equal(await response.text(), '%PDF-1.7')
   assert.equal(response.headers.has('content-length'), false)
 })
 
@@ -390,7 +390,7 @@ test('cancelling a streamed client response also cancels the upstream reader', a
   let cancelled = false
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(new TextEncoder().encode('%PDF-'))
+      controller.enqueue(new TextEncoder().encode('%PDF-1.7'))
     },
     cancel() {
       cancelled = true

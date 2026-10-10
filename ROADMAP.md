@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.39 (strict successful diagnostic HTTP status validation).
+- **Baseline:** v1.0.40 (complete PDF version-header and response-prefix length checks).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -44,6 +44,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.37** | Release | Status probe response cleanup | Cancel unread upstream /health and /version error bodies without affecting authentication or health reporting; add deterministic cancellation regressions. |
 | **v1.0.38** | Release | Diagnostic response integrity | Reject malformed and mismatched uncompressed Content-Length values on health/version, debug and metrics responses; maintain body-size caps, compressed-body compatibility and cancellation tests. |
 | **v1.0.39** | Release | Diagnostic HTTP status compatibility | Reject successful-looking partial or unexpected 2xx upstream diagnostic responses; require HTTP 200 for health, version, debug and legacy metrics, cancelling unread bodies. Add unit and built Nitro smoke regressions. |
+| **v1.0.40** | Fix | Conversion prefix integrity | Reject incomplete/invalid PDF version headers and declared uncompressed response lengths shorter than the binary signature or bytes already read for signature validation, before sending download headers. Retain PDF 1.x/2.0 compatibility and streaming. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -144,6 +145,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
 
 ## Verification and release gates
+
+**v1.0.40 conversion prefix integrity:** PDF signature checks now require a complete supported `%PDF-1.x` or `%PDF-2.0` version header rather than accepting the incomplete `%PDF-` prefix. For uncompressed conversion responses, a declared `Content-Length` smaller than the required binary header or the bytes already read during preflight fails with HTTP 502 and cancels upstream before download headers are returned. Compressed upstream responses continue using decoded-byte streaming limits without comparing compressed lengths. Vitest and the built Nitro mock-upstream smoke test cover this failure; full-document validity and real-Gotenberg integration remain separate concerns.
 
 **v1.0.39 diagnostic HTTP statuses:** Gotenberg documents HTTP 200 as the successful GET response for /health, /version, /debug and legacy /prometheus/metrics. A gateway could previously return valid-looking JSON or metrics with HTTP 201 or 206, and Gotenui would accept the incomplete or unexpected result. Full status polling now rejects non-200 health and ignores non-200 optional versions; debug and metrics return a gateway error for unexpected successful statuses. Rejected response bodies are cancelled. Twelve unit tests reproduced the old behaviour, and four built-Nitro smoke checks exercise it through same-origin API routes. Full Gotenberg and ingress verification remains outstanding.
 

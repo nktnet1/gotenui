@@ -451,7 +451,7 @@ export async function proxyConversionRequest(
     await upstream.body.cancel().catch(() => {})
     throw error
   }
-  const checkedBody = await verifyConversionSignature(upstream.body, returnedType)
+  const checkedBody = await verifyConversionSignature(upstream.body, returnedType, declaredLength)
   headers.set('Content-Type', upstreamContentType ?? returnedType)
   headers.set(
     'Content-Disposition',

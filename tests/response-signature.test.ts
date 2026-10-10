@@ -51,13 +51,13 @@ test('validates fragmented prefixes without waiting for the rest of the document
     start(controller) {
       controller.enqueue(input.slice(0, 2))
       controller.enqueue(input.slice(2, 4))
-      controller.enqueue(input.slice(4, 7))
+      controller.enqueue(input.slice(4, 8))
     },
     async pull(controller) {
       await ready
       if (!deliveredTail) {
         deliveredTail = true
-        controller.enqueue(input.slice(7))
+        controller.enqueue(input.slice(8))
         controller.close()
       }
     },
@@ -132,4 +132,87 @@ test('metadata JSON does not require a binary signature', async () => {
     await new Response(await verifyConversionSignature(stream, 'application/json')).text(),
     data,
   )
+})
+
+test.each(['%PDF-', '%PDF-1.', '%PDF-1x7', '%PDF-9.9'])(
+  'rejects an incomplete or invalid PDF version header: %s',
+  async (header) => {
+    await assert.rejects(
+      verifyConversionSignature(new Blob([header]).stream(), 'application/pdf'),
+      /does not match its declared file type/,
+    )
+  },
+)
+
+test('rejects an advertised PDF length smaller than its complete header before streaming', async () => {
+  let cancelled = false
+  const upstream = new ReadableStream<Uint8Array>({
+    cancel() {
+      cancelled = true
+    },
+  })
+  await assert.rejects(
+    verifyConversionSignature(upstream, 'application/pdf', 5),
+    /inconsistent response length/,
+  )
+  assert.equal(cancelled, true)
+})
+
+test.each([
+  ['application/zip', 3],
+  ['image/png', 7],
+  ['image/jpeg', 2],
+  ['image/webp', 11],
+])('rejects %s with a Content-Length shorter than its signature', async (type, length) => {
+  let cancelled = false
+  const upstream = new ReadableStream<Uint8Array>({
+    cancel() {
+      cancelled = true
+    },
+  })
+  await assert.rejects(
+    verifyConversionSignature(upstream, type, length),
+    /inconsistent response length/,
+  )
+  assert.equal(cancelled, true)
+})
+
+test('rejects an already buffered PDF prefix exceeding the declared length', async () => {
+  let cancelled = false
+  const upstream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('%PDF-1.7\nbody'))
+    },
+    cancel() {
+      cancelled = true
+    },
+  })
+  await assert.rejects(
+    verifyConversionSignature(upstream, 'application/pdf', 8),
+    /inconsistent response length/,
+  )
+  assert.equal(cancelled, true)
+})
+
+test('a proxy PDF with a truncated version and matching Content-Length fails before HTTP 200', async () => {
+  const response = await proxyConversionRequest(
+    requestFor(),
+    async () =>
+      new Response('%PDF-', {
+        headers: { 'Content-Type': 'application/pdf', 'Content-Length': '5' },
+      }),
+  ).catch(proxyErrorResponse)
+  assert.equal(response.status, 502)
+  assert.match(await response.text(), /file type|response length/)
+})
+
+test('complete PDF 1.x and PDF 2.0 version headers remain supported', async () => {
+  for (const header of ['%PDF-1.4', '%PDF-1.7', '%PDF-2.0']) {
+    const verified = await verifyConversionSignature(
+      new Blob([header]).stream(),
+      'application/pdf',
+      header.length,
+    )
+    assert.equal(await new Response(verified).text(), header)
+  }
 })

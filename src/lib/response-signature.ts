@@ -12,7 +12,8 @@ function beginsWith(value: Uint8Array, signature: Uint8Array, offset = 0): boole
 function requiredBytes(type: string): number {
   switch (type) {
     case 'application/pdf':
-      return 5
+      // A valid PDF starts with the complete version header, not just "%PDF-".
+      return 8
     case 'application/zip':
       return 4
     case 'image/png':
@@ -30,7 +31,13 @@ function requiredBytes(type: string): number {
 function matchesSignature(type: string, prefix: Uint8Array): boolean {
   switch (type) {
     case 'application/pdf':
-      return beginsWith(prefix, PDF_SIGNATURE)
+      // PDF 1.0-1.7 and PDF 2.0: RFC 8118 requires a version after %PDF-.
+      return (
+        beginsWith(prefix, PDF_SIGNATURE) &&
+        prefix[6] === 0x2e &&
+        ((prefix[5] === 0x31 && prefix[7] >= 0x30 && prefix[7] <= 0x37) ||
+          (prefix[5] === 0x32 && prefix[7] === 0x30))
+      )
     case 'application/zip':
       return (
         prefix[0] === 0x50 &&
@@ -57,23 +64,41 @@ function matchesSignature(type: string, prefix: Uint8Array): boolean {
 export async function verifyConversionSignature(
   body: ReadableStream<Uint8Array>,
   contentType: string,
+  declaredLength?: number,
 ): Promise<ReadableStream<Uint8Array>> {
   const size = requiredBytes(contentType)
+  if (declaredLength !== undefined && declaredLength < size) {
+    await body.cancel().catch(() => {})
+    throw new ProxyInputError('Gotenberg returned an inconsistent response length.', 502)
+  }
   if (size === 0) return body
 
   const reader = body.getReader()
   const buffered: Uint8Array[] = []
   const prefix = new Uint8Array(size)
   let offset = 0
+  let bufferedBytes = 0
   try {
     while (offset < size) {
       const { done, value } = await reader.read()
       if (done) break
       if (value.byteLength === 0) continue
       buffered.push(value)
+      bufferedBytes += value.byteLength
+      if (declaredLength !== undefined && bufferedBytes > declaredLength) {
+        throw new ProxyInputError('Gotenberg returned an inconsistent response length.', 502)
+      }
       const portion = Math.min(size - offset, value.byteLength)
       prefix.set(value.subarray(0, portion), offset)
       offset += portion
+      // An HTML fallback can be rejected as soon as its first five bytes
+      // disagree with %PDF-, without waiting for the full version header.
+      if (contentType === 'application/pdf' && offset >= 5 && !beginsWith(prefix, PDF_SIGNATURE)) {
+        throw new ProxyInputError(
+          'Gotenberg returned content that does not match its declared file type.',
+          502,
+        )
+      }
     }
     if (offset < size || !matchesSignature(contentType, prefix)) {
       throw new ProxyInputError(
