@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.32 (reproducible pnpm container build and non-root runtime; previous streaming and focus checks retained).
+- **Baseline:** v1.0.33 (validate binary conversion signatures before returning downloads; existing response limits and cancellation checks retained).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -37,6 +37,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.30** | Release | Keyboard accessibility hardening | Contain keyboard focus in connection/debug/metrics dialogs and open mobile navigation; restore focus on dismissal, hide closed mobile controls from tab order, and add non-browser focus regressions. |
 | **v1.0.31** | Release | Live Nitro cancellation and isolation smoke | Fix the smoke helper overwriting caller abort signals; verify prompt abort before upstream headers and during streaming, truncated-response rejection, and overlapping browser/server credentials in the built app. |
 | **v1.0.32** | Release | Container build reproducibility | Use Node.js 24 and pnpm 12 with a frozen lockfile instead of npm resolving dependencies anew, restrict the Docker build context, and run the packaged Nitro app as a non-root user; add a static packaging contract test (real image build outstanding). |
+| **v1.0.33** | Release | Binary response signature hardening | Reject mislabeled PDF, ZIP and screenshot outputs before returning download headers. Inspect only the minimum file-signature bytes and replay the inspected stream without buffering the full result; extend unit and live Nitro smoke coverage. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -137,6 +138,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
 
 ## Verification and release gates
+
+**v1.0.33 binary response signatures:** The proxy now inspects the leading 3–12 bytes of PDF, ZIP, PNG, JPEG and WebP responses before sending a successful download response. This rejects HTML or other mislabeled gateway fallbacks even when they claim a permitted media type. PDF and ZIP can still vary by route exactly as in v1.0.27. JSON metadata remains non-binary and is not subject to signature sniffing. The rest of each response remains streaming with the existing decoded-byte limit, truncation checks and cancellation propagation. Unit tests cover split signature chunks, valid/invalid types, early upstream cancellation, and browser-download cancellation; a non-Docker Nitro smoke checks HTTP 502 for mislabeled PDFs. Full Gotenberg and browser verification remains outstanding.
 
 **v1.0.32 image packaging:** The Dockerfile now uses Corepack and the package-manager version pinned in `package.json`, installs with `pnpm install --frozen-lockfile`, builds using `pnpm build`, and copies only Nitro output into a non-root runtime image. The unit suite verifies these packaging invariants and the Docker context exclusions. A real container build/run (with an updated, committed lockfile) is still required; this review did not run Docker.
 

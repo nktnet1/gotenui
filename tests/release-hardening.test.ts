@@ -102,10 +102,10 @@ test('status probes do not reflect network exception messages or excessively lar
 test('screenshots must return the selected image content type', async () => {
   const response = await proxyConversionRequest(
     requestFor('url-shot', { url: 'https://example.test', format: 'webp' }),
-    async () => new Response('RIFF', { headers: { 'Content-Type': 'image/webp' } }),
+    async () => new Response('RIFFxxxxWEBPdata', { headers: { 'Content-Type': 'image/webp' } }),
   )
   assert.equal(response.status, 200)
-  assert.equal(await response.text(), 'RIFF')
+  assert.equal(await response.text(), 'RIFFxxxxWEBPdata')
   const mismatch = await proxyConversionRequest(
     requestFor('url-shot', { url: 'https://example.test', format: 'webp' }),
     async () => new Response('PNG', { headers: { 'Content-Type': 'image/png' } }),
@@ -265,8 +265,11 @@ test('empty successful conversions fail, including an advertised zero byte respo
     pdfResponse('', { 'Content-Length': '0' }),
   ).catch(proxyErrorResponse)
   assert.equal(zero.status, 502)
-  const absent = await proxyConversionRequest(requestFor(), async () => pdfResponse(''))
-  await assert.rejects(absent.arrayBuffer(), /empty conversion response/)
+  const absent = await proxyConversionRequest(requestFor(), async () => pdfResponse('')).catch(
+    proxyErrorResponse,
+  )
+  assert.equal(absent.status, 502)
+  assert.match(await absent.text(), /does not match its declared file type/)
 })
 
 test('decoded compressed transfers do not compare compressed Content-Length with decoded bytes', async () => {
@@ -278,7 +281,7 @@ test('decoded compressed transfers do not compare compressed Content-Length with
 
 test('PDF tools validate ZIP and JSON result types independently', async () => {
   for (const [operation, fields, mime, content] of [
-    ['split', { splitMode: 'pages', splitSpan: '1' }, 'application/zip', 'PK'],
+    ['split', { splitMode: 'pages', splitSpan: '1' }, 'application/zip', 'PK\u0003\u0004'],
     ['metadata-read', {}, 'application/json', '{}'],
   ] as const) {
     const form = new FormData()
@@ -303,7 +306,9 @@ test('body larger than the stream limit rejects the download and cancels upstrea
   let cancelled = false
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(new Uint8Array(800))
+      const first = new Uint8Array(800)
+      first.set(new TextEncoder().encode('%PDF-'))
+      controller.enqueue(first)
       controller.enqueue(new Uint8Array(300))
     },
     cancel() {
@@ -321,16 +326,16 @@ test('body larger than the stream limit rejects the download and cancels upstrea
 
 test('unexpected early EOF rejects a declared-length conversion instead of downloading a truncated file', async () => {
   const response = await proxyConversionRequest(requestFor(), async () =>
-    pdfResponse('%PDF', { 'Content-Length': '8' }),
+    pdfResponse('%PDF-', { 'Content-Length': '9' }),
   )
   await assert.rejects(response.text(), /truncated conversion response/)
 })
 
 test('exact-length responses succeed without buffering in the proxy', async () => {
   const response = await proxyConversionRequest(requestFor(), async () =>
-    pdfResponse('%PDF', { 'Content-Length': '4' }),
+    pdfResponse('%PDF-', { 'Content-Length': '5' }),
   )
-  assert.equal(await response.text(), '%PDF')
+  assert.equal(await response.text(), '%PDF-')
   assert.equal(response.headers.has('content-length'), false)
 })
 
@@ -338,7 +343,7 @@ test('cancelling a streamed client response also cancels the upstream reader', a
   let cancelled = false
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(new TextEncoder().encode('%PDF'))
+      controller.enqueue(new TextEncoder().encode('%PDF-'))
     },
     cancel() {
       cancelled = true

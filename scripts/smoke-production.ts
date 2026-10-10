@@ -104,6 +104,12 @@ const upstream = createServer(async (request, response) => {
       // Both browser and server-managed requests remain in flight together.
       await sleep(150)
     }
+    if (trace === 'smoke-mislabeled-pdf') {
+      response
+        .writeHead(200, { 'Content-Type': 'application/pdf' })
+        .end('<html>proxy fallback</html>')
+      return
+    }
     if (trace === 'smoke-invalid-html') {
       response.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>invalid</html>')
       return
@@ -456,6 +462,15 @@ async function run(): Promise<void> {
       assert.match(await invalid.text(), expected)
       checks++
     }
+
+    const mislabeled = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('url-pdf', baseFields, [], { requestTrace: 'smoke-mislabeled-pdf' }),
+    })
+    assert.equal(mislabeled.status, 502)
+    assert.match(await mislabeled.text(), /does not match its declared file type/)
+    checks++
 
     const rejectedAuth = await get(convertUrl, {
       method: 'POST',

@@ -14,6 +14,7 @@ import {
   readLimitedBody,
   requireSameOrigin,
 } from '#/lib/proxy-policy'
+import { verifyConversionSignature } from '#/lib/response-signature'
 import { parseServerConnections, publicServerConnections } from '#/lib/server-connections.server'
 import { uiFeatures } from '#/lib/ui-features.server'
 import {
@@ -360,7 +361,8 @@ export async function proxyConversionRequest(
     await upstream.body.cancel().catch(() => {})
     throw error
   }
-  return new Response(limitResponseStream(upstream.body, maxResponseBytes, declaredLength), {
+  const checkedBody = await verifyConversionSignature(upstream.body, returnedType)
+  return new Response(limitResponseStream(checkedBody, maxResponseBytes, declaredLength), {
     status: 200,
     headers,
   })

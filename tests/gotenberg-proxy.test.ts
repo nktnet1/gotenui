@@ -301,7 +301,7 @@ test('forwards only validated request metadata; browser-supplied tracing headers
     assert.equal(headers.get('tracestate'), 'tenant@host=1,vendor=2')
     assert.equal(headers.get('cookie'), null)
     assert.equal(headers.get('authorization'), null)
-    return new Response('%PDF', {
+    return new Response('%PDF-', {
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': 'attachment; filename="my-report.pdf"',
@@ -325,7 +325,7 @@ test('omitted metadata does not override upstream auto-generated names or traces
     ]) {
       assert.equal(headers.has(header), false)
     }
-    return new Response('%PDF', {
+    return new Response('%PDF-', {
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': 'attachment; filename="upstream-default.pdf"',
