@@ -5,6 +5,8 @@ A **stateless TanStack Start document workbench** for Gotenberg 8.x. The interfa
 ## Features
 
 - 22 Chromium, LibreOffice and PDF-engine operations, including HTML, Markdown, URL and Office conversions, screenshots, merging, metadata, bookmarks, watermarks and Factur-X.
+- Optional remote-file `downloadFrom` inputs and asynchronous Gotenberg webhook delivery, validated server-side and forwarded through the same-origin proxy.
+- Pure vector `public/gotenui-icon.svg`, used as the in-app mark and browser favicon.
 - Multiple named connections in **Connection settings**: browser profiles are saved in `localStorage` (`gotenui.connections.v1`), with automatic migration from the former `gotenui.backend-url.v1` preference. Default: **https://demo.gotenberg.dev**. Server-managed profiles are configured through environment variables, with credentials kept server-side.
 - Conversions and health/version checks call **same-origin `/api/gotenberg/*` routes**. Nitro makes server-to-server requests to Gotenberg, so **the demo requires no CORS configuration**.
 - Input validation in both browser and server, explicit destination allowlist, independent per-connection Basic Auth or bearer-token support, with server-side credentials never exposed to browsers, streaming conversion responses, three-minute request timeout and an in-memory activity list.
@@ -43,7 +45,7 @@ The test setup does **not** change the application's public-demo default. Docker
 
 ### Gotenberg API coverage
 
-Gotenui exposes **all 22 documented `POST /forms/*` routes**: four conversion, three screenshot, and fifteen PDF-engine routes. It queries `GET /health` and `GET /version` for detailed connection status, and exposes `HEAD /health` through `HEAD /api/gotenberg/health` for a no-body health probe. The privileged `GET /debug` endpoint is available through `POST /api/gotenberg/debug`, but only when `GOTENUI_DEBUG_ACCESS_KEY` is configured and supplied. Legacy Prometheus text metrics (`GET /prometheus/metrics` upstream) are available through the protected `POST /api/gotenberg/metrics` endpoint. Optional async webhook and `downloadFrom` parameters are not yet exposed. OpenTelemetry exporters are configured on Gotenberg itself, not through Gotenui.
+Gotenui exposes **all 22 documented `POST /forms/*` routes**: four conversion, three screenshot, and fifteen PDF-engine routes. It queries `GET /health` and `GET /version` for detailed connection status, and exposes `HEAD /health` through `HEAD /api/gotenberg/health` for a no-body health probe. The privileged `GET /debug` endpoint is available through `POST /api/gotenberg/debug`, but only when `GOTENUI_DEBUG_ACCESS_KEY` is configured and supplied. Legacy Prometheus text metrics (`GET /prometheus/metrics` upstream) are available through the protected `POST /api/gotenberg/metrics` endpoint. Optional async webhook delivery and `downloadFrom` remote file descriptors are available through the Advanced options panel. OpenTelemetry exporters are configured on Gotenberg itself, not through Gotenui.
 
 ## Protected debug diagnostics
 

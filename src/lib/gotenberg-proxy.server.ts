@@ -12,7 +12,12 @@ import {
   requireSameOrigin,
 } from '#/lib/proxy-policy'
 import { parseServerConnections, publicServerConnections } from '#/lib/server-connections.server'
-import { InputError, validateFiles, validatePayload } from '#/lib/validation'
+import {
+  type ConversionPayload,
+  InputError,
+  validateFiles,
+  validatePayload,
+} from '#/lib/validation'
 
 const serverEnvSchema = v.object({
   GOTENBERG_ALLOWED_URLS: v.optional(v.pipe(v.string(), v.maxLength(20_000))),
@@ -85,6 +90,25 @@ function fetchOptions(request: Request): Pick<RequestInit, 'signal' | 'redirect'
   }
 }
 
+function upstreamConversionHeaders(
+  auth: HeadersInit | undefined,
+  payload: ConversionPayload,
+): Headers {
+  const headers = new Headers(auth)
+  const webhook = payload.webhook
+  if (webhook) {
+    headers.set('Gotenberg-Webhook-Url', webhook.url)
+    if (webhook.method) headers.set('Gotenberg-Webhook-Method', webhook.method)
+    if (webhook.errorUrl) headers.set('Gotenberg-Webhook-Error-Url', webhook.errorUrl)
+    if (webhook.errorMethod) headers.set('Gotenberg-Webhook-Error-Method', webhook.errorMethod)
+    if (webhook.eventsUrl) headers.set('Gotenberg-Webhook-Events-Url', webhook.eventsUrl)
+    if (webhook.extraHttpHeaders) {
+      headers.set('Gotenberg-Webhook-Extra-Http-Headers', JSON.stringify(webhook.extraHttpHeaders))
+    }
+  }
+  return headers
+}
+
 async function upstreamErrorText(response: Response): Promise<string> {
   const reader = response.body?.getReader()
   if (!reader) return `Gotenberg returned HTTP ${response.status}.`
@@ -143,7 +167,7 @@ export async function proxyConversionRequest(
   }
   if (payloadCount !== 1) throw new ProxyInputError('Exactly one conversion payload is required.')
   const { operation, payload } = validatePayload(candidate)
-  validateFiles(operation, files, auxiliary, maxBytes)
+  validateFiles(operation, files, auxiliary, maxBytes, payload)
   const { url, headers: authHeaders } = resolveConnectionTarget(
     request,
     settings,
@@ -155,7 +179,7 @@ export async function proxyConversionRequest(
     method: 'POST',
     ...fetchOptions(request),
     body: form,
-    headers: authHeaders,
+    headers: upstreamConversionHeaders(authHeaders, payload),
     credentials: 'omit',
   })
   if (!upstream.ok) {
@@ -170,6 +194,10 @@ export async function proxyConversionRequest(
     if (value) headers.set(name, value)
   }
   headers.set('Content-Type', headers.get('Content-Type') ?? 'application/octet-stream')
+  if (upstream.status === 204 || upstream.status === 202) {
+    await upstream.body?.cancel().catch(() => {})
+    return new Response(null, { status: upstream.status, headers })
+  }
   return new Response(upstream.body, { status: 200, headers })
 }
 

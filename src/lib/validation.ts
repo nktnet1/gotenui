@@ -4,12 +4,33 @@ import { OPERATION_BY_ID, type Operation } from '#/lib/operations'
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
 
+const remoteFileSchema = v.object({
+  url: v.pipe(v.string(), v.maxLength(2048)),
+  field: v.optional(v.picklist(['embedded', 'watermark', 'stamp'])),
+  embedded: v.optional(v.boolean()),
+  extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
+})
+
+const webhookSchema = v.object({
+  url: v.pipe(v.string(), v.maxLength(2048)),
+  method: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
+  errorUrl: v.optional(v.pipe(v.string(), v.maxLength(2048))),
+  errorMethod: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
+  eventsUrl: v.optional(v.pipe(v.string(), v.maxLength(2048))),
+  extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
+})
+
+export type RemoteFile = v.InferOutput<typeof remoteFileSchema>
+export type WebhookConfig = v.InferOutput<typeof webhookSchema>
+
 export const payloadSchema = v.object({
   operation: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   fields: v.record(v.string(), fieldValue),
   advanced: v.record(v.string(), advancedValue),
   source: v.optional(v.pipe(v.string(), v.maxLength(300_000))),
   outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
+  downloadFrom: v.optional(v.pipe(v.array(remoteFileSchema), v.maxLength(20))),
+  webhook: v.optional(webhookSchema),
 })
 
 export type ConversionPayload = v.InferOutput<typeof payloadSchema>
@@ -36,6 +57,7 @@ const forbiddenAdvanced = new Set([
   'webhookErrorURL',
   'webhookMethod',
   'webhookErrorMethod',
+  'webhookEventsURL',
   'webhookExtraHttpHeaders',
 ])
 const officeExtensions = new Set([
@@ -83,15 +105,64 @@ export function safeFilename(name: string): string {
   return name
 }
 
+/** Validate outbound URL and per-request header metadata without fetching remote content here. */
+function requireHttpUrl(url: string, label: string): void {
+  if (!isHttpUrl(url)) throw new InputError(`${label} must be an absolute http or https URL.`)
+}
+
+function validateHeaderMap(headers: Record<string, string> | undefined): void {
+  if (!headers) return
+  const entries = Object.entries(headers)
+  if (entries.length > 20) throw new InputError('At most 20 extra HTTP headers are supported.')
+  for (const [name, value] of entries) {
+    if (
+      !/^[A-Za-z][A-Za-z0-9-]{0,79}$/.test(name) ||
+      !value ||
+      value.length > 2000 ||
+      /[\r\n]/.test(value)
+    ) {
+      throw new InputError('Invalid extra HTTP header name or value.')
+    }
+  }
+}
+
+function validateAsyncInputs(payload: ConversionPayload): void {
+  for (const remote of payload.downloadFrom ?? []) {
+    requireHttpUrl(remote.url, 'downloadFrom URL')
+    validateHeaderMap(remote.extraHttpHeaders)
+  }
+  const webhook = payload.webhook
+  if (webhook) {
+    requireHttpUrl(webhook.url, 'Webhook URL')
+    if (webhook.errorUrl) requireHttpUrl(webhook.errorUrl, 'Webhook error URL')
+    if (webhook.eventsUrl) requireHttpUrl(webhook.eventsUrl, 'Webhook events URL')
+    validateHeaderMap(webhook.extraHttpHeaders)
+  }
+}
+
+/** Remote files count as inputs only when they feed the corresponding Gotenberg field. */
+function remoteCounts(payload: Pick<ConversionPayload, 'downloadFrom'> | undefined) {
+  const counts = { input: 0, embedded: 0, watermark: 0, stamp: 0 }
+  for (const remote of payload?.downloadFrom ?? []) {
+    if (remote.field === 'stamp') counts.stamp++
+    else if (remote.field === 'watermark') counts.watermark++
+    else if (remote.field === 'embedded' || remote.embedded) counts.embedded++
+    else counts.input++
+  }
+  return counts
+}
+
 export function validateFiles(
   operation: Operation,
   files: File[],
   auxiliary: File[],
   maxBytes: number,
+  payload?: Pick<ConversionPayload, 'downloadFrom' | 'fields'>,
 ): void {
+  const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
   if (operation.input === 'pdf' || operation.input === 'office') {
-    if (files.length < minFiles || files.length > 20) {
+    if (files.length + remote.input < minFiles || files.length + remote.input > 20) {
       throw new InputError(`Upload ${minFiles} to 20 input files.`)
     }
   } else if (files.length > 0) {
@@ -110,7 +181,15 @@ export function validateFiles(
         ? 20
         : 1
   if (auxiliary.length > maxAux) throw new InputError('Too many additional files.')
-  if (operation.auxiliary?.required && auxiliary.length === 0) {
+  const remoteAux =
+    operation.id === 'embed'
+      ? remote.embedded
+      : operation.id === 'watermark'
+        ? remote.watermark
+        : operation.id === 'stamp'
+          ? remote.stamp
+          : 0
+  if (operation.auxiliary?.required && auxiliary.length + remoteAux === 0) {
     throw new InputError(`${operation.auxiliary.label} is required.`)
   }
   const names = new Set(
@@ -145,6 +224,19 @@ export function validateFiles(
       !new Set(['.pdf', '.png', '.jpeg', '.jpg', '.gif', '.webp', '.tiff']).has(ext ?? '')
     ) {
       throw new InputError('Stamp and watermark files must be images or PDFs.')
+    }
+  }
+  if (operation.id === 'watermark' || operation.id === 'stamp') {
+    const source = payload?.fields[`${operation.id}Source`]
+    const expression = payload?.fields[`${operation.id}Expression`]
+    if (source === 'text' && auxiliary.length + remoteAux > 0) {
+      throw new InputError('A text overlay must not include an image or PDF attachment.')
+    }
+    if (source !== 'text' && auxiliary.length + remoteAux !== 1) {
+      throw new InputError('Provide exactly one image or PDF overlay, uploaded or remote.')
+    }
+    if (source !== 'text' && auxiliary.length === 1 && auxiliary[0]?.name !== expression) {
+      throw new InputError('Upload a source file and match its filename in the expression field.')
     }
   }
 }
@@ -232,6 +324,7 @@ export function validatePayload(input: unknown): {
   if (payload.outputName && !/^[a-zA-Z0-9][a-zA-Z0-9 _-]{0,99}$/.test(payload.outputName)) {
     throw new InputError('Output name contains invalid characters.')
   }
+  validateAsyncInputs(payload)
   return { payload, operation }
 }
 

@@ -15,7 +15,10 @@ export const Route = createRootRoute({
       },
       { name: 'robots', content: 'noindex, nofollow' },
     ],
-    links: [{ rel: 'stylesheet', href: appCss }],
+    links: [
+      { rel: 'stylesheet', href: appCss },
+      { rel: 'icon', type: 'image/svg+xml', href: '/gotenui-icon.svg' },
+    ],
   }),
   component: Root,
 })

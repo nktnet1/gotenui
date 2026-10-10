@@ -148,11 +148,20 @@ type Download = {
   trace?: string
 }
 
+function parseOptionalJson(text: string, label: string): unknown {
+  if (!text.trim()) return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new InputError(`${label} must be valid JSON.`)
+  }
+}
+
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="brand-mark flex size-10 shrink-0 items-center justify-center rounded-xl text-white shadow-lg shadow-sky-950/15">
-        <Layers3 className="size-5" strokeWidth={2.2} />
+      <div className="brand-mark flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl shadow-lg shadow-sky-950/15">
+        <img src="/gotenui-icon.svg" alt="" className="size-full" />
       </div>
       {!compact && (
         <div>
@@ -666,6 +675,8 @@ function Workbench({
   const [files, setFiles] = useState<File[]>([])
   const [auxFiles, setAuxFiles] = useState<File[]>([])
   const [advanced, setAdvanced] = useState('')
+  const [remoteInput, setRemoteInput] = useState('')
+  const [webhookInput, setWebhookInput] = useState('')
   const [outputName, setOutputName] = useState('')
   const [pending, setPending] = useState(false)
   const [lastDownload, setLastDownload] = useState<Download | null>(null)
@@ -684,6 +695,8 @@ function Workbench({
     setFiles([])
     setAuxFiles([])
     setAdvanced('')
+    setRemoteInput('')
+    setWebhookInput('')
     setOutputName('')
     setLastDownload(null)
     if (fileUrl.current) {
@@ -720,6 +733,8 @@ function Workbench({
         fields,
         source: isSourceEditor ? source : undefined,
         advanced: parseAdvanced(advanced),
+        downloadFrom: parseOptionalJson(remoteInput, 'Remote files'),
+        webhook: parseOptionalJson(webhookInput, 'Webhook settings'),
         outputName: outputName.trim() || undefined,
       }
       const start = performance.now()
@@ -730,6 +745,17 @@ function Workbench({
       const result = await convertWithGotenberg(connection, candidate, files, auxFiles, signal)
       if (signal.aborted) {
         if (deadline.aborted) toast.error('Gotenberg did not respond within three minutes.')
+        return
+      }
+      if (result.mode === 'webhook') {
+        setLastDownload(null)
+        if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
+        fileUrl.current = null
+        toast.success(
+          result.trace
+            ? `Gotenberg accepted the webhook job (trace ${result.trace}).`
+            : 'Gotenberg accepted the webhook job.',
+        )
         return
       }
       const { blob, type, name, trace } = result
@@ -957,7 +983,46 @@ function Workbench({
                   />
                   <p className="text-[11px] leading-5 text-slate-500">
                     Use this for documented options not shown above. Enter flat JSON key/value
-                    pairs. Webhooks and remote-file downloads are intentionally disabled.
+                    pairs; enter remote inputs and webhooks separately below.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="remote-inputs">
+                    Remote file inputs (downloadFrom JSON array)
+                  </Label>
+                  <Textarea
+                    id="remote-inputs"
+                    rows={5}
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                    placeholder={'[{"url":"https://example.com/document.docx"}]'}
+                    value={remoteInput}
+                    onChange={(event) => setRemoteInput(event.target.value)}
+                  />
+                  <p className="text-[11px] leading-5 text-slate-500">
+                    Gotenberg downloads these files itself. The URL must be reachable from your
+                    Gotenberg container and the response must include a Content-Disposition
+                    filename.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="webhook-settings">
+                    Asynchronous webhook delivery (JSON object)
+                  </Label>
+                  <Textarea
+                    id="webhook-settings"
+                    rows={5}
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                    placeholder={
+                      '{"url":"https://example.com/hooks/success","eventsUrl":"https://example.com/hooks/events"}'
+                    }
+                    value={webhookInput}
+                    onChange={(event) => setWebhookInput(event.target.value)}
+                  />
+                  <p className="text-[11px] leading-5 text-slate-500">
+                    Send results directly from Gotenberg to your callback instead of downloading
+                    them in this browser. Use your instance's outbound URL restrictions.
                   </p>
                 </div>
               </div>
@@ -967,7 +1032,7 @@ function Workbench({
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <ShieldCheck className="size-4 text-emerald-500" />
-            <span>Direct browser-to-Gotenberg processing</span>
+            <span>Processing through the same-origin Gotenui proxy</span>
           </div>
           {pending && (
             <Button

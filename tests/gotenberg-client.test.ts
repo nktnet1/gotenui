@@ -58,6 +58,8 @@ test('converts through the same-origin API, not direct-to-Gotenberg fetch', asyn
       [],
       new AbortController().signal,
     )
+    assert.equal(result.mode, 'download')
+    if (result.mode !== 'download') throw new Error('Expected a direct PDF download')
     assert.equal(result.name, 'my-output.pdf')
     assert.equal(requests[0]?.url, '/api/gotenberg/convert')
     assert.equal(requests[0]?.options.method, 'POST')

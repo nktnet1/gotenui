@@ -162,21 +162,12 @@ export function createGotenbergForm(
   auxiliary: File[],
   maxBytes = MAX_UPLOAD_BYTES,
 ): FormData {
-  validateFiles(operation, files, auxiliary, maxBytes)
-  if (operation.id === 'watermark' || operation.id === 'stamp') {
-    const source = payload.fields[`${operation.id}Source`]
-    const expression = payload.fields[`${operation.id}Expression`]
-    if (source !== 'text' && (auxiliary.length !== 1 || auxiliary[0]?.name !== expression)) {
-      throw new InputError('Upload a source file and match its filename in the expression field.')
-    }
-    if (source === 'text' && auxiliary.length !== 0) {
-      throw new InputError('A text overlay must not include an image or PDF attachment.')
-    }
-  }
+  validateFiles(operation, files, auxiliary, maxBytes, payload)
   const form = new FormData()
   for (const [key, value] of Object.entries({ ...payload.fields, ...payload.advanced })) {
     if (value !== '') form.set(key, String(value))
   }
+  if (payload.downloadFrom?.length) form.set('downloadFrom', JSON.stringify(payload.downloadFrom))
   if (operation.input === 'html' || operation.input === 'markdown') {
     const html =
       operation.input === 'html'
@@ -199,12 +190,9 @@ export function createGotenbergForm(
   return form
 }
 
-export type ConversionResult = {
-  blob: Blob
-  type: string
-  name: string
-  trace?: string
-}
+export type ConversionResult =
+  | { mode: 'download'; blob: Blob; type: string; name: string; trace?: string }
+  | { mode: 'webhook'; trace?: string }
 
 /** The proxy revalidates the JSON and files, and reconstructs a safe Gotenberg form. */
 export async function convertWithGotenberg(
@@ -217,7 +205,7 @@ export async function convertWithGotenberg(
   const headers = targetHeaders(connection)
   const { operation, payload } = validatePayload(candidate)
   // Keep fast client-side feedback; all fields and files are checked again by the server.
-  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES)
+  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES, payload)
   const body = new FormData()
   body.set('payload', JSON.stringify(payload))
   for (const file of files) body.append('files', file, file.name)
@@ -239,6 +227,9 @@ export async function convertWithGotenberg(
     const detail = (await response.text()).trim().slice(0, 1_500)
     throw new Error(detail || `Gotenui proxy returned HTTP ${response.status}.`)
   }
+  if (response.status === 202 || response.status === 204) {
+    return { mode: 'webhook', trace: response.headers.get('Gotenberg-Trace') ?? undefined }
+  }
   const blob = await response.blob()
   const type =
     response.headers.get('content-type')?.split(';')[0]?.trim() ||
@@ -250,6 +241,7 @@ export async function convertWithGotenberg(
     ? fallback
     : downloadFilename(response.headers.get('content-disposition'), fallback)
   return {
+    mode: 'download',
     blob,
     type,
     name: filename,
