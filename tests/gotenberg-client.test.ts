@@ -3,6 +3,7 @@ import { test } from 'vitest'
 import {
   convertWithGotenberg,
   createGotenbergForm,
+  getGotenbergDebug,
   getGotenbergStatus,
 } from '#/lib/gotenberg-client'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
@@ -153,6 +154,42 @@ test('server-managed status and conversion select the profile without leaking cr
     assert.equal(captures[1]?.headers.get('X-Gotenui-Profile-Access-Key'), 'private-test-key')
     assert.equal(captures[1]?.headers.has('X-Gotenberg-Url'), false)
     assert.doesNotMatch(captures[0]?.path ?? '', /private-test-key/)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('debug diagnostics use a same-origin POST without persisting access credentials', async () => {
+  const original = globalThis.fetch
+  const key = 'test-admin-secret-not-persisted-anywhere'
+  globalThis.fetch = async (input, options) => {
+    assert.equal(String(input), '/api/gotenberg/debug')
+    assert.equal(options?.method, 'POST')
+    assert.equal(options?.credentials, 'same-origin')
+    assert.equal(options?.cache, 'no-store')
+    assert.equal(options?.body, undefined)
+    const headers = new Headers(options?.headers)
+    assert.equal(headers.get('x-gotenui-debug-access-key'), key)
+    assert.equal(headers.get('x-gotenberg-url'), 'http://127.0.0.1:3000')
+    assert.equal(headers.get('authorization'), null)
+    return Response.json({ flags: { debug: true } })
+  }
+  try {
+    const result = await getGotenbergDebug('http://127.0.0.1:3000', key)
+    assert.deepEqual(result, { flags: { debug: true } })
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('debug client rejects SPA fallbacks and exposes disabled-route errors', async () => {
+  const original = globalThis.fetch
+  try {
+    globalThis.fetch = async () =>
+      new Response('<html>Fallback</html>', { headers: { 'content-type': 'text/html' } })
+    await assert.rejects(getGotenbergDebug('http://127.0.0.1:3000', 'key'), /did not return JSON/)
+    globalThis.fetch = async () => new Response('Debug not enabled', { status: 404 })
+    await assert.rejects(getGotenbergDebug('http://127.0.0.1:3000', 'key'), /Debug not enabled/)
   } finally {
     globalThis.fetch = original
   }

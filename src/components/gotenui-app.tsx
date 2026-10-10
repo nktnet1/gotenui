@@ -38,6 +38,7 @@ import {
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ConnectionManager } from '#/components/connection-manager'
+import { DebugDialog } from '#/components/debug-dialog'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
@@ -1037,6 +1038,7 @@ function Workspace({
   const operation = OPERATION_BY_ID.get(selectedId) ?? (OPERATIONS[0] as Operation)
   const Icon = ICONS[operation.id] ?? FileText
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [debugOpen, setDebugOpen] = useState(false)
   const statusAbort = useRef<AbortController | null>(null)
   const refreshStatus = useCallback(async () => {
     statusAbort.current?.abort()
@@ -1141,6 +1143,16 @@ function Workspace({
               <RefreshCw className={cn('size-4', statusLoading && 'animate-spin')} />
             </Button>
             <span className="mx-1 h-5 w-px bg-slate-200" />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setDebugOpen(true)}
+              aria-label="Open debug diagnostics"
+            >
+              <Braces className="size-4" />
+              <span className="hidden md:inline">Diagnostics</span>
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -1268,6 +1280,13 @@ function Workspace({
           </footer>
         </main>
       </div>
+      {debugOpen && (
+        <DebugDialog
+          connection={connection}
+          connectionName={connectionName}
+          onClose={() => setDebugOpen(false)}
+        />
+      )}
       {settingsOpen && (
         <ConnectionDialog
           browserProfiles={browserProfiles}

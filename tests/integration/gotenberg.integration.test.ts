@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { afterAll, beforeAll, expect, inject, test } from 'vitest'
-import { proxyConversionRequest, proxyStatusRequest } from '#/lib/gotenberg-proxy.server'
+import {
+  proxyConversionRequest,
+  proxyDebugRequest,
+  proxyStatusRequest,
+} from '#/lib/gotenberg-proxy.server'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
 import type { ConversionPayload } from '#/lib/validation'
 
@@ -17,6 +21,7 @@ const authEnvNames = [
   'GOTENBERG_BASIC_AUTH_USERNAME',
   'GOTENBERG_BASIC_AUTH_PASSWORD',
   'GOTENUI_PROFILE_ACCESS_KEY',
+  'GOTENUI_DEBUG_ACCESS_KEY',
   'GOTENUI_SERVER_CONNECTIONS',
 ] as const
 const previousEnv = new Map<string, string | undefined>()
@@ -143,6 +148,7 @@ beforeAll(async () => {
   process.env.GOTENBERG_ALLOWED_URLS = backendUrl
   delete process.env.GOTENUI_SERVER_CONNECTIONS
   process.env.GOTENUI_PROFILE_ACCESS_KEY = 'local-test-profile-access-key-123'
+  process.env.GOTENUI_DEBUG_ACCESS_KEY = 'local-test-debug-admin-key-1234567890'
   process.env.GOTENBERG_BASIC_AUTH_URL = backendUrl
   process.env.GOTENBERG_BASIC_AUTH_USERNAME = testUsername
   process.env.GOTENBERG_BASIC_AUTH_PASSWORD = testPassword
@@ -342,4 +348,31 @@ test('local server-managed credentials cannot be reached by supplying only the U
   urlOnly.headers.set('X-Gotenberg-Url', backendUrl)
   const response = await proxyConversionRequest(urlOnly)
   expect(response.status).toBe(401)
+}, 120_000)
+
+test('debug diagnostics return real JSON from the authenticated local Gotenberg container', async () => {
+  const adminKey = 'local-test-debug-admin-key-1234567890'
+  const request = new Request(`${proxyOrigin}/api/gotenberg/debug`, {
+    method: 'POST',
+    headers: {
+      Origin: proxyOrigin,
+      'X-Gotenui-Connection-Id': 'legacy-basic',
+      'X-Gotenui-Profile-Access-Key': 'local-test-profile-access-key-123',
+      'X-Gotenui-Debug-Access-Key': adminKey,
+    },
+  })
+  const response = await proxyDebugRequest(request)
+  expect(response.status).toBe(200)
+  expect(response.headers.get('content-type')).toContain('application/json')
+  expect(response.headers.get('cache-control')).toBe('no-store')
+  expect(response.headers.get('authorization')).toBeNull()
+  const payload = await response.json()
+  expect(payload).toBeTypeOf('object')
+  expect(Object.keys(payload).length).toBeGreaterThan(0)
+
+  const unauthenticated = await fetch(`${backendUrl}/debug`)
+  expect(unauthenticated.status).toBe(401)
+  const wrong = request.clone()
+  wrong.headers.set('X-Gotenui-Debug-Access-Key', 'invalid-key')
+  await expect(proxyDebugRequest(wrong)).rejects.toMatchObject({ status: 403 })
 }, 120_000)

@@ -102,6 +102,8 @@ export default async function setup(project: TestProject): Promise<() => Promise
       '--env',
       'API_ENABLE_BASIC_AUTH=true',
       '--env',
+      'API_ENABLE_DEBUG_ROUTE=true',
+      '--env',
       `GOTENBERG_API_BASIC_AUTH_USERNAME=${testUsername}`,
       '--env',
       `GOTENBERG_API_BASIC_AUTH_PASSWORD=${testPassword}`,

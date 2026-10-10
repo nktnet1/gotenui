@@ -217,3 +217,40 @@ export async function convertWithGotenberg(
     trace: response.headers.get('Gotenberg-Trace') ?? undefined,
   }
 }
+
+/** Sensitive diagnostics are requested explicitly; neither the admin key nor JSON is persisted. */
+export async function getGotenbergDebug(
+  connection: string | ConnectionChoice,
+  debugKey: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  if (!debugKey) throw new InputError('Enter the Gotenui debug access key.')
+  const headers = targetHeaders(connection)
+  headers.set('X-Gotenui-Debug-Access-Key', debugKey)
+  let response: Response
+  try {
+    response = await fetch('/api/gotenberg/debug', {
+      method: 'POST',
+      headers,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal,
+    })
+  } catch (error) {
+    if (signal?.aborted) throw error
+    throw new Error(connectionHint())
+  }
+  if (!response.ok) {
+    throw new Error(
+      (await response.text()).trim().slice(0, 500) || `Debug returned HTTP ${response.status}.`,
+    )
+  }
+  if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+    throw new Error('Debug did not return JSON. Check the Gotenui API deployment.')
+  }
+  const data: unknown = await response.json()
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Debug returned an unexpected response.')
+  }
+  return data as Record<string, unknown>
+}

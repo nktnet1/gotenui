@@ -1,6 +1,7 @@
 import urlJoin from 'url-join'
 import * as v from 'valibot'
 import { resolveConnectionTarget } from '#/lib/connection-target.server'
+import { requireDebugAccess } from '#/lib/debug-access.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import {
   DEFAULT_MAX_REQUEST_BYTES,
@@ -225,4 +226,70 @@ export async function proxyStatusRequest(
     }
   }
   return Response.json(status, { headers: safeResponseHeaders })
+}
+
+/** Debug is opt-in and requires an independent admin key, even for anonymous instances. */
+export async function proxyDebugRequest(
+  request: Request,
+  fetcher: typeof fetch = fetch,
+): Promise<Response> {
+  requireSameOrigin(request)
+  requireDebugAccess(request, process.env.GOTENUI_DEBUG_ACCESS_KEY)
+  const { url, headers: authHeaders } = resolveConnectionTarget(
+    request,
+    runtimeConfig(),
+    request.headers.get('x-gotenberg-url'),
+    request.headers.get('x-gotenui-connection-id'),
+  )
+  const upstream = await fetcher(urlJoin(url, '/debug'), {
+    method: 'GET',
+    ...fetchOptions(request),
+    headers: authHeaders,
+    credentials: 'omit',
+  })
+  if (!upstream.ok) {
+    await upstream.body?.cancel().catch(() => {})
+    const message =
+      upstream.status === 404
+        ? 'Gotenberg debug is disabled. Enable API_ENABLE_DEBUG_ROUTE on your instance.'
+        : upstream.status === 401 || upstream.status === 403
+          ? 'Gotenberg rejected authentication for its debug route.'
+          : `Gotenberg returned HTTP ${upstream.status} from /debug.`
+    return new Response(message, {
+      status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
+      headers: { ...safeResponseHeaders, 'Content-Type': 'text/plain; charset=utf-8' },
+    })
+  }
+
+  const MAX_DEBUG_RESPONSE_BYTES = 1_000_000
+  const declaredSize = Number(upstream.headers.get('content-length') ?? 0)
+  if (declaredSize > MAX_DEBUG_RESPONSE_BYTES) {
+    await upstream.body?.cancel().catch(() => {})
+    throw new ProxyInputError('Gotenberg debug response exceeds the 1 MB limit.', 502)
+  }
+  if (!upstream.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+    await upstream.body?.cancel().catch(() => {})
+    throw new ProxyInputError('Gotenberg debug did not return JSON.', 502)
+  }
+  if (!upstream.body) throw new ProxyInputError('Gotenberg returned an empty debug response.', 502)
+
+  let bytes: Uint8Array
+  try {
+    bytes = await readLimitedBody(upstream.body, MAX_DEBUG_RESPONSE_BYTES)
+  } catch (error) {
+    if (error instanceof ProxyInputError && error.status === 413) {
+      throw new ProxyInputError('Gotenberg debug response exceeds the 1 MB limit.', 502)
+    }
+    throw error
+  }
+  let payload: unknown
+  try {
+    payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+  } catch {
+    throw new ProxyInputError('Gotenberg debug returned invalid JSON.', 502)
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new ProxyInputError('Gotenberg debug returned an unexpected response.', 502)
+  }
+  return Response.json(payload, { headers: safeResponseHeaders })
 }
