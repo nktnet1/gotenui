@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
+import { useModalFocus } from '#/components/use-modal-focus'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { getGotenbergMetrics } from '#/lib/gotenberg-client'
 import { filterPrometheusMetrics, summarizePrometheusMetrics } from '#/lib/prometheus-metrics'
@@ -19,24 +20,14 @@ export function MetricsDialog({ connection, connectionName, onClose }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const inFlight = useRef<AbortController | null>(null)
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+  const dialogRef = useModalFocus(onClose)
   const summary = useMemo(() => (metrics ? summarizePrometheusMetrics(metrics) : null), [metrics])
   const filtered = useMemo(
     () => (metrics === null ? '' : filterPrometheusMetrics(metrics, filter)),
     [metrics, filter],
   )
 
-  useEffect(() => {
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCloseRef.current()
-    }
-    window.addEventListener('keydown', onEscape)
-    return () => {
-      window.removeEventListener('keydown', onEscape)
-      inFlight.current?.abort()
-    }
-  }, [])
+  useEffect(() => () => inFlight.current?.abort(), [])
 
   async function readMetrics(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -91,11 +82,15 @@ export function MetricsDialog({ connection, connectionName, onClose }: Props) {
       <button
         type="button"
         aria-label="Close metrics"
+        aria-hidden="true"
+        tabIndex={-1}
         className="absolute inset-0 cursor-default"
         onClick={onClose}
       />
       <div
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby="metrics-heading"
         className="relative w-full max-w-[850px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl sm:p-8"

@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.29 (native Node.js TypeScript release smoke with additional negative/async cases; v1.0.28 deployment coverage retained).
+- **Baseline:** v1.0.30 (keyboard focus behaviour for modal dialogs and mobile navigation, with non-browser regression tests; prior deployment smoke retained).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -34,6 +34,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.27** | Fix | Gotenberg response format compatibility | Fix v1.0.26 regression rejecting single-result split PDFs and ZIP outputs from multi-document processing; add unit/Docker regressions, preserve strict unexpected-format rejection. |
 | **v1.0.28** | Release | Built Nitro deployment smoke | Add a no-Docker release test for real SPA/API routing, runtime profiles, authentication isolation, PDF/ZIP compatibility, response protections and origin/allowlist enforcement; run in CI after build. |
 | **v1.0.29** | Release | TypeScript smoke and gateway contract checks | Convert the smoke runner to native Node.js 24 TypeScript, include project scripts in typechecking, and extend the built-server test for webhook acceptance, upstream authentication errors and redirect rejection. |
+| **v1.0.30** | Release | Keyboard accessibility hardening | Contain keyboard focus in connection/debug/metrics dialogs and open mobile navigation; restore focus on dismissal, hide closed mobile controls from tab order, and add non-browser focus regressions. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -134,6 +135,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
 
 ## Verification and release gates
+
+**v1.0.30 keyboard focus checks:** Focus management now covers the connection, debug and metrics dialogs plus the mobile navigation drawer. Keyboard Tab and Shift+Tab remain within the active overlay, Escape closes it, and focus returns to the invoking element where it still exists. The closed mobile drawer is CSS-hidden and its opener exposes expanded state. Vitest verifies focus filtering, wrapping, Escape, outside-focus recapture and cleanup using document test doubles. **Manual browser, viewport-resize and screen-reader verification remains outstanding.**
 
 **v1.0.29 smoke verification:** `pnpm test:smoke` runs `scripts/smoke-production.ts` directly with Node.js 24 (no TypeScript runner or generated script). The runner is included in `tsc --noEmit`. Additional built-server cases check 204 webhook acceptance and correlation headers without implying job completion, preservation of upstream HTTP 401 with trace but no cookie forwarding, and a same-upstream redirect target that must never be fetched. These are mocked-contract checks, not live Gotenberg validation.
 

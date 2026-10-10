@@ -16,6 +16,7 @@ See [ROADMAP.md](ROADMAP.md) for the remaining feature gaps, priorities, and pro
 - Input validation in both browser and server, explicit destination allowlist, independent per-connection Basic Auth or bearer-token support, with server-side credentials never exposed to browsers, streaming conversion responses, three-minute request timeout and an in-memory activity list.
 - Optional debug JSON (`GET /debug`) and legacy Prometheus metrics (`GET /prometheus/metrics`) for the selected instance. Gotenberg controls access; runtime `GOTENUI_SHOW_DEBUG` / `GOTENUI_SHOW_METRICS` flags hide the UI options without disabling the APIs.
 - A lightweight **Probe** button sends an authenticated, same-origin `HEAD /api/gotenberg/health` request to check Gotenberg without downloading a JSON body. HTTP 200 means healthy and 503 means unhealthy. The existing full status check remains responsible for verifying credentials against `/version`.
+- Keyboard-focused connection, debug and metrics dialogs: initial focus, Tab/Shift+Tab containment, Escape dismissal and focus restoration. The mobile navigation drawer uses the same focus handling and is hidden from tab navigation when closed.
 
 ## Development
 
@@ -251,7 +252,10 @@ frozen installation; no generated lockfiles are changed by incremental patches.
 | Built Nitro runtime, SPA/API routing, status/health, credential isolation, single-PDF split/Office ZIP responses, 401/trace handling, redirects, and webhook acceptance | `pnpm build && pnpm test:smoke` with native Node 24 TypeScript and a disposable mock upstream | Real Gotenberg behaviour and callback delivery still require Docker |
 | Package checks and production build warnings | Biome, TypeScript, Vitest unit tests, Vite/Nitro build | CI run on GitHub Actions |
 | Actual conversion routes, overlays and remote/webhook flows | Authored Vitest Docker suite | Must run against local pinned image; not executed in this environment |
+| Dialog/drawer keyboard focus containment and restoration | Vitest modal-focus tests (no browser) | Manual keyboard, screen-reader, mobile and responsive-layout testing |
 | Desktop, mobile, accessibility, deployment checks | — | Manual browser, mobile, accessibility and release review |
+
+The modal focus tests use a small document fixture and do not substitute for browser accessibility audits. Check Tab, Shift+Tab, Escape, focus restoration and viewport resizing in an actual browser before release.
 
 The unit suite alone does **not** certify `pnpm test` (which also invokes Docker).
 

@@ -60,6 +60,7 @@ import { Label } from '#/components/ui/label'
 import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
 import { UploadZone } from '#/components/upload-zone'
+import { useModalFocus } from '#/components/use-modal-focus'
 import {
   emptyWebhook,
   type RemoteInputRow,
@@ -221,23 +222,21 @@ function ConnectionDialog({
   onRemove: (id: string) => void
   onClose: () => void
 }) {
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [onClose])
+  const dialogRef = useModalFocus(onClose)
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-5 pt-[9vh]">
       <button
         type="button"
         aria-label="Close connection settings"
+        aria-hidden="true"
+        tabIndex={-1}
         className="absolute inset-0 cursor-default"
         onClick={onClose}
       />
       <div
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby="connection-heading"
         className="relative w-full max-w-[550px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl sm:p-8"
@@ -290,6 +289,18 @@ function Sidebar({
   setMobileOpen: (state: boolean) => void
 }) {
   const [search, setSearch] = useState('')
+  const navRef = useModalFocus<HTMLElement>(() => setMobileOpen(false), mobileOpen)
+  useEffect(() => {
+    if (!mobileOpen) return
+    // The drawer stops being modal once the desktop sidebar breakpoint is reached.
+    const desktop = window.matchMedia('(min-width: 64rem)')
+    const closeOnDesktop = () => {
+      if (desktop.matches) setMobileOpen(false)
+    }
+    desktop.addEventListener('change', closeOnDesktop)
+    closeOnDesktop()
+    return () => desktop.removeEventListener('change', closeOnDesktop)
+  }, [mobileOpen, setMobileOpen])
   const matches = useMemo(
     () =>
       OPERATIONS.filter((operation) =>
@@ -305,14 +316,23 @@ function Sidebar({
         <button
           type="button"
           aria-label="Close navigation"
+          aria-hidden="true"
+          tabIndex={-1}
           className="fixed inset-0 z-30 bg-slate-950/70 lg:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
+      {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: The sidebar becomes a modal dialog only when mobile navigation is open. */}
       <aside
+        id="gotenui-navigation"
+        ref={navRef}
+        role={mobileOpen ? 'dialog' : undefined}
+        aria-modal={mobileOpen ? true : undefined}
+        tabIndex={mobileOpen ? -1 : undefined}
+        aria-label={mobileOpen ? 'Navigation menu' : undefined}
         className={cn(
           'fixed inset-y-0 left-0 z-40 flex w-[270px] flex-col bg-[#0c1b2c] text-white shadow-2xl transition-transform lg:translate-x-0',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          mobileOpen ? 'visible translate-x-0' : 'invisible -translate-x-full lg:visible',
         )}
       >
         <div className="flex items-center justify-between border-b border-white/8 px-6 py-6">
@@ -1426,7 +1446,10 @@ function Workspace({
         selectedId={selectedId}
         onSelect={setSelectedId}
         status={status}
-        onSettings={() => setSettingsOpen(true)}
+        onSettings={() => {
+          setMobileOpen(false)
+          setSettingsOpen(true)
+        }}
         mobileOpen={mobileOpen}
         setMobileOpen={setMobileOpen}
       />
@@ -1439,6 +1462,8 @@ function Workspace({
               size="icon"
               className="lg:hidden"
               aria-label="Open menu"
+              aria-controls="gotenui-navigation"
+              aria-expanded={mobileOpen}
               onClick={() => setMobileOpen(true)}
             >
               <Menu className="size-5" />

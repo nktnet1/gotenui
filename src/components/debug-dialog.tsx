@@ -1,6 +1,7 @@
 import { Braces, ChartNoAxesColumn, RefreshCw, ShieldAlert, X } from 'lucide-react'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
+import { useModalFocus } from '#/components/use-modal-focus'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { getGotenbergDebug } from '#/lib/gotenberg-client'
 
@@ -16,19 +17,9 @@ export function DebugDialog({ connection, connectionName, onClose, onOpenMetrics
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const inFlight = useRef<AbortController | null>(null)
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+  const dialogRef = useModalFocus(onClose)
 
-  useEffect(() => {
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCloseRef.current()
-    }
-    window.addEventListener('keydown', onEscape)
-    return () => {
-      window.removeEventListener('keydown', onEscape)
-      inFlight.current?.abort()
-    }
-  }, [])
+  useEffect(() => () => inFlight.current?.abort(), [])
 
   async function inspect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -61,11 +52,15 @@ export function DebugDialog({ connection, connectionName, onClose, onOpenMetrics
       <button
         type="button"
         aria-label="Close diagnostics"
+        aria-hidden="true"
+        tabIndex={-1}
         className="absolute inset-0 cursor-default"
         onClick={onClose}
       />
       <div
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby="debug-heading"
         className="relative w-full max-w-[850px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl sm:p-8"
