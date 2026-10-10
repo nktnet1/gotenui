@@ -5,6 +5,12 @@ import {
   markdownTemplateReferences,
 } from '#/lib/chromium-documents'
 import { OPERATION_BY_ID, type Operation } from '#/lib/operations'
+import {
+  countPostProcessFiles,
+  PDF_CONVERSION_IDS,
+  type PostProcessFiles,
+  pdfPostProcessSchema,
+} from '#/lib/pdf-post-processing'
 
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
@@ -42,6 +48,7 @@ export const payloadSchema = v.object({
   markdownTemplate: v.optional(v.pipe(v.string(), v.maxLength(150_000))),
   headerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   footerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
+  postProcess: v.optional(pdfPostProcessSchema),
   outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
   requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
   traceparent: v.optional(v.pipe(v.string(), v.maxLength(55))),
@@ -76,6 +83,10 @@ const forbiddenAdvanced = new Set([
   'webhookErrorMethod',
   'webhookEventsURL',
   'webhookExtraHttpHeaders',
+  'watermark',
+  'stamp',
+  'embeds',
+  'facturxXml',
 ])
 const officeExtensions = new Set([
   '.doc',
@@ -228,6 +239,185 @@ function validateAsyncInputs(payload: ConversionPayload): void {
   }
 }
 
+/** Validate post-processing contracts before any upstream request is made. */
+function validatePostProcessSettings(operation: Operation, payload: ConversionPayload): void {
+  const settings = payload.postProcess
+  if (!settings) return
+  if (!PDF_CONVERSION_IDS.has(operation.id)) {
+    throw new InputError('PDF post-processing is supported only on PDF conversion operations.')
+  }
+  const submitted = Object.keys(settings).filter(
+    (key) => settings[key as keyof typeof settings] !== undefined,
+  )
+  const keys = new Set<string>()
+  for (const key of submitted) {
+    if (key === 'watermark' || key === 'stamp') {
+      for (const suffix of ['Source', 'Expression', 'Pages', 'Options']) keys.add(`${key}${suffix}`)
+    } else keys.add(key)
+  }
+  for (const key of keys) {
+    if (payload.advanced[key] !== undefined || payload.fields[key] !== undefined) {
+      throw new InputError(`Use the post-processing editor or Advanced JSON for ${key}, not both.`)
+    }
+  }
+  const pdfa = payload.fields.pdfa ?? payload.advanced.pdfa
+  if (settings.facturxConformanceLevel && pdfa && pdfa !== 'PDF/A-3b') {
+    throw new InputError('Factur-X requires PDF/A-3; choose PDF/A-3b or leave PDF/A unset.')
+  }
+  if (
+    (settings.facturxDocumentType || settings.facturxVersion) &&
+    !settings.facturxConformanceLevel
+  ) {
+    throw new InputError('Factur-X document type and version require a conformance level.')
+  }
+  if (
+    Object.entries(settings).some(([key, value]) => key.startsWith('allow') && value === false) &&
+    !settings.userPassword &&
+    !settings.ownerPassword
+  ) {
+    throw new InputError('PDF permissions require a user or owner password.')
+  }
+  for (const kind of ['watermark', 'stamp'] as const) {
+    const overlay = settings[kind]
+    if (!overlay) continue
+    if (overlay.source === 'text' && !overlay.expression?.trim()) {
+      throw new InputError(`${kind} text cannot be empty.`)
+    }
+    if (overlay.pages && !/^\d+(?:-\d+)?(?:\s*,\s*\d+(?:-\d+)?)*$/.test(overlay.pages)) {
+      throw new InputError(`${kind} pages must be page numbers or ranges, e.g. 1-3, 5.`)
+    }
+    if (overlay.options) requireJsonObject(overlay.options, `${kind} options`)
+  }
+  if (settings.metadata) requireJsonObject(settings.metadata, 'PDF metadata')
+  if (settings.embedsMetadata) {
+    const metadata = requireJsonObject(settings.embedsMetadata, 'Attachments metadata')
+    for (const [filename, details] of Object.entries(metadata)) {
+      safeFilename(filename)
+      const fields = details as Record<string, unknown> | null
+      if (
+        !fields ||
+        typeof fields !== 'object' ||
+        Array.isArray(fields) ||
+        !Object.keys(fields).every((key) => key === 'mimeType' || key === 'relationship') ||
+        (fields.mimeType !== undefined &&
+          (typeof fields.mimeType !== 'string' || !/^[\w.+-]+\/[\w.+-]+$/.test(fields.mimeType))) ||
+        (fields.relationship !== undefined &&
+          !['Source', 'Data', 'Alternative', 'Supplement', 'Unspecified'].includes(
+            String(fields.relationship),
+          ))
+      ) {
+        throw new InputError(`Invalid attachment metadata for ${filename}.`)
+      }
+    }
+  }
+}
+
+function requireJsonObject(value: string, label: string): Record<string, unknown> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new InputError(`${label} must be valid JSON.`)
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new InputError(`${label} must be a JSON object.`)
+  }
+  return parsed as Record<string, unknown>
+}
+
+function validatePostProcessFiles(
+  operation: Operation,
+  payload: Pick<ConversionPayload, 'postProcess' | 'fields' | 'downloadFrom'> | undefined,
+  files: PostProcessFiles,
+  maxBytes: number,
+  currentBytes: number,
+): void {
+  const settings = payload?.postProcess
+  if (!settings && (files.watermark || files.stamp || files.facturxXml)) {
+    throw new InputError('Overlay and Factur-X uploads require post-processing settings.')
+  }
+  if (!PDF_CONVERSION_IDS.has(operation.id) && countPostProcessFiles(files)) {
+    throw new InputError('PDF processing files are supported only on PDF conversion operations.')
+  }
+  const remote = remoteCounts(payload)
+  const embedded = files.embeds ?? []
+  if (countPostProcessFiles(files) > 20 || embedded.length + remote.embedded > 20) {
+    throw new InputError('At most 20 post-processing files or attachments are supported.')
+  }
+  const postFiles = [files.watermark, files.stamp, ...embedded, files.facturxXml].filter(
+    (file): file is File => file !== undefined,
+  )
+  let total = currentBytes
+  const embeddedNames = new Set<string>()
+  for (const file of postFiles) {
+    const name = safeFilename(file.name)
+    if (!file.size) throw new InputError(`${name} is empty.`)
+    total += file.size
+    if (total > maxBytes)
+      throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
+  }
+  for (const file of embedded) {
+    const lower = file.name.toLowerCase()
+    if (embeddedNames.has(lower))
+      throw new InputError(`Duplicate PDF attachment filename: ${file.name}`)
+    embeddedNames.add(lower)
+  }
+  if (settings?.embedsMetadata) {
+    if (!embedded.length && !remote.embedded)
+      throw new InputError('Attachment metadata needs an embedded file.')
+    const entries = Object.keys(requireJsonObject(settings.embedsMetadata, 'Attachments metadata'))
+    if (!remote.embedded && entries.some((name) => !embedded.some((file) => file.name === name))) {
+      throw new InputError(
+        'Attachment metadata references a file that was not uploaded (exact filename required).',
+      )
+    }
+  }
+  if (
+    (embedded.length || remote.embedded) &&
+    ['PDF/A-1b', 'PDF/A-2b'].includes(String(payload?.fields.pdfa))
+  ) {
+    throw new InputError('PDF/A-1b and PDF/A-2b do not support embedded attachments. Use PDF/A-3b.')
+  }
+  for (const kind of ['watermark', 'stamp'] as const) {
+    const local = files[kind]
+    const count = Number(Boolean(local)) + remote[kind]
+    const overlay = settings?.[kind]
+    if (!overlay) {
+      if (local) throw new InputError(`${kind} upload requires ${kind} settings.`)
+      continue
+    }
+    if (overlay.source === 'text') {
+      if (count) throw new InputError(`Text ${kind} must not include an image or PDF upload.`)
+    } else {
+      if (count !== 1) throw new InputError(`Provide exactly one local or remote ${kind} file.`)
+      if (!local && !overlay.expression?.trim()) {
+        throw new InputError(`${kind} requires the remote file's Content-Disposition filename.`)
+      }
+      const ext = local?.name.match(extension)?.[0]?.toLowerCase()
+      if (
+        local &&
+        !(overlay.source === 'pdf'
+          ? ext === '.pdf'
+          : ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.tif', '.tiff'].includes(ext ?? ''))
+      ) {
+        throw new InputError(`${kind} source type does not match the uploaded file extension.`)
+      }
+      if (local && overlay.expression && overlay.expression !== local.name) {
+        throw new InputError(`${kind} expression must match the uploaded filename.`)
+      }
+    }
+  }
+  if (files.facturxXml && !/\.xml$/i.test(files.facturxXml.name)) {
+    throw new InputError('Factur-X requires an XML invoice file.')
+  }
+  if (Boolean(files.facturxXml) !== Boolean(settings?.facturxConformanceLevel)) {
+    throw new InputError('Factur-X requires both a local XML upload and a conformance level.')
+  }
+  if (files.facturxXml && ['PDF/A-1b', 'PDF/A-2b'].includes(String(payload?.fields.pdfa))) {
+    throw new InputError('Factur-X requires PDF/A-3.')
+  }
+}
+
 /** Remote files count as inputs only when they feed the corresponding Gotenberg field. */
 function remoteCounts(payload: Pick<ConversionPayload, 'downloadFrom'> | undefined) {
   const counts = { input: 0, embedded: 0, watermark: 0, stamp: 0 }
@@ -255,7 +445,9 @@ export function validateFiles(
     | 'markdownTemplate'
     | 'headerHtml'
     | 'footerHtml'
+    | 'postProcess'
   >,
+  postFiles: PostProcessFiles = {},
 ): void {
   const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
@@ -355,6 +547,7 @@ export function validateFiles(
       throw new InputError('Stamp and watermark files must be images or PDFs.')
     }
   }
+  validatePostProcessFiles(operation, payload, postFiles, maxBytes, total)
   if (operation.id === 'watermark' || operation.id === 'stamp') {
     const source = payload?.fields[`${operation.id}Source`]
     const expression = payload?.fields[`${operation.id}Expression`]
@@ -438,6 +631,19 @@ export function validatePayload(input: unknown): {
     throw new InputError('Enter some source content first.')
   }
   validateChromiumDocuments(operation, payload)
+  validatePostProcessSettings(operation, payload)
+  if (PDF_CONVERSION_IDS.has(operation.id) || operation.id === 'pdfa') {
+    const pdfa = payload.fields.pdfa ?? payload.advanced.pdfa
+    const pdfua = payload.fields.pdfua ?? payload.advanced.pdfua
+    const userPassword = payload.postProcess?.userPassword ?? payload.advanced.userPassword
+    const ownerPassword = payload.postProcess?.ownerPassword ?? payload.advanced.ownerPassword
+    if (pdfa && (userPassword || ownerPassword)) {
+      throw new InputError('PDF/A and PDF encryption cannot be combined.')
+    }
+    if (pdfa === 'PDF/A-1b' && pdfua === true) {
+      throw new InputError('PDF/UA is not supported with PDF/A-1b. Use PDF/A-2b or PDF/A-3b.')
+    }
+  }
   if (operation.id === 'encrypt' && !payload.fields.userPassword && !payload.fields.ownerPassword) {
     throw new InputError('Enter an open password or owner password.')
   }

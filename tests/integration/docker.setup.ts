@@ -28,6 +28,14 @@ async function docker(...args: string[]): Promise<string> {
 
 async function fixtureServer(): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
+    if (req.url === '/attachment') {
+      res.writeHead(200, {
+        'content-type': 'text/plain',
+        'content-disposition': 'attachment; filename=remote.txt',
+      })
+      res.end('Local Gotenberg integration attachment')
+      return
+    }
     if (req.url !== '/fixture') {
       res.writeHead(404).end()
       return

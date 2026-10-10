@@ -8,6 +8,7 @@ See [ROADMAP.md](ROADMAP.md) for the remaining feature gaps, priorities, and pro
 
 - 22 Chromium, LibreOffice and PDF-engine operations, including HTML, Markdown, URL and Office conversions, screenshots, merging, metadata, bookmarks, watermarks and Factur-X.
 - Custom Chromium PDF headers/footers and multi-file Markdown templates, with editable/importable HTML and named, reorderable Markdown sources.
+- Single-request PDF conversion plus watermark/stamp overlays, attachments, Factur-X XML, metadata, flattening and encryption.
 - Optional remote-file `downloadFrom` inputs and asynchronous Gotenberg webhook delivery, validated server-side and forwarded through the same-origin proxy.
 - Pure vector `public/gotenui-icon.svg`, used as the in-app mark and browser favicon.
 - Multiple named connections in **Connection settings**: browser profiles are saved in `localStorage` (`gotenui.connections.v1`), with automatic migration from the former `gotenui.backend-url.v1` preference. Default: **https://demo.gotenberg.dev**. Server-managed profiles are configured through environment variables, with credentials kept server-side.
@@ -44,6 +45,8 @@ Vitest integration tests start a **disposable `gotenberg/gotenberg:8.37.0` conta
 
 To cover both split response types, the suite merges two locally generated PDF pages and verifies that splitting produces a ZIP with two entries. It also checks the single-page PDF response and uploads a MINIMUM-profile XML fixture for Factur-X.
 
+The integration suite also covers single-request PDF overlays, embedded attachments, Factur-X XML during Office conversion, and a remote attachment from a disposable local fixture server.
+
 The test setup does **not** change the application's public-demo default. Docker must support the `host-gateway` option so the container can reach the deterministic fixture page. Unit tests mock `fetch` and do not contact any remote host.
 
 ### Gotenberg API coverage
@@ -69,6 +72,26 @@ Chromium renders headers and footers in an **isolated context**: the main docume
 The **Markdown to PDF** and **Markdown screenshot** workbenches retain their editable initial `document.md`, and now allow renaming it and adding, importing, removing or reordering more `.md` sources (up to 20 total). The default `index.html` template is generated automatically from their displayed order. Use **Customize template** or load your own `.html` template to control layout and render order with Gotenberg's `{{ toHTML "filename.md" }}` action. Return to **Use generated template** to track source changes automatically. When using a custom template, every listed Markdown source must be referenced and every reference must match a submitted filename, including case.
 
 All Chromium HTML, Markdown and asset files share **one flat Gotenberg directory**: reference stylesheets and images by basename (for example `style.css`), not absolute paths or subdirectories. Markdown sources have unique case-insensitive `.md` names; reserved filenames, missing template references, empty Markdown sources and asset name collisions are rejected before proxying. Existing one-file Markdown conversions retain their previous request contract. These editors and imports are per-tab, in-memory only; no state is added to the server or stored between sessions.
+
+## PDF post-processing during conversion (v1.0.21)
+
+The **Website to PDF**, **HTML to PDF**, **Markdown to PDF**, and **Office to PDF** workbenches include an optional **PDF post-processing** editor. Gotenui sends these options to the **same** Gotenberg conversion endpoint rather than converting a PDF twice or storing an intermediate result. Screenshot operations do not support PDF-engine post-processing; PDF tools retain their own dedicated controls.
+
+| Feature | Gotenberg form fields | Upload part / remote input |
+| --- | --- | --- |
+| Text, image, or PDF watermark | `watermarkSource`, `watermarkExpression`, optional `watermarkPages` and `watermarkOptions` | `watermark` (one local image/PDF); or `downloadFrom` with `field: "watermark"` |
+| Text, image, or PDF stamp | `stampSource`, `stampExpression`, optional `stampPages` and `stampOptions` | `stamp` (one local image/PDF); or `downloadFrom` with `field: "stamp"` |
+| Embedded attachments | Optional `embedsMetadata` JSON keyed by **exact** attachment filenames | Repeated `embeds` file parts; or `downloadFrom` with `field: "embedded"` |
+| Factur-X / ZUGFeRD | Required `facturxConformanceLevel`, optional `facturxDocumentType` and `facturxVersion` | **One local XML file** as `facturxXml` (not a source or regular attachment; remote descriptors do not support this field) |
+| Metadata and flattening | `metadata` (JSON), `flatten` | No extra files |
+| Passwords and permissions | `userPassword`, `ownerPassword`, optional `allowPrinting`, `allowCopying`, `allowModifying`, `allowAnnotating`, `allowFillingForms`, `allowAssembling` | No extra files |
+| PDF/A and PDF/UA | Existing `pdfa`, `pdfua` fields in **Advanced options** | No extra files |
+
+One watermark and one stamp are supported in this patch, each with optional page ranges and PDF-engine-specific JSON options. Repeated ordered overlays are scheduled separately. Select **Text** to enter content, or **Image/PDF** to select exactly one matching local file. For remote overlays, use Advanced `downloadFrom` JSON. Gotenberg requires the remote server to provide a `Content-Disposition` filename and applies its own outbound URL restrictions. Enter the exact remote filename in the editor (required for image/PDF overlays). Remote attachments likewise use a remote descriptor, not a Gotenui upload.
+
+**Compatibility constraints:** PDF/A and PDF encryption are mutually exclusive. PDF/A-1b/2b cannot contain attachments; use PDF/A-3b (or let Factur-X generate PDF/A-3). PDF/A-1b combined with PDF/UA is not supported. Factur-X and attachment metadata require a compatible PDF engine (QPDF is recommended). Local embedded filenames must be unique, and `embedsMetadata` keys must match them exactly; Gotenui can validate this when no remote attachments are supplied. When combining PDF/A and metadata writing, the upstream converter can overwrite some standard metadata fields. Permission restrictions require a user or owner password and remain PDF-viewer-dependent.
+
+All post-processing files use the existing bounded same-origin Nitro proxy and the selected Gotenberg instance's authentication. Multipart parts have dedicated validated names (`watermark`, `stamp`, `embeds`, `facturxXml`) and count toward the upload budget. UI selections remain in memory only; passwords are not persisted or written to server storage. Browser-managed and server-managed connections, allowlisting, and proxy security policy are unchanged. No new environment variables are required.
 
 ## Debug diagnostics and Prometheus metrics (Gotenberg-controlled)
 

@@ -4,6 +4,7 @@ import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-d
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import type { Operation } from '#/lib/operations'
+import { type PostProcessFiles, postProcessFormFields } from '#/lib/pdf-post-processing'
 import { downloadFilename, responseExtension } from '#/lib/security'
 import {
   type ConversionPayload,
@@ -162,8 +163,9 @@ export function createGotenbergForm(
   files: File[],
   auxiliary: File[],
   maxBytes = MAX_UPLOAD_BYTES,
+  postFiles: PostProcessFiles = {},
 ): FormData {
-  validateFiles(operation, files, auxiliary, maxBytes, payload)
+  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles)
   const form = new FormData()
   for (const [key, value] of Object.entries({ ...payload.fields, ...payload.advanced })) {
     if (value === '') continue
@@ -214,6 +216,16 @@ export function createGotenbergForm(
   if (payload.footerHtml !== undefined) {
     form.append('files', new File([payload.footerHtml], 'footer.html', { type: 'text/html' }))
   }
+  if (payload.postProcess) {
+    for (const [name, value] of postProcessFormFields(payload.postProcess, postFiles)) {
+      form.set(name, value)
+    }
+  }
+  if (postFiles.watermark) form.append('watermark', postFiles.watermark, postFiles.watermark.name)
+  if (postFiles.stamp) form.append('stamp', postFiles.stamp, postFiles.stamp.name)
+  for (const file of postFiles.embeds ?? []) form.append('embeds', file, file.name)
+  if (postFiles.facturxXml)
+    form.append('facturxXml', postFiles.facturxXml, postFiles.facturxXml.name)
   return form
 }
 
@@ -228,15 +240,21 @@ export async function convertWithGotenberg(
   files: File[],
   auxiliary: File[],
   signal: AbortSignal,
+  postFiles: PostProcessFiles = {},
 ): Promise<ConversionResult> {
   const headers = targetHeaders(connection)
   const { operation, payload } = validatePayload(candidate)
   // Keep fast client-side feedback; all fields and files are checked again by the server.
-  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES, payload)
+  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES, payload, postFiles)
   const body = new FormData()
   body.set('payload', JSON.stringify(payload))
   for (const file of files) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
+  if (postFiles.watermark) body.append('watermark', postFiles.watermark, postFiles.watermark.name)
+  if (postFiles.stamp) body.append('stamp', postFiles.stamp, postFiles.stamp.name)
+  for (const file of postFiles.embeds ?? []) body.append('embeds', file, file.name)
+  if (postFiles.facturxXml)
+    body.append('facturxXml', postFiles.facturxXml, postFiles.facturxXml.name)
   let response: Response
   try {
     response = await fetch('/api/gotenberg/convert', {

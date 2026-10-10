@@ -42,6 +42,7 @@ import { ConnectionManager } from '#/components/connection-manager'
 import { DebugDialog } from '#/components/debug-dialog'
 import { MarkdownAssetsEditor, type MarkdownSource } from '#/components/markdown-assets-editor'
 import { MetricsDialog } from '#/components/metrics-dialog'
+import { PdfConversionPostProcessing } from '#/components/pdf-conversion-post-processing'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
@@ -80,6 +81,11 @@ import {
   type Operation,
   operationDefaults,
 } from '#/lib/operations'
+import {
+  PDF_CONVERSION_IDS,
+  type PdfPostProcess,
+  type PostProcessFiles,
+} from '#/lib/pdf-post-processing'
 import { formatBytes } from '#/lib/security'
 import { cn } from '#/lib/utils'
 import { InputError, parseAdvanced } from '#/lib/validation'
@@ -491,6 +497,7 @@ function JobPanel({
   operation,
   files,
   auxFiles,
+  postFiles,
   source,
   pending,
   lastDownload,
@@ -499,6 +506,7 @@ function JobPanel({
   operation: Operation
   files: File[]
   auxFiles: File[]
+  postFiles: PostProcessFiles
   source: string
   pending: boolean
   lastDownload: Download | null
@@ -537,13 +545,27 @@ function JobPanel({
             </div>
             <div className="flex justify-between gap-4 text-xs">
               <span className="text-slate-500">Files selected</span>
-              <span className="font-semibold text-slate-700">{files.length + auxFiles.length}</span>
+              <span className="font-semibold text-slate-700">
+                {files.length +
+                  auxFiles.length +
+                  (postFiles.embeds?.length ?? 0) +
+                  Number(Boolean(postFiles.watermark)) +
+                  Number(Boolean(postFiles.stamp)) +
+                  Number(Boolean(postFiles.facturxXml))}
+              </span>
             </div>
             <div className="flex justify-between gap-4 text-xs">
               <span className="text-slate-500">Upload size</span>
               <span className="font-semibold text-slate-700">
                 {formatBytes(
-                  [...files, ...auxFiles].reduce((sum, file) => sum + file.size, 0) +
+                  [
+                    ...files,
+                    ...auxFiles,
+                    ...(postFiles.embeds ?? []),
+                    ...[postFiles.watermark, postFiles.stamp, postFiles.facturxXml].filter(
+                      (file): file is File => file !== undefined,
+                    ),
+                  ].reduce((sum, file) => sum + file.size, 0) +
                     new TextEncoder().encode(source).byteLength,
                 )}
               </span>
@@ -682,6 +704,8 @@ function Workbench({
   const [markdownTemplate, setMarkdownTemplate] = useState<string | null>(null)
   const [headerHtml, setHeaderHtml] = useState('')
   const [footerHtml, setFooterHtml] = useState('')
+  const [postProcess, setPostProcess] = useState<PdfPostProcess>({})
+  const [postFiles, setPostFiles] = useState<PostProcessFiles>({})
   const [files, setFiles] = useState<File[]>([])
   const [auxFiles, setAuxFiles] = useState<File[]>([])
   const [advanced, setAdvanced] = useState('')
@@ -710,6 +734,8 @@ function Workbench({
     setMarkdownTemplate(null)
     setHeaderHtml('')
     setFooterHtml('')
+    setPostProcess({})
+    setPostFiles({})
     setFiles([])
     setAuxFiles([])
     setAdvanced('')
@@ -732,6 +758,7 @@ function Workbench({
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
   const operationHasFileAssets = isSourceEditor
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
+  const hasPostProcessing = PDF_CONVERSION_IDS.has(operation.id)
   const docsUrl = `https://gotenberg.dev/docs/${operation.docs}`
 
   const updateField = (name: string, value: string | boolean) =>
@@ -763,6 +790,10 @@ function Workbench({
           operation.input === 'markdown' ? (markdownTemplate ?? undefined) : undefined,
         headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
         footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
+        postProcess:
+          hasPostProcessing && Object.values(postProcess).some((value) => value !== undefined)
+            ? postProcess
+            : undefined,
         advanced: parseAdvanced(advanced),
         downloadFrom: parseOptionalJson(remoteInput, 'Remote files'),
         webhook: parseOptionalJson(webhookInput, 'Webhook settings'),
@@ -776,7 +807,14 @@ function Workbench({
       requestAbort.current = controller
       const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       const signal = AbortSignal.any([controller.signal, deadline])
-      const result = await convertWithGotenberg(connection, candidate, files, auxFiles, signal)
+      const result = await convertWithGotenberg(
+        connection,
+        candidate,
+        files,
+        auxFiles,
+        signal,
+        postFiles,
+      )
       if (signal.aborted) {
         if (deadline.aborted) toast.error('Gotenberg did not respond within three minutes.')
         return
@@ -985,6 +1023,14 @@ function Workbench({
                 onFooterChange={setFooterHtml}
               />
             )}
+            {hasPostProcessing && (
+              <PdfConversionPostProcessing
+                value={postProcess}
+                onChange={setPostProcess}
+                files={postFiles}
+                onFilesChange={setPostFiles}
+              />
+            )}
             <div className="space-y-2 border-t border-slate-100 pt-5">
               <Label htmlFor="output-filename">
                 Output filename <span className="font-normal text-slate-400">(optional)</span>
@@ -1161,6 +1207,7 @@ function Workbench({
         operation={operation}
         files={files}
         auxFiles={auxFiles}
+        postFiles={postFiles}
         source={isSourceEditor ? source : ''}
         pending={pending}
         lastDownload={lastDownload}

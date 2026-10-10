@@ -313,3 +313,46 @@ test('client reports upstream correlation IDs on rejected conversions', async ()
     globalThis.fetch = original
   }
 })
+
+test('browser sends named post-processing uploads only to the same-origin proxy', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async (input, options) => {
+    assert.equal(String(input), '/api/gotenberg/convert')
+    assert.equal(options?.credentials, 'same-origin')
+    const body = options?.body
+    assert.ok(body instanceof FormData)
+    assert.equal(body.get('watermark') instanceof File, true)
+    assert.equal((body.get('watermark') as File).name, 'logo.png')
+    assert.deepEqual(
+      (body.getAll('embeds') as File[]).map((file) => file.name),
+      ['report.txt'],
+    )
+    assert.equal(body.has('watermarkSource'), false)
+    assert.equal(body.has('stampExpression'), false)
+    const payload = JSON.parse(String(body.get('payload')))
+    assert.equal(payload.postProcess.watermark.source, 'image')
+    assert.equal(payload.postProcess.stamp.expression, 'INTERNAL')
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  }
+  try {
+    const result = await convertWithGotenberg(
+      { kind: 'server', id: 'records' },
+      {
+        operation: 'url-pdf',
+        fields: { url: 'https://example.test' },
+        advanced: {},
+        postProcess: {
+          watermark: { source: 'image' },
+          stamp: { source: 'text', expression: 'INTERNAL' },
+        },
+      },
+      [],
+      [],
+      new AbortController().signal,
+      { watermark: new File(['logo'], 'logo.png'), embeds: [new File(['report'], 'report.txt')] },
+    )
+    assert.equal(result.mode, 'download')
+  } finally {
+    globalThis.fetch = original
+  }
+})

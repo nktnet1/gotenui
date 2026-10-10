@@ -8,6 +8,7 @@ import {
   proxyStatusRequest,
 } from '#/lib/gotenberg-proxy.server'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
+import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import type { ConversionPayload } from '#/lib/validation'
 
 const backendUrl = inject('gotenbergTestUrl')
@@ -31,6 +32,7 @@ function request(
   overrides: Partial<ConversionPayload> = {},
   inputFiles: File[] = [],
   auxiliary: File[] = [],
+  postFiles: PostProcessFiles = {},
 ): Request {
   const payload: ConversionPayload = {
     operation: operation.id,
@@ -42,6 +44,8 @@ function request(
     ...(overrides.markdownTemplate ? { markdownTemplate: overrides.markdownTemplate } : {}),
     ...(overrides.headerHtml ? { headerHtml: overrides.headerHtml } : {}),
     ...(overrides.footerHtml ? { footerHtml: overrides.footerHtml } : {}),
+    ...(overrides.postProcess ? { postProcess: overrides.postProcess } : {}),
+    ...(overrides.downloadFrom ? { downloadFrom: overrides.downloadFrom } : {}),
     ...(overrides.outputName ? { outputName: overrides.outputName } : {}),
     ...(overrides.requestTrace ? { requestTrace: overrides.requestTrace } : {}),
     ...(overrides.traceparent ? { traceparent: overrides.traceparent } : {}),
@@ -51,6 +55,11 @@ function request(
   body.set('payload', JSON.stringify(payload))
   for (const file of inputFiles) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
+  if (postFiles.watermark) body.append('watermark', postFiles.watermark, postFiles.watermark.name)
+  if (postFiles.stamp) body.append('stamp', postFiles.stamp, postFiles.stamp.name)
+  for (const file of postFiles.embeds ?? []) body.append('embeds', file, file.name)
+  if (postFiles.facturxXml)
+    body.append('facturxXml', postFiles.facturxXml, postFiles.facturxXml.name)
   return new Request(`${proxyOrigin}/api/gotenberg/convert`, {
     method: 'POST',
     headers: {
@@ -592,3 +601,77 @@ test.each(['markdown-pdf', 'markdown-shot'])(
   },
   120_000,
 )
+
+test.each(['html-pdf', 'markdown-pdf', 'office-pdf'])(
+  '%s applies watermark/stamp plus an attachment in one conversion request',
+  async (id) => {
+    const operation = OPERATIONS.find((item) => item.id === id)
+    if (!operation) throw new Error(`Missing ${id}`)
+    const inputs = inputFor(operation)
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        {
+          ...inputs.overrides,
+          postProcess: {
+            watermark: { source: 'text', expression: 'INTERNAL' },
+            stamp: { source: 'text', expression: 'APPROVED' },
+            metadata: '{"Author":"Gotenui combined processing"}',
+            flatten: true,
+          },
+        },
+        inputs.files,
+        [],
+        {
+          embeds: [new File(['Embedded in same conversion'], 'supplement.txt')],
+        },
+      ),
+    )
+    if (!response.ok)
+      throw new Error(`${id} post-processing: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(
+      new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+    ).toBe('%PDF-')
+  },
+  120_000,
+)
+
+test('LibreOffice conversion accepts a Factur-X CII XML attachment in the same request', async () => {
+  const operation = OPERATIONS.find((item) => item.id === 'office-pdf')
+  if (!operation) throw new Error('Missing office-pdf')
+  const xml = readFileSync(new URL('./fixtures/factur-x-minimum.xml', import.meta.url))
+  const response = await proxyConversionRequest(
+    request(
+      operation,
+      { postProcess: { facturxConformanceLevel: 'MINIMUM' } },
+      [new File(['Invoice contents'], 'invoice.txt', { type: 'text/plain' })],
+      [],
+      { facturxXml: new File([xml], 'invoice.xml', { type: 'application/xml' }) },
+    ),
+  )
+  if (!response.ok)
+    throw new Error(`Factur-X conversion: ${response.status} ${await response.text()}`)
+  expect(response.headers.get('content-type')).toContain('application/pdf')
+  expect(
+    new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+  ).toBe('%PDF-')
+}, 120_000)
+
+test('Gotenberg downloads a remote attachment into a new Chromium PDF', async () => {
+  const operation = OPERATIONS.find((item) => item.id === 'url-pdf')
+  if (!operation) throw new Error('Missing URL-to-PDF operation')
+  const url = new URL('/attachment', fixtureUrl).href
+  const response = await proxyConversionRequest(
+    request(operation, {
+      fields: { url: fixtureUrl },
+      downloadFrom: [{ url, field: 'embedded' }],
+    }),
+  )
+  if (!response.ok)
+    throw new Error(`Remote attachment: ${response.status} ${await response.text()}`)
+  expect(response.headers.get('content-type')).toContain('application/pdf')
+  expect(
+    new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+  ).toBe('%PDF-')
+}, 120_000)

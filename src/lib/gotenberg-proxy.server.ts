@@ -2,6 +2,7 @@ import urlJoin from 'url-join'
 import * as v from 'valibot'
 import { resolveConnectionTarget } from '#/lib/connection-target.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
+import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
   DEFAULT_MAX_REQUEST_BYTES,
@@ -155,6 +156,7 @@ export async function proxyConversionRequest(
   let candidate: unknown
   const files: File[] = []
   const auxiliary: File[] = []
+  const postFiles: PostProcessFiles = {}
   let payloadCount = 0
   for (const [key, value] of fields) {
     if (key === 'payload' && typeof value === 'string' && value.length <= 400_000) {
@@ -168,20 +170,29 @@ export async function proxyConversionRequest(
       files.push(value)
     } else if (key === 'auxiliary' && value instanceof File) {
       auxiliary.push(value)
+    } else if (key === 'embeds' && value instanceof File) {
+      if (!postFiles.embeds) postFiles.embeds = []
+      postFiles.embeds.push(value)
+    } else if (
+      (key === 'watermark' || key === 'stamp' || key === 'facturxXml') &&
+      value instanceof File
+    ) {
+      if (postFiles[key]) throw new ProxyInputError(`Only one ${key} file may be uploaded.`)
+      postFiles[key] = value
     } else {
       throw new ProxyInputError('The multipart request contains unsupported fields.')
     }
   }
   if (payloadCount !== 1) throw new ProxyInputError('Exactly one conversion payload is required.')
   const { operation, payload } = validatePayload(candidate)
-  validateFiles(operation, files, auxiliary, maxBytes, payload)
+  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles)
   const { url, headers: authHeaders } = resolveConnectionTarget(
     request,
     settings,
     request.headers.get('x-gotenberg-url'),
     request.headers.get('x-gotenui-connection-id'),
   )
-  const form = createGotenbergForm(operation, payload, files, auxiliary, maxBytes)
+  const form = createGotenbergForm(operation, payload, files, auxiliary, maxBytes, postFiles)
   const upstream = await fetcher(urlJoin(url, operation.path), {
     method: 'POST',
     ...fetchOptions(request),

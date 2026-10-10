@@ -460,3 +460,88 @@ test('the proxy rejects reserved asset filenames before contacting the backend',
   )
   assert.equal(calls, 0)
 })
+
+test('routes conversion post-processing files through the named fields without exposing proxy payloads', async () => {
+  const input = new FormData()
+  input.set(
+    'payload',
+    JSON.stringify({
+      operation: 'html-pdf',
+      fields: {},
+      advanced: {},
+      source: '<html><head></head><body>Document</body></html>',
+      postProcess: {
+        watermark: { source: 'image' },
+        stamp: { source: 'text', expression: 'DRAFT' },
+        facturxConformanceLevel: 'MINIMUM',
+        embedsMetadata: '{"report.txt":{"mimeType":"text/plain","relationship":"Supplement"}}',
+      },
+    }),
+  )
+  input.append('watermark', new File(['png'], 'logo.png', { type: 'image/png' }))
+  input.append('embeds', new File(['text'], 'report.txt'))
+  input.append('facturxXml', new File(['<Invoice />'], 'invoice.xml'))
+  const request = new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: { origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
+    body: input,
+  })
+  request.headers.set('X-Internal-File-Routing', 'malicious')
+  const response = await proxyConversionRequest(request, async (url, init) => {
+    assert.equal(String(url), 'http://127.0.0.1:3000/forms/chromium/convert/html')
+    assert.equal(new Headers(init?.headers).has('X-Internal-File-Routing'), false)
+    assert.equal(init?.redirect, 'error')
+    const outgoing = init?.body
+    assert.ok(outgoing instanceof FormData)
+    assert.deepEqual(
+      (outgoing.getAll('files') as File[]).map((file) => file.name),
+      ['index.html'],
+    )
+    assert.equal(outgoing.get('watermarkSource'), 'image')
+    assert.equal(outgoing.get('watermarkExpression'), 'logo.png')
+    assert.equal(outgoing.get('stampExpression'), 'DRAFT')
+    assert.equal(outgoing.get('facturxConformanceLevel'), 'MINIMUM')
+    assert.equal((outgoing.get('facturxXml') as File).name, 'invoice.xml')
+    assert.deepEqual(
+      (outgoing.getAll('embeds') as File[]).map((file) => file.name),
+      ['report.txt'],
+    )
+    assert.equal(outgoing.has('payload'), false)
+    assert.equal(outgoing.has('postProcess'), false)
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  })
+  assert.equal(response.status, 200)
+})
+
+test('rejects duplicate overlay file fields and unsupported file destinations before forwarding', async () => {
+  for (const fields of [
+    [
+      ['watermark', 'one.png'],
+      ['watermark', 'two.png'],
+    ],
+    [['unknown', 'malicious.pdf']],
+  ]) {
+    const input = new FormData()
+    input.set(
+      'payload',
+      JSON.stringify({
+        operation: 'url-pdf',
+        fields: { url: 'https://example.test' },
+        advanced: {},
+        postProcess: { watermark: { source: 'image' } },
+      }),
+    )
+    for (const [key, name] of fields) input.append(key, new File(['data'], name))
+    const request = new Request(`${origin}/api/gotenberg/convert`, {
+      method: 'POST',
+      headers: { origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
+      body: input,
+    })
+    await assert.rejects(
+      proxyConversionRequest(request, async () => {
+        throw new Error('Must not call upstream')
+      }),
+      /Only one watermark|unsupported fields/,
+    )
+  }
+})
