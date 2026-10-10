@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.37 (rejected status-response cleanup).
+- **Baseline:** v1.0.38 (diagnostic response length validation).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -42,6 +42,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.35** | Release | Public-origin reverse-proxy compatibility | Allow a single explicitly configured public origin for TLS-terminating deployments; preserve strict origin/site rejection without trusting forwarded request headers, add proxy unit tests and a second built Nitro smoke instance. |
 | **v1.0.36** | Fix | Multipart request header compatibility | Accept valid quoted boundaries and optional UTF-8 charset parameters in either order while retaining upload limits, field validation, and rejection of ambiguous MIME parameters; add unit and built Nitro smoke regressions. |
 | **v1.0.37** | Release | Status probe response cleanup | Cancel unread upstream /health and /version error bodies without affecting authentication or health reporting; add deterministic cancellation regressions. |
+| **v1.0.38** | Release | Diagnostic response integrity | Reject malformed and mismatched uncompressed Content-Length values on health/version, debug and metrics responses; maintain body-size caps, compressed-body compatibility and cancellation tests. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -142,6 +143,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
 
 ## Verification and release gates
+
+**v1.0.38 diagnostic lengths:** Full health/version polling, the debug JSON viewer, and legacy metrics now verify valid uncompressed upstream Content-Length declarations against the actual bounded response body. Invalid, truncated, or overlong replies cannot be presented as valid diagnostics; malformed or oversized declarations cancel unread bodies. Because fetch transparently decompresses upstream responses, encoded length declarations are not compared to decoded bytes, but the decoded payloads remain size-limited. New non-Docker unit tests reproduced the original acceptance defects and verify success, rejection, cancellation and compressed-response compatibility. Real Gotenberg and ingress testing remain outstanding.
 
 **v1.0.37 status cleanup:** The periodic full status request now cancels unread upstream /health responses on HTTP errors and /version responses on authentication failures or non-200 results. The browser still receives the existing status/error contract, including protected-version authentication failures; no upstream error body is exposed. Focused unit tests first reproduced the uncancelled streams, then verified cleanup. Real Gotenberg Docker and browser testing remain outstanding.
 

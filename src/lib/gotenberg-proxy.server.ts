@@ -102,18 +102,77 @@ export function proxyErrorResponse(error: unknown): Response {
 
 class StatusProbeError extends Error {}
 
+class DiagnosticBodyError extends Error {
+  constructor(readonly reason: 'invalid-length' | 'too-large' | 'length-mismatch') {
+    super(reason)
+  }
+}
+
+/** Some gateways advertise malformed or truncated diagnostic bodies. Fetch also
+ * transparently decompresses responses, so encoded lengths cannot be compared
+ * with the decoded bytes it exposes. Never trust Content-Length as a size cap.
+ */
+async function boundedDiagnosticBody(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const announced = response.headers.get('content-length')
+  const encoding = response.headers.get('content-encoding')?.trim().toLowerCase()
+  let expectedLength: number | undefined
+  if (announced !== null && (!encoding || encoding === 'identity')) {
+    if (!/^\d+$/.test(announced) || !Number.isSafeInteger(Number(announced))) {
+      await response.body?.cancel().catch(() => {})
+      throw new DiagnosticBodyError('invalid-length')
+    }
+    expectedLength = Number(announced)
+    if (expectedLength > maxBytes) {
+      await response.body?.cancel().catch(() => {})
+      throw new DiagnosticBodyError('too-large')
+    }
+  }
+  let bytes: Uint8Array
+  try {
+    bytes = await readLimitedBody(response.body, maxBytes)
+  } catch (error) {
+    if (error instanceof ProxyInputError && error.status === 413) {
+      throw new DiagnosticBodyError('too-large')
+    }
+    throw error
+  }
+  if (expectedLength !== undefined && bytes.byteLength !== expectedLength) {
+    throw new DiagnosticBodyError('length-mismatch')
+  }
+  return bytes
+}
+
 /** Health and version are diagnostic text, never unbounded downloads. */
 async function boundedStatusText(response: Response, maxBytes: number): Promise<string> {
-  const announced = response.headers.get('content-length')
-  if (announced !== null && (!/^\d+$/.test(announced) || Number(announced) > maxBytes)) {
-    await response.body?.cancel().catch(() => {})
-    throw new StatusProbeError('Gotenberg status response exceeds its size limit.')
-  }
   try {
-    const bytes = await readLimitedBody(response.body, maxBytes)
+    const bytes = await boundedDiagnosticBody(response, maxBytes)
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-  } catch {
+  } catch (error) {
+    if (error instanceof DiagnosticBodyError && error.reason === 'too-large') {
+      throw new StatusProbeError('Gotenberg status response exceeds its size limit.')
+    }
     throw new StatusProbeError('Gotenberg status response is invalid or too large.')
+  }
+}
+
+async function boundedProxyDiagnosticBody(
+  response: Response,
+  maxBytes: number,
+  name: 'debug' | 'metrics',
+  sizeLabel: string,
+): Promise<Uint8Array> {
+  try {
+    return await boundedDiagnosticBody(response, maxBytes)
+  } catch (error) {
+    if (error instanceof DiagnosticBodyError) {
+      throw new ProxyInputError(
+        error.reason === 'too-large'
+          ? `Gotenberg ${name} response exceeds the ${sizeLabel} limit.`
+          : `Gotenberg ${name} returned an invalid response length.`,
+        502,
+      )
+    }
+    throw error
   }
 }
 
@@ -556,11 +615,6 @@ export async function proxyMetricsRequest(
   }
 
   const MAX_METRICS_RESPONSE_BYTES = 2_000_000
-  const declaredSize = Number(upstream.headers.get('content-length') ?? 0)
-  if (declaredSize > MAX_METRICS_RESPONSE_BYTES) {
-    await upstream.body?.cancel().catch(() => {})
-    throw new ProxyInputError('Gotenberg metrics response exceeds the 2 MB limit.', 502)
-  }
   const contentType = upstream.headers.get('content-type')?.toLowerCase() ?? ''
   if (
     !contentType.startsWith('text/plain') &&
@@ -572,15 +626,12 @@ export async function proxyMetricsRequest(
   if (!upstream.body) {
     throw new ProxyInputError('Gotenberg returned an empty metrics response.', 502)
   }
-  let bytes: Uint8Array
-  try {
-    bytes = await readLimitedBody(upstream.body, MAX_METRICS_RESPONSE_BYTES)
-  } catch (error) {
-    if (error instanceof ProxyInputError && error.status === 413) {
-      throw new ProxyInputError('Gotenberg metrics response exceeds the 2 MB limit.', 502)
-    }
-    throw error
-  }
+  const bytes = await boundedProxyDiagnosticBody(
+    upstream,
+    MAX_METRICS_RESPONSE_BYTES,
+    'metrics',
+    '2 MB',
+  )
   let text: string
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -633,26 +684,18 @@ export async function proxyDebugRequest(
   }
 
   const MAX_DEBUG_RESPONSE_BYTES = 1_000_000
-  const declaredSize = Number(upstream.headers.get('content-length') ?? 0)
-  if (declaredSize > MAX_DEBUG_RESPONSE_BYTES) {
-    await upstream.body?.cancel().catch(() => {})
-    throw new ProxyInputError('Gotenberg debug response exceeds the 1 MB limit.', 502)
-  }
   if (!upstream.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
     await upstream.body?.cancel().catch(() => {})
     throw new ProxyInputError('Gotenberg debug did not return JSON.', 502)
   }
   if (!upstream.body) throw new ProxyInputError('Gotenberg returned an empty debug response.', 502)
 
-  let bytes: Uint8Array
-  try {
-    bytes = await readLimitedBody(upstream.body, MAX_DEBUG_RESPONSE_BYTES)
-  } catch (error) {
-    if (error instanceof ProxyInputError && error.status === 413) {
-      throw new ProxyInputError('Gotenberg debug response exceeds the 1 MB limit.', 502)
-    }
-    throw error
-  }
+  const bytes = await boundedProxyDiagnosticBody(
+    upstream,
+    MAX_DEBUG_RESPONSE_BYTES,
+    'debug',
+    '1 MB',
+  )
   let payload: unknown
   try {
     payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
