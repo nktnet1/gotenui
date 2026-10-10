@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-brand-50: #edf8ff;
+  --color-brand-500: #0ea5e9;
+  --color-brand-600: #0284c7;
+  --color-brand-950: #0c1b2c;
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root {
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  font-family: var(--font-sans);
+}
+* {
+  box-sizing: border-box;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  touch-action: manipulation;
+}
+::selection {
+  background: #bae6fd;
+  color: #0c4a6e;
+}
+
+.brand-mark {
+  background: linear-gradient(145deg, #38bdf8, #0284c7 55%, #075985);
+}
+.login-glow {
+  background: radial-gradient(circle, rgba(14, 165, 233, 0.18), transparent 68%);
+  filter: blur(12px);
+}
+.nav-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #294056 transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto;
+    animation-duration: 0.01ms;
+    transition-duration: 0.01ms;
+  }
+}

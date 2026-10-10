@@ -1,0 +1,10 @@
+node_modules/
+.output/
+.tanstack/
+dist/
+static/
+.env
+.env.*
+!.env.example
+src/routeTree.gen.ts
+*.tsbuildinfo

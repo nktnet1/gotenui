@@ -1,0 +1,16 @@
+# An OPTIONAL local demonstration. The Gotenui application itself remains static.
+# Do not publish this directly to the public internet: the proxy exposes Gotenberg's API.
+services:
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    expose:
+      - "3000"
+  gotenui:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:3100:80"
+    depends_on:
+      - gotenberg

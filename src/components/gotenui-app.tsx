@@ -1,0 +1,1399 @@
+import type { LucideIcon } from 'lucide-react'
+import {
+  Activity,
+  ArrowDownToLine,
+  Braces,
+  Camera,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Clock3,
+  Code2,
+  ExternalLink,
+  FileArchive,
+  FileCode2,
+  FileDown,
+  FileJson2,
+  FilePlus2,
+  FileStack,
+  Files,
+  FileText,
+  FileUp,
+  Globe2,
+  Image,
+  Layers3,
+  LockKeyhole,
+  Menu,
+  PanelLeftClose,
+  Play,
+  RefreshCw,
+  RotateCw,
+  Search,
+  Server,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  WandSparkles,
+  X,
+} from 'lucide-react'
+import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import { browserStorage, loadBackendUrl, saveBackendUrl } from '../lib/backend-url'
+import { DEFAULT_BACKEND_URL } from '../lib/config'
+import {
+  convertWithGotenberg,
+  getGotenbergStatus,
+  REQUEST_TIMEOUT_MS,
+  type ServerStatus,
+  validatedBackend,
+} from '../lib/gotenberg-client'
+import {
+  type FieldDefinition,
+  GROUPS,
+  OPERATION_BY_ID,
+  OPERATIONS,
+  type Operation,
+  operationDefaults,
+} from '../lib/operations'
+import { formatBytes } from '../lib/security'
+import { cn } from '../lib/utils'
+import { InputError, parseAdvanced } from '../lib/validation'
+import { Button } from './ui/button'
+import { Card, CardContent, CardHeader } from './ui/card'
+import { Input } from './ui/input'
+import { Label } from './ui/label'
+import { Switch } from './ui/switch'
+import { Textarea } from './ui/textarea'
+import { UploadZone } from './upload-zone'
+
+const ICONS: Record<string, LucideIcon> = {
+  'url-pdf': Globe2,
+  'html-pdf': Code2,
+  'markdown-pdf': FileCode2,
+  'office-pdf': FileUp,
+  'url-shot': Camera,
+  'html-shot': Image,
+  'markdown-shot': Image,
+  merge: Files,
+  split: FileStack,
+  pdfa: ShieldCheck,
+  optimize: WandSparkles,
+  rotate: RotateCw,
+  flatten: Layers3,
+  encrypt: LockKeyhole,
+  watermark: FileText,
+  stamp: FilePlus2,
+  'metadata-read': FileJson2,
+  'metadata-write': FileJson2,
+  'bookmarks-read': Braces,
+  'bookmarks-write': Braces,
+  embed: FileArchive,
+  'factur-x': FileText,
+}
+
+const EXAMPLE_HTML = `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>My document</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 48px; color: #172033; }
+      h1 { font-size: 34px; margin-bottom: 12px; }
+      p { line-height: 1.65; color: #475569; }
+    </style>
+  </head>
+  <body>
+    <h1>Hello from Gotenui</h1>
+    <p>Every great document begins with an idea.</p>
+  </body>
+</html>`
+const EXAMPLE_MARKDOWN = `# Hello from Gotenui
+
+Turn plain text into beautiful, portable documents.
+
+- **Write** your content in Markdown
+- **Render** with Chromium
+- **Download** the result
+
+> Your documents, your infrastructure.`
+
+type Job = {
+  id: number
+  operation: string
+  name: string
+  size: number
+  elapsed: number
+  trace?: string
+}
+type Download = {
+  url: string
+  name: string
+  size: number
+  type: string
+  preview?: string
+  trace?: string
+}
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="brand-mark flex size-10 shrink-0 items-center justify-center rounded-xl text-white shadow-lg shadow-sky-950/15">
+        <Layers3 className="size-5" strokeWidth={2.2} />
+      </div>
+      {!compact && (
+        <div>
+          <p className="text-[19px] font-extrabold tracking-tight text-white">
+            Gotenui<span className="text-sky-400">.</span>
+          </p>
+          <p className="mt-[-2px] text-[10px] font-medium tracking-[.13em] text-slate-400">
+            GOTENBERG WORKSPACE
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ConnectionEditor({
+  initialUrl,
+  onSave,
+}: {
+  initialUrl: string
+  onSave: (url: string) => void
+}) {
+  const [value, setValue] = useState(initialUrl)
+  const [testing, setTesting] = useState(false)
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [isReachable, setIsReachable] = useState(false)
+  const verify = async () => {
+    setFeedback(null)
+    setTesting(true)
+    try {
+      const url = validatedBackend(value)
+      const result = await getGotenbergStatus(url, AbortSignal.timeout(7000))
+      setIsReachable(result.online)
+      setFeedback(
+        result.online
+          ? `Connected to Gotenberg ${result.version}.`
+          : (result.error ?? 'Service unavailable.'),
+      )
+    } catch (error) {
+      setIsReachable(false)
+      setFeedback(
+        error instanceof Error && error.name !== 'TimeoutError'
+          ? error.message
+          : 'Connection test timed out.',
+      )
+    } finally {
+      setTesting(false)
+    }
+  }
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    try {
+      onSave(validatedBackend(value))
+    } catch (error) {
+      setIsReachable(false)
+      setFeedback(error instanceof Error ? error.message : 'Invalid Gotenberg URL.')
+    }
+  }
+  return (
+    <form className="space-y-5" onSubmit={submit}>
+      <div className="space-y-2">
+        <Label htmlFor="gotenberg-url">Gotenberg backend URL</Label>
+        <Input
+          id="gotenberg-url"
+          type="text"
+          inputMode="url"
+          autoComplete="url"
+          autoFocus
+          spellCheck={false}
+          placeholder="http://localhost:3000 or /gotenberg"
+          required
+          value={value}
+          onChange={(event) => {
+            setValue(event.target.value)
+            setFeedback(null)
+          }}
+          className="font-mono text-xs"
+        />
+        <p className="text-xs leading-5 text-slate-500">
+          Enter a URL accessible <strong>from your browser</strong>, or a same-origin reverse-proxy
+          path like <code>/gotenberg</code>. The value is saved in this browser's local storage, not
+          sent to a Gotenui server.
+        </p>
+      </div>
+      {feedback && (
+        <p
+          role="status"
+          className={cn(
+            'rounded-lg px-3 py-3 text-xs leading-5',
+            isReachable ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900',
+          )}
+        >
+          {feedback}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit">Save connection</Button>
+        <Button type="button" variant="outline" disabled={testing} onClick={() => void verify()}>
+          <RefreshCw className={cn('size-4', testing && 'animate-spin')} />
+          {testing ? 'Testing…' : 'Test connection'}
+        </Button>
+      </div>
+      <p className="text-[11px] leading-5 text-slate-500">
+        Cross-origin connections require CORS on the Gotenberg-facing server. An HTTPS page cannot
+        use an insecure HTTP backend unless the browser explicitly permits it. No files are stored
+        by Gotenui.
+      </p>
+    </form>
+  )
+}
+
+function ConnectionSetup({ onSave }: { onSave: (url: string) => void }) {
+  return (
+    <div className="relative grid min-h-screen place-items-center overflow-hidden bg-[#091725] px-5 py-12">
+      <div className="login-glow pointer-events-none absolute -left-48 top-1/4 size-[500px] rounded-full" />
+      <div className="login-glow pointer-events-none absolute -right-32 bottom-0 size-[520px] rounded-full" />
+      <div className="relative w-full max-w-[520px]">
+        <div className="mb-9 flex justify-center">
+          <Brand />
+        </div>
+        <div className="rounded-[22px] border border-white/10 bg-white p-7 text-slate-900 shadow-[0_25px_90px_rgba(0,0,0,.38)] sm:p-10">
+          <div className="mb-6 flex size-12 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+            <Server className="size-6" />
+          </div>
+          <h1 className="text-2xl font-extrabold tracking-tight">Connect to Gotenberg</h1>
+          <p className="mb-7 mt-2 text-sm leading-6 text-slate-500">
+            Configure the service you want to use. Gotenui is a fully static application, with no
+            application backend or login server.
+          </p>
+          <ConnectionEditor initialUrl="" onSave={onSave} />
+        </div>
+        <p className="mt-7 text-center text-xs text-slate-400">
+          All conversions go straight from your browser to Gotenberg.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function ConnectionDialog({
+  url,
+  onSave,
+  onClose,
+}: {
+  url: string
+  onSave: (url: string) => void
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-5 pt-[9vh]">
+      <button
+        type="button"
+        aria-label="Close connection settings"
+        className="absolute inset-0 cursor-default"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="connection-heading"
+        className="relative w-full max-w-[520px] rounded-2xl bg-white p-6 text-slate-900 shadow-2xl sm:p-8"
+      >
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h2 id="connection-heading" className="text-lg font-extrabold tracking-tight">
+              Connection settings
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Switch Gotenberg instances whenever you need.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Close settings"
+            onClick={onClose}
+          >
+            <X className="size-5" />
+          </Button>
+        </div>
+        <ConnectionEditor initialUrl={url} onSave={onSave} />
+      </div>
+    </div>
+  )
+}
+
+function Sidebar({
+  selectedId,
+  onSelect,
+  status,
+  onSettings,
+  mobileOpen,
+  setMobileOpen,
+}: {
+  selectedId: string
+  onSelect: (id: string) => void
+  status: ServerStatus | null
+  onSettings: () => void
+  mobileOpen: boolean
+  setMobileOpen: (state: boolean) => void
+}) {
+  const [search, setSearch] = useState('')
+  const matches = useMemo(
+    () =>
+      OPERATIONS.filter((operation) =>
+        `${operation.title} ${operation.summary}`
+          .toLowerCase()
+          .includes(search.toLowerCase().trim()),
+      ),
+    [search],
+  )
+  return (
+    <>
+      {mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          className="fixed inset-0 z-30 bg-slate-950/70 lg:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-40 flex w-[270px] flex-col bg-[#0c1b2c] text-white shadow-2xl transition-transform lg:translate-x-0',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full',
+        )}
+      >
+        <div className="flex items-center justify-between border-b border-white/8 px-6 py-6">
+          <Brand />
+          <Button
+            variant="ghost"
+            size="icon"
+            type="button"
+            aria-label="Close menu"
+            className="text-slate-300 lg:hidden"
+            onClick={() => setMobileOpen(false)}
+          >
+            <PanelLeftClose className="size-5" />
+          </Button>
+        </div>
+        <div className="px-4 pt-5">
+          <div className="relative">
+            <Search className="absolute top-2.5 left-3 size-4 text-slate-500" />
+            <input
+              aria-label="Search operations"
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Find a tool..."
+              className="h-9 w-full rounded-lg border border-white/10 bg-white/5 pr-3 pl-9 text-xs text-white outline-none placeholder:text-slate-500 focus:border-sky-500 focus:ring-2 focus:ring-sky-900"
+            />
+          </div>
+        </div>
+        <nav
+          className="nav-scroll mt-5 flex-1 overflow-y-auto px-3 pb-6"
+          aria-label="Gotenberg operations"
+        >
+          {GROUPS.map((group) => {
+            const items = matches.filter((operation) => operation.group === group)
+            if (items.length === 0) return null
+            return (
+              <div key={group} className="mb-5">
+                <p className="mb-2 px-3 text-[10px] font-extrabold tracking-[.16em] text-slate-500 uppercase">
+                  {group}
+                </p>
+                <div className="space-y-0.5">
+                  {items.map((operation) => {
+                    const Icon = ICONS[operation.id] ?? FileText
+                    const active = selectedId === operation.id
+                    return (
+                      <button
+                        key={operation.id}
+                        type="button"
+                        aria-current={active ? 'page' : undefined}
+                        onClick={() => {
+                          onSelect(operation.id)
+                          setMobileOpen(false)
+                        }}
+                        className={cn(
+                          'group flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-[10px] text-left text-[13px] font-medium transition-colors',
+                          active
+                            ? 'bg-sky-500/15 text-sky-300'
+                            : 'text-slate-400 hover:bg-white/7 hover:text-white',
+                        )}
+                      >
+                        <Icon
+                          className={cn(
+                            'size-4 shrink-0',
+                            active ? 'text-sky-400' : 'text-slate-500 group-hover:text-slate-300',
+                          )}
+                        />
+                        <span className="flex-1 truncate">{operation.title}</span>
+                        {active && <span className="size-1.5 rounded-full bg-sky-400" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+          {matches.length === 0 && (
+            <p className="px-3 text-xs text-slate-400">No operations match that search.</p>
+          )}
+        </nav>
+        <div className="border-t border-white/10 px-4 py-4">
+          <div className="mb-3 flex items-center gap-3 rounded-xl bg-white/5 p-3">
+            <span
+              className={cn(
+                'relative flex size-2 shrink-0 rounded-full',
+                status?.online ? 'bg-emerald-400' : 'bg-amber-400',
+              )}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-white">Gotenberg service</p>
+              <p className="truncate text-[11px] text-slate-400">
+                {status
+                  ? status.online
+                    ? `Online · ${status.version}`
+                    : 'Not responding'
+                  : 'Checking connection...'}
+              </p>
+            </div>
+            <Activity className="size-4 text-slate-500" />
+          </div>
+          <button
+            type="button"
+            className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-xs font-medium text-slate-400 transition-colors hover:bg-white/7 hover:text-white"
+            onClick={onSettings}
+          >
+            <Settings2 className="size-4" />
+            Connection settings
+          </button>
+        </div>
+      </aside>
+    </>
+  )
+}
+
+function FieldControl({
+  field,
+  value,
+  onChange,
+}: {
+  field: FieldDefinition
+  value: string | boolean | undefined
+  onChange: (value: string | boolean) => void
+}) {
+  const id = useId()
+  if (field.kind === 'toggle')
+    return (
+      <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 bg-slate-50/50 px-3.5 py-3">
+        <div>
+          <Label htmlFor={id} className="cursor-pointer">
+            {field.label}
+          </Label>
+          {field.description && <p className="mt-1 text-xs text-slate-500">{field.description}</p>}
+        </div>
+        <Switch id={id} checked={value === true} onCheckedChange={onChange} />
+      </div>
+    )
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>
+        {field.label}
+        {field.required && <span className="ml-1 text-red-500">*</span>}
+      </Label>
+      {field.kind === 'select' ? (
+        <div className="relative">
+          <select
+            id={id}
+            className="h-11 w-full appearance-none rounded-lg border border-slate-200 bg-white px-3.5 pr-9 text-sm text-slate-900 outline-none focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-100"
+            value={String(value ?? '')}
+            onChange={(event) => onChange(event.target.value)}
+            required={field.required}
+          >
+            {!field.required && <option value="">Default / not set</option>}
+            {field.options?.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute top-3.5 right-3 size-4 text-slate-400" />
+        </div>
+      ) : field.kind === 'json' ? (
+        <Textarea
+          id={id}
+          rows={4}
+          spellCheck={false}
+          className="font-mono text-xs"
+          placeholder={field.placeholder ?? '{ }'}
+          value={String(value ?? '')}
+          onChange={(event) => onChange(event.target.value)}
+          required={field.required}
+        />
+      ) : (
+        <Input
+          id={id}
+          type={
+            field.kind === 'password'
+              ? 'password'
+              : field.kind === 'number'
+                ? 'number'
+                : field.kind === 'url'
+                  ? 'url'
+                  : 'text'
+          }
+          min={field.min}
+          max={field.max}
+          step={field.kind === 'number' ? 'any' : undefined}
+          autoComplete={field.kind === 'password' ? 'new-password' : undefined}
+          placeholder={field.placeholder}
+          value={String(value ?? '')}
+          onChange={(event) => onChange(event.target.value)}
+          required={field.required}
+        />
+      )}
+      {field.description && <p className="text-xs text-slate-500">{field.description}</p>}
+    </div>
+  )
+}
+
+function JobPanel({
+  operation,
+  files,
+  auxFiles,
+  source,
+  pending,
+  lastDownload,
+  recent,
+}: {
+  operation: Operation
+  files: File[]
+  auxFiles: File[]
+  source: string
+  pending: boolean
+  lastDownload: Download | null
+  recent: Job[]
+}) {
+  const Icon = ICONS[operation.id] ?? FileText
+  return (
+    <div className="space-y-5 lg:sticky lg:top-7 lg:self-start">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Settings2 className="size-4 text-sky-600" />
+            <h2 className="text-sm font-bold text-slate-900">Job overview</h2>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="flex items-center gap-3">
+            <div className="flex size-11 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+              <Icon className="size-5" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-slate-900">{operation.title}</p>
+              <p className="mt-0.5 text-xs text-slate-500">{operation.group}</p>
+            </div>
+          </div>
+          <div className="space-y-3 border-t border-slate-100 pt-4">
+            <div className="flex justify-between gap-4 text-xs">
+              <span className="text-slate-500">Method</span>
+              <span className="font-mono font-semibold text-slate-700">POST</span>
+            </div>
+            <div className="space-y-1">
+              <span className="text-xs text-slate-500">Gotenberg endpoint</span>
+              <code className="block break-all rounded-lg bg-slate-100 px-3 py-2.5 text-[11px] leading-5 text-slate-700">
+                {operation.path}
+              </code>
+            </div>
+            <div className="flex justify-between gap-4 text-xs">
+              <span className="text-slate-500">Files selected</span>
+              <span className="font-semibold text-slate-700">{files.length + auxFiles.length}</span>
+            </div>
+            <div className="flex justify-between gap-4 text-xs">
+              <span className="text-slate-500">Upload size</span>
+              <span className="font-semibold text-slate-700">
+                {formatBytes(
+                  [...files, ...auxFiles].reduce((sum, file) => sum + file.size, 0) +
+                    new TextEncoder().encode(source).byteLength,
+                )}
+              </span>
+            </div>
+            <div className="flex justify-between gap-4 text-xs">
+              <span className="text-slate-500">Target output</span>
+              <span className="font-semibold uppercase text-slate-700">
+                {operation.output === 'image'
+                  ? 'PNG / JPEG / WebP'
+                  : operation.output === 'pdf'
+                    ? 'PDF / ZIP'
+                    : operation.output}
+              </span>
+            </div>
+          </div>
+          <p className="flex items-start gap-2 rounded-lg bg-sky-50 px-3 py-3 text-[11px] leading-5 text-sky-800">
+            <ShieldCheck className="mt-0.5 size-4 shrink-0" />
+            Your browser sends document files directly to the configured Gotenberg service. Protect
+            access to that service on your network.
+          </p>
+        </CardContent>
+      </Card>
+      {(pending || lastDownload) && (
+        <Card>
+          <CardHeader>
+            <h2 className="text-sm font-bold text-slate-900">Latest result</h2>
+          </CardHeader>
+          <CardContent>
+            {pending ? (
+              <div className="flex items-center gap-3 text-sm text-slate-500">
+                <RefreshCw className="size-5 animate-spin text-sky-600" />
+                Processing document...
+              </div>
+            ) : (
+              lastDownload && (
+                <>
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="flex size-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                      <Check className="size-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-slate-900">
+                        {lastDownload.name}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {formatBytes(lastDownload.size)} · Ready
+                      </p>
+                    </div>
+                  </div>
+                  {lastDownload.type.startsWith('image/') && (
+                    <img
+                      className="mb-4 max-h-52 w-full rounded-lg border border-slate-100 object-contain"
+                      src={lastDownload.url}
+                      alt="Latest screenshot"
+                    />
+                  )}
+                  {lastDownload.preview && (
+                    <pre className="mb-4 max-h-56 overflow-auto rounded-lg bg-slate-950 p-3 text-[11px] leading-5 text-sky-100">
+                      {lastDownload.preview}
+                    </pre>
+                  )}
+                  <a
+                    className="flex h-10 items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 text-xs font-bold text-white hover:bg-sky-700"
+                    href={lastDownload.url}
+                    download={lastDownload.name}
+                  >
+                    <ArrowDownToLine className="size-4" />
+                    Download again
+                  </a>
+                  {lastDownload.trace && (
+                    <p className="mt-3 break-all text-[10px] text-slate-400">
+                      Trace: {lastDownload.trace}
+                    </p>
+                  )}
+                </>
+              )
+            )}
+          </CardContent>
+        </Card>
+      )}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Clock3 className="size-4 text-slate-500" />
+            <h2 className="text-sm font-bold text-slate-900">Session activity</h2>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {recent.length === 0 ? (
+            <div className="py-3 text-center">
+              <div className="mx-auto mb-3 flex size-10 items-center justify-center rounded-full bg-slate-100">
+                <FileDown className="size-4 text-slate-400" />
+              </div>
+              <p className="text-xs font-semibold text-slate-700">Nothing processed yet</p>
+              <p className="mt-1 text-xs text-slate-400">Your recent jobs will appear here.</p>
+            </div>
+          ) : (
+            <ul className="space-y-4">
+              {recent.map((job) => (
+                <li key={job.id} className="flex items-start gap-2.5">
+                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-slate-800">{job.name}</p>
+                    <p className="mt-0.5 text-[11px] text-slate-400">
+                      {job.operation} · {(job.elapsed / 1000).toFixed(1)}s · {formatBytes(job.size)}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function Workbench({
+  operation,
+  recent,
+  onCompleted,
+  backendUrl,
+}: {
+  operation: Operation
+  recent: Job[]
+  onCompleted: (job: Job) => void
+  backendUrl: string
+}) {
+  const [fields, setFields] = useState<Record<string, string | boolean>>(() =>
+    operationDefaults(operation),
+  )
+  const [source, setSource] = useState(EXAMPLE_HTML)
+  const [files, setFiles] = useState<File[]>([])
+  const [auxFiles, setAuxFiles] = useState<File[]>([])
+  const [advanced, setAdvanced] = useState('')
+  const [outputName, setOutputName] = useState('')
+  const [pending, setPending] = useState(false)
+  const [lastDownload, setLastDownload] = useState<Download | null>(null)
+  const fileUrl = useRef<string | null>(null)
+  const requestAbort = useRef<AbortController | null>(null)
+  useEffect(
+    () => () => {
+      requestAbort.current?.abort()
+      if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
+    },
+    [],
+  )
+  useEffect(() => {
+    if (backendUrl) requestAbort.current?.abort()
+  }, [backendUrl])
+  useEffect(() => {
+    setFields(operationDefaults(operation))
+    setSource(operation.input === 'markdown' ? EXAMPLE_MARKDOWN : EXAMPLE_HTML)
+    setFiles([])
+    setAuxFiles([])
+    setAdvanced('')
+    setOutputName('')
+    setLastDownload(null)
+    if (fileUrl.current) {
+      URL.revokeObjectURL(fileUrl.current)
+      fileUrl.current = null
+    }
+  }, [operation])
+  const basicFields = operation.fields.filter((field) => !field.advanced)
+  const advancedFields = operation.fields.filter((field) => field.advanced)
+  const hasUpload = operation.input === 'pdf' || operation.input === 'office'
+  const isSourceEditor = operation.input === 'html' || operation.input === 'markdown'
+  const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
+  const operationHasFileAssets = isSourceEditor
+  const docsUrl = `https://gotenberg.dev/docs/${operation.docs}`
+
+  const updateField = (name: string, value: string | boolean) =>
+    setFields((current) => ({ ...current, [name]: value }))
+  const updateAux = (selected: File[]) => {
+    setAuxFiles(selected)
+    if ((operation.id === 'watermark' || operation.id === 'stamp') && selected[0]) {
+      setFields((current) => ({
+        ...current,
+        [`${operation.id}Expression`]: selected[0]?.name ?? '',
+      }))
+    }
+  }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (pending) return
+    setPending(true)
+    try {
+      const candidate = {
+        operation: operation.id,
+        fields,
+        source: isSourceEditor ? source : undefined,
+        advanced: parseAdvanced(advanced),
+        outputName: outputName.trim() || undefined,
+      }
+      const start = performance.now()
+      const controller = new AbortController()
+      requestAbort.current = controller
+      const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      const signal = AbortSignal.any([controller.signal, deadline])
+      const result = await convertWithGotenberg(backendUrl, candidate, files, auxFiles, signal)
+      if (signal.aborted) {
+        if (deadline.aborted) toast.error('Gotenberg did not respond within three minutes.')
+        return
+      }
+      const { blob, type, name, trace } = result
+      const url = URL.createObjectURL(blob)
+      if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
+      fileUrl.current = url
+      const preview = type === 'application/json' ? (await blob.text()).slice(0, 16_000) : undefined
+      setLastDownload({ name, size: blob.size, type, url, preview, trace })
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = name
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      onCompleted({
+        id: Date.now(),
+        operation: operation.title,
+        name,
+        size: blob.size,
+        elapsed: performance.now() - start,
+        trace,
+      })
+      toast.success(`${name} is ready to download`)
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        toast.message('Conversion cancelled.')
+        return
+      }
+      if (error instanceof Error && error.name === 'TimeoutError') {
+        toast.error('Gotenberg did not respond within three minutes.')
+        return
+      }
+      const message =
+        error instanceof InputError || error instanceof Error
+          ? error.message
+          : 'Something went wrong.'
+      toast.error(message)
+    } finally {
+      requestAbort.current = null
+      setPending(false)
+    }
+  }
+  return (
+    <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
+      <form className="min-w-0 space-y-5" onSubmit={submit}>
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-[11px] font-bold tracking-[.1em] text-sky-700 uppercase">
+                  <span className="size-1.5 rounded-full bg-sky-500" />
+                  Step 01 / Your input
+                </div>
+                <h2 className="text-base font-extrabold text-slate-900">Source document</h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Provide the content you want Gotenberg to process.
+                </p>
+              </div>
+              <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                {hasUpload ? (
+                  <FileUp className="size-5" />
+                ) : isSourceEditor ? (
+                  <Code2 className="size-5" />
+                ) : (
+                  <Globe2 className="size-5" />
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {hasUpload && (
+              <UploadZone
+                label={
+                  operation.input === 'pdf' ? 'Upload PDF documents' : 'Upload Office documents'
+                }
+                description={
+                  operation.id === 'merge'
+                    ? 'Select at least two PDF files. Their order below determines the merged result.'
+                    : operation.input === 'pdf'
+                      ? 'Select PDF files to process. Multiple files may produce a ZIP archive.'
+                      : 'Word, Excel, PowerPoint, OpenDocument, images and other supported formats.'
+                }
+                files={files}
+                onChange={setFiles}
+                accept={
+                  operation.input === 'pdf'
+                    ? '.pdf,application/pdf'
+                    : '.doc,.docx,.docm,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp,.pps,.pages,.numbers,.key,.svg,.png,.jpg,.jpeg,.gif,.tiff,.bmp,.html,.epub,.pdf,.xml'
+                }
+                multiple={true}
+                reorder={operation.id === 'merge'}
+              />
+            )}
+            {operation.input === 'url' && (
+              <FieldControl
+                field={operation.fields[0] as FieldDefinition}
+                value={fields.url}
+                onChange={(value) => updateField('url', value)}
+              />
+            )}
+            {isSourceEditor && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="source-editor">{sourceExtension} source</Label>
+                  <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] font-semibold text-slate-500">
+                    {operation.input === 'html' ? 'index.html' : 'document.md'}
+                  </span>
+                </div>
+                <Textarea
+                  id="source-editor"
+                  spellCheck={false}
+                  rows={14}
+                  value={source}
+                  onChange={(event) => setSource(event.target.value)}
+                  className="min-h-72 resize-y bg-[#0d1e2e] p-5 font-mono text-xs leading-6 text-sky-100 focus-visible:border-sky-500"
+                />
+                <p className="text-xs text-slate-500">
+                  {operation.input === 'html'
+                    ? 'HTML renders with Chromium, including inline CSS and scripts.'
+                    : 'Gotenui adds the required index.html template automatically.'}
+                </p>
+              </div>
+            )}
+            {operationHasFileAssets && (
+              <UploadZone
+                label="Optional assets"
+                description="Attach local images, fonts or stylesheets. Reference them by filename in the source."
+                files={auxFiles}
+                onChange={setAuxFiles}
+                multiple={true}
+              />
+            )}
+            {operation.auxiliary && (
+              <UploadZone
+                label={operation.auxiliary.label}
+                description={operation.auxiliary.description}
+                files={auxFiles}
+                onChange={updateAux}
+                multiple={operation.auxiliary.multiple}
+                accept={operation.auxiliary.accept}
+              />
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <div className="mb-2 flex items-center gap-2 text-[11px] font-bold tracking-[.1em] text-sky-700 uppercase">
+              <span className="size-1.5 rounded-full bg-sky-500" />
+              Step 02 / Configure
+            </div>
+            <h2 className="text-base font-extrabold text-slate-900">Output settings</h2>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              Fine-tune how your output should look and behave.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {basicFields.filter((field) => !(operation.input === 'url' && field.name === 'url'))
+              .length > 0 ? (
+              <div className="grid gap-x-4 gap-y-5 sm:grid-cols-2">
+                {basicFields
+                  .filter((field) => !(operation.input === 'url' && field.name === 'url'))
+                  .map((field) => (
+                    <FieldControl
+                      key={field.name}
+                      field={field}
+                      value={fields[field.name]}
+                      onChange={(value) => updateField(field.name, value)}
+                    />
+                  ))}
+              </div>
+            ) : (
+              <p className="rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                This operation works with its default settings.
+              </p>
+            )}
+            <div className="space-y-2 border-t border-slate-100 pt-5">
+              <Label htmlFor="output-filename">
+                Output filename <span className="font-normal text-slate-400">(optional)</span>
+              </Label>
+              <Input
+                id="output-filename"
+                value={outputName}
+                onChange={(event) => setOutputName(event.target.value)}
+                placeholder={`e.g. ${operation.id}-result (without extension)`}
+                maxLength={100}
+              />
+              <p className="text-xs text-slate-500">
+                Gotenberg adds the file extension automatically.
+              </p>
+            </div>
+            <details
+              className="group rounded-xl border border-slate-200 bg-slate-50/50"
+              open={undefined}
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-4 text-sm font-semibold text-slate-700 marker:hidden">
+                <span className="flex items-center gap-2">
+                  <Settings2 className="size-4 text-slate-500" />
+                  Advanced options
+                </span>
+                <ChevronDown className="size-4 text-slate-400 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="space-y-5 border-t border-slate-200 px-4 py-5">
+                {advancedFields.length > 0 && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {advancedFields.map((field) => (
+                      <FieldControl
+                        key={field.name}
+                        field={field}
+                        value={fields[field.name]}
+                        onChange={(value) => updateField(field.name, value)}
+                      />
+                    ))}
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="additional-fields">Additional Gotenberg form fields (JSON)</Label>
+                  <Textarea
+                    id="additional-fields"
+                    rows={4}
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                    placeholder={'{ "waitForExpression": "window.ready === true" }'}
+                    value={advanced}
+                    onChange={(event) => setAdvanced(event.target.value)}
+                  />
+                  <p className="text-[11px] leading-5 text-slate-500">
+                    Use this for documented options not shown above. Enter flat JSON key/value
+                    pairs. Webhooks and remote-file downloads are intentionally disabled.
+                  </p>
+                </div>
+              </div>
+            </details>
+          </CardContent>
+        </Card>
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <ShieldCheck className="size-4 text-emerald-500" />
+            <span>Direct browser-to-Gotenberg processing</span>
+          </div>
+          {pending && (
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              onClick={() => requestAbort.current?.abort()}
+            >
+              Cancel
+            </Button>
+          )}
+          <Button type="submit" size="lg" disabled={pending} className="min-w-44">
+            {pending ? (
+              <RefreshCw className="size-4 animate-spin" />
+            ) : (
+              <Play className="size-4 fill-current" />
+            )}
+            {pending ? 'Processing...' : 'Run operation'}
+          </Button>
+        </div>
+      </form>
+      <JobPanel
+        operation={operation}
+        files={files}
+        auxFiles={auxFiles}
+        source={isSourceEditor ? source : ''}
+        pending={pending}
+        lastDownload={lastDownload}
+        recent={recent}
+      />
+      <a
+        href={docsUrl}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="flex items-center gap-2 text-xs font-semibold text-sky-700 hover:text-sky-900 xl:col-span-2"
+      >
+        <ExternalLink className="size-4" />
+        Review official Gotenberg documentation for {operation.title}
+      </a>
+    </div>
+  )
+}
+
+function Workspace({
+  backendUrl,
+  onChangeUrl,
+}: {
+  backendUrl: string
+  onChangeUrl: (url: string) => void
+}) {
+  const [selectedId, setSelectedId] = useState('url-pdf')
+  const [status, setStatus] = useState<ServerStatus | null>(null)
+  const [statusLoading, setStatusLoading] = useState(true)
+  const [recent, setRecent] = useState<Job[]>([])
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const operation = OPERATION_BY_ID.get(selectedId) ?? (OPERATIONS[0] as Operation)
+  const Icon = ICONS[operation.id] ?? FileText
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const statusAbort = useRef<AbortController | null>(null)
+  const refreshStatus = useCallback(async () => {
+    statusAbort.current?.abort()
+    const controller = new AbortController()
+    statusAbort.current = controller
+    setStatusLoading(true)
+    const timeout = window.setTimeout(() => controller.abort(), 7_000)
+    try {
+      const result = await getGotenbergStatus(backendUrl, controller.signal)
+      if (!controller.signal.aborted) setStatus(result)
+    } catch {
+      if (statusAbort.current === controller) {
+        setStatus({
+          online: false,
+          version: 'Unavailable',
+          modules: [],
+          error: 'Connection test timed out.',
+        })
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (statusAbort.current === controller) {
+        statusAbort.current = null
+        setStatusLoading(false)
+      }
+    }
+  }, [backendUrl])
+  useEffect(() => {
+    setStatus(null)
+    void refreshStatus()
+    const timer = window.setInterval(() => void refreshStatus(), 30_000)
+    return () => {
+      window.clearInterval(timer)
+      statusAbort.current?.abort()
+      statusAbort.current = null
+    }
+  }, [refreshStatus])
+  const updateUrl = (url: string) => {
+    onChangeUrl(url)
+    setSettingsOpen(false)
+  }
+  return (
+    <div className="min-h-screen bg-[#f6f8fb] text-slate-900">
+      <Sidebar
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        status={status}
+        onSettings={() => setSettingsOpen(true)}
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+      />
+      <div className="min-h-screen lg:pl-[270px]">
+        <header className="sticky top-0 z-20 flex h-[72px] items-center justify-between gap-3 border-b border-slate-200/80 bg-white/95 px-5 backdrop-blur-xl md:px-9">
+          <div className="flex min-w-0 items-center gap-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="lg:hidden"
+              aria-label="Open menu"
+              onClick={() => setMobileOpen(true)}
+            >
+              <Menu className="size-5" />
+            </Button>
+            <span className="truncate text-xs font-semibold text-slate-500">Workspace</span>
+            <span className="text-slate-300">/</span>
+            <span className="truncate text-xs font-bold text-slate-900">{operation.group}</span>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <div
+              className={cn(
+                'hidden items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold sm:flex',
+                status?.online
+                  ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                  : 'border-amber-100 bg-amber-50 text-amber-700',
+              )}
+            >
+              <span
+                className={cn(
+                  'size-1.5 rounded-full',
+                  status?.online ? 'bg-emerald-500' : 'bg-amber-500',
+                )}
+              />
+              {status?.online
+                ? 'Service online'
+                : statusLoading
+                  ? 'Checking...'
+                  : 'Service offline'}
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Refresh service status"
+              onClick={() => void refreshStatus()}
+              disabled={statusLoading}
+            >
+              <RefreshCw className={cn('size-4', statusLoading && 'animate-spin')} />
+            </Button>
+            <span className="mx-1 h-5 w-px bg-slate-200" />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSettingsOpen(true)}
+              title={backendUrl}
+            >
+              <Settings2 className="size-4" />
+              <span className="hidden max-w-44 truncate md:inline">{backendUrl}</span>
+              <span className="md:hidden">Settings</span>
+            </Button>
+          </div>
+        </header>
+        <main className="mx-auto max-w-[1390px] px-5 pt-8 pb-14 md:px-9 md:pt-10">
+          <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
+            <div className="max-w-2xl">
+              <p className="mb-3 flex items-center gap-2 text-[11px] font-extrabold tracking-[.16em] text-sky-700 uppercase">
+                <Sparkles className="size-3.5" />
+                Document operations
+              </p>
+              <div className="flex items-center gap-3">
+                <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-sky-100 bg-sky-50 text-sky-600">
+                  <Icon className="size-6" />
+                </div>
+                <h1 className="text-[29px] font-extrabold tracking-[-.04em] text-slate-950 sm:text-[36px]">
+                  {operation.title}
+                </h1>
+              </div>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-slate-500">
+                {operation.summary} Configure your output and let Gotenberg take care of the rest.
+              </p>
+            </div>
+            <a
+              href="https://gotenberg.dev/docs/getting-started/routes"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
+            >
+              <FileText className="size-4" />
+              API reference
+              <ExternalLink className="size-3.5" />
+            </a>
+          </div>
+          <div className="mb-7 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-200/80 bg-white px-4 py-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-500">Connection</span>
+                <Activity className="size-4 text-slate-400" />
+              </div>
+              <p className="mt-2 flex items-center gap-2 text-base font-extrabold text-slate-900">
+                <span
+                  className={cn(
+                    'size-2 rounded-full',
+                    status?.online ? 'bg-emerald-500' : 'bg-amber-500',
+                  )}
+                />
+                {status?.online ? 'Operational' : statusLoading ? 'Checking' : 'Unavailable'}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200/80 bg-white px-4 py-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-500">Gotenberg version</span>
+                <Layers3 className="size-4 text-slate-400" />
+              </div>
+              <p className="mt-2 truncate text-base font-extrabold text-slate-900">
+                {status?.version ?? '—'}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200/80 bg-white px-4 py-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-500">Modules healthy</span>
+                <CheckCircle2 className="size-4 text-slate-400" />
+              </div>
+              <p className="mt-2 text-base font-extrabold text-slate-900">
+                {status?.modules.length
+                  ? `${status.modules.filter((module) => module.status === 'up').length} / ${status.modules.length}`
+                  : '—'}
+              </p>
+            </div>
+          </div>
+          {status?.error && (
+            <div
+              role="status"
+              className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"
+            >
+              <p className="max-w-3xl text-xs leading-5 text-amber-900">{status.error}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSettingsOpen(true)}
+              >
+                Edit URL
+              </Button>
+            </div>
+          )}
+          <div className="mb-6 flex flex-wrap items-center gap-2">
+            <p className="mr-1 text-xs font-bold text-slate-500">Quick access</p>
+            {OPERATIONS.filter((item) => item.featured).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setSelectedId(item.id)}
+                className={cn(
+                  'cursor-pointer rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors',
+                  selectedId === item.id
+                    ? 'border-sky-200 bg-sky-50 text-sky-700'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:text-sky-700',
+                )}
+              >
+                {item.title}
+              </button>
+            ))}
+          </div>
+          <Workbench
+            key={operation.id}
+            operation={operation}
+            recent={recent}
+            onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
+            backendUrl={backendUrl}
+          />
+          <footer className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-5 text-[11px] text-slate-400">
+            <span>Gotenui · Static document workbench</span>
+            <span>TanStack Start SPA · Connected directly to Gotenberg</span>
+          </footer>
+        </main>
+      </div>
+      {settingsOpen && (
+        <ConnectionDialog
+          url={backendUrl}
+          onSave={updateUrl}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+export function GotenuiApp() {
+  const [checking, setChecking] = useState(true)
+  const [backendUrl, setBackendUrl] = useState('')
+  useEffect(() => {
+    const storage = browserStorage()
+    const stored = loadBackendUrl(storage)
+    const selected = stored || DEFAULT_BACKEND_URL
+    if (!stored && selected) saveBackendUrl(storage, selected)
+    setBackendUrl(selected)
+    setChecking(false)
+  }, [])
+  const save = (url: string) => {
+    const normalized = validatedBackend(url)
+    if (!saveBackendUrl(browserStorage(), normalized)) {
+      toast.warning('Browser storage is unavailable; this connection will last for this tab only.')
+    } else {
+      toast.success('Gotenberg URL saved to local storage.')
+    }
+    setBackendUrl(normalized)
+  }
+  if (checking)
+    return (
+      <div className="grid min-h-screen place-items-center bg-[#0c1b2c]">
+        <div className="flex items-center gap-3 text-sm font-semibold text-white">
+          <RefreshCw className="size-5 animate-spin text-sky-400" />
+          Opening Gotenui...
+        </div>
+      </div>
+    )
+  return backendUrl ? (
+    <Workspace backendUrl={backendUrl} onChangeUrl={save} />
+  ) : (
+    <ConnectionSetup onSave={save} />
+  )
+}
