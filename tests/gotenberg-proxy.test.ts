@@ -378,3 +378,85 @@ test('Gotenberg JSON metadata endpoints do not receive a binary output filename 
   })
   assert.equal(response.status, 200)
 })
+
+test('the proxy reconstitutes Chromium headers and named Markdown assets without raw header forwarding', async () => {
+  const header = '<html><head></head><body>Header</body></html>'
+  const footer = '<html><head></head><body>Footer</body></html>'
+  const template =
+    '<html><head><link rel="stylesheet" href="theme.css"></head><body>{{ toHTML "first.md" }}{{ toHTML "second.md" }}</body></html>'
+  const fields = new FormData()
+  fields.set(
+    'payload',
+    JSON.stringify({
+      operation: 'markdown-pdf',
+      fields: {},
+      advanced: {},
+      source: '# First',
+      markdownName: 'first.md',
+      markdownFiles: [{ name: 'second.md', content: '# Second' }],
+      markdownTemplate: template,
+      headerHtml: header,
+      footerHtml: footer,
+    }),
+  )
+  fields.append('auxiliary', new File(['body { color: blue }'], 'theme.css'))
+  const request = new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: { Origin: origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000', Cookie: 'secret=1' },
+    body: fields,
+  })
+  const response = await proxyConversionRequest(request, async (url, options) => {
+    assert.equal(String(url), 'http://127.0.0.1:3000/forms/chromium/convert/markdown')
+    const headers = new Headers(options?.headers)
+    assert.equal(headers.get('Cookie'), null)
+    assert.equal(headers.get('Content-Type'), null)
+    assert.equal(headers.get('Gotenberg-Webhook-Url'), null)
+    const form = options?.body
+    assert.ok(form instanceof FormData)
+    assert.deepEqual(
+      (form.getAll('files') as File[]).map((file) => file.name),
+      ['index.html', 'first.md', 'second.md', 'theme.css', 'header.html', 'footer.html'],
+    )
+    assert.equal(form.has('index.html'), false)
+    const fileList = form.getAll('files') as File[]
+    assert.equal(await fileList[0]?.text(), template)
+    assert.equal(await fileList[1]?.text(), '# First')
+    assert.equal(await fileList[2]?.text(), '# Second')
+    assert.equal(await fileList[4]?.text(), header)
+    assert.equal(await fileList[5]?.text(), footer)
+    assert.equal(form.has('headerHtml'), false)
+    assert.equal(form.has('footerHtml'), false)
+    assert.equal(form.has('markdownTemplate'), false)
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  })
+  assert.equal(response.status, 200)
+})
+
+test('the proxy rejects reserved asset filenames before contacting the backend', async () => {
+  const form = new FormData()
+  form.set(
+    'payload',
+    JSON.stringify({
+      operation: 'html-pdf',
+      fields: {},
+      advanced: {},
+      source: '<html><body>Hi</body></html>',
+      headerHtml: '<html><head></head><body>Header</body></html>',
+    }),
+  )
+  form.append('auxiliary', new File(['forged'], 'header.html'))
+  const request = new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: { Origin: origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
+    body: form,
+  })
+  let calls = 0
+  await assert.rejects(
+    proxyConversionRequest(request, async () => {
+      calls++
+      return new Response('not expected')
+    }),
+    /Duplicate filename: header.html/,
+  )
+  assert.equal(calls, 0)
+})

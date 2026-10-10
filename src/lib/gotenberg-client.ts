@@ -1,5 +1,6 @@
 import * as v from 'valibot'
 import { normalizeBackendUrl } from '#/lib/backend-url'
+import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import type { Operation } from '#/lib/operations'
@@ -178,16 +179,23 @@ export function createGotenbergForm(
   }
   if (payload.downloadFrom?.length) form.set('downloadFrom', JSON.stringify(payload.downloadFrom))
   if (operation.input === 'html' || operation.input === 'markdown') {
+    const markdownNames = [
+      payload.markdownName ?? DEFAULT_MARKDOWN_NAME,
+      ...(payload.markdownFiles ?? []).map((file) => file.name),
+    ]
     const html =
       operation.input === 'html'
         ? (payload.source ?? '')
-        : '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Markdown</title><style>body{font:16px/1.6 system-ui;margin:40px auto;max-width:820px;padding:0 24px}</style></head><body>{{ toHTML "document.md" }}</body></html>'
+        : (payload.markdownTemplate ?? defaultMarkdownTemplate(markdownNames))
     form.append('files', new File([html], 'index.html', { type: 'text/html' }))
     if (operation.input === 'markdown') {
       form.append(
         'files',
-        new File([payload.source ?? ''], 'document.md', { type: 'text/markdown' }),
+        new File([payload.source ?? ''], markdownNames[0], { type: 'text/markdown' }),
       )
+      for (const file of payload.markdownFiles ?? []) {
+        form.append('files', new File([file.content], file.name, { type: 'text/markdown' }))
+      }
     }
     for (const file of auxiliary) form.append('files', file, file.name)
   } else {
@@ -199,6 +207,12 @@ export function createGotenbergForm(
     if (operation.auxiliary) {
       for (const file of auxiliary) form.append(operation.auxiliary.name, file, file.name)
     }
+  }
+  if (payload.headerHtml !== undefined) {
+    form.append('files', new File([payload.headerHtml], 'header.html', { type: 'text/html' }))
+  }
+  if (payload.footerHtml !== undefined) {
+    form.append('files', new File([payload.footerHtml], 'footer.html', { type: 'text/html' }))
   }
   return form
 }

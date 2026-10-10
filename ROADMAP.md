@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.19 (P0 merge ordering and request metadata implemented; metadata regression-test typecheck fixed).
+- **Baseline:** v1.0.20 (Chromium PDF document assets and multi-file Markdown templates implemented).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -24,7 +24,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.17** | Documentation | This roadmap | Track gaps, constraints, acceptance criteria, and references only. |
 | **v1.0.18** | P0 | Merge ordering and request metadata | Done: ordered local merges, output filename, correlation ID, W3C trace context. |
 | **v1.0.19** | Fix | Metadata assertion typecheck | Fix Node.js assertion matcher typing in the request-metadata regression test; no runtime behaviour change. |
-| **v1.0.20** | P1 | Chromium document assets | Custom `header.html` / `footer.html` uploads and editable Markdown template(s) with multiple Markdown sources. |
+| **v1.0.20** | P1 | Chromium document assets | Done: named header/footer HTML parts, Markdown templates and ordered multi-file sources with collision validation and tests. |
 | **v1.0.21** | P1 | Conversion plus PDF post-processing | Enable supported single-request watermark, stamp, attachments, and Factur-X inputs on applicable conversion operations. |
 | **v1.0.22** | P1 | Multiple overlays | Repeated watermark/stamp field groups, ordered supporting files, and correct multipart serialization. |
 | **v1.0.23** | P2 | Advanced conversion controls | First-class commonly used Chromium and LibreOffice options with accurate defaults and validation. |
@@ -57,19 +57,19 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 
 **Current gap:** URL-to-PDF has no supporting-file upload flow, so the user cannot supply `header.html` or `footer.html`. HTML/Markdown users may be able to attach these as generic assets, but there is no dedicated validated workflow.
 
-- [ ] Expose optional HTML header and footer editors or uploads on the applicable PDF conversion operations.
-- [ ] Send named `header.html` and `footer.html` files through the correct Gotenberg multipart `files` field; reject duplicate or reserved filenames.
-- [ ] Explain that headers/footers run in an isolated Chromium context: use complete HTML, inline assets, and suitable page margins; external resources and scripts are unavailable.
-- [ ] Cover URL/HTML/Markdown PDF output and invalid header/footer fixtures. Avoid showing PDF header controls on screenshot-only operations.
+- [x] Expose optional HTML header and footer editors or uploads on the applicable PDF conversion operations.
+- [x] Send named `header.html` and `footer.html` files through the correct Gotenberg multipart `files` field; reject duplicate or reserved filenames.
+- [x] Explain that headers/footers run in an isolated Chromium context: use complete HTML, inline assets, and suitable page margins; external resources and scripts are unavailable.
+- [x] Cover URL/HTML/Markdown PDF output and invalid header/footer fixtures. Avoid showing PDF header controls on screenshot-only operations.
 
 #### 4. Custom Markdown templates and multiple Markdown files
 
 **Current gap:** The client synthesises one fixed `index.html` template and one `document.md` file. Gotenberg accepts a custom `index.html` containing `{{ toHTML "file.md" }}` calls and multiple `.md` files.
 
-- [ ] Allow the template to be edited or uploaded, with a working generated default.
-- [ ] Support multiple named Markdown files and deterministic ordering without filename collisions; keep optional non-Markdown assets.
-- [ ] Reject missing/duplicate reserved filenames and provide useful feedback for invalid template references.
-- [ ] Test a custom template, multiple Markdown files, local assets, and backwards-compatible default output.
+- [x] Allow the template to be edited or uploaded, with a working generated default.
+- [x] Support multiple named Markdown files and deterministic ordering without filename collisions; keep optional non-Markdown assets.
+- [x] Reject missing/duplicate reserved filenames and provide useful feedback for invalid template references.
+- [x] Test a custom template, multiple Markdown files, local assets, and backwards-compatible default output.
 
 #### 5. One-step conversion and PDF-engine post-processing
 

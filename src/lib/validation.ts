@@ -1,8 +1,17 @@
 import * as v from 'valibot'
+import {
+  DEFAULT_MARKDOWN_NAME,
+  defaultMarkdownTemplate,
+  markdownTemplateReferences,
+} from '#/lib/chromium-documents'
 import { OPERATION_BY_ID, type Operation } from '#/lib/operations'
 
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
+const markdownFileSchema = v.object({
+  name: v.pipe(v.string(), v.minLength(1), v.maxLength(155)),
+  content: v.pipe(v.string(), v.maxLength(300_000)),
+})
 
 const remoteFileSchema = v.object({
   url: v.pipe(v.string(), v.maxLength(2048)),
@@ -28,6 +37,11 @@ export const payloadSchema = v.object({
   fields: v.record(v.string(), fieldValue),
   advanced: v.record(v.string(), advancedValue),
   source: v.optional(v.pipe(v.string(), v.maxLength(300_000))),
+  markdownName: v.optional(v.pipe(v.string(), v.maxLength(155))),
+  markdownFiles: v.optional(v.pipe(v.array(markdownFileSchema), v.maxLength(19))),
+  markdownTemplate: v.optional(v.pipe(v.string(), v.maxLength(150_000))),
+  headerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
+  footerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
   requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
   traceparent: v.optional(v.pipe(v.string(), v.maxLength(55))),
@@ -108,6 +122,77 @@ export function safeFilename(name: string): string {
   return name
 }
 
+function markdownName(name: string): string {
+  safeFilename(name)
+  if (!/\.md$/i.test(name)) throw new InputError(`Markdown filename must end in .md: ${name}`)
+  if (['index.html', 'header.html', 'footer.html'].includes(name.toLowerCase())) {
+    throw new InputError(`Reserved filename: ${name}`)
+  }
+  return name
+}
+
+function validateChromiumDocuments(operation: Operation, payload: ConversionPayload): void {
+  const isMarkdown = operation.input === 'markdown'
+  if (
+    !isMarkdown &&
+    (payload.markdownName !== undefined ||
+      payload.markdownFiles !== undefined ||
+      payload.markdownTemplate !== undefined)
+  ) {
+    throw new InputError('Markdown documents and templates require a Markdown operation.')
+  }
+  if (isMarkdown) {
+    const names = [
+      markdownName(payload.markdownName ?? DEFAULT_MARKDOWN_NAME),
+      ...(payload.markdownFiles ?? []).map((file) => markdownName(file.name)),
+    ]
+    if (new Set(names.map((name) => name.toLowerCase())).size !== names.length) {
+      throw new InputError('Markdown filenames must be unique (case-insensitive).')
+    }
+    for (const file of payload.markdownFiles ?? []) {
+      if (!file.content.trim()) throw new InputError(`${file.name} has no Markdown content.`)
+    }
+    const template = payload.markdownTemplate ?? defaultMarkdownTemplate(names)
+    if (!template.trim()) throw new InputError('The Markdown template must not be empty.')
+    const references = markdownTemplateReferences(template)
+    if (!references.length) {
+      throw new InputError('The Markdown template must contain {{ toHTML "file.md" }} calls.')
+    }
+    const included = new Set(references)
+    for (const reference of references) {
+      if (!names.includes(reference)) {
+        throw new InputError(`Markdown template references missing file: ${reference}`)
+      }
+    }
+    for (const name of names) {
+      if (!included.has(name)) throw new InputError(`Markdown template does not render ${name}.`)
+    }
+  }
+
+  const pdf =
+    operation.id === 'url-pdf' || operation.id === 'html-pdf' || operation.id === 'markdown-pdf'
+  if (!pdf && (payload.headerHtml !== undefined || payload.footerHtml !== undefined)) {
+    throw new InputError('Custom headers and footers are supported only for Chromium PDF output.')
+  }
+  for (const [name, html] of [
+    ['Header', payload.headerHtml],
+    ['Footer', payload.footerHtml],
+  ] as const) {
+    if (html === undefined) continue
+    if (
+      !html.trim() ||
+      !/<html\b[^>]*>/i.test(html) ||
+      !/<\/html\s*>/i.test(html) ||
+      !/<head\b[^>]*>/i.test(html) ||
+      !/<\/head\s*>/i.test(html) ||
+      !/<body\b[^>]*>/i.test(html) ||
+      !/<\/body\s*>/i.test(html)
+    ) {
+      throw new InputError(`${name} must be a complete HTML document with html, head and body.`)
+    }
+  }
+}
+
 /** Validate outbound URL and per-request header metadata without fetching remote content here. */
 function requireHttpUrl(url: string, label: string): void {
   if (!isHttpUrl(url)) throw new InputError(`${label} must be an absolute http or https URL.`)
@@ -160,7 +245,17 @@ export function validateFiles(
   files: File[],
   auxiliary: File[],
   maxBytes: number,
-  payload?: Pick<ConversionPayload, 'downloadFrom' | 'fields'>,
+  payload?: Pick<
+    ConversionPayload,
+    | 'downloadFrom'
+    | 'fields'
+    | 'source'
+    | 'markdownName'
+    | 'markdownFiles'
+    | 'markdownTemplate'
+    | 'headerHtml'
+    | 'footerHtml'
+  >,
 ): void {
   const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
@@ -195,16 +290,45 @@ export function validateFiles(
   if (operation.auxiliary?.required && auxiliary.length + remoteAux === 0) {
     throw new InputError(`${operation.auxiliary.label} is required.`)
   }
-  const names = new Set(
-    operation.input === 'html'
-      ? ['index.html']
-      : operation.input === 'markdown'
-        ? ['index.html', 'document.md']
-        : [],
+  const names = new Set<string>()
+  if (operation.input === 'html' || operation.input === 'markdown') {
+    for (const name of ['index.html', 'header.html', 'footer.html']) names.add(name)
+    if (operation.input === 'markdown') {
+      names.add((payload?.markdownName ?? DEFAULT_MARKDOWN_NAME).toLowerCase())
+      for (const file of payload?.markdownFiles ?? []) names.add(file.name.toLowerCase())
+    }
+  }
+  const generatedTemplate =
+    operation.input === 'markdown'
+      ? (payload?.markdownTemplate ??
+        defaultMarkdownTemplate([
+          payload?.markdownName ?? DEFAULT_MARKDOWN_NAME,
+          ...(payload?.markdownFiles ?? []).map((file) => file.name),
+        ]))
+      : ''
+  // The JSON payload and local files are independently limited by the HTTP request cap;
+  // include the generated files when enforcing the upstream upload budget as well.
+  const generatedText = [
+    payload?.source ?? '',
+    ...(payload?.markdownFiles ?? []).map((file) => file.content),
+    generatedTemplate,
+    payload?.headerHtml ?? '',
+    payload?.footerHtml ?? '',
+  ]
+  let total = generatedText.reduce(
+    (bytes, part) => bytes + new TextEncoder().encode(part).length,
+    0,
   )
-  let total = 0
+  if (total > maxBytes) {
+    throw new InputError('Combined document content exceeds the configured size limit.', 413)
+  }
   for (const file of [...files, ...auxiliary]) {
     const name = safeFilename(file.name)
+    if (operation.input === 'markdown' && auxiliary.includes(file) && /\.md$/i.test(name)) {
+      throw new InputError(
+        'Add Markdown documents through the Markdown sources editor, not assets.',
+      )
+    }
     if (names.has(name.toLowerCase()) && operation.id !== 'merge') {
       throw new InputError(`Duplicate filename: ${name}`)
     }
@@ -313,6 +437,7 @@ export function validatePayload(input: unknown): {
   if ((operation.input === 'html' || operation.input === 'markdown') && !payload.source?.trim()) {
     throw new InputError('Enter some source content first.')
   }
+  validateChromiumDocuments(operation, payload)
   if (operation.id === 'encrypt' && !payload.fields.userPassword && !payload.fields.ownerPassword) {
     throw new InputError('Enter an open password or owner password.')
   }

@@ -37,8 +37,10 @@ import {
 } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { ChromiumPdfAssets } from '#/components/chromium-pdf-assets'
 import { ConnectionManager } from '#/components/connection-manager'
 import { DebugDialog } from '#/components/debug-dialog'
+import { MarkdownAssetsEditor, type MarkdownSource } from '#/components/markdown-assets-editor'
 import { MetricsDialog } from '#/components/metrics-dialog'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
@@ -48,6 +50,7 @@ import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
 import { UploadZone } from '#/components/upload-zone'
 import { browserStorage } from '#/lib/backend-url'
+import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
 import { DEFAULT_BACKEND_URL } from '#/lib/config'
 import {
   type BrowserConnection,
@@ -673,6 +676,12 @@ function Workbench({
     operationDefaults(operation),
   )
   const [source, setSource] = useState(EXAMPLE_HTML)
+  const [markdownName, setMarkdownName] = useState(DEFAULT_MARKDOWN_NAME)
+  const [markdownFiles, setMarkdownFiles] = useState<MarkdownSource[]>([])
+  const nextMarkdownId = useRef(0)
+  const [markdownTemplate, setMarkdownTemplate] = useState<string | null>(null)
+  const [headerHtml, setHeaderHtml] = useState('')
+  const [footerHtml, setFooterHtml] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [auxFiles, setAuxFiles] = useState<File[]>([])
   const [advanced, setAdvanced] = useState('')
@@ -696,6 +705,11 @@ function Workbench({
   useEffect(() => {
     setFields(operationDefaults(operation))
     setSource(operation.input === 'markdown' ? EXAMPLE_MARKDOWN : EXAMPLE_HTML)
+    setMarkdownName(DEFAULT_MARKDOWN_NAME)
+    setMarkdownFiles([])
+    setMarkdownTemplate(null)
+    setHeaderHtml('')
+    setFooterHtml('')
     setFiles([])
     setAuxFiles([])
     setAdvanced('')
@@ -717,6 +731,7 @@ function Workbench({
   const isSourceEditor = operation.input === 'html' || operation.input === 'markdown'
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
   const operationHasFileAssets = isSourceEditor
+  const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
   const docsUrl = `https://gotenberg.dev/docs/${operation.docs}`
 
   const updateField = (name: string, value: string | boolean) =>
@@ -739,6 +754,15 @@ function Workbench({
         operation: operation.id,
         fields,
         source: isSourceEditor ? source : undefined,
+        markdownName: operation.input === 'markdown' ? markdownName : undefined,
+        markdownFiles:
+          operation.input === 'markdown' && markdownFiles.length
+            ? markdownFiles.map(({ name, content }) => ({ name, content }))
+            : undefined,
+        markdownTemplate:
+          operation.input === 'markdown' ? (markdownTemplate ?? undefined) : undefined,
+        headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
+        footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
         advanced: parseAdvanced(advanced),
         downloadFrom: parseOptionalJson(remoteInput, 'Remote files'),
         webhook: parseOptionalJson(webhookInput, 'Webhook settings'),
@@ -872,7 +896,7 @@ function Workbench({
                 <div className="flex items-center justify-between gap-3">
                   <Label htmlFor="source-editor">{sourceExtension} source</Label>
                   <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] font-semibold text-slate-500">
-                    {operation.input === 'html' ? 'index.html' : 'document.md'}
+                    {operation.input === 'html' ? 'index.html' : markdownName}
                   </span>
                 </div>
                 <Textarea
@@ -886,9 +910,20 @@ function Workbench({
                 <p className="text-xs text-slate-500">
                   {operation.input === 'html'
                     ? 'HTML renders with Chromium, including inline CSS and scripts.'
-                    : 'Gotenui adds the required index.html template automatically.'}
+                    : 'Edit this Markdown document, then add more named sources or customize its HTML template below.'}
                 </p>
               </div>
+            )}
+            {operation.input === 'markdown' && (
+              <MarkdownAssetsEditor
+                primaryName={markdownName}
+                onPrimaryNameChange={setMarkdownName}
+                sources={markdownFiles}
+                onSourcesChange={setMarkdownFiles}
+                nextId={() => nextMarkdownId.current++}
+                customTemplate={markdownTemplate}
+                onCustomTemplateChange={setMarkdownTemplate}
+              />
             )}
             {operationHasFileAssets && (
               <UploadZone
@@ -941,6 +976,14 @@ function Workbench({
               <p className="rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-500">
                 This operation works with its default settings.
               </p>
+            )}
+            {hasPdfHeaderFooter && (
+              <ChromiumPdfAssets
+                headerHtml={headerHtml}
+                footerHtml={footerHtml}
+                onHeaderChange={setHeaderHtml}
+                onFooterChange={setFooterHtml}
+              />
             )}
             <div className="space-y-2 border-t border-slate-100 pt-5">
               <Label htmlFor="output-filename">

@@ -7,6 +7,7 @@ See [ROADMAP.md](ROADMAP.md) for the remaining feature gaps, priorities, and pro
 ## Features
 
 - 22 Chromium, LibreOffice and PDF-engine operations, including HTML, Markdown, URL and Office conversions, screenshots, merging, metadata, bookmarks, watermarks and Factur-X.
+- Custom Chromium PDF headers/footers and multi-file Markdown templates, with editable/importable HTML and named, reorderable Markdown sources.
 - Optional remote-file `downloadFrom` inputs and asynchronous Gotenberg webhook delivery, validated server-side and forwarded through the same-origin proxy.
 - Pure vector `public/gotenui-icon.svg`, used as the in-app mark and browser favicon.
 - Multiple named connections in **Connection settings**: browser profiles are saved in `localStorage` (`gotenui.connections.v1`), with automatic migration from the former `gotenui.backend-url.v1` preference. Default: **https://demo.gotenberg.dev**. Server-managed profiles are configured through environment variables, with credentials kept server-side.
@@ -58,6 +59,16 @@ For **Merge PDFs**, the displayed order is authoritative for locally uploaded PD
 For file-producing operations, **Output filename** now sets both the browser download name and the upstream `Gotenberg-Output-Filename` header (without extension). When blank, Gotenberg chooses its own filename and Gotenui uses the returned `Content-Disposition`. For metadata/bookmark JSON reads, the field changes the browser download filename only; Gotenberg does not define an output-filename header on these routes.
 
 Advanced options include a validated custom **Gotenberg request ID** (`Gotenberg-Trace`, plain log/webhook correlation ID), **W3C `traceparent`**, and optional `tracestate` for distributed tracing. Gotenberg 8.34+ continues upstream `traceparent` context into asynchronous webhook callbacks. These are different mechanisms: the correlation ID is *not* an OpenTelemetry trace ID. The app only forwards these fields from the validated conversion payload, never arbitrary browser request headers. Upstream error responses retain a safe Gotenberg correlation ID for diagnosis; credentials and cookies are not relayed. No session state or new authentication layer is added.
+
+## Chromium PDF headers, footers and Markdown templates (v1.0.20)
+
+The **Website to PDF**, **HTML to PDF** and **Markdown to PDF** workbenches accept optional **Header HTML** and **Footer HTML**. Paste complete HTML documents into the editors or load `.html` files into them. The API proxy creates the required `header.html` and `footer.html` file parts for Gotenberg; these are not separate form fields. Uploaded assets with reserved filenames (`header.html`, `footer.html` or `index.html`) are rejected to avoid collisions. **Screenshot** routes have no PDF header/footer controls.
+
+Chromium renders headers and footers in an **isolated context**: the main document's CSS does not apply, external assets cannot be loaded and scripts do not execute. Use a complete document with `<html>`, `<head>` and `<body>`, inline CSS and base64/data-URI images. Set suitable `marginTop` and `marginBottom` (for example `0.8` inches) to prevent clipping. Chromium supports placeholder elements such as `<span class="pageNumber"></span>` and `<span class="totalPages"></span>`.
+
+The **Markdown to PDF** and **Markdown screenshot** workbenches retain their editable initial `document.md`, and now allow renaming it and adding, importing, removing or reordering more `.md` sources (up to 20 total). The default `index.html` template is generated automatically from their displayed order. Use **Customize template** or load your own `.html` template to control layout and render order with Gotenberg's `{{ toHTML "filename.md" }}` action. Return to **Use generated template** to track source changes automatically. When using a custom template, every listed Markdown source must be referenced and every reference must match a submitted filename, including case.
+
+All Chromium HTML, Markdown and asset files share **one flat Gotenberg directory**: reference stylesheets and images by basename (for example `style.css`), not absolute paths or subdirectories. Markdown sources have unique case-insensitive `.md` names; reserved filenames, missing template references, empty Markdown sources and asset name collisions are rejected before proxying. Existing one-file Markdown conversions retain their previous request contract. These editors and imports are per-tab, in-memory only; no state is added to the server or stored between sessions.
 
 ## Debug diagnostics and Prometheus metrics (Gotenberg-controlled)
 

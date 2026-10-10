@@ -37,6 +37,11 @@ function request(
     fields: { ...operationDefaults(operation), ...overrides.fields },
     advanced: overrides.advanced ?? {},
     ...(overrides.source ? { source: overrides.source } : {}),
+    ...(overrides.markdownName ? { markdownName: overrides.markdownName } : {}),
+    ...(overrides.markdownFiles ? { markdownFiles: overrides.markdownFiles } : {}),
+    ...(overrides.markdownTemplate ? { markdownTemplate: overrides.markdownTemplate } : {}),
+    ...(overrides.headerHtml ? { headerHtml: overrides.headerHtml } : {}),
+    ...(overrides.footerHtml ? { footerHtml: overrides.footerHtml } : {}),
     ...(overrides.outputName ? { outputName: overrides.outputName } : {}),
     ...(overrides.requestTrace ? { requestTrace: overrides.requestTrace } : {}),
     ...(overrides.traceparent ? { traceparent: overrides.traceparent } : {}),
@@ -514,3 +519,76 @@ test('real Gotenberg accepts the configured output filename, correlation ID and 
     new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
   ).toBe('%PDF-')
 }, 120_000)
+
+const chromiumHeader =
+  '<html><head><style>body{font-size:10px;margin:0 12px}</style></head><body>Gotenui <span class="pageNumber"></span></body></html>'
+const chromiumFooter =
+  '<html><head><style>body{font-size:10px;margin:0 12px}</style></head><body>Page <span class="pageNumber"></span> of <span class="totalPages"></span></body></html>'
+
+test.each(['url-pdf', 'html-pdf', 'markdown-pdf'])(
+  'Gotenberg renders %s with custom HTML header and footer',
+  async (id) => {
+    const operation = OPERATIONS.find((value) => value.id === id)
+    if (!operation) throw new Error(`Missing ${id}`)
+    const overrides: Partial<ConversionPayload> = {
+      fields: {
+        ...(operation.input === 'url' ? { url: fixtureUrl } : {}),
+        marginTop: '0.8',
+        marginBottom: '0.8',
+      },
+      source:
+        operation.input === 'html'
+          ? '<html><body><h1>Custom HTML header test</h1></body></html>'
+          : operation.input === 'markdown'
+            ? '# Custom Markdown header test'
+            : undefined,
+      headerHtml: chromiumHeader,
+      footerHtml: chromiumFooter,
+    }
+    const response = await proxyConversionRequest(request(operation, overrides))
+    if (!response.ok) {
+      throw new Error(`${id} header/footer failed: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    const pdf = new Uint8Array(await response.arrayBuffer())
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-')
+    expect(pdf.length).toBeGreaterThan(1000)
+  },
+  120_000,
+)
+
+test.each(['markdown-pdf', 'markdown-shot'])(
+  'Gotenberg renders %s with a custom template, two Markdown files and a local stylesheet',
+  async (id) => {
+    const operation = OPERATIONS.find((value) => value.id === id)
+    if (!operation) throw new Error(`Missing ${id}`)
+    const template =
+      '<!doctype html><html><head><link rel="stylesheet" href="theme.css"></head><body><h1>Gotenui</h1>{{ toHTML "chapter.md" }}{{ toHTML "intro.md" }}</body></html>'
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        {
+          source: '# Intro',
+          markdownName: 'intro.md',
+          markdownFiles: [{ name: 'chapter.md', content: '# Chapter' }],
+          markdownTemplate: template,
+        },
+        [],
+        [new File(['body { color: navy; }'], 'theme.css', { type: 'text/css' })],
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(`${id} custom template failed: ${response.status} ${await response.text()}`)
+    }
+    const contentType = response.headers.get('content-type')
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (id === 'markdown-pdf') {
+      expect(contentType).toContain('application/pdf')
+      expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
+    } else {
+      expect(contentType).toContain('image/png')
+      expect([...bytes.subarray(0, 4)]).toEqual([137, 80, 78, 71])
+    }
+  },
+  120_000,
+)
