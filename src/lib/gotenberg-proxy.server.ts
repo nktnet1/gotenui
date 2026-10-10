@@ -233,6 +233,37 @@ function conversionResponseLength(header: string | null, maxBytes: number): numb
   return length
 }
 
+/** Accept RFC-style multipart boundary quoting and optional UTF-8 charset while
+ * rejecting ambiguous parameters before parsing an untrusted upload body.
+ * Node's FormData parser already supports these valid MIME header variants.
+ */
+function supportedMultipartContentType(contentType: string): boolean {
+  if (contentType.length > 512) return false
+  const [mediaType, ...parameters] = contentType.split(';')
+  if (mediaType?.trim().toLowerCase() !== 'multipart/form-data') return false
+
+  let boundary = false
+  let charset = false
+  for (const parameter of parameters) {
+    const separator = parameter.indexOf('=')
+    if (separator < 1) return false
+    const name = parameter.slice(0, separator).trim().toLowerCase()
+    const rawValue = parameter.slice(separator + 1).trim()
+    const value =
+      rawValue.startsWith('"') && rawValue.endsWith('"') ? rawValue.slice(1, -1) : rawValue
+    if (name === 'boundary') {
+      if (boundary || !/^[A-Za-z0-9'()+_,./:=?-]{1,200}$/.test(value)) return false
+      boundary = true
+    } else if (name === 'charset') {
+      if (charset || value.toLowerCase() !== 'utf-8') return false
+      charset = true
+    } else {
+      return false
+    }
+  }
+  return boundary
+}
+
 /** Every request resolves a validated destination and its authentication, without sessions. */
 export async function proxyConversionRequest(
   request: Request,
@@ -240,7 +271,7 @@ export async function proxyConversionRequest(
 ): Promise<Response> {
   requireSameOrigin(request)
   const contentType = request.headers.get('content-type') ?? ''
-  if (!/^multipart\/form-data;\s*boundary=[\w-]{1,200}$/i.test(contentType)) {
+  if (!supportedMultipartContentType(contentType)) {
     throw new ProxyInputError('Expected a multipart/form-data conversion request.')
   }
   const { maxBytes, maxResponseBytes, ...settings } = runtimeConfig()

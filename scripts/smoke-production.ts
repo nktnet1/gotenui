@@ -337,6 +337,26 @@ async function run(): Promise<void> {
     assert.match(serverRequest.body, /name="url"/)
     checks++
 
+    // Reverse proxies can quote the standard multipart boundary and include
+    // an explicit charset. The built Nitro route must accept this valid form.
+    const encodedMultipart = new Request(convertUrl, { method: 'POST', body: pdfRequest() })
+    const unquotedType = encodedMultipart.headers.get('content-type')
+    assert.ok(unquotedType)
+    assert.ok(unquotedType.startsWith('multipart/form-data; boundary='))
+    const quotedType = `${unquotedType.replace('boundary=', 'charset=UTF-8; boundary="')}"`
+    const quotedMultipart = await get(convertUrl, {
+      method: 'POST',
+      headers: {
+        ...sameOrigin,
+        'X-Gotenui-Connection-Id': 'smoke',
+        'Content-Type': quotedType,
+      },
+      body: await encodedMultipart.arrayBuffer(),
+    })
+    assert.equal(quotedMultipart.status, 200)
+    assert.deepEqual(Buffer.from(await quotedMultipart.arrayBuffer()), pdf)
+    checks++
+
     const browser = await get(convertUrl, {
       method: 'POST',
       headers: {

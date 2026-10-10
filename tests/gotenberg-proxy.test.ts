@@ -29,6 +29,61 @@ function conversionRequest(baseUrl = 'http://127.0.0.1:3000', operation = 'url-p
   })
 }
 
+/** Use a real FormData-encoded body, then vary only its valid MIME parameters. */
+async function multipartRequest(header: string): Promise<Request> {
+  const original = conversionRequest()
+  const boundary = original.headers.get('content-type')?.split('boundary=')[1]
+  assert.ok(boundary)
+  const bytes = new TextDecoder().decode(await original.arrayBuffer())
+  const modified = bytes.replaceAll(boundary, 'gotenui.test-boundary')
+  return new Request(original.url, {
+    method: 'POST',
+    headers: {
+      origin,
+      'X-Gotenberg-Url': 'http://127.0.0.1:3000',
+      'Content-Type': header,
+    },
+    body: new TextEncoder().encode(modified),
+  })
+}
+
+test.each([
+  'multipart/form-data; boundary="gotenui.test-boundary"',
+  'multipart/form-data; boundary="gotenui.test-boundary"; charset=UTF-8',
+  'multipart/form-data; charset="utf-8"; boundary=gotenui.test-boundary',
+])('supports valid multipart parameters: %s', async (header) => {
+  let forwarded = 0
+  const response = await proxyConversionRequest(await multipartRequest(header), async (_, init) => {
+    forwarded++
+    const upstream = init?.body
+    assert.ok(upstream instanceof FormData)
+    assert.equal(upstream.get('url'), 'https://example.test')
+    assert.equal(upstream.has('payload'), false)
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  })
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), '%PDF-1.7')
+  assert.equal(forwarded, 1)
+})
+
+test.each([
+  'multipart/form-data; boundary="gotenui.test-boundary',
+  'multipart/form-data; boundary=gotenui.test-boundary; boundary=other',
+  'multipart/form-data; boundary=gotenui.test-boundary; charset=latin1',
+  'multipart/form-data; boundary=gotenui.test-boundary; unauthorized=1',
+  'multipart/form-data; boundary=gotenui.test-boundary; charset=UTF-8; charset=UTF-8',
+])('rejects malformed or ambiguous multipart parameters: %s', async (header) => {
+  let forwarded = false
+  await assert.rejects(
+    proxyConversionRequest(await multipartRequest(header), async () => {
+      forwarded = true
+      throw new Error('Must reject before Gotenberg')
+    }),
+    (error: { status?: number }) => error.status === 400,
+  )
+  assert.equal(forwarded, false)
+})
+
 test('proxies only the operation path, revalidating fields before forwarding', async () => {
   let forwarded = 0
   const fetcher: typeof fetch = async (input, options) => {
