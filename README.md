@@ -87,3 +87,22 @@ The browser currently caps uploaded files at **4,000,000 bytes** and the proxy c
 - `POST /api/gotenberg/convert` — multipart body with one `payload` JSON field and zero or more `files` and `auxiliary` file fields. `X-Gotenberg-Url` holds the selected base URL. The server validates the payload using Valibot, looks up the operation from the fixed catalogue, reconstructs a safe Gotenberg form and streams the result. It does not accept arbitrary Gotenberg routes or webhook/download URL overrides.
 
 These API routes are **same-origin** and do not enable CORS. Requests with cross-site `Origin` or `Sec-Fetch-Site` headers are rejected. They remain reachable by server-side HTTP clients, so edge authentication and rate limits are still important.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes, pull requests and manual dispatch. The
+**quality** job checks Biome, TypeScript, Vitest unit tests and a production build;
+it also fails if either previously reported Rolldown warning returns. The
+**integration** job invokes Vitest's Docker harness, which starts a disposable
+`gotenberg/gotenberg:8.37.0` container with a local fixture server. CI never
+contacts `demo.gotenberg.dev` to run tests.
+
+CI uses Node.js 24 and pnpm 10 with `pnpm install --frozen-lockfile`.
+After changing dependencies, update and commit `pnpm-lock.yaml` locally before
+expecting CI to pass. This patch intentionally leaves the generated lockfile
+untouched.
+
+The Nitro build config labels its function-named library chunk group (without
+altering chunk names) and silences only `MODULE_LEVEL_DIRECTIVE` warnings about
+third-party `"use client"` markers in the **non-RSC** Nitro server bundle.
+Warnings from application files and all other Rolldown warnings still appear.

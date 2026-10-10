@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, types, unit tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check formatting and lint
+        run: pnpm check
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test:unit
+      - name: Build without known Rolldown warnings
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm build 2>&1 | tee build.log
+          if grep -E '\[MODULE_LEVEL_DIRECTIVE\]|output\.codeSplitting\.groups\[[0-9]+\]\.name.*function' build.log; then
+            echo '::error::Rolldown build warnings have regressed.'
+            exit 1
+          fi
+
+  integration:
+    name: Integration tests (local Gotenberg Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check Docker
+        run: docker info
+      - name: Integration tests against Gotenberg 8.37.0
+        env:
+          GOTENBERG_TEST_IMAGE: gotenberg/gotenberg:8.37.0
+        run: pnpm test:integration
