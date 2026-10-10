@@ -489,7 +489,7 @@ export async function proxyStatusRequest(
   let status: ServerStatus
   try {
     const health = await fetcher(urlJoin(url, '/health'), options)
-    if (!health.ok) {
+    if (health.status !== 200) {
       await health.body?.cancel().catch(() => {})
       throw new StatusProbeError(`Gotenberg returned HTTP ${health.status}.`)
     }
@@ -519,7 +519,7 @@ export async function proxyStatusRequest(
       if (response.status === 401 || response.status === 403) {
         versionAuthFailure = response.status
         await response.body?.cancel().catch(() => {})
-      } else if (response.ok) {
+      } else if (response.status === 200) {
         version = (await boundedStatusText(response, 1_024)).trim().slice(0, 80) || 'Unknown'
       } else {
         // The optional version probe must not retain an unread upstream response.
@@ -600,7 +600,7 @@ export async function proxyMetricsRequest(
     headers: authHeaders,
     credentials: 'omit',
   })
-  if (!upstream.ok) {
+  if (upstream.status !== 200) {
     await upstream.body?.cancel().catch(() => {})
     const message =
       upstream.status === 404
@@ -669,7 +669,7 @@ export async function proxyDebugRequest(
     headers: authHeaders,
     credentials: 'omit',
   })
-  if (!upstream.ok) {
+  if (upstream.status !== 200) {
     await upstream.body?.cancel().catch(() => {})
     const message =
       upstream.status === 404

@@ -16,6 +16,7 @@ const seen: UpstreamRequest[] = []
 let followedRedirects = 0
 let cancelledUpstreams = 0
 let cancelledPendingUpstreams = 0
+let partialDiagnostic: 'health' | 'version' | 'debug' | 'metrics' | null = null
 
 async function listen(server: Server): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -39,6 +40,7 @@ async function unusedPort(): Promise<number> {
 const upstream = createServer(async (request, response) => {
   try {
     if (request.url === '/health' && (request.method === 'GET' || request.method === 'HEAD')) {
+      if (partialDiagnostic === 'health' && request.method === 'GET') response.statusCode = 206
       response.setHeader('Content-Type', 'application/json')
       response.end(
         request.method === 'HEAD'
@@ -48,7 +50,24 @@ const upstream = createServer(async (request, response) => {
       return
     }
     if (request.url === '/version' && request.method === 'GET') {
+      if (partialDiagnostic === 'version') response.statusCode = 206
       response.end('8.37.0')
+      return
+    }
+    if (request.url === '/debug' && request.method === 'GET' && partialDiagnostic === 'debug') {
+      response.writeHead(206, { 'Content-Type': 'application/json' }).end('{"enabled":true}')
+      return
+    }
+    if (
+      request.url === '/prometheus/metrics' &&
+      request.method === 'GET' &&
+      partialDiagnostic === 'metrics'
+    ) {
+      response
+        .writeHead(206, { 'Content-Type': 'text/plain' })
+        .end(
+          '# HELP gotenberg_requests_total Requests\n# TYPE gotenberg_requests_total counter\ngotenberg_requests_total 1\n',
+        )
       return
     }
     if (request.url === '/redirect-target') {
@@ -310,6 +329,31 @@ async function run(): Promise<void> {
     const convertUrl = `${origin}/api/gotenberg/convert`
     const baseFields = { url: 'https://example.test/smoke' }
     const sameOrigin = { Origin: origin, 'Sec-Fetch-Site': 'same-origin' }
+    for (const route of ['health', 'version', 'debug', 'metrics'] as const) {
+      partialDiagnostic = route
+      try {
+        if (route === 'health' || route === 'version') {
+          const response = await get(`${origin}/api/gotenberg/status?connection=smoke`)
+          assert.equal(response.status, 200)
+          const payload = await response.json()
+          if (route === 'health') assert.equal(payload.online, false)
+          else {
+            assert.equal(payload.online, true)
+            assert.equal(payload.version, 'Unknown')
+          }
+        } else {
+          const response = await get(`${origin}/api/gotenberg/${route}`, {
+            method: 'POST',
+            headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+          })
+          assert.equal(response.status, 502)
+          assert.match(await response.text(), /HTTP 206/)
+        }
+        checks++
+      } finally {
+        partialDiagnostic = null
+      }
+    }
     const pdfRequest = () => conversionBody('url-pdf', baseFields)
     const converted = await get(convertUrl, {
       method: 'POST',

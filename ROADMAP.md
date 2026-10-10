@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.38 (diagnostic response length validation).
+- **Baseline:** v1.0.39 (strict successful diagnostic HTTP status validation).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -43,6 +43,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.36** | Fix | Multipart request header compatibility | Accept valid quoted boundaries and optional UTF-8 charset parameters in either order while retaining upload limits, field validation, and rejection of ambiguous MIME parameters; add unit and built Nitro smoke regressions. |
 | **v1.0.37** | Release | Status probe response cleanup | Cancel unread upstream /health and /version error bodies without affecting authentication or health reporting; add deterministic cancellation regressions. |
 | **v1.0.38** | Release | Diagnostic response integrity | Reject malformed and mismatched uncompressed Content-Length values on health/version, debug and metrics responses; maintain body-size caps, compressed-body compatibility and cancellation tests. |
+| **v1.0.39** | Release | Diagnostic HTTP status compatibility | Reject successful-looking partial or unexpected 2xx upstream diagnostic responses; require HTTP 200 for health, version, debug and legacy metrics, cancelling unread bodies. Add unit and built Nitro smoke regressions. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -143,6 +144,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
 
 ## Verification and release gates
+
+**v1.0.39 diagnostic HTTP statuses:** Gotenberg documents HTTP 200 as the successful GET response for /health, /version, /debug and legacy /prometheus/metrics. A gateway could previously return valid-looking JSON or metrics with HTTP 201 or 206, and Gotenui would accept the incomplete or unexpected result. Full status polling now rejects non-200 health and ignores non-200 optional versions; debug and metrics return a gateway error for unexpected successful statuses. Rejected response bodies are cancelled. Twelve unit tests reproduced the old behaviour, and four built-Nitro smoke checks exercise it through same-origin API routes. Full Gotenberg and ingress verification remains outstanding.
 
 **v1.0.38 diagnostic lengths:** Full health/version polling, the debug JSON viewer, and legacy metrics now verify valid uncompressed upstream Content-Length declarations against the actual bounded response body. Invalid, truncated, or overlong replies cannot be presented as valid diagnostics; malformed or oversized declarations cancel unread bodies. Because fetch transparently decompresses upstream responses, encoded length declarations are not compared to decoded bytes, but the decoded payloads remain size-limited. New non-Docker unit tests reproduced the original acceptance defects and verify success, rejection, cancellation and compressed-response compatibility. Real Gotenberg and ingress testing remain outstanding.
 
