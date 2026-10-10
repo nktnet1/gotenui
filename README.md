@@ -49,6 +49,16 @@ The test setup does **not** change the application's public-demo default. Docker
 
 Gotenui exposes **all 22 documented `POST /forms/*` routes**: four conversion, three screenshot, and fifteen PDF-engine routes. It queries `GET /health` and `GET /version` for detailed connection status, and exposes `HEAD /health` through `HEAD /api/gotenberg/health` for a no-body health probe. Gotenberg's `GET /debug` endpoint is accessible through `POST /api/gotenberg/debug` when enabled on the selected instance; legacy Prometheus metrics (`GET /prometheus/metrics` upstream) are accessible through `POST /api/gotenberg/metrics`. Both rely on Gotenberg's upstream authentication, not Gotenui access keys. Optional async webhook delivery and `downloadFrom` remote file descriptors are available through the Advanced options panel. OpenTelemetry exporters are configured on Gotenberg itself, not through Gotenui.
 
+## Merge order, filenames and tracing (v1.0.18)
+
+For **Merge PDFs**, the displayed order is authoritative for locally uploaded PDFs. Gotenberg normally merges files by alphanumeric filename (numeric names first), regardless of upload order. Gotenui assigns temporary numbered names (`01_original.pdf`, `02_original.pdf`, etc.) to **local** multipart uploads to preserve the chosen order. Duplicate local filenames are supported with Gotenberg 8.37+; original PDF bytes are unchanged. For filename-keyed `bookmarks` JSON, Gotenui maps original filenames to their temporary upload names. Where multiple files share the same name, that bookmark mapping applies to each. A Gotenberg-generated title bookmark may display a numbered filename if the original PDF has no Title metadata.
+
+`downloadFrom` remote inputs cannot be reordered from the local upload list. Gotenberg sorts remote filenames together with the submitted files, so **mixed remote/local merges do not guarantee that the visible local order matches the complete merged page order**. For deterministic complete ordering, download remote files and add them as local uploads, then reorder. Gotenberg must permit remote downloads in its own outbound URL configuration.
+
+For file-producing operations, **Output filename** now sets both the browser download name and the upstream `Gotenberg-Output-Filename` header (without extension). When blank, Gotenberg chooses its own filename and Gotenui uses the returned `Content-Disposition`. For metadata/bookmark JSON reads, the field changes the browser download filename only; Gotenberg does not define an output-filename header on these routes.
+
+Advanced options include a validated custom **Gotenberg request ID** (`Gotenberg-Trace`, plain log/webhook correlation ID), **W3C `traceparent`**, and optional `tracestate` for distributed tracing. Gotenberg 8.34+ continues upstream `traceparent` context into asynchronous webhook callbacks. These are different mechanisms: the correlation ID is *not* an OpenTelemetry trace ID. The app only forwards these fields from the validated conversion payload, never arbitrary browser request headers. Upstream error responses retain a safe Gotenberg correlation ID for diagnosis; credentials and cookies are not relayed. No session state or new authentication layer is added.
+
 ## Debug diagnostics and Prometheus metrics (Gotenberg-controlled)
 
 Gotenui no longer implements a separate administrator access key for diagnostics or metrics. Select **Diagnostics** in the header to request the selected instance's `/debug` JSON; from that dialog, open **Prometheus metrics**. If debug is hidden while metrics are shown, a standalone Metrics button appears in the header. The same selected connection's upstream Basic/Bearer authentication is forwarded to Gotenberg, and upstream `401`/`403` responses are respected.
@@ -95,7 +105,7 @@ The UI is client-rendered: there is no requirement for persistent server process
 | `GOTENUI_MAX_REQUEST_BYTES` | Maximum total multipart request size at the server. Defaults to `4200000` bytes. |
 | `GOTENBERG_BASIC_AUTH_URL` | **Server-only** exact Gotenberg base URL that should receive the credentials. Must be present in `GOTENBERG_ALLOWED_URLS`. |
 | `GOTENBERG_BASIC_AUTH_USERNAME` | **Server-only** Basic Auth username for that URL. Cannot contain `:`. |
-| `GOTENBERG_BASIC_AUTH_PASSWORD` | **Server-only** legacy Basic Auth password for that URL; v1.0.10 requires an access key for this profile. |
+| `GOTENBERG_BASIC_AUTH_PASSWORD` | **Server-only** legacy Basic Auth password for that URL; like other server-managed credentials, it may be used by anyone allowed to access the proxy. |
 | `GOTENUI_SERVER_CONNECTIONS` | Optional server-only JSON array of named connection profiles, each with ID, name, allowed URL and optional Basic/Bearer auth. |
 | `GOTENUI_SHOW_DEBUG` | Optional server-only runtime flag (`true` or `false`, default `true`) controlling visibility of the Debug diagnostics option. Does **not** disable the API. |
 | `GOTENUI_SHOW_METRICS` | Optional server-only runtime flag (`true` or `false`, default `true`) controlling visibility of Prometheus metrics. Does **not** disable the API. |
@@ -111,7 +121,7 @@ GOTENBERG_ALLOWED_URLS=https://demo.gotenberg.dev,https://pdf.internal.example.c
 Gotenui supports **two connection types**, with no database, cookies, sessions, or persistent server storage:
 
 1. **Browser-managed:** Users add, rename, remove, and select their own profiles in Connection settings. Each profile stores only its name, URL and authentication *mode* in `localStorage`. For Basic Auth and bearer-token connections, users enter the username/password or token when switching to that connection. Secrets are held in **tab memory only** and sent to the same-origin Gotenui proxy on each request, never persisted by Gotenui. Refreshing the page requires re-entering them.
-2. **Server-managed:** Operators provide named profiles via `GOTENUI_SERVER_CONNECTIONS`. Users select a profile by ID; the proxy resolves the exact approved URL and attaches its configured Basic or bearer credentials. The browser receives only the profile ID, name and whether an access key is required; neither the upstream URL nor credentials are returned. Switching requires no redeployment.
+2. **Server-managed:** Operators provide named profiles via `GOTENUI_SERVER_CONNECTIONS`. Users select a profile by ID; the proxy resolves the exact approved URL and attaches its configured Basic or bearer credentials. The browser receives only the profile ID and name; neither the upstream URL nor credentials are returned. Switching requires no redeployment.
 
 Both modes use the fixed, server-side `GOTENBERG_ALLOWED_URLS` allowlist. **Adding a browser profile cannot add a new allowed destination**; to permit more backends, update the deployment's allowlist. Redirects and arbitrary relay endpoints remain disabled.
 

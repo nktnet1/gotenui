@@ -679,6 +679,9 @@ function Workbench({
   const [remoteInput, setRemoteInput] = useState('')
   const [webhookInput, setWebhookInput] = useState('')
   const [outputName, setOutputName] = useState('')
+  const [requestTrace, setRequestTrace] = useState('')
+  const [traceparent, setTraceparent] = useState('')
+  const [tracestate, setTracestate] = useState('')
   const [pending, setPending] = useState(false)
   const [lastDownload, setLastDownload] = useState<Download | null>(null)
   const fileUrl = useRef<string | null>(null)
@@ -699,6 +702,9 @@ function Workbench({
     setRemoteInput('')
     setWebhookInput('')
     setOutputName('')
+    setRequestTrace('')
+    setTraceparent('')
+    setTracestate('')
     setLastDownload(null)
     if (fileUrl.current) {
       URL.revokeObjectURL(fileUrl.current)
@@ -737,6 +743,9 @@ function Workbench({
         downloadFrom: parseOptionalJson(remoteInput, 'Remote files'),
         webhook: parseOptionalJson(webhookInput, 'Webhook settings'),
         outputName: outputName.trim() || undefined,
+        requestTrace: requestTrace.trim() || undefined,
+        traceparent: traceparent.trim() || undefined,
+        tracestate: tracestate.trim() || undefined,
       }
       const start = performance.now()
       const controller = new AbortController()
@@ -834,7 +843,7 @@ function Workbench({
                 }
                 description={
                   operation.id === 'merge'
-                    ? 'Select at least two PDF files. Their order below determines the merged result.'
+                    ? 'Select at least two PDFs. Gotenui prefixes uploaded filenames to preserve the order shown below.'
                     : operation.input === 'pdf'
                       ? 'Select PDF files to process. Multiple files may produce a ZIP archive.'
                       : 'Word, Excel, PowerPoint, OpenDocument, images and other supported formats.'
@@ -848,6 +857,7 @@ function Workbench({
                 }
                 multiple={true}
                 reorder={operation.id === 'merge'}
+                allowDuplicateNames={operation.id === 'merge'}
               />
             )}
             {operation.input === 'url' && (
@@ -944,7 +954,9 @@ function Workbench({
                 maxLength={100}
               />
               <p className="text-xs text-slate-500">
-                Gotenberg adds the file extension automatically.
+                {operation.output === 'json'
+                  ? 'Names the browser download. Gotenberg metadata responses do not support the output filename header.'
+                  : 'Sets Gotenberg-Output-Filename and the browser download name. Gotenberg adds the extension automatically; leave blank for its default.'}
               </p>
             </div>
             <details
@@ -971,6 +983,52 @@ function Workbench({
                     ))}
                   </div>
                 )}
+                <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
+                  <div>
+                    <Label htmlFor="request-trace">Gotenberg request ID (optional)</Label>
+                    <Input
+                      id="request-trace"
+                      value={requestTrace}
+                      onChange={(event) => setRequestTrace(event.target.value)}
+                      maxLength={128}
+                      placeholder="e.g. invoice-batch-42"
+                      className="mt-2 font-mono text-xs"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      Gotenberg-Trace identifies a request in upstream logs and webhook callbacks.
+                      It is not a distributed trace ID.
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="traceparent">W3C traceparent (optional)</Label>
+                    <Input
+                      id="traceparent"
+                      value={traceparent}
+                      onChange={(event) => setTraceparent(event.target.value)}
+                      maxLength={55}
+                      placeholder="00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+                      className="mt-2 font-mono text-xs"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      Continue an OpenTelemetry trace on Gotenberg 8.34+. Do not paste a secret or
+                      unrelated identifier here.
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="tracestate">W3C tracestate (optional)</Label>
+                    <Input
+                      id="tracestate"
+                      value={tracestate}
+                      onChange={(event) => setTracestate(event.target.value)}
+                      maxLength={512}
+                      placeholder="vendor=value"
+                      className="mt-2 font-mono text-xs"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      Optional vendor context; requires a valid traceparent.
+                    </p>
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="additional-fields">Additional Gotenberg form fields (JSON)</Label>
                   <Textarea
@@ -1003,7 +1061,8 @@ function Workbench({
                   <p className="text-[11px] leading-5 text-slate-500">
                     Gotenberg downloads these files itself. The URL must be reachable from your
                     Gotenberg container and the response must include a Content-Disposition
-                    filename.
+                    filename. For PDF merging, remote filenames retain Gotenberg's alphanumeric
+                    ordering; only local uploads follow the order above.
                   </p>
                 </div>
                 <div className="space-y-2">

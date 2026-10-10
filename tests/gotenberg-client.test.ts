@@ -248,3 +248,68 @@ test('HEAD health rejects a static SPA fallback masquerading as a healthy server
     globalThis.fetch = original
   }
 })
+
+test('download filename uses upstream response when unspecified and the local override when provided', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () =>
+    new Response('%PDF', {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="from-gotenberg.pdf"',
+        'Gotenberg-Trace': 'upstream-42',
+      },
+    })
+  try {
+    const base = {
+      operation: 'url-pdf',
+      fields: { url: 'https://example.test' },
+      advanced: {},
+    }
+    const automatic = await convertWithGotenberg(
+      'http://127.0.0.1:3000',
+      base,
+      [],
+      [],
+      new AbortController().signal,
+    )
+    assert.equal(automatic.mode, 'download')
+    if (automatic.mode === 'download') {
+      assert.equal(automatic.name, 'from-gotenberg.pdf')
+      assert.equal(automatic.trace, 'upstream-42')
+    }
+    const overridden = await convertWithGotenberg(
+      'http://127.0.0.1:3000',
+      { ...base, outputName: 'renamed' },
+      [],
+      [],
+      new AbortController().signal,
+    )
+    assert.equal(overridden.mode, 'download')
+    if (overridden.mode === 'download') assert.equal(overridden.name, 'renamed.pdf')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('client reports upstream correlation IDs on rejected conversions', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () =>
+    new Response('Bad parameters', {
+      status: 400,
+      headers: { 'Gotenberg-Trace': 'bad-request-99' },
+    })
+  try {
+    await assert.rejects(
+      convertWithGotenberg(
+        'http://127.0.0.1:3000',
+        { operation: 'url-pdf', fields: { url: 'https://example.test' }, advanced: {} },
+        [],
+        [],
+        new AbortController().signal,
+      ),
+      /Bad parameters.*bad-request-99/,
+    )
+  } finally {
+    globalThis.fetch = original
+  }
+})

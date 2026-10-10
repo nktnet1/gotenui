@@ -1,6 +1,7 @@
 import * as v from 'valibot'
 import { normalizeBackendUrl } from '#/lib/backend-url'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
+import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import type { Operation } from '#/lib/operations'
 import { downloadFilename, responseExtension } from '#/lib/security'
 import {
@@ -164,7 +165,16 @@ export function createGotenbergForm(
   validateFiles(operation, files, auxiliary, maxBytes, payload)
   const form = new FormData()
   for (const [key, value] of Object.entries({ ...payload.fields, ...payload.advanced })) {
-    if (value !== '') form.set(key, String(value))
+    if (value === '') continue
+    // Gotenberg keys per-input bookmarks by the uploaded filename.
+    const encoded =
+      operation.id === 'merge' && key === 'bookmarks'
+        ? mergeBookmarks(
+            String(value),
+            files.map((file) => file.name),
+          )
+        : String(value)
+    form.set(key, encoded)
   }
   if (payload.downloadFrom?.length) form.set('downloadFrom', JSON.stringify(payload.downloadFrom))
   if (operation.input === 'html' || operation.input === 'markdown') {
@@ -181,7 +191,11 @@ export function createGotenbergForm(
     }
     for (const file of auxiliary) form.append('files', file, file.name)
   } else {
-    for (const file of files) form.append('files', file, file.name)
+    for (const [index, file] of files.entries()) {
+      const name =
+        operation.id === 'merge' ? mergeUploadFilename(file.name, index, files.length) : file.name
+      form.append('files', file, name)
+    }
     if (operation.auxiliary) {
       for (const file of auxiliary) form.append(operation.auxiliary.name, file, file.name)
     }
@@ -224,7 +238,9 @@ export async function convertWithGotenberg(
   }
   if (!response.ok) {
     const detail = (await response.text()).trim().slice(0, 1_500)
-    throw new Error(detail || `Gotenui proxy returned HTTP ${response.status}.`)
+    const trace = response.headers.get('Gotenberg-Trace')?.slice(0, 128)
+    const message = detail || `Gotenui proxy returned HTTP ${response.status}.`
+    throw new Error(trace ? `${message} (Gotenberg trace: ${trace})` : message)
   }
   if (response.status === 202 || response.status === 204) {
     return { mode: 'webhook', trace: response.headers.get('Gotenberg-Trace') ?? undefined }

@@ -93,8 +93,15 @@ function fetchOptions(request: Request): Pick<RequestInit, 'signal' | 'redirect'
 function upstreamConversionHeaders(
   auth: HeadersInit | undefined,
   payload: ConversionPayload,
+  acceptsOutputFilename: boolean,
 ): Headers {
   const headers = new Headers(auth)
+  if (acceptsOutputFilename && payload.outputName) {
+    headers.set('Gotenberg-Output-Filename', payload.outputName)
+  }
+  if (payload.requestTrace) headers.set('Gotenberg-Trace', payload.requestTrace)
+  if (payload.traceparent) headers.set('traceparent', payload.traceparent)
+  if (payload.tracestate) headers.set('tracestate', payload.tracestate)
   const webhook = payload.webhook
   if (webhook) {
     headers.set('Gotenberg-Webhook-Url', webhook.url)
@@ -179,13 +186,19 @@ export async function proxyConversionRequest(
     method: 'POST',
     ...fetchOptions(request),
     body: form,
-    headers: upstreamConversionHeaders(authHeaders, payload),
+    headers: upstreamConversionHeaders(authHeaders, payload, operation.output !== 'json'),
     credentials: 'omit',
   })
   if (!upstream.ok) {
+    const headers = new Headers({
+      ...safeResponseHeaders,
+      'Content-Type': 'text/plain; charset=utf-8',
+    })
+    const trace = upstream.headers.get('gotenberg-trace')
+    if (trace) headers.set('Gotenberg-Trace', trace)
     return new Response(await upstreamErrorText(upstream), {
       status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
-      headers: { ...safeResponseHeaders, 'Content-Type': 'text/plain; charset=utf-8' },
+      headers,
     })
   }
   const headers = new Headers(safeResponseHeaders)

@@ -241,7 +241,7 @@ export const OPERATIONS: readonly Operation[] = [
     id: 'merge',
     title: 'Merge PDFs',
     group: 'PDF tools',
-    summary: 'Combine PDFs in the order they are uploaded.',
+    summary: 'Combine PDFs in your selected order.',
     path: '/forms/pdfengines/merge',
     docs: 'manipulate-pdfs/merge-pdfs',
     ...pdfFiles,

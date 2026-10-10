@@ -12,6 +12,7 @@ interface UploadZoneProps {
   accept?: string
   multiple?: boolean
   reorder?: boolean
+  allowDuplicateNames?: boolean
   maxFiles?: number
 }
 
@@ -23,10 +24,25 @@ export function UploadZone({
   accept,
   multiple = false,
   reorder = false,
+  allowDuplicateNames = false,
   maxFiles = 20,
 }: UploadZoneProps) {
   const id = useId()
   const ref = useRef<HTMLInputElement>(null)
+  // Stable identity for same-named files (including repeated copies of one File).
+  const fileIds = useRef(new WeakMap<File, number>())
+  const nextId = useRef(0)
+  const occurrences = new Map<File, number>()
+  const fileKey = (file: File) => {
+    let id = fileIds.current.get(file)
+    if (id === undefined) {
+      id = nextId.current++
+      fileIds.current.set(file, id)
+    }
+    const occurrence = occurrences.get(file) ?? 0
+    occurrences.set(file, occurrence + 1)
+    return `${id}-${occurrence}`
+  }
   const [dragging, setDragging] = useState(false)
   const addFiles = (newFiles: File[]) => {
     const existing = multiple ? files : []
@@ -34,6 +50,7 @@ export function UploadZone({
       [...existing, ...newFiles]
         .filter(
           (file, index, all) =>
+            allowDuplicateNames ||
             all.findIndex(
               (candidate) => candidate.name.toLowerCase() === file.name.toLowerCase(),
             ) === index,
@@ -109,7 +126,7 @@ export function UploadZone({
         <ul className="space-y-2" aria-label={`${label} selected files`}>
           {files.map((file, index) => (
             <li
-              key={file.name.toLowerCase()}
+              key={fileKey(file)}
               className="flex min-w-0 items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5"
             >
               <FileText className="size-4 shrink-0 text-slate-500" />

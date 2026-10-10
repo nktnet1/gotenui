@@ -37,6 +37,10 @@ function request(
     fields: { ...operationDefaults(operation), ...overrides.fields },
     advanced: overrides.advanced ?? {},
     ...(overrides.source ? { source: overrides.source } : {}),
+    ...(overrides.outputName ? { outputName: overrides.outputName } : {}),
+    ...(overrides.requestTrace ? { requestTrace: overrides.requestTrace } : {}),
+    ...(overrides.traceparent ? { traceparent: overrides.traceparent } : {}),
+    ...(overrides.tracestate ? { tracestate: overrides.tracestate } : {}),
   }
   const body = new FormData()
   body.set('payload', JSON.stringify(payload))
@@ -436,4 +440,77 @@ test('legacy Prometheus metrics are read from local Docker through the authentic
   unapproved.headers.delete('X-Gotenui-Connection-Id')
   unapproved.headers.set('X-Gotenberg-Url', 'https://unapproved.example.test')
   await expect(proxyMetricsRequest(unapproved)).rejects.toMatchObject({ status: 403 })
+}, 120_000)
+
+/** Write a unique bookmark to the only page, so merge order can be checked in the result. */
+async function bookmarkedPdf(marker: string, filename: string): Promise<File> {
+  const operation = OPERATIONS.find(({ id }) => id === 'bookmarks-write')
+  if (!operation) throw new Error('Missing bookmarks write operation')
+  const bookmarks = JSON.stringify([{ title: marker, page: 1, children: [] }])
+  const response = await proxyConversionRequest(
+    request(operation, { fields: { bookmarks } }, [pdfFile(filename)]),
+  )
+  if (!response.ok) {
+    throw new Error(`Bookmark fixture ${marker}: ${response.status} ${await response.text()}`)
+  }
+  return new File([await response.arrayBuffer()], filename, { type: 'application/pdf' })
+}
+
+test('local merge preserves displayed page order with numeric and duplicate filenames', async () => {
+  const merge = OPERATIONS.find(({ id }) => id === 'merge')
+  const read = OPERATIONS.find(({ id }) => id === 'bookmarks-read')
+  if (!merge || !read) throw new Error('Merge/bookmark routes missing')
+  // Gotenberg sorts raw filenames 2.pdf before z.pdf, but selected order must win.
+  const files = [
+    await bookmarkedPdf('z-first', 'z.pdf'),
+    await bookmarkedPdf('numeric-second', '2.pdf'),
+    await bookmarkedPdf('duplicate-third', 'duplicate.pdf'),
+    await bookmarkedPdf('duplicate-fourth', 'duplicate.pdf'),
+  ]
+  const response = await proxyConversionRequest(
+    request(merge, { fields: { autoIndexBookmarks: true } }, files),
+  )
+  if (!response.ok) throw new Error(`Merge order: ${response.status} ${await response.text()}`)
+  expect(response.headers.get('content-type')).toContain('application/pdf')
+  const output = new File([await response.arrayBuffer()], 'merged.pdf', {
+    type: 'application/pdf',
+  })
+  const readResponse = await proxyConversionRequest(request(read, {}, [output]))
+  if (!readResponse.ok) {
+    throw new Error(`Read merged bookmarks: ${readResponse.status} ${await readResponse.text()}`)
+  }
+  const result = (await readResponse.json()) as Record<
+    string,
+    { title: string; page: number; children?: { title: string; page: number }[] }[]
+  >
+  const bookmarks = Object.values(result).flat()
+  expect(bookmarks.map(({ title }) => title)).toEqual([
+    'z-first',
+    'numeric-second',
+    'duplicate-third',
+    'duplicate-fourth',
+  ])
+  expect(bookmarks.map(({ page }) => page)).toEqual([1, 2, 3, 4])
+}, 120_000)
+
+test('real Gotenberg accepts the configured output filename, correlation ID and W3C traceparent', async () => {
+  const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
+  if (!operation) throw new Error('Missing HTML conversion operation')
+  const response = await proxyConversionRequest(
+    request(operation, {
+      source: '<!doctype html><html><body>Header contract</body></html>',
+      outputName: 'contract-report',
+      requestTrace: 'gotenui-contract-42',
+      traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+      tracestate: 'vendor=test',
+    }),
+  )
+  if (!response.ok) throw new Error(`Header contract: ${response.status} ${await response.text()}`)
+  expect(response.headers.get('content-disposition')).toContain('contract-report.pdf')
+  expect(response.headers.get('gotenberg-trace')).toBe('gotenui-contract-42')
+  expect(response.headers.get('content-type')).toContain('application/pdf')
+  expect(response.headers.get('traceparent')).toBeNull()
+  expect(
+    new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+  ).toBe('%PDF-')
 }, 120_000)

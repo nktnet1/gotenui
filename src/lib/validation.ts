@@ -29,6 +29,9 @@ export const payloadSchema = v.object({
   advanced: v.record(v.string(), advancedValue),
   source: v.optional(v.pipe(v.string(), v.maxLength(300_000))),
   outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
+  requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
+  traceparent: v.optional(v.pipe(v.string(), v.maxLength(55))),
+  tracestate: v.optional(v.pipe(v.string(), v.maxLength(512))),
   downloadFrom: v.optional(v.pipe(v.array(remoteFileSchema), v.maxLength(20))),
   webhook: v.optional(webhookSchema),
 })
@@ -202,7 +205,9 @@ export function validateFiles(
   let total = 0
   for (const file of [...files, ...auxiliary]) {
     const name = safeFilename(file.name)
-    if (names.has(name.toLowerCase())) throw new InputError(`Duplicate filename: ${name}`)
+    if (names.has(name.toLowerCase()) && operation.id !== 'merge') {
+      throw new InputError(`Duplicate filename: ${name}`)
+    }
     names.add(name.toLowerCase())
     total += file.size
     if (file.size === 0) throw new InputError(`${name} is empty.`)
@@ -324,8 +329,62 @@ export function validatePayload(input: unknown): {
   if (payload.outputName && !/^[a-zA-Z0-9][a-zA-Z0-9 _-]{0,99}$/.test(payload.outputName)) {
     throw new InputError('Output name contains invalid characters.')
   }
+  if (operation.id === 'merge' && payload.advanced.bookmarks !== undefined) {
+    try {
+      JSON.parse(String(payload.advanced.bookmarks))
+    } catch {
+      throw new InputError('Merge bookmarks must be valid JSON.')
+    }
+  }
+  validateRequestMetadata(payload)
   validateAsyncInputs(payload)
   return { payload, operation }
+}
+
+/** Only validated request metadata is ever sent as upstream HTTP headers. */
+function validateRequestMetadata(payload: ConversionPayload): void {
+  if (payload.requestTrace && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(payload.requestTrace)) {
+    throw new InputError(
+      'Gotenberg request ID must contain only letters, digits, dots, colons, underscores or hyphens.',
+    )
+  }
+  if (payload.traceparent !== undefined) {
+    if (!/^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/.test(payload.traceparent)) {
+      throw new InputError('traceparent must use W3C version 00 with lowercase hexadecimal IDs.')
+    }
+    const [, traceId, spanId] = payload.traceparent.split('-')
+    if (/^0+$/.test(traceId ?? '') || /^0+$/.test(spanId ?? '')) {
+      throw new InputError('traceparent trace and parent span IDs must not be all zeros.')
+    }
+  }
+  if (payload.tracestate !== undefined) {
+    if (!payload.traceparent) throw new InputError('tracestate requires traceparent.')
+    const members = payload.tracestate.split(',')
+    if (members.length > 32 || members.length === 0) {
+      throw new InputError('tracestate supports at most 32 entries.')
+    }
+    const keys = new Set<string>()
+    for (const member of members) {
+      const trimmed = member.trim()
+      const separator = trimmed.indexOf('=')
+      const key = trimmed.slice(0, separator)
+      const value = trimmed.slice(separator + 1)
+      const simpleKey = /^[a-z][a-z0-9_*/-]{0,255}$/
+      const tenantKey = /^[a-z0-9][a-z0-9_*/-]{0,240}@[a-z][a-z0-9_*/-]{0,13}$/
+      if (
+        separator === -1 ||
+        (!simpleKey.test(key) && !tenantKey.test(key)) ||
+        value.length === 0 ||
+        value.length > 256 ||
+        !/^[\x20-\x2B\x2D-\x3C\x3E-\x7E]+$/.test(value) ||
+        value.trim() !== value ||
+        keys.has(key)
+      ) {
+        throw new InputError('Invalid W3C tracestate entry.')
+      }
+      keys.add(key)
+    }
+  }
 }
 
 export function isHttpUrl(value: string): boolean {

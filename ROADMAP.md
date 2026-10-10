@@ -1,8 +1,8 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.16 (Gotenberg-managed authentication and optional diagnostics visibility).
+- **Baseline:** v1.0.19 (P0 merge ordering and request metadata implemented; metadata regression-test typecheck fixed).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
-- **Status:** Planning document; entries below are not implemented unless explicitly marked otherwise.
+- **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
 Gotenui already exposes the 22 Gotenberg conversion, screenshot, and PDF-engine routes, along with status, health, version, debug, legacy Prometheus metrics, `downloadFrom`, and asynchronous webhook submission. **Route coverage is not the same as complete feature coverage:** some route-specific form fields, uploaded assets, and repeated multipart parameters still need first-class support. An Advanced JSON field covers some scalar options, but not additional file streams, repeated fields, or HTTP request headers.
 
@@ -22,33 +22,34 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | Proposed patch | Priority | Deliverable | Scope |
 | --- | --- | --- | --- |
 | **v1.0.17** | Documentation | This roadmap | Track gaps, constraints, acceptance criteria, and references only. |
-| **v1.0.18** | P0 | Merge ordering and request metadata | Fix the misleading reorder UI; support upstream output filename, request trace, and optional trace context. |
-| **v1.0.19** | P1 | Chromium document assets | Custom `header.html` / `footer.html` uploads and editable Markdown template(s) with multiple Markdown sources. |
-| **v1.0.20** | P1 | Conversion plus PDF post-processing | Enable supported single-request watermark, stamp, attachments, and Factur-X inputs on applicable conversion operations. |
-| **v1.0.21** | P1 | Multiple overlays | Repeated watermark/stamp field groups, ordered supporting files, and correct multipart serialization. |
-| **v1.0.22** | P2 | Advanced conversion controls | First-class commonly used Chromium and LibreOffice options with accurate defaults and validation. |
-| **v1.0.23** | P2 | Remote-input and webhook usability | Structured editors, clear async results, and expanded real callback / download integration tests. |
-| **v1.0.24** | P1 | Automated release hardening | Negative security cases, edge-case responses, build/CI validation, and a final automated regression matrix. |
+| **v1.0.18** | P0 | Merge ordering and request metadata | Done: ordered local merges, output filename, correlation ID, W3C trace context. |
+| **v1.0.19** | Fix | Metadata assertion typecheck | Fix Node.js assertion matcher typing in the request-metadata regression test; no runtime behaviour change. |
+| **v1.0.20** | P1 | Chromium document assets | Custom `header.html` / `footer.html` uploads and editable Markdown template(s) with multiple Markdown sources. |
+| **v1.0.21** | P1 | Conversion plus PDF post-processing | Enable supported single-request watermark, stamp, attachments, and Factur-X inputs on applicable conversion operations. |
+| **v1.0.22** | P1 | Multiple overlays | Repeated watermark/stamp field groups, ordered supporting files, and correct multipart serialization. |
+| **v1.0.23** | P2 | Advanced conversion controls | First-class commonly used Chromium and LibreOffice options with accurate defaults and validation. |
+| **v1.0.24** | P2 | Remote-input and webhook usability | Structured editors, clear async results, and expanded real callback / download integration tests. |
+| **v1.0.25** | P1 | Automated release hardening | Negative security cases, edge-case responses, build/CI validation, and a final automated regression matrix. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
 
 #### 1. Merge ordering
 
-**Current gap:** The Merge PDFs workbench allows drag reordering and states that the visible file order determines the result. Gotenberg actually merges PDFs in **alphanumeric filename order** (numbers first, then letters). With Gotenberg 8.37+, files sharing a filename are retained and their upload order resolves the tie.
+**Previously:** The Merge PDFs workbench allows drag reordering and states that the visible file order determines the result. Gotenberg actually merges PDFs in **alphanumeric filename order** (numbers first, then letters). With Gotenberg 8.37+, files sharing a filename are retained and their upload order resolves the tie.
 
-- [ ] Make the result respect the displayed order **or** remove the reorder control and accurately explain filename-based ordering. If filenames are rewritten, preserve meaningful output metadata and avoid collisions.
-- [ ] Cover differing filenames, numeric prefixes, and duplicate filenames in local integration tests; assert actual page order, not only PDF validity.
-- [ ] Ensure the UI description and test fixtures agree with Gotenberg's ordering rules.
+- [x] Preserve displayed order for **local uploads** using numbered temporary filenames without altering file contents. Rewrite filename-keyed bookmarks for those uploads, retain original names in prefixes, and allow duplicate filenames. Remote merge inputs still use Gotenberg filename sorting.
+- [x] Cover differing filenames, numeric prefixes, and duplicate filenames in local Docker integration tests; assert bookmarked page order, not only PDF validity.
+- [x] Explain local upload ordering and remote filename sorting in the UI.
 
 #### 2. Output filename, request ID, and tracing
 
-**Current gap:** `outputName` currently names the **browser download**, not the upstream `Gotenberg-Output-Filename` request header. Gotenui reads the returned `Gotenberg-Trace`, but has no explicit custom request-trace field or distributed trace-context control.
+**Previously:** `outputName` named the **browser download**, not the upstream `Gotenberg-Output-Filename` request header. Gotenui read the returned `Gotenberg-Trace`, but had no explicit request-trace field or distributed trace-context control.
 
-- [ ] Offer optional `Gotenberg-Output-Filename` and `Gotenberg-Trace` inputs; validate lengths and characters and attach them only to conversion requests.
-- [ ] Distinguish a Gotenberg correlation ID (`Gotenberg-Trace`) from W3C `traceparent`; add trace-context forwarding only with appropriate validation.
-- [ ] Preserve existing automatic filenames and traces when inputs are omitted; never relay arbitrary browser headers, cookies, or credentials.
-- [ ] Test upstream request headers, error handling, returned filenames, and webhook trace correlation.
+- [x] Reuse the existing browser output-name field for `Gotenberg-Output-Filename` on file-producing requests, plus a separate optional `Gotenberg-Trace` input. Validate fields server-side; metadata-read routes only apply the browser filename.
+- [x] Distinguish correlation ID from W3C `traceparent` and optional `tracestate`; validate context before forwarding.
+- [x] Preserve Gotenberg-generated filenames and traces when omitted; explicitly forward only validated metadata from the body, not arbitrary browser headers, cookies, or credentials.
+- [x] Add unit tests for upstream request headers, rejected responses, returned filenames, and async webhook trace correlation, plus local Docker integration contracts.
 
 ### P1 — Document creation and post-processing
 

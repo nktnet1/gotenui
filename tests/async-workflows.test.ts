@@ -121,3 +121,25 @@ test('the PDF tools remain available with remote inputs enabled', () => {
   assert.ok(OPERATION_BY_ID.get('merge'))
   assert.ok(OPERATION_BY_ID.get('watermark'))
 })
+
+test('async webhook response retains custom correlation while propagating an independent W3C trace', async () => {
+  const parent = '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01'
+  const request = requestFor(
+    payloadFor('url-pdf', {
+      fields: { url: 'https://example.test' },
+      requestTrace: 'async-42',
+      traceparent: parent,
+      webhook: { url: 'https://hooks.example.test/success' },
+    }),
+  )
+  const response = await proxyConversionRequest(request, async (_input, options) => {
+    const headers = new Headers(options?.headers)
+    assert.equal(headers.get('gotenberg-trace'), 'async-42')
+    assert.equal(headers.get('traceparent'), parent)
+    assert.equal(headers.get('gotenberg-webhook-url'), 'https://hooks.example.test/success')
+    return new Response(null, { status: 204, headers: { 'Gotenberg-Trace': 'async-42' } })
+  })
+  assert.equal(response.status, 204)
+  assert.equal(response.headers.get('gotenberg-trace'), 'async-42')
+  assert.equal(await response.text(), '')
+})
