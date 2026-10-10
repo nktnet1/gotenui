@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.34 (sanitize successful download Content-Disposition headers and enforce media-type-correct filename extensions).
+- **Baseline:** v1.0.35 (explicit public-origin validation for deployments behind TLS-terminating reverse proxies).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -39,6 +39,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.32** | Release | Container build reproducibility | Use Node.js 24 and pnpm 12 with a frozen lockfile instead of npm resolving dependencies anew, restrict the Docker build context, and run the packaged Nitro app as a non-root user; add a static packaging contract test (real image build outstanding). |
 | **v1.0.33** | Release | Binary response signature hardening | Reject mislabeled PDF, ZIP and screenshot outputs before returning download headers. Inspect only the minimum file-signature bytes and replay the inspected stream without buffering the full result; extend unit and live Nitro smoke coverage. |
 | **v1.0.34** | Release | Download disposition hardening | Force safe attachment filenames consistent with the verified output media type, prefer validated requested names, and avoid reflecting download headers on webhook acceptance; add unit and live Nitro smoke regressions. |
+| **v1.0.35** | Release | Public-origin reverse-proxy compatibility | Allow a single explicitly configured public origin for TLS-terminating deployments; preserve strict origin/site rejection without trusting forwarded request headers, add proxy unit tests and a second built Nitro smoke instance. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -139,6 +140,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
 
 ## Verification and release gates
+
+**v1.0.35 reverse-proxy origin:** An operator may set `GOTENUI_PUBLIC_ORIGIN` to the browser-visible HTTP(S) origin when TLS termination or reverse-proxy routing causes Nitro's internal `Request.url` origin to differ. The override replaces, rather than supplements, the implicit origin for the CSRF check. Arbitrary forwarded-host/protocol headers remain untrusted and `Sec-Fetch-Site` enforcement is unchanged. Vitest and a second built Nitro process cover the public-HTTPS/internal-HTTP mismatch, rejection of other origins, and no upstream request on denial. Manual ingress/TLS and browser verification remain outstanding.
 
 **v1.0.34 download headers:** Before serving a successful conversion, Gotenui now builds `Content-Disposition: attachment` from a sanitized name rather than blindly relaying the upstream value. The filename extension follows the verified response content type (including PDF/ZIP variations), with validated `outputName` taking precedence over upstream suggestions. This prevents a gateway from changing the browser disposition to `inline` or assigning an HTML/executable-looking suffix to PDF, ZIP, image or JSON responses. Webhook `202`/`204` acceptance retains correlation IDs but does not forward irrelevant file-download headers. Unit tests and built Nitro smoke checks cover these contracts; actual Gotenberg integration and manual browser behaviour remain outstanding.
 

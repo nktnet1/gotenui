@@ -36,6 +36,53 @@ function pdfResponse(bytes = '%PDF-1.7', headers: HeadersInit = {}) {
   })
 }
 
+test('the conversion proxy honours a configured public HTTPS origin behind an internal HTTP hop', async () => {
+  const publicOrigin = 'https://documents.example.test'
+  vi.stubEnv('GOTENUI_PUBLIC_ORIGIN', publicOrigin)
+  let upstreamCalls = 0
+  const request = (origin: string, headers: Record<string, string> = {}) => {
+    const form = new FormData()
+    form.set(
+      'payload',
+      JSON.stringify({
+        operation: 'url-pdf',
+        fields: { url: 'https://example.test' },
+        advanced: {},
+      }),
+    )
+    return new Request('http://127.0.0.1:3100/api/gotenberg/convert', {
+      method: 'POST',
+      headers: {
+        Origin: origin,
+        'Sec-Fetch-Site': 'same-origin',
+        'X-Gotenberg-Url': backend,
+        ...headers,
+      },
+      body: form,
+    })
+  }
+  const fetcher: typeof fetch = async () => {
+    upstreamCalls++
+    return pdfResponse()
+  }
+  const accepted = await proxyConversionRequest(request(publicOrigin), fetcher)
+  assert.equal(accepted.status, 200)
+  assert.equal(await accepted.text(), '%PDF-1.7')
+  assert.equal(upstreamCalls, 1)
+
+  for (const rejectedOrigin of ['http://127.0.0.1:3100', 'https://evil.example.test']) {
+    const rejected = await proxyConversionRequest(
+      request(rejectedOrigin, {
+        'X-Forwarded-Host': 'documents.example.test',
+        'X-Forwarded-Proto': 'https',
+      }),
+      fetcher,
+    ).catch(proxyErrorResponse)
+    assert.equal(rejected.status, 403)
+  }
+  assert.equal(upstreamCalls, 1, 'Origin rejection must precede the upstream request')
+})
+
 test('conversion output has a finite configurable streaming limit', () => {
   assert.equal(DEFAULT_MAX_RESPONSE_BYTES, 100_000_000)
 })

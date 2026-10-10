@@ -251,6 +251,7 @@ async function run(): Promise<void> {
     GOTENUI_SHOW_DEBUG: 'false',
     GOTENUI_SHOW_METRICS: 'false',
     GOTENUI_MAX_RESPONSE_BYTES: '1024',
+    GOTENUI_PUBLIC_ORIGIN: undefined,
   }
   const child = spawn(process.execPath, [entry], {
     cwd: projectRoot,
@@ -592,6 +593,69 @@ async function run(): Promise<void> {
     assert.equal(conflicting.status, 400)
     assert.equal(seen.length, previousCount, 'Rejected requests must never reach upstream')
     checks++
+
+    // A TLS-terminating ingress can forward a public HTTPS Origin to an HTTP
+    // Nitro listener. Verify the explicitly configured origin without trusting
+    // client-supplied X-Forwarded-Host or X-Forwarded-Proto.
+    const proxiedPort = await unusedPort()
+    const proxiedOrigin = `http://127.0.0.1:${proxiedPort}`
+    const publicOrigin = 'https://documents.example.test'
+    const proxiedChild = spawn(process.execPath, [entry], {
+      cwd: projectRoot,
+      env: {
+        ...env,
+        PORT: String(proxiedPort),
+        NITRO_PORT: String(proxiedPort),
+        GOTENUI_PUBLIC_ORIGIN: publicOrigin,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let proxiedLogs = ''
+    const captureProxy = (chunk: Buffer) => {
+      proxiedLogs = `${proxiedLogs}${chunk.toString()}`.slice(-4_000)
+    }
+    proxiedChild.stdout.on('data', captureProxy)
+    proxiedChild.stderr.on('data', captureProxy)
+    try {
+      await waitForServer(proxiedChild, proxiedOrigin, () => proxiedLogs)
+      const proxiedConvert = `${proxiedOrigin}/api/gotenberg/convert`
+      const proxyHeaders = {
+        Origin: publicOrigin,
+        'Sec-Fetch-Site': 'same-origin',
+        'X-Gotenui-Connection-Id': 'smoke',
+      }
+      const acceptedPublic = await get(proxiedConvert, {
+        method: 'POST',
+        headers: proxyHeaders,
+        body: pdfRequest(),
+      })
+      assert.equal(acceptedPublic.status, 200)
+      assert.deepEqual(Buffer.from(await acceptedPublic.arrayBuffer()), pdf)
+      checks++
+
+      const beforeRejections = seen.length
+      for (const headers of [
+        { ...proxyHeaders, Origin: proxiedOrigin },
+        {
+          ...proxyHeaders,
+          Origin: 'https://attacker.example.test',
+          'X-Forwarded-Host': 'documents.example.test',
+          'X-Forwarded-Proto': 'https',
+        },
+        { ...proxyHeaders, 'Sec-Fetch-Site': 'cross-site' },
+      ]) {
+        const rejected = await get(proxiedConvert, {
+          method: 'POST',
+          headers,
+          body: pdfRequest(),
+        })
+        assert.equal(rejected.status, 403)
+        checks++
+      }
+      assert.equal(seen.length, beforeRejections, 'Cross-origin traffic must not reach Gotenberg')
+    } finally {
+      await stopProcess(proxiedChild)
+    }
 
     console.log(`Production Nitro smoke: ${styleText('green', 'PASS')} (${checks} checks)`)
   } finally {

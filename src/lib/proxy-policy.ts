@@ -126,14 +126,44 @@ export function limitResponseStream(
   })
 }
 
-/** A form submission from another site must not turn this function into a public relay. */
-export function requireSameOrigin(request: Request): void {
+/** A trusted deployment setting, never a browser-supplied forwarded host/protocol. */
+function publicOrigin(configured: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(configured)
+  } catch {
+    throw new Error('GOTENUI_PUBLIC_ORIGIN must be a valid HTTP(S) origin.')
+  }
+  if (
+    !/^https?:\/\/[^/?#]+\/?$/i.test(configured) ||
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== '/' ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error('GOTENUI_PUBLIC_ORIGIN must be a valid HTTP(S) origin.')
+  }
+  return parsed.origin
+}
+
+/** A form submission from another site must not turn this function into a public relay.
+ * TLS-terminating proxies may expose a different internal Request.url origin.
+ * Only the explicit server-side origin override is trusted, never X-Forwarded-*.
+ */
+export function requireSameOrigin(
+  request: Request,
+  configuredOrigin: string | undefined = process.env.GOTENUI_PUBLIC_ORIGIN,
+): void {
   const site = request.headers.get('sec-fetch-site')
   if (site && site !== 'same-origin' && site !== 'none') {
     throw new ProxyInputError('Cross-origin proxy requests are not allowed.', 403)
   }
+  const expectedOrigin =
+    configuredOrigin === undefined ? new URL(request.url).origin : publicOrigin(configuredOrigin)
   const origin = request.headers.get('origin')
-  if (origin && origin !== new URL(request.url).origin) {
+  if (origin && origin !== expectedOrigin) {
     throw new ProxyInputError('Cross-origin proxy requests are not allowed.', 403)
   }
 }

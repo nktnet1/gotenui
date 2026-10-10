@@ -51,6 +51,67 @@ test('same-origin browser requests pass; foreign origin and site are rejected', 
   )
 })
 
+test('explicit public origin permits TLS-terminating reverse proxies without trusting forwarded headers', () => {
+  const internalUrl = 'http://127.0.0.1:3100/api/gotenberg/convert'
+  const publicOrigin = 'https://documents.example.test'
+  const request = (origin: string, headers: Record<string, string> = {}) =>
+    new Request(internalUrl, {
+      method: 'POST',
+      headers: {
+        Origin: origin,
+        'Sec-Fetch-Site': 'same-origin',
+        ...headers,
+      },
+    })
+
+  assert.throws(() => requireSameOrigin(request(publicOrigin)), /Cross-origin/)
+  requireSameOrigin(request(publicOrigin), publicOrigin)
+  requireSameOrigin(request(publicOrigin), `${publicOrigin}/`)
+  for (const origin of [
+    'http://127.0.0.1:3100',
+    'http://documents.example.test',
+    'https://documents.example.test:8443',
+    'https://documents.example.test.attacker.test',
+    'null',
+  ]) {
+    assert.throws(
+      () =>
+        requireSameOrigin(
+          request(origin, {
+            'X-Forwarded-Host': 'documents.example.test',
+            'X-Forwarded-Proto': 'https',
+          }),
+          publicOrigin,
+        ),
+      /Cross-origin/,
+      origin,
+    )
+  }
+  assert.throws(
+    () =>
+      requireSameOrigin(request(publicOrigin, { 'Sec-Fetch-Site': 'cross-site' }), publicOrigin),
+    /Cross-origin/,
+  )
+})
+
+test('the public origin setting accepts only an HTTP(S) origin without credentials or paths', () => {
+  const request = new Request('http://127.0.0.1:3100/api/gotenberg/connections')
+  for (const invalid of [
+    '',
+    'documents.example.test',
+    'ftp://documents.example.test',
+    'https://admin:secret@documents.example.test',
+    'https://documents.example.test/proxy',
+    'https://documents.example.test?redirect=1',
+    'https://documents.example.test#anchor',
+    'https://documents.example.test.attacker.test/path',
+    'https://documents.example.test\nX-Foo: evil',
+  ]) {
+    assert.throws(() => requireSameOrigin(request, invalid), /GOTENUI_PUBLIC_ORIGIN/, invalid)
+  }
+  requireSameOrigin(request, 'http://127.0.0.1:3100')
+})
+
 test('reads bounded bodies and rejects oversized streams without buffering them', async () => {
   const good = new Blob(['a'.repeat(100)]).stream()
   const bytes = await readLimitedBody(good, 101)
