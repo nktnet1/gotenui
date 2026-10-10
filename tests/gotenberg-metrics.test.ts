@@ -10,7 +10,6 @@ import {
 
 const origin = 'https://gotenui.example.test'
 const backend = 'http://127.0.0.1:3000'
-const adminKey = 'local-metrics-unit-test-access-key-123456'
 const text = [
   '# HELP gotenberg_requests_total Number of requests',
   '# TYPE gotenberg_requests_total counter',
@@ -27,7 +26,6 @@ function metricsRequest(headers: Record<string, string> = {}): Request {
     headers: {
       Origin: origin,
       'X-Gotenberg-Url': backend,
-      'X-Gotenui-Debug-Access-Key': adminKey,
       ...headers,
     },
   })
@@ -41,10 +39,7 @@ const metricsResponse = () =>
     },
   })
 
-beforeEach(() => {
-  vi.stubEnv('GOTENBERG_ALLOWED_URLS', backend)
-  vi.stubEnv('GOTENUI_DEBUG_ACCESS_KEY', adminKey)
-})
+beforeEach(() => vi.stubEnv('GOTENBERG_ALLOWED_URLS', backend))
 afterEach(() => vi.unstubAllEnvs())
 
 test('legacy Prometheus metrics are recognised, summarized and filtered', () => {
@@ -57,22 +52,14 @@ test('legacy Prometheus metrics are recognised, summarized and filtered', () => 
   assert.equal(filterPrometheusMetrics(text, '  '), text)
 })
 
-test('metrics require a configured admin key, same origin, and POST before contacting Gotenberg', async () => {
+test('metrics rely on upstream auth but still require same-origin POST', async () => {
   let calls = 0
   const fetcher: typeof fetch = async () => {
     calls++
     return metricsResponse()
   }
-  vi.stubEnv('GOTENUI_DEBUG_ACCESS_KEY', undefined)
-  await assert.rejects(
-    proxyMetricsRequest(metricsRequest(), fetcher),
-    (error: { status?: number }) => error.status === 404,
-  )
-  vi.stubEnv('GOTENUI_DEBUG_ACCESS_KEY', adminKey)
-  await assert.rejects(
-    proxyMetricsRequest(metricsRequest({ 'X-Gotenui-Debug-Access-Key': 'incorrect' }), fetcher),
-    (error: { status?: number }) => error.status === 403,
-  )
+  const response = await proxyMetricsRequest(metricsRequest(), fetcher)
+  assert.equal(response.status, 200)
   await assert.rejects(
     proxyMetricsRequest(metricsRequest({ Origin: 'https://untrusted.test' }), fetcher),
     (error: { status?: number }) => error.status === 403,
@@ -81,7 +68,7 @@ test('metrics require a configured admin key, same origin, and POST before conta
     proxyMetricsRequest(new Request(`${origin}/api/gotenberg/metrics`), fetcher),
     (error: { status?: number }) => error.status === 405,
   )
-  assert.equal(calls, 0)
+  assert.equal(calls, 1)
 })
 
 test('metrics proxy uses approved target with no redirects and strips upstream headers', async () => {
@@ -112,9 +99,7 @@ test('metrics proxy uses approved target with no redirects and strips upstream h
   )
 })
 
-test('server-managed profile credentials require its access key and cannot be overridden', async () => {
-  const profileKey = 'local-unit-profile-key-1234567890'
-  vi.stubEnv('GOTENUI_PROFILE_ACCESS_KEY', profileKey)
+test('server-managed upstream credentials are scoped to the selected profile', async () => {
   vi.stubEnv(
     'GOTENUI_SERVER_CONNECTIONS',
     JSON.stringify([
@@ -129,7 +114,6 @@ test('server-managed profile credentials require its access key and cannot be ov
   const headers = {
     'X-Gotenberg-Url': '',
     'X-Gotenui-Connection-Id': 'private',
-    'X-Gotenui-Profile-Access-Key': profileKey,
   }
   const request = metricsRequest(headers)
   request.headers.delete('X-Gotenberg-Url')
@@ -143,12 +127,6 @@ test('server-managed profile credentials require its access key and cannot be ov
   })
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('authorization'), null)
-  const wrong = request.clone()
-  wrong.headers.set('X-Gotenui-Profile-Access-Key', 'incorrect')
-  await assert.rejects(
-    proxyMetricsRequest(wrong),
-    (error: { status?: number }) => error.status === 403,
-  )
   const forged = request.clone()
   forged.headers.set('X-Gotenui-Upstream-Authorization', 'Bearer forged')
   await assert.rejects(proxyMetricsRequest(forged), /cannot override/)
@@ -194,7 +172,6 @@ test('oversized, malformed and unrelated metrics responses are rejected as gatew
 
 test('browser fetches metrics only through the same-origin API, with no query-string secrets', async () => {
   const original = globalThis.fetch
-  const key = 'memory-only-admin-key'
   globalThis.fetch = async (input, options) => {
     assert.equal(String(input), '/api/gotenberg/metrics')
     assert.equal(options?.method, 'POST')
@@ -202,18 +179,18 @@ test('browser fetches metrics only through the same-origin API, with no query-st
     assert.equal(options?.credentials, 'same-origin')
     assert.equal(options?.body, undefined)
     const headers = new Headers(options?.headers)
-    assert.equal(headers.get('x-gotenui-debug-access-key'), key)
+    assert.equal(headers.get('x-gotenui-debug-access-key'), null)
     assert.equal(headers.get('x-gotenberg-url'), backend)
     return new Response(text, {
       headers: { 'Content-Type': 'text/plain', 'X-Gotenui-Metrics': '1' },
     })
   }
   try {
-    assert.equal(await getGotenbergMetrics(backend, key), text)
+    assert.equal(await getGotenbergMetrics(backend), text)
     globalThis.fetch = async () => new Response('<html>fallback</html>')
-    await assert.rejects(getGotenbergMetrics(backend, key), /did not reach/)
+    await assert.rejects(getGotenbergMetrics(backend), /did not reach/)
     globalThis.fetch = async () => new Response('Metrics unavailable', { status: 403 })
-    await assert.rejects(getGotenbergMetrics(backend, key), /Metrics unavailable/)
+    await assert.rejects(getGotenbergMetrics(backend), /Metrics unavailable/)
   } finally {
     globalThis.fetch = original
   }

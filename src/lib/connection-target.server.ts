@@ -4,7 +4,6 @@ import { requireServerConnection, type ServerConnection } from '#/lib/server-con
 export type TargetSettings = {
   allowed: ReadonlySet<string>
   connections: ServerConnection[]
-  accessKey: string | undefined
 }
 
 /** A browser-supplied Authorization header is never forwarded without validation. */
@@ -43,23 +42,18 @@ export function resolveConnectionTarget(
   idCandidate: string | null,
 ): { url: string; headers?: HeadersInit } {
   const suppliedAuth = request.headers.get('x-gotenui-upstream-authorization')
+  if (request.headers.has('x-gotenui-profile-access-key')) {
+    throw new ProxyInputError('Gotenui profile access keys are no longer supported.')
+  }
   if (idCandidate !== null) {
     if (urlCandidate !== null || suppliedAuth !== null) {
       throw new ProxyInputError('Server connections cannot override their URL or credentials.')
     }
-    const selected = requireServerConnection(
-      idCandidate,
-      request.headers.get('x-gotenui-profile-access-key'),
-      settings.connections,
-      settings.accessKey,
-    )
+    const selected = requireServerConnection(idCandidate, settings.connections)
     return {
       url: selected.url,
       headers: selected.authorization ? { Authorization: selected.authorization } : undefined,
     }
-  }
-  if (request.headers.has('x-gotenui-profile-access-key')) {
-    throw new ProxyInputError('Access keys cannot be sent to browser-managed connections.')
   }
   const url = requireAllowedBackend(urlCandidate ?? DEMO_GOTENBERG_URL, settings.allowed)
   const authorization = parseBrowserAuthorization(suppliedAuth)

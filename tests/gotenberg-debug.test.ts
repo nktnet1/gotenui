@@ -4,7 +4,6 @@ import { proxyDebugRequest, proxyErrorResponse } from '#/lib/gotenberg-proxy.ser
 
 const origin = 'https://gotenui.example.test'
 const backend = 'http://127.0.0.1:3000'
-const debugKey = 'local-unit-test-debug-access-key-12345'
 
 function debugRequest(url = backend, headers: Record<string, string> = {}): Request {
   return new Request(`${origin}/api/gotenberg/debug`, {
@@ -12,46 +11,26 @@ function debugRequest(url = backend, headers: Record<string, string> = {}): Requ
     headers: {
       Origin: origin,
       'X-Gotenberg-Url': url,
-      'X-Gotenui-Debug-Access-Key': debugKey,
       ...headers,
     },
   })
 }
 
-beforeEach(() => {
-  vi.stubEnv('GOTENBERG_ALLOWED_URLS', backend)
-  vi.stubEnv('GOTENUI_DEBUG_ACCESS_KEY', debugKey)
-})
+beforeEach(() => vi.stubEnv('GOTENBERG_ALLOWED_URLS', backend))
 afterEach(() => vi.unstubAllEnvs())
 
-test('requires a separately configured administrator key before contacting any backend', async () => {
+test('debug reaches the selected Gotenberg instance without an extra UI admin key', async () => {
   let called = 0
-  const fetcher: typeof fetch = async () => {
+  const response = await proxyDebugRequest(debugRequest(), async () => {
     called++
-    return Response.json({ secrets: 'private' })
-  }
-  vi.stubEnv('GOTENUI_DEBUG_ACCESS_KEY', undefined)
-  await assert.rejects(
-    proxyDebugRequest(debugRequest(), fetcher),
-    (error: { status?: number }) => error.status === 404,
-  )
-  assert.equal(called, 0)
-  vi.stubEnv('GOTENUI_DEBUG_ACCESS_KEY', debugKey)
-  const missing = debugRequest()
-  missing.headers.delete('X-Gotenui-Debug-Access-Key')
-  await assert.rejects(
-    proxyDebugRequest(missing, fetcher),
-    (error: { status?: number }) => error.status === 403,
-  )
-  const incorrect = debugRequest(backend, { 'X-Gotenui-Debug-Access-Key': 'wrong-secret' })
-  await assert.rejects(
-    proxyDebugRequest(incorrect, fetcher),
-    (error: { status?: number }) => error.status === 403,
-  )
-  assert.equal(called, 0)
+    return Response.json({ enabled: true })
+  })
+  assert.equal(called, 1)
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { enabled: true })
 })
 
-test('admin key protects the exact allowlist and same-origin boundary', async () => {
+test('exact allowlist and same-origin checks still protect the proxy', async () => {
   let called = false
   const fetcher: typeof fetch = async () => {
     called = true
@@ -69,7 +48,7 @@ test('admin key protects the exact allowlist and same-origin boundary', async ()
   assert.equal(called, false)
 })
 
-test('debug returns bounded JSON with no-store and never forwards the admin key', async () => {
+test('debug returns bounded JSON with no-store and never forwards browser headers', async () => {
   const request = debugRequest()
   request.headers.set('Authorization', 'Bearer forged-browser-value')
   const response = await proxyDebugRequest(request, async (input, options) => {
@@ -94,9 +73,7 @@ test('debug returns bounded JSON with no-store and never forwards the admin key'
   })
 })
 
-test('debug uses server-managed credentials only with a valid profile key', async () => {
-  const profileKey = 'local-unit-test-profile-key-1234567'
-  vi.stubEnv('GOTENUI_PROFILE_ACCESS_KEY', profileKey)
+test('debug uses the selected server-managed upstream credentials', async () => {
   vi.stubEnv(
     'GOTENUI_SERVER_CONNECTIONS',
     JSON.stringify([
@@ -111,7 +88,6 @@ test('debug uses server-managed credentials only with a valid profile key', asyn
   const request = debugRequest()
   request.headers.delete('X-Gotenberg-Url')
   request.headers.set('X-Gotenui-Connection-Id', 'secure')
-  request.headers.set('X-Gotenui-Profile-Access-Key', profileKey)
   const expected = `Basic ${Buffer.from('debug-user:debug-password').toString('base64')}`
   const response = await proxyDebugRequest(request, async (input, options) => {
     assert.equal(String(input), `${backend}/debug`)
@@ -119,12 +95,6 @@ test('debug uses server-managed credentials only with a valid profile key', asyn
     return Response.json({ authenticated: true })
   })
   assert.equal(response.status, 200)
-  const wrong = request.clone()
-  wrong.headers.set('X-Gotenui-Profile-Access-Key', 'wrong')
-  await assert.rejects(
-    proxyDebugRequest(wrong),
-    (error: { status?: number }) => error.status === 403,
-  )
   const forged = request.clone()
   forged.headers.set('X-Gotenui-Upstream-Authorization', 'Bearer forged')
   await assert.rejects(proxyDebugRequest(forged), /cannot override/)

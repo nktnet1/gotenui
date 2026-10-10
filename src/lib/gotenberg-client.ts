@@ -62,7 +62,6 @@ function targetHeaders(connection: string | ConnectionChoice): Headers {
     }
   } else {
     headers.set('X-Gotenui-Connection-Id', connection.id)
-    if (connection.accessKey) headers.set('X-Gotenui-Profile-Access-Key', connection.accessKey)
   }
   return headers
 }
@@ -249,15 +248,12 @@ export async function convertWithGotenberg(
   }
 }
 
-/** Sensitive diagnostics are requested explicitly; neither the admin key nor JSON is persisted. */
+/** Read selected-instance debug JSON using its upstream authentication; no Gotenui access key. */
 export async function getGotenbergDebug(
   connection: string | ConnectionChoice,
-  debugKey: string,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  if (!debugKey) throw new InputError('Enter the Gotenui debug access key.')
   const headers = targetHeaders(connection)
-  headers.set('X-Gotenui-Debug-Access-Key', debugKey)
   let response: Response
   try {
     response = await fetch('/api/gotenberg/debug', {
@@ -286,15 +282,12 @@ export async function getGotenbergDebug(
   return data as Record<string, unknown>
 }
 
-/** Request bounded, admin-only legacy Prometheus metrics from the selected instance. */
+/** Request bounded legacy Prometheus metrics; the upstream controls authentication. */
 export async function getGotenbergMetrics(
   connection: string | ConnectionChoice,
-  adminKey: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  if (!adminKey) throw new InputError('Enter the Gotenui diagnostics access key.')
   const headers = targetHeaders(connection)
-  headers.set('X-Gotenui-Debug-Access-Key', adminKey)
   let response: Response
   try {
     response = await fetch('/api/gotenberg/metrics', {

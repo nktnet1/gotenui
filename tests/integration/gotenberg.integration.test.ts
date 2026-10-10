@@ -22,8 +22,6 @@ const authEnvNames = [
   'GOTENBERG_BASIC_AUTH_URL',
   'GOTENBERG_BASIC_AUTH_USERNAME',
   'GOTENBERG_BASIC_AUTH_PASSWORD',
-  'GOTENUI_PROFILE_ACCESS_KEY',
-  'GOTENUI_DEBUG_ACCESS_KEY',
   'GOTENUI_SERVER_CONNECTIONS',
 ] as const
 const previousEnv = new Map<string, string | undefined>()
@@ -49,7 +47,6 @@ function request(
     headers: {
       Origin: proxyOrigin,
       'X-Gotenui-Connection-Id': 'legacy-basic',
-      'X-Gotenui-Profile-Access-Key': 'local-test-profile-access-key-123',
     },
     body,
   })
@@ -149,15 +146,11 @@ beforeAll(async () => {
   for (const name of authEnvNames) previousEnv.set(name, process.env[name])
   process.env.GOTENBERG_ALLOWED_URLS = backendUrl
   delete process.env.GOTENUI_SERVER_CONNECTIONS
-  process.env.GOTENUI_PROFILE_ACCESS_KEY = 'local-test-profile-access-key-123'
-  process.env.GOTENUI_DEBUG_ACCESS_KEY = 'local-test-debug-admin-key-1234567890'
   process.env.GOTENBERG_BASIC_AUTH_URL = backendUrl
   process.env.GOTENBERG_BASIC_AUTH_USERNAME = testUsername
   process.env.GOTENBERG_BASIC_AUTH_PASSWORD = testPassword
   const status = await proxyStatusRequest(
-    new Request(`${proxyOrigin}/api/gotenberg/status?connection=legacy-basic`, {
-      headers: { 'X-Gotenui-Profile-Access-Key': 'local-test-profile-access-key-123' },
-    }),
+    new Request(`${proxyOrigin}/api/gotenberg/status?connection=legacy-basic`),
   )
   expect(status.status).toBe(200)
   expect(await status.json()).toMatchObject({ online: true })
@@ -299,10 +292,7 @@ test('HEAD health probes the local Gotenberg container without a body or demo re
   const selected = await proxyHeadHealthRequest(
     new Request(`${proxyOrigin}/api/gotenberg/health?connection=legacy-basic`, {
       method: 'HEAD',
-      headers: {
-        Origin: proxyOrigin,
-        'X-Gotenui-Profile-Access-Key': 'local-test-profile-access-key-123',
-      },
+      headers: { Origin: proxyOrigin },
     }),
   )
   expect(selected.status).toBe(200)
@@ -338,9 +328,7 @@ test('the proxy returns an upstream 401 when the configured Basic Auth password 
   process.env.GOTENBERG_BASIC_AUTH_PASSWORD = 'wrong-password'
   try {
     const status = await proxyStatusRequest(
-      new Request(`${proxyOrigin}/api/gotenberg/status?connection=legacy-basic`, {
-        headers: { 'X-Gotenui-Profile-Access-Key': 'local-test-profile-access-key-123' },
-      }),
+      new Request(`${proxyOrigin}/api/gotenberg/status?connection=legacy-basic`),
     )
     expect(await status.json()).toMatchObject({
       online: false,
@@ -364,7 +352,6 @@ test('browser-managed Basic Auth works against the local protected Gotenberg wit
     source: '<!doctype html><html><body><h1>Browser Basic Auth</h1></body></html>',
   })
   browser.headers.delete('X-Gotenui-Connection-Id')
-  browser.headers.delete('X-Gotenui-Profile-Access-Key')
   browser.headers.set('X-Gotenberg-Url', backendUrl)
   const unauthenticated = await proxyConversionRequest(browser.clone())
   expect(unauthenticated.status).toBe(401)
@@ -386,21 +373,17 @@ test('local server-managed credentials cannot be reached by supplying only the U
   if (!operation) throw new Error('Missing HTML operation')
   const urlOnly = request(operation, { source: '<!doctype html><h1>Anonymous</h1>' })
   urlOnly.headers.delete('X-Gotenui-Connection-Id')
-  urlOnly.headers.delete('X-Gotenui-Profile-Access-Key')
   urlOnly.headers.set('X-Gotenberg-Url', backendUrl)
   const response = await proxyConversionRequest(urlOnly)
   expect(response.status).toBe(401)
 }, 120_000)
 
 test('debug diagnostics return real JSON from the authenticated local Gotenberg container', async () => {
-  const adminKey = 'local-test-debug-admin-key-1234567890'
   const request = new Request(`${proxyOrigin}/api/gotenberg/debug`, {
     method: 'POST',
     headers: {
       Origin: proxyOrigin,
       'X-Gotenui-Connection-Id': 'legacy-basic',
-      'X-Gotenui-Profile-Access-Key': 'local-test-profile-access-key-123',
-      'X-Gotenui-Debug-Access-Key': adminKey,
     },
   })
   const response = await proxyDebugRequest(request)
@@ -414,19 +397,21 @@ test('debug diagnostics return real JSON from the authenticated local Gotenberg 
 
   const unauthenticated = await fetch(`${backendUrl}/debug`)
   expect(unauthenticated.status).toBe(401)
-  const wrong = request.clone()
-  wrong.headers.set('X-Gotenui-Debug-Access-Key', 'invalid-key')
-  await expect(proxyDebugRequest(wrong)).rejects.toMatchObject({ status: 403 })
+  const missingUpstreamAuth = await proxyDebugRequest(
+    new Request(`${proxyOrigin}/api/gotenberg/debug`, {
+      method: 'POST',
+      headers: { Origin: proxyOrigin, 'X-Gotenberg-Url': backendUrl },
+    }),
+  )
+  expect(missingUpstreamAuth.status).toBe(401)
 }, 120_000)
 
-test('legacy Prometheus metrics are read from local Docker through the protected proxy', async () => {
+test('legacy Prometheus metrics are read from local Docker through the authenticated proxy', async () => {
   const request = new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
     method: 'POST',
     headers: {
       Origin: proxyOrigin,
       'X-Gotenui-Connection-Id': 'legacy-basic',
-      'X-Gotenui-Profile-Access-Key': 'local-test-profile-access-key-123',
-      'X-Gotenui-Debug-Access-Key': 'local-test-debug-admin-key-1234567890',
     },
   })
   const response = await proxyMetricsRequest(request)
@@ -440,12 +425,15 @@ test('legacy Prometheus metrics are read from local Docker through the protected
   expect(text).toContain('# TYPE ')
   expect(text.length).toBeGreaterThan(100)
 
-  const missingKey = request.clone()
-  missingKey.headers.delete('X-Gotenui-Debug-Access-Key')
-  await expect(proxyMetricsRequest(missingKey)).rejects.toMatchObject({ status: 403 })
+  const missingUpstreamAuth = await proxyMetricsRequest(
+    new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
+      method: 'POST',
+      headers: { Origin: proxyOrigin, 'X-Gotenberg-Url': backendUrl },
+    }),
+  )
+  expect(missingUpstreamAuth.status).toBe(401)
   const unapproved = request.clone()
   unapproved.headers.delete('X-Gotenui-Connection-Id')
-  unapproved.headers.delete('X-Gotenui-Profile-Access-Key')
   unapproved.headers.set('X-Gotenberg-Url', 'https://unapproved.example.test')
   await expect(proxyMetricsRequest(unapproved)).rejects.toMatchObject({ status: 403 })
 }, 120_000)

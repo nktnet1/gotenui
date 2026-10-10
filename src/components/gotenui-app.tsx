@@ -53,12 +53,13 @@ import {
   type BrowserConnection,
   type ConnectionChoice,
   DEFAULT_CONNECTION_ID,
-  fetchManagedConnections,
+  fetchConnectionSettings,
   loadConnections,
   type ManagedConnection,
   makeBrowserAuthorization,
   type SavedConnections,
   saveConnections,
+  type UiFeatures,
 } from '#/lib/connection-profiles'
 import {
   convertWithGotenberg,
@@ -189,7 +190,7 @@ function ConnectionDialog({
   browserProfiles: BrowserConnection[]
   managedProfiles: ManagedConnection[]
   selected: string
-  onApply: (id: string, username: string, secret: string, accessKey: string) => void
+  onApply: (id: string, username: string, secret: string) => void
   onUpsert: (profile: BrowserConnection, username: string, secret: string) => void
   onRemove: (id: string) => void
   onClose: () => void
@@ -1083,6 +1084,7 @@ function Workspace({
   connectionEpoch,
   browserProfiles,
   managedProfiles,
+  features,
   onApply,
   onUpsert,
   onRemove,
@@ -1093,7 +1095,8 @@ function Workspace({
   connectionEpoch: number
   browserProfiles: BrowserConnection[]
   managedProfiles: ManagedConnection[]
-  onApply: (id: string, username: string, secret: string, accessKey: string) => void
+  features: UiFeatures
+  onApply: (id: string, username: string, secret: string) => void
   onUpsert: (profile: BrowserConnection, username: string, secret: string) => void
   onRemove: (id: string) => void
 }) {
@@ -1173,8 +1176,8 @@ function Workspace({
       probeAbort.current = null
     }
   }, [refreshStatus])
-  const applyConnection = (id: string, username: string, secret: string, accessKey: string) => {
-    onApply(id, username, secret, accessKey)
+  const applyConnection = (id: string, username: string, secret: string) => {
+    onApply(id, username, secret)
     setSettingsOpen(false)
   }
   const upsertConnection = (profile: BrowserConnection, username: string, secret: string) => {
@@ -1252,16 +1255,30 @@ function Workspace({
               <Activity className={cn('size-4', probeLoading && 'animate-pulse')} />
               <span className="hidden md:inline">Probe</span>
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setDebugOpen(true)}
-              aria-label="Open debug diagnostics"
-            >
-              <Braces className="size-4" />
-              <span className="hidden md:inline">Diagnostics</span>
-            </Button>
+            {features.showDebug && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setDebugOpen(true)}
+                aria-label="Open debug diagnostics"
+              >
+                <Braces className="size-4" />
+                <span className="hidden md:inline">Diagnostics</span>
+              </Button>
+            )}
+            {!features.showDebug && features.showMetrics && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setMetricsOpen(true)}
+                aria-label="Open Prometheus metrics"
+              >
+                <Activity className="size-4" />
+                <span className="hidden md:inline">Metrics</span>
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -1389,18 +1406,22 @@ function Workspace({
           </footer>
         </main>
       </div>
-      {debugOpen && (
+      {features.showDebug && debugOpen && (
         <DebugDialog
           connection={connection}
           connectionName={connectionName}
           onClose={() => setDebugOpen(false)}
-          onOpenMetrics={() => {
-            setDebugOpen(false)
-            setMetricsOpen(true)
-          }}
+          onOpenMetrics={
+            features.showMetrics
+              ? () => {
+                  setDebugOpen(false)
+                  setMetricsOpen(true)
+                }
+              : undefined
+          }
         />
       )}
-      {metricsOpen && (
+      {features.showMetrics && metricsOpen && (
         <MetricsDialog
           connection={connection}
           connectionName={connectionName}
@@ -1428,17 +1449,19 @@ export function GotenuiApp() {
     loadConnections(null, DEFAULT_BACKEND_URL),
   )
   const [managed, setManaged] = useState<ManagedConnection[]>([])
+  const [features, setFeatures] = useState<UiFeatures>({ showDebug: false, showMetrics: false })
   const [connectionEpoch, setConnectionEpoch] = useState(0)
   // Ephemeral credentials: intentionally never serialized, cached or placed in URLs.
-  const [credentials, setCredentials] = useState({ username: '', secret: '', accessKey: '' })
+  const [credentials, setCredentials] = useState({ username: '', secret: '' })
   useEffect(() => {
     const loaded = loadConnections(browserStorage(), DEFAULT_BACKEND_URL)
     setSaved(loaded)
     const controller = new AbortController()
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(8000)])
-    void fetchManagedConnections(signal)
-      .then((profiles) => {
+    void fetchConnectionSettings(signal)
+      .then(({ connections: profiles, features: options }) => {
         setManaged(profiles)
+        setFeatures(options)
         if (
           loaded.selected.startsWith('server:') &&
           !profiles.some((profile) => `server:${profile.id}` === loaded.selected)
@@ -1465,17 +1488,16 @@ export function GotenuiApp() {
       toast.warning('Browser storage is unavailable; changes will last only in this tab.')
     }
   }
-  const apply = (id: string, username: string, secret: string, accessKey: string) => {
+  const apply = (id: string, username: string, secret: string) => {
     if (id.startsWith('server:')) {
       const server = managed.find((item) => item.id === id.slice(7))
       if (!server) throw new Error('Unknown server-managed connection.')
-      if (server.requiresKey && !accessKey) throw new Error('Enter the server profile access key.')
     } else {
       const browser = saved.browsers.find((item) => item.id === id)
       if (!browser) throw new Error('Unknown browser connection.')
       makeBrowserAuthorization(browser.auth, username, secret)
     }
-    setCredentials({ username, secret, accessKey })
+    setCredentials({ username, secret })
     setConnectionEpoch((value) => value + 1)
     persist({ ...saved, selected: id })
     toast.success('Connection selected.')
@@ -1486,7 +1508,7 @@ export function GotenuiApp() {
       ? saved.browsers.map((item) => (item.id === profile.id ? profile : item))
       : [...saved.browsers, profile]
     if (browsers.length > 20) throw new Error('You can save up to 20 browser connections.')
-    setCredentials({ username, secret, accessKey: '' })
+    setCredentials({ username, secret })
     setConnectionEpoch((value) => value + 1)
     persist({ browsers, selected: profile.id })
     toast.success('Browser connection saved.')
@@ -1495,7 +1517,7 @@ export function GotenuiApp() {
     if (id === DEFAULT_CONNECTION_ID) return
     const browsers = saved.browsers.filter((item) => item.id !== id)
     if (browsers.length === saved.browsers.length) return
-    setCredentials({ username: '', secret: '', accessKey: '' })
+    setCredentials({ username: '', secret: '' })
     setConnectionEpoch((value) => value + 1)
     persist({ browsers, selected: saved.selected === id ? DEFAULT_CONNECTION_ID : saved.selected })
     toast.success('Connection removed.')
@@ -1508,8 +1530,7 @@ export function GotenuiApp() {
   const activeBrowser = browser ?? saved.browsers[0]
   const selectionKey = server ? saved.selected : (activeBrowser?.id ?? DEFAULT_CONNECTION_ID)
   const connection = useMemo<ConnectionChoice>(() => {
-    if (server)
-      return { kind: 'server', id: server.id, accessKey: credentials.accessKey || undefined }
+    if (server) return { kind: 'server', id: server.id }
     return {
       kind: 'browser',
       url: activeBrowser?.url ?? DEFAULT_BACKEND_URL,
@@ -1536,6 +1557,7 @@ export function GotenuiApp() {
       connectionEpoch={connectionEpoch}
       browserProfiles={saved.browsers}
       managedProfiles={managed}
+      features={features}
       onApply={apply}
       onUpsert={upsert}
       onRemove={remove}

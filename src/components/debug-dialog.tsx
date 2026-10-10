@@ -1,8 +1,6 @@
 import { Braces, ChartNoAxesColumn, RefreshCw, ShieldAlert, X } from 'lucide-react'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
-import { Input } from '#/components/ui/input'
-import { Label } from '#/components/ui/label'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { getGotenbergDebug } from '#/lib/gotenberg-client'
 
@@ -10,11 +8,10 @@ type Props = {
   connection: ConnectionChoice
   connectionName: string
   onClose: () => void
-  onOpenMetrics: () => void
+  onOpenMetrics?: () => void
 }
 
 export function DebugDialog({ connection, connectionName, onClose, onOpenMetrics }: Props) {
-  const [key, setKey] = useState('')
   const [details, setDetails] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -44,7 +41,6 @@ export function DebugDialog({ connection, connectionName, onClose, onOpenMetrics
     try {
       const payload = await getGotenbergDebug(
         connection,
-        key,
         AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
       )
       if (!controller.signal.aborted) setDetails(JSON.stringify(payload, null, 2))
@@ -88,35 +84,24 @@ export function DebugDialog({ connection, connectionName, onClose, onOpenMetrics
         <div className="mb-5 flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-950">
           <ShieldAlert className="size-5 shrink-0" />
           <p>
-            Gotenberg debug output can contain sensitive runtime configuration. Access is restricted
-            by a separate Gotenui administrator key. Your key and the returned data stay in this
-            dialog, are not saved, and disappear when you close it. The Gotenberg instance must also
-            have API_ENABLE_DEBUG_ROUTE=true.
+            Gotenberg debug output can expose sensitive runtime configuration. Gotenui forwards your
+            selected connection's credentials and relies on Gotenberg to control access. Enable
+            API_ENABLE_DEBUG_ROUTE=true on the instance only if this information may be accessed by
+            its authorised clients.
           </p>
         </div>
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-          <p className="text-xs text-slate-600">
-            Need performance counters instead of runtime configuration?
-          </p>
-          <Button type="button" variant="outline" size="sm" onClick={onOpenMetrics}>
-            <ChartNoAxesColumn className="size-4" /> Prometheus metrics
-          </Button>
-        </div>
-        <form onSubmit={(event) => void inspect(event)} className="flex flex-wrap items-end gap-3">
-          <div className="min-w-0 flex-1 space-y-2">
-            <Label htmlFor="debug-access-key">Gotenui debug access key</Label>
-            <Input
-              id="debug-access-key"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              value={key}
-              onChange={(event) => setKey(event.target.value)}
-              placeholder="Administrator access key"
-              required
-            />
+        {onOpenMetrics && (
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs text-slate-600">
+              Need performance counters instead of runtime configuration?
+            </p>
+            <Button type="button" variant="outline" size="sm" onClick={onOpenMetrics}>
+              <ChartNoAxesColumn className="size-4" /> Prometheus metrics
+            </Button>
           </div>
-          <Button type="submit" disabled={busy || !key}>
+        )}
+        <form onSubmit={(event) => void inspect(event)}>
+          <Button type="submit" disabled={busy}>
             {busy && <RefreshCw className="size-4 animate-spin" />}
             {busy ? 'Reading...' : 'Read debug info'}
           </Button>

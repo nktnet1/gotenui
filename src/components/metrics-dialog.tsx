@@ -14,7 +14,6 @@ type Props = {
 }
 
 export function MetricsDialog({ connection, connectionName, onClose }: Props) {
-  const [accessKey, setAccessKey] = useState('')
   const [metrics, setMetrics] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -50,7 +49,6 @@ export function MetricsDialog({ connection, connectionName, onClose }: Props) {
     try {
       const text = await getGotenbergMetrics(
         connection,
-        accessKey,
         AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
       )
       if (!controller.signal.aborted) setMetrics(text)
@@ -116,30 +114,13 @@ export function MetricsDialog({ connection, connectionName, onClose }: Props) {
         <div className="mb-5 flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-950">
           <ShieldAlert className="size-5 shrink-0" />
           <p>
-            Metrics may reveal internal instance details. Use your Gotenui diagnostics access key to
-            read the selected instance's legacy /prometheus/metrics endpoint. Gotenberg has
-            deprecated this endpoint in favour of OpenTelemetry. The key and response are not saved
-            and are cleared when this dialog closes.
+            Metrics may reveal internal instance details. Gotenui relies on the selected Gotenberg
+            instance to control access to /prometheus/metrics. This legacy endpoint is deprecated in
+            favour of OpenTelemetry. Responses are kept in memory only.
           </p>
         </div>
-        <form
-          onSubmit={(event) => void readMetrics(event)}
-          className="flex flex-wrap items-end gap-3"
-        >
-          <div className="min-w-0 flex-1 space-y-2">
-            <Label htmlFor="metrics-access-key">Gotenui diagnostics access key</Label>
-            <Input
-              id="metrics-access-key"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              value={accessKey}
-              onChange={(event) => setAccessKey(event.target.value)}
-              placeholder="Administrator access key"
-              required
-            />
-          </div>
-          <Button type="submit" disabled={busy || !accessKey}>
+        <form onSubmit={(event) => void readMetrics(event)}>
+          <Button type="submit" disabled={busy}>
             {busy && <RefreshCw className="size-4 animate-spin" />}
             {busy ? 'Reading...' : metrics ? 'Refresh metrics' : 'Read metrics'}
           </Button>

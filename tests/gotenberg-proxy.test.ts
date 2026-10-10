@@ -149,12 +149,10 @@ test('status requests use an approved local target without requiring browser COR
   assert.equal(error.status, 403)
 })
 
-const profileKey = 'test-only-profile-access-key-123'
 function managedRequest(): Request {
   const request = conversionRequest()
   request.headers.delete('X-Gotenberg-Url')
   request.headers.set('X-Gotenui-Connection-Id', 'legacy-basic')
-  request.headers.set('X-Gotenui-Profile-Access-Key', profileKey)
   return request
 }
 function setLegacyAuth() {
@@ -162,10 +160,9 @@ function setLegacyAuth() {
   vi.stubEnv('GOTENBERG_BASIC_AUTH_URL', 'http://127.0.0.1:3000')
   vi.stubEnv('GOTENBERG_BASIC_AUTH_USERNAME', 'test-user')
   vi.stubEnv('GOTENBERG_BASIC_AUTH_PASSWORD', 'test-password')
-  vi.stubEnv('GOTENUI_PROFILE_ACCESS_KEY', profileKey)
 }
 
-test('server-managed Basic Auth requires the exact profile and access key', async () => {
+test('server-managed Basic Auth requires selecting the configured profile', async () => {
   setLegacyAuth()
   const expected = `Basic ${Buffer.from('test-user:test-password').toString('base64')}`
   const fetcher: typeof fetch = async (_input, options) => {
@@ -180,12 +177,6 @@ test('server-managed Basic Auth requires the exact profile and access key', asyn
     return new Response('Unauthorized', { status: 401 })
   })
   assert.equal(urlOnly.status, 401)
-  const wrong = managedRequest()
-  wrong.headers.set('X-Gotenui-Profile-Access-Key', 'wrong-key')
-  await assert.rejects(
-    proxyConversionRequest(wrong),
-    (error: { status?: number }) => error.status === 403,
-  )
   const forged = managedRequest()
   forged.headers.set('X-Gotenui-Upstream-Authorization', 'Bearer forged')
   await assert.rejects(proxyConversionRequest(forged), /cannot override/)
@@ -211,9 +202,7 @@ test('server-managed status forwards credentials without exposing them in JSON',
     return Response.json({ status: 'up', details: {} })
   }
   const status = await proxyStatusRequest(
-    new Request(`${origin}/api/gotenberg/status?connection=legacy-basic`, {
-      headers: { 'X-Gotenui-Profile-Access-Key': profileKey },
-    }),
+    new Request(`${origin}/api/gotenberg/status?connection=legacy-basic`),
     fetcher,
   )
   assert.equal(requests, 2)
@@ -273,7 +262,8 @@ test('connections metadata endpoint never leaks server URLs or credentials', asy
   assert.equal(response.headers.get('cache-control'), 'no-store')
   const body = await response.text()
   assert.deepEqual(JSON.parse(body), {
-    connections: [{ id: 'legacy-basic', name: 'Private Gotenberg (legacy)', requiresKey: true }],
+    connections: [{ id: 'legacy-basic', name: 'Private Gotenberg (legacy)' }],
+    features: { showDebug: true, showMetrics: true },
   })
   assert.doesNotMatch(body, /test-password|127\.0\.0\.1|Basic [A-Za-z]/)
 })

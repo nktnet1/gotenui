@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
 import * as v from 'valibot'
 import { normalizeBackendUrl } from '#/lib/backend-url'
 import { DEMO_GOTENBERG_URL, ProxyInputError } from '#/lib/proxy-policy'
@@ -28,29 +27,17 @@ export type ServerConnection = Readonly<{
   name: string
   url: string
   authorization?: string
-  requiresKey: boolean
 }>
 export type PublicServerConnection = Readonly<{
   id: string
   name: string
-  requiresKey: boolean
 }>
 
-function secureEquals(actual: string, expected: string): boolean {
-  const a = createHash('sha256').update(actual).digest()
-  const b = createHash('sha256').update(expected).digest()
-  return timingSafeEqual(a, b)
-}
-
-/** Validate and bind all secrets at request time. Nothing is persisted or sent to the browser. */
+/** Resolve deployment-defined profiles; the upstream decides access via its credentials. */
 export function parseServerConnections(
   env: NodeJS.ProcessEnv,
   allowed: ReadonlySet<string>,
-): { connections: ServerConnection[]; accessKey: string | undefined } {
-  const accessKey = env.GOTENUI_PROFILE_ACCESS_KEY
-  if (accessKey !== undefined && (accessKey.length < 16 || accessKey.length > 4096)) {
-    throw new Error('GOTENUI_PROFILE_ACCESS_KEY must contain 16 to 4096 characters.')
-  }
+): { connections: ServerConnection[] } {
   let entries: v.InferOutput<typeof connectionListSchema> = []
   if (env.GOTENUI_SERVER_CONNECTIONS) {
     let parsed: unknown
@@ -83,10 +70,9 @@ export function parseServerConnections(
         : entry.auth?.type === 'bearer'
           ? `Bearer ${entry.auth.token}`
           : undefined
-    return { id: entry.id, name: entry.name, url, authorization, requiresKey: !!accessKey }
+    return { id: entry.id, name: entry.name, url, authorization }
   })
-  // Backwards compatibility: v1.0.9 credentials become an explicitly selected,
-  // protected profile rather than silently authorizing requests based on URL alone.
+  // Legacy credentials require an explicit profile ID; URL selection never inherits them.
   const legacy = parseUpstreamBasicAuth(env, allowed)
   if (legacy) {
     connections.push({
@@ -94,32 +80,23 @@ export function parseServerConnections(
       name: 'Private Gotenberg (legacy)',
       url: legacy.target,
       authorization: legacy.authorization,
-      requiresKey: true,
     })
   }
   if (new Set(connections.map((connection) => connection.id)).size !== connections.length) {
     throw new Error('Server connection IDs must be unique.')
   }
-  if (connections.some((connection) => connection.authorization) && !accessKey) {
-    throw new Error('GOTENUI_PROFILE_ACCESS_KEY is required for authenticated server connections.')
-  }
-  return { connections, accessKey }
+  return { connections }
 }
 
 export function publicServerConnections(connections: ServerConnection[]): PublicServerConnection[] {
-  return connections.map(({ id, name, requiresKey }) => ({ id, name, requiresKey }))
+  return connections.map(({ id, name }) => ({ id, name }))
 }
 
 export function requireServerConnection(
   id: string,
-  key: string | null,
   connections: ServerConnection[],
-  accessKey: string | undefined,
 ): ServerConnection {
   const selected = connections.find((connection) => connection.id === id)
   if (!selected) throw new ProxyInputError('Unknown server-managed connection.', 404)
-  if (selected.requiresKey && (!accessKey || !key || !secureEquals(key, accessKey))) {
-    throw new ProxyInputError('This server-managed connection requires a valid access key.', 403)
-  }
   return selected
 }

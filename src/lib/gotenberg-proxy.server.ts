@@ -1,7 +1,6 @@
 import urlJoin from 'url-join'
 import * as v from 'valibot'
 import { resolveConnectionTarget } from '#/lib/connection-target.server'
-import { requireDebugAccess } from '#/lib/debug-access.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
@@ -12,6 +11,7 @@ import {
   requireSameOrigin,
 } from '#/lib/proxy-policy'
 import { parseServerConnections, publicServerConnections } from '#/lib/server-connections.server'
+import { uiFeatures } from '#/lib/ui-features.server'
 import {
   type ConversionPayload,
   InputError,
@@ -58,7 +58,7 @@ export function proxyConnectionsRequest(request: Request): Response {
   requireSameOrigin(request)
   const { connections } = runtimeConfig()
   return Response.json(
-    { connections: publicServerConnections(connections) },
+    { connections: publicServerConnections(connections), features: uiFeatures(process.env) },
     { headers: safeResponseHeaders },
   )
 }
@@ -295,7 +295,7 @@ export function proxyHeadErrorResponse(error: unknown): Response {
   return new Response(null, { status: result.status, headers: healthProbeHeaders })
 }
 
-/** Metrics are privileged diagnostics; the browser never gets a general-purpose GET relay. */
+/** The selected Gotenberg instance authenticates metrics; this is not an arbitrary GET relay. */
 export async function proxyMetricsRequest(
   request: Request,
   fetcher: typeof fetch = fetch,
@@ -304,8 +304,6 @@ export async function proxyMetricsRequest(
   if (request.method !== 'POST') {
     throw new ProxyInputError('Metrics requests must use POST.', 405)
   }
-  // Reuse the same administrator key as /debug: neither route is public.
-  requireDebugAccess(request, process.env.GOTENUI_DEBUG_ACCESS_KEY)
   const { url, headers: authHeaders } = resolveConnectionTarget(
     request,
     runtimeConfig(),
@@ -377,13 +375,12 @@ export async function proxyMetricsRequest(
   })
 }
 
-/** Debug is opt-in and requires an independent admin key, even for anonymous instances. */
+/** The selected Gotenberg instance controls access to its optional debug route. */
 export async function proxyDebugRequest(
   request: Request,
   fetcher: typeof fetch = fetch,
 ): Promise<Response> {
   requireSameOrigin(request)
-  requireDebugAccess(request, process.env.GOTENUI_DEBUG_ACCESS_KEY)
   const { url, headers: authHeaders } = resolveConnectionTarget(
     request,
     runtimeConfig(),

@@ -12,9 +12,7 @@ const demo = 'https://demo.gotenberg.dev'
 const privateA = 'https://a.example.test/gotenberg'
 const privateB = 'https://b.example.test'
 const allowed = parseAllowedBackends(`${demo},${privateA},${privateB}`)
-const accessKey = 'sample-connection-access-key-123'
 const config: NodeJS.ProcessEnv = {
-  GOTENUI_PROFILE_ACCESS_KEY: accessKey,
   GOTENUI_SERVER_CONNECTIONS: JSON.stringify([
     {
       id: 'accounting',
@@ -35,9 +33,8 @@ function request(headers: Record<string, string> = {}): Request {
   return new Request('https://gotenui.example.test/api/gotenberg/convert', { headers })
 }
 
-test('server registry contains multiple independent authentication methods', () => {
-  const { connections, accessKey: key } = parseServerConnections(config, allowed)
-  assert.equal(key, accessKey)
+test('server registry contains multiple independent upstream authentication methods', () => {
+  const { connections } = parseServerConnections(config, allowed)
   assert.equal(connections[0]?.url, privateA)
   assert.equal(
     connections[0]?.authorization,
@@ -45,8 +42,8 @@ test('server registry contains multiple independent authentication methods', () 
   )
   assert.equal(connections[1]?.authorization, 'Bearer eyJ.valid.token')
   assert.deepEqual(publicServerConnections(connections), [
-    { id: 'accounting', name: 'Accounting', requiresKey: true },
-    { id: 'records', name: 'Records', requiresKey: true },
+    { id: 'accounting', name: 'Accounting' },
+    { id: 'records', name: 'Records' },
   ])
   assert.doesNotMatch(
     JSON.stringify(publicServerConnections(connections)),
@@ -54,26 +51,18 @@ test('server registry contains multiple independent authentication methods', () 
   )
 })
 
-test('server target is resolved exclusively from a protected connection ID', () => {
+test('server target uses its profile ID and upstream credentials, without a Gotenui access key', () => {
   const settings = { allowed, ...parseServerConnections(config, allowed) }
-  const result = resolveConnectionTarget(
-    request({ 'X-Gotenui-Profile-Access-Key': accessKey }),
-    settings,
-    null,
-    'accounting',
-  )
+  const result = resolveConnectionTarget(request(), settings, null, 'accounting')
   assert.equal(result.url, privateA)
   assert.equal(
     new Headers(result.headers).get('authorization'),
     settings.connections[0]?.authorization,
   )
+  assert.equal(requireServerConnection('records', settings.connections).url, privateB)
   assert.throws(
-    () => requireServerConnection('records', 'wrong', settings.connections, settings.accessKey),
-    (error: { status?: number }) => error.status === 403,
-  )
-  assert.throws(
-    () => resolveConnectionTarget(request(), settings, null, 'accounting'),
-    (error: { status?: number }) => error.status === 403,
+    () => requireServerConnection('absent', settings.connections),
+    (error: { status?: number }) => error.status === 404,
   )
   assert.throws(
     () =>
@@ -88,6 +77,16 @@ test('server target is resolved exclusively from a protected connection ID', () 
   assert.throws(
     () => resolveConnectionTarget(request(), settings, privateA, 'accounting'),
     /cannot override/,
+  )
+  assert.throws(
+    () =>
+      resolveConnectionTarget(
+        request({ 'X-Gotenui-Profile-Access-Key': 'obsolete' }),
+        settings,
+        null,
+        'accounting',
+      ),
+    /no longer supported/,
   )
 })
 
@@ -117,16 +116,6 @@ test('browser URL selection never inherits server-managed credentials', () => {
     () => resolveConnectionTarget(request(), settings, 'https://metadata.google.internal', null),
     (error: { status?: number }) => error.status === 403,
   )
-  assert.throws(
-    () =>
-      resolveConnectionTarget(
-        request({ 'X-Gotenui-Profile-Access-Key': accessKey }),
-        settings,
-        privateA,
-        null,
-      ),
-    /Access keys cannot/,
-  )
 })
 
 test('auth values must be valid Basic/Bearer strings', () => {
@@ -147,8 +136,6 @@ test('auth values must be valid Basic/Bearer strings', () => {
 
 test('invalid registry configurations fail closed', () => {
   for (const env of [
-    { GOTENUI_SERVER_CONNECTIONS: config.GOTENUI_SERVER_CONNECTIONS },
-    { ...config, GOTENUI_PROFILE_ACCESS_KEY: 'short' },
     { ...config, GOTENUI_SERVER_CONNECTIONS: '{oops' },
     {
       ...config,
@@ -174,6 +161,7 @@ test('invalid registry configurations fail closed', () => {
         { id: 'duplicate', name: 'B', url: privateB },
       ]),
     },
-  ])
+  ]) {
     assert.throws(() => parseServerConnections(env, allowed))
+  }
 })

@@ -4,7 +4,6 @@ import { proxyHeadErrorResponse, proxyHeadHealthRequest } from '#/lib/gotenberg-
 
 const origin = 'https://gotenui.example.test'
 const backend = 'http://127.0.0.1:3000'
-const profileKey = 'unit-test-profile-key-123456789'
 
 function headRequest(path = `?url=${encodeURIComponent(backend)}`, headers: HeadersInit = {}) {
   return new Request(`${origin}/api/gotenberg/health${path}`, {
@@ -46,7 +45,6 @@ test.each([200, 503])(
 )
 
 test('HEAD health uses the selected server profile and attaches only upstream credentials', async () => {
-  vi.stubEnv('GOTENUI_PROFILE_ACCESS_KEY', profileKey)
   vi.stubEnv(
     'GOTENUI_SERVER_CONNECTIONS',
     JSON.stringify([
@@ -59,9 +57,7 @@ test('HEAD health uses the selected server profile and attaches only upstream cr
     ]),
   )
   const expected = `Basic ${Buffer.from('test-user:test-password').toString('base64')}`
-  const request = headRequest('?connection=private', {
-    'X-Gotenui-Profile-Access-Key': profileKey,
-  })
+  const request = headRequest('?connection=private')
   const response = await proxyHeadHealthRequest(request, async (input, options) => {
     assert.equal(String(input), `${backend}/health`)
     const headers = new Headers(options?.headers)
@@ -73,13 +69,10 @@ test('HEAD health uses the selected server profile and attaches only upstream cr
   assert.equal(response.headers.get('authorization'), null)
   assert.equal(response.body, null)
 
-  const wrong = headRequest('?connection=private', {
-    'X-Gotenui-Profile-Access-Key': 'wrong-key',
+  const forged = headRequest('?connection=private', {
+    'X-Gotenui-Upstream-Authorization': 'Bearer forged',
   })
-  await assert.rejects(
-    proxyHeadHealthRequest(wrong),
-    (error: { status?: number }) => error.status === 403,
-  )
+  await assert.rejects(proxyHeadHealthRequest(forged), /cannot override/)
 })
 
 test('HEAD health enforces allowlisting, same-origin and method restrictions', async () => {

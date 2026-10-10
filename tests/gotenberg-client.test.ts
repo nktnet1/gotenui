@@ -138,7 +138,7 @@ test('server-managed status and conversion select the profile without leaking cr
     return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
   }
   try {
-    const connection = { kind: 'server' as const, id: 'records', accessKey: 'private-test-key' }
+    const connection = { kind: 'server' as const, id: 'records' }
     const status = await getGotenbergStatus(connection)
     assert.equal(status.online, true)
     const op = OPERATION_BY_ID.get('url-pdf')
@@ -151,12 +151,9 @@ test('server-managed status and conversion select the profile without leaking cr
       new AbortController().signal,
     )
     assert.equal(captures[0]?.path, '/api/gotenberg/status?connection=records')
-    assert.equal(captures[0]?.headers.get('X-Gotenui-Profile-Access-Key'), 'private-test-key')
     assert.equal(captures[1]?.path, '/api/gotenberg/convert')
     assert.equal(captures[1]?.headers.get('X-Gotenui-Connection-Id'), 'records')
-    assert.equal(captures[1]?.headers.get('X-Gotenui-Profile-Access-Key'), 'private-test-key')
     assert.equal(captures[1]?.headers.has('X-Gotenberg-Url'), false)
-    assert.doesNotMatch(captures[0]?.path ?? '', /private-test-key/)
   } finally {
     globalThis.fetch = original
   }
@@ -164,7 +161,6 @@ test('server-managed status and conversion select the profile without leaking cr
 
 test('debug diagnostics use a same-origin POST without persisting access credentials', async () => {
   const original = globalThis.fetch
-  const key = 'test-admin-secret-not-persisted-anywhere'
   globalThis.fetch = async (input, options) => {
     assert.equal(String(input), '/api/gotenberg/debug')
     assert.equal(options?.method, 'POST')
@@ -172,13 +168,13 @@ test('debug diagnostics use a same-origin POST without persisting access credent
     assert.equal(options?.cache, 'no-store')
     assert.equal(options?.body, undefined)
     const headers = new Headers(options?.headers)
-    assert.equal(headers.get('x-gotenui-debug-access-key'), key)
+    assert.equal(headers.get('x-gotenui-debug-access-key'), null)
     assert.equal(headers.get('x-gotenberg-url'), 'http://127.0.0.1:3000')
     assert.equal(headers.get('authorization'), null)
     return Response.json({ flags: { debug: true } })
   }
   try {
-    const result = await getGotenbergDebug('http://127.0.0.1:3000', key)
+    const result = await getGotenbergDebug('http://127.0.0.1:3000')
     assert.deepEqual(result, { flags: { debug: true } })
   } finally {
     globalThis.fetch = original
@@ -190,9 +186,9 @@ test('debug client rejects SPA fallbacks and exposes disabled-route errors', asy
   try {
     globalThis.fetch = async () =>
       new Response('<html>Fallback</html>', { headers: { 'content-type': 'text/html' } })
-    await assert.rejects(getGotenbergDebug('http://127.0.0.1:3000', 'key'), /did not return JSON/)
+    await assert.rejects(getGotenbergDebug('http://127.0.0.1:3000'), /did not return JSON/)
     globalThis.fetch = async () => new Response('Debug not enabled', { status: 404 })
-    await assert.rejects(getGotenbergDebug('http://127.0.0.1:3000', 'key'), /Debug not enabled/)
+    await assert.rejects(getGotenbergDebug('http://127.0.0.1:3000'), /Debug not enabled/)
   } finally {
     globalThis.fetch = original
   }
@@ -226,15 +222,12 @@ test('HEAD health probe selects server-managed connection without embedding secr
     assert.equal(String(input), '/api/gotenberg/health?connection=private')
     assert.equal(options?.method, 'HEAD')
     const headers = new Headers(options?.headers)
-    assert.equal(headers.get('X-Gotenui-Profile-Access-Key'), 'unit-test-key')
+    assert.equal(headers.get('X-Gotenui-Profile-Access-Key'), null)
     assert.equal(headers.get('X-Gotenberg-Url'), null)
     return new Response(null, { status: 200, headers: { 'X-Gotenui-Health-Probe': '1' } })
   }
   try {
-    assert.equal(
-      await probeGotenbergHealth({ kind: 'server', id: 'private', accessKey: 'unit-test-key' }),
-      true,
-    )
+    assert.equal(await probeGotenbergHealth({ kind: 'server', id: 'private' }), true)
     globalThis.fetch = async () => new Response(null, { status: 403 })
     await assert.rejects(probeGotenbergHealth('http://127.0.0.1:3000'), /HTTP 403/)
   } finally {

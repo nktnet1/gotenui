@@ -17,7 +17,7 @@ type Props = {
   browserProfiles: BrowserConnection[]
   managedProfiles: ManagedConnection[]
   selected: string
-  onApply: (selected: string, username: string, secret: string, accessKey: string) => void
+  onApply: (selected: string, username: string, secret: string) => void
   onUpsert: (profile: BrowserConnection, username: string, secret: string) => void
   onRemove: (id: string) => void
 }
@@ -36,7 +36,6 @@ export function ConnectionManager({
   const [mode, setMode] = useState<BrowserConnection['auth']>('none')
   const [username, setUsername] = useState('')
   const [secret, setSecret] = useState('')
-  const [accessKey, setAccessKey] = useState('')
   const [testing, setTesting] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
   const [newProfile, setNewProfile] = useState(false)
@@ -50,7 +49,6 @@ export function ConnectionManager({
     }
     setSecret('')
     setUsername('')
-    setAccessKey('')
     setFeedback(null)
   }, [draftId, browserProfiles])
 
@@ -72,7 +70,6 @@ export function ConnectionManager({
     setMode('none')
     setUsername('')
     setSecret('')
-    setAccessKey('')
     setFeedback(null)
   }
   const target = (): ConnectionChoice => {
@@ -84,8 +81,7 @@ export function ConnectionManager({
       }
     }
     if (!server) throw new Error('Select a connection.')
-    if (server.requiresKey && !accessKey) throw new Error('Enter the server access key.')
-    return { kind: 'server', id: server.id, accessKey: accessKey || undefined }
+    return { kind: 'server', id: server.id }
   }
   const test = async () => {
     setTesting(true)
@@ -115,7 +111,7 @@ export function ConnectionManager({
         )
         setNewProfile(false)
       } else if (server) {
-        onApply(`server:${server.id}`, '', '', accessKey)
+        onApply(`server:${server.id}`, '', '')
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not save connection.')
@@ -229,25 +225,11 @@ export function ConnectionManager({
           )}
         </>
       ) : server ? (
-        <>
-          <p className="rounded-lg bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-600">
-            This connection is configured by the deployment. Its address and upstream credentials
-            are not exposed to the browser.
-          </p>
-          {server.requiresKey && (
-            <div className="space-y-2">
-              <Label htmlFor="connection-access-key">Server profile access key</Label>
-              <Input
-                id="connection-access-key"
-                type="password"
-                autoComplete="off"
-                value={accessKey}
-                onChange={(e) => setAccessKey(e.target.value)}
-              />
-              <p className="text-xs text-slate-500">The access key is kept in memory only.</p>
-            </div>
-          )}
-        </>
+        <p className="rounded-lg bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-600">
+          This connection is configured by the deployment. Its address and upstream credentials are
+          not exposed to the browser. Anyone with access to Gotenui can use the configured
+          credentials for this profile.
+        </p>
       ) : (
         <p className="text-xs text-amber-700">This server connection is no longer available.</p>
       )}
@@ -277,8 +259,9 @@ export function ConnectionManager({
         )}
       </div>
       <p className="text-[11px] leading-5 text-slate-500">
-        Gotenui sends requests through its stateless server-side proxy. Connection names and URLs
-        are saved locally; no jobs or credentials are stored by Gotenui.
+        Gotenui uses a stateless server-side proxy. Browser profile names and URLs are saved
+        locally; user-entered secrets stay in tab memory. Server-managed credentials remain in the
+        deployment environment.
       </p>
     </form>
   )

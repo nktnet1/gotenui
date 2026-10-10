@@ -9,17 +9,18 @@ const profileSchema = v.object({
   url: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
   auth: v.picklist(['none', 'basic', 'bearer']),
 })
+const featuresSchema = v.object({ showDebug: v.boolean(), showMetrics: v.boolean() })
 const savedSchema = v.object({
   selected: v.string(),
   browsers: v.pipe(v.array(profileSchema), v.maxLength(20)),
 })
 const managedSchema = v.object({
+  features: featuresSchema,
   connections: v.pipe(
     v.array(
       v.object({
         id: v.pipe(v.string(), v.regex(/^[a-z][a-z0-9-]{0,63}$/)),
         name: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
-        requiresKey: v.boolean(),
       }),
     ),
     v.maxLength(31),
@@ -29,9 +30,11 @@ const managedSchema = v.object({
 export type BrowserConnection = v.InferOutput<typeof profileSchema>
 export type ManagedConnection = v.InferOutput<typeof managedSchema>['connections'][number]
 export type SavedConnections = { selected: string; browsers: BrowserConnection[] }
+export type UiFeatures = { showDebug: boolean; showMetrics: boolean }
+export type ConnectionSettings = { connections: ManagedConnection[]; features: UiFeatures }
 export type ConnectionChoice =
   | { kind: 'browser'; url: string; authorization?: string }
-  | { kind: 'server'; id: string; accessKey?: string }
+  | { kind: 'server'; id: string }
 
 export function newBrowserConnection(
   name: string,
@@ -123,14 +126,14 @@ export function saveConnections(
   }
 }
 
-export async function fetchManagedConnections(signal?: AbortSignal): Promise<ManagedConnection[]> {
+export async function fetchConnectionSettings(signal?: AbortSignal): Promise<ConnectionSettings> {
   const response = await fetch('/api/gotenberg/connections', {
     credentials: 'same-origin',
     cache: 'no-store',
     signal,
   })
   if (!response.ok) throw new Error(`Could not load managed connections (HTTP ${response.status}).`)
-  return v.parse(managedSchema, await response.json()).connections
+  return v.parse(managedSchema, await response.json())
 }
 
 /** Secrets only exist in React memory and are never included in saved JSON. */
