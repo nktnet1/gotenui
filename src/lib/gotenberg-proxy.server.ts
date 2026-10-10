@@ -6,6 +6,8 @@ import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
   DEFAULT_MAX_REQUEST_BYTES,
+  DEFAULT_MAX_RESPONSE_BYTES,
+  limitResponseStream,
   ProxyInputError,
   parseAllowedBackends,
   readLimitedBody,
@@ -23,6 +25,7 @@ import {
 const serverEnvSchema = v.object({
   GOTENBERG_ALLOWED_URLS: v.optional(v.pipe(v.string(), v.maxLength(20_000))),
   GOTENUI_MAX_REQUEST_BYTES: v.optional(v.pipe(v.string(), v.regex(/^\d+$/))),
+  GOTENUI_MAX_RESPONSE_BYTES: v.optional(v.pipe(v.string(), v.regex(/^\d+$/))),
 })
 
 const healthSchema = v.object({
@@ -38,9 +41,20 @@ function runtimeConfig() {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1024 || maxBytes > 250_000_000) {
     throw new Error('GOTENUI_MAX_REQUEST_BYTES must be between 1024 and 250000000.')
   }
+  const maxResponseBytes = env.GOTENUI_MAX_RESPONSE_BYTES
+    ? Number(env.GOTENUI_MAX_RESPONSE_BYTES)
+    : DEFAULT_MAX_RESPONSE_BYTES
+  if (
+    !Number.isSafeInteger(maxResponseBytes) ||
+    maxResponseBytes < 1024 ||
+    maxResponseBytes > 500_000_000
+  ) {
+    throw new Error('GOTENUI_MAX_RESPONSE_BYTES must be between 1024 and 500000000.')
+  }
   const allowed = parseAllowedBackends(env.GOTENBERG_ALLOWED_URLS)
   return {
     maxBytes,
+    maxResponseBytes,
     allowed,
     ...parseServerConnections(process.env, allowed),
   }
@@ -81,6 +95,23 @@ export function proxyErrorResponse(error: unknown): Response {
       headers: { ...safeResponseHeaders, 'Content-Type': 'text/plain; charset=utf-8' },
     },
   )
+}
+
+class StatusProbeError extends Error {}
+
+/** Health and version are diagnostic text, never unbounded downloads. */
+async function boundedStatusText(response: Response, maxBytes: number): Promise<string> {
+  const announced = response.headers.get('content-length')
+  if (announced !== null && (!/^\d+$/.test(announced) || Number(announced) > maxBytes)) {
+    await response.body?.cancel().catch(() => {})
+    throw new StatusProbeError('Gotenberg status response exceeds its size limit.')
+  }
+  try {
+    const bytes = await readLimitedBody(response.body, maxBytes)
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new StatusProbeError('Gotenberg status response is invalid or too large.')
+  }
 }
 
 function fetchOptions(request: Request): Pick<RequestInit, 'signal' | 'redirect' | 'cache'> {
@@ -132,6 +163,43 @@ async function upstreamErrorText(response: Response): Promise<string> {
   }
 }
 
+function expectedConversionContentType(output: string, format: string | boolean | undefined) {
+  switch (output) {
+    case 'pdf':
+      return 'application/pdf'
+    case 'zip':
+      return 'application/zip'
+    case 'json':
+      return 'application/json'
+    case 'image':
+      return `image/${format === 'jpeg' || format === 'webp' ? format : 'png'}`
+    default:
+      throw new Error('Unknown conversion output.')
+  }
+}
+
+/** An untrusted upstream may send an incorrect or missing content-length. */
+function conversionResponseLength(header: string | null, maxBytes: number): number | undefined {
+  if (header === null) return undefined
+  if (!/^(0|[1-9]\d*)$/.test(header)) {
+    throw new ProxyInputError('Gotenberg returned an invalid response length.', 502)
+  }
+  const length = Number(header)
+  if (!Number.isSafeInteger(length)) {
+    throw new ProxyInputError('Gotenberg returned an invalid response length.', 502)
+  }
+  if (length === 0) {
+    throw new ProxyInputError('Gotenberg returned an empty conversion response.', 502)
+  }
+  if (length > maxBytes) {
+    throw new ProxyInputError(
+      `Gotenberg conversion response exceeds the ${maxBytes} byte limit.`,
+      502,
+    )
+  }
+  return length
+}
+
 /** Every request resolves a validated destination and its authentication, without sessions. */
 export async function proxyConversionRequest(
   request: Request,
@@ -142,7 +210,7 @@ export async function proxyConversionRequest(
   if (!/^multipart\/form-data;\s*boundary=[\w-]{1,200}$/i.test(contentType)) {
     throw new ProxyInputError('Expected a multipart/form-data conversion request.')
   }
-  const { maxBytes, ...settings } = runtimeConfig()
+  const { maxBytes, maxResponseBytes, ...settings } = runtimeConfig()
   if (Number(request.headers.get('content-length') ?? 0) > maxBytes) {
     throw new ProxyInputError(`Request exceeds the ${maxBytes} byte upload limit.`, 413)
   }
@@ -225,12 +293,41 @@ export async function proxyConversionRequest(
     const value = upstream.headers.get(name)
     if (value) headers.set(name, value)
   }
-  headers.set('Content-Type', headers.get('Content-Type') ?? 'application/octet-stream')
   if (upstream.status === 204 || upstream.status === 202) {
     await upstream.body?.cancel().catch(() => {})
+    if (!payload.webhook) {
+      throw new ProxyInputError(
+        'Gotenberg returned asynchronous acceptance without a webhook.',
+        502,
+      )
+    }
     return new Response(null, { status: upstream.status, headers })
   }
-  return new Response(upstream.body, { status: 200, headers })
+  const expectedType = expectedConversionContentType(operation.output, payload.fields.format)
+  const returnedType = headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
+  if (upstream.status !== 200 || returnedType !== expectedType || !upstream.body) {
+    await upstream.body?.cancel().catch(() => {})
+    throw new ProxyInputError('Gotenberg returned an unexpected conversion response.', 502)
+  }
+  let declaredLength: number | undefined
+  try {
+    // Fetch decodes compressed upstream responses but leaves their compressed
+    // Content-Length header intact. Always limit decoded stream bytes instead.
+    const contentEncoding = upstream.headers.get('content-encoding')
+    if (!contentEncoding || contentEncoding.toLowerCase() === 'identity') {
+      declaredLength = conversionResponseLength(
+        upstream.headers.get('content-length'),
+        maxResponseBytes,
+      )
+    }
+  } catch (error) {
+    await upstream.body.cancel().catch(() => {})
+    throw error
+  }
+  return new Response(limitResponseStream(upstream.body, maxResponseBytes, declaredLength), {
+    status: 200,
+    headers,
+  })
 }
 
 /** A compact JSON status response for the browser, with no browser-to-Gotenberg fetches. */
@@ -254,10 +351,19 @@ export async function proxyStatusRequest(
   let status: ServerStatus
   try {
     const health = await fetcher(urlJoin(url, '/health'), options)
-    if (!health.ok) throw new Error(`Gotenberg returned HTTP ${health.status}.`)
-    const parsed = v.safeParse(healthSchema, await health.json())
-    if (!parsed.success) throw new Error('This URL did not return a Gotenberg health response.')
-    if (parsed.output.status !== 'up') throw new Error('Gotenberg reports unhealthy modules.')
+    if (!health.ok) throw new StatusProbeError(`Gotenberg returned HTTP ${health.status}.`)
+    let healthPayload: unknown
+    try {
+      healthPayload = JSON.parse(await boundedStatusText(health, 128_000))
+    } catch (error) {
+      if (error instanceof StatusProbeError) throw error
+      throw new StatusProbeError('This URL did not return a Gotenberg health response.')
+    }
+    const parsed = v.safeParse(healthSchema, healthPayload)
+    if (!parsed.success)
+      throw new StatusProbeError('This URL did not return a Gotenberg health response.')
+    if (parsed.output.status !== 'up')
+      throw new StatusProbeError('Gotenberg reports unhealthy modules.')
     const modules = Object.entries(parsed.output.details ?? {}).map(([name, value]) => ({
       name,
       status:
@@ -272,13 +378,13 @@ export async function proxyStatusRequest(
       if (response.status === 401 || response.status === 403) {
         versionAuthFailure = response.status
       } else if (response.ok) {
-        version = (await response.text()).trim().slice(0, 80) || 'Unknown'
+        version = (await boundedStatusText(response, 1_024)).trim().slice(0, 80) || 'Unknown'
       }
     } catch {
       // The version endpoint is optional, unless it explicitly rejects authentication.
     }
     if (versionAuthFailure !== undefined) {
-      throw new Error(`Gotenberg returned HTTP ${versionAuthFailure} from /version.`)
+      throw new StatusProbeError(`Gotenberg returned HTTP ${versionAuthFailure} from /version.`)
     }
     status = { online: true, version, modules }
   } catch (error) {
@@ -286,7 +392,8 @@ export async function proxyStatusRequest(
       online: false,
       version: 'Unavailable',
       modules: [],
-      error: error instanceof Error ? error.message : 'Gotenberg is unavailable.',
+      error:
+        error instanceof StatusProbeError ? error.message : 'Could not contact Gotenberg safely.',
     }
   }
   return Response.json(status, { headers: safeResponseHeaders })

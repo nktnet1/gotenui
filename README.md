@@ -200,9 +200,11 @@ For browser-managed Basic/Bearer credentials, user-entered secrets are forwarded
 
 The proxy buffers and validates incoming multipart data in memory (up to the configured limit), then streams the upstream response back to the browser. Neither uploads nor results are intentionally persisted by Gotenui. Browser download previews and activity remain in memory until the tab closes. Your host or Gotenberg may enforce separate limits or log requests.
 
-### Request size limits
+### Request and response size limits
 
 The browser currently caps uploaded files at **4,000,000 bytes** and the proxy caps its entire multipart body at **4,200,000 bytes** by default. This leaves some overhead under Vercel Functions' **4.5 MB request limit**, although large form fields and generated output can still hit host limits. Vercel also applies a 4.5 MB limit to function responses; some streaming configurations behave differently. For large conversions use a Node/other hosting platform with suitable limits, then increase `VITE_GOTENUI_MAX_UPLOAD_BYTES` and `GOTENUI_MAX_REQUEST_BYTES` appropriately. The public Gotenberg demo has its own limit of **5 MB per request** and rate limit of **2 requests per second per IP**; it is intended for evaluation, not production.
+
+Converted output is streamed rather than fully buffered by Nitro. `GOTENUI_MAX_RESPONSE_BYTES` defaults to **100,000,000 bytes** (100 MB), and can be set between **1,024 and 500,000,000 bytes**. The proxy checks the declared `Content-Length` before streaming, counts actual streamed bytes independently, rejects truncated responses when the upstream supplies an uncompressed length, and cancels the upstream stream when the browser cancels. Compressed responses are limited by decoded bytes without comparing against their compressed `Content-Length`. If an undeclared or incorrectly declared stream exceeds its budget *after response headers have been sent*, the download stream fails (rather than returning a partial document); the HTTP status cannot then change to 502. Increase this value when legitimately processing large documents, subject to your hosting platform's response limits. The proxy also rejects unexpected 2xx output media types (including HTML SPA fallbacks), unexpected partial-content responses, and asynchronous success without configured webhook delivery.
 
 ## API contracts
 
@@ -225,12 +227,27 @@ it also fails if either previously reported Rolldown warning returns. The
 `gotenberg/gotenberg:8.37.0` container with a local fixture server. CI never
 contacts `demo.gotenberg.dev` to run tests.
 
-CI uses `pnpm/setup@v1` to install Node.js 24 and **pnpm 12**, reading the
+CI uses `pnpm/setup@v3` to install Node.js 24 and **pnpm 12**, reading the
 exact pnpm version from `packageManager` in `package.json` (currently
 `pnpm@12.10.1`) automatically. Both jobs run `pnpm install --frozen-lockfile`.
 After changing dependencies, update and commit `pnpm-lock.yaml` locally before
-expecting CI to pass. This patch intentionally leaves the generated lockfile
-untouched.
+expecting CI to pass. The action uses Node.js 24, a cached pnpm store, and
+frozen installation; no generated lockfile is changed by v1.0.26.
+
+### Automated release regression matrix
+
+| Gate | Local automated check | Remaining verification |
+| --- | --- | --- |
+| Conversion request validation, destination allowlist, same-origin restrictions, and header isolation | Vitest proxy/security suites | Browser-managed and server-managed deployments in staging |
+| Gotenberg `400`, `401`, `403`, `409`, and `5xx` error propagation | Vitest negative-response matrix | Local Docker rerun against pinned Gotenberg 8.37.0 |
+| Binary/JSON/image/ZIP media type, `202`/`204` webhook responses | Vitest proxy and async suites | Real asynchronous callback delivery with Docker |
+| Declared and undeclared output size limits, early EOF, cancellation, and timeout mapping | Vitest stream and gateway suites | Host-level buffering and timeout tests |
+| Switching server and browser connections while in flight | Vitest concurrent-proxy regression | Manual tab-level connection switch |
+| Package checks and production build warnings | Biome, TypeScript, Vitest unit tests, Vite/Nitro build | CI run on GitHub Actions |
+| Actual conversion routes, overlays and remote/webhook flows | Authored Vitest Docker suite | Must run against local pinned image; not executed in this environment |
+| Desktop, mobile, accessibility, deployment checks | — | Manual browser, mobile, accessibility and release review |
+
+The unit suite alone does **not** certify `pnpm test` (which also invokes Docker).
 
 The Nitro build config labels its function-named library chunk group (without
 altering chunk names) and silences only `MODULE_LEVEL_DIRECTIVE` warnings about

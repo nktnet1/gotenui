@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/setup@v1
+      - uses: pnpm/setup@v3
         with:
           runtime: node@24
           install: false
@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/setup@v1
+      - uses: pnpm/setup@v3
         with:
           runtime: node@24
           install: false

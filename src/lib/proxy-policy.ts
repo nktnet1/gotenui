@@ -2,6 +2,7 @@ import { normalizeBackendUrl } from '#/lib/backend-url'
 
 export const DEMO_GOTENBERG_URL = 'https://demo.gotenberg.dev'
 export const DEFAULT_MAX_REQUEST_BYTES = 4_200_000
+export const DEFAULT_MAX_RESPONSE_BYTES = 100_000_000
 
 /** Parse an explicit deployment-side allowlist, never an arbitrary browser-supplied hostname. */
 export function parseAllowedBackends(configured: string | undefined): ReadonlySet<string> {
@@ -65,6 +66,64 @@ export async function readLimitedBody(body: ReadableStream<Uint8Array> | null, l
     offset += chunk.byteLength
   }
   return bytes
+}
+
+/** Bound conversion downloads without buffering the generated document in Nitro memory.
+ * Cancellation of the browser response also cancels the upstream reader.
+ */
+export function limitResponseStream(
+  body: ReadableStream<Uint8Array>,
+  limit: number,
+  declaredLength?: number,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader()
+  let received = 0
+  let released = false
+  let cancelled = false
+  const release = () => {
+    if (!released) {
+      released = true
+      reader.releaseLock()
+    }
+  }
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read()
+        if (cancelled) return
+        if (done) {
+          release()
+          if (received === 0) {
+            controller.error(new Error('Gotenberg returned an empty conversion response.'))
+          } else if (declaredLength !== undefined && declaredLength !== received) {
+            controller.error(new Error('Gotenberg returned a truncated conversion response.'))
+          } else {
+            controller.close()
+          }
+          return
+        }
+        received += value.byteLength
+        if (received > limit || (declaredLength !== undefined && received > declaredLength)) {
+          await reader.cancel().catch(() => {})
+          release()
+          controller.error(new Error('Gotenberg conversion response exceeded its size limit.'))
+          return
+        }
+        controller.enqueue(value)
+      } catch (error) {
+        release()
+        controller.error(error)
+      }
+    },
+    async cancel(reason) {
+      cancelled = true
+      try {
+        await reader.cancel(reason)
+      } finally {
+        release()
+      }
+    },
+  })
 }
 
 /** A form submission from another site must not turn this function into a public relay. */
