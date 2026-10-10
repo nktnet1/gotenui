@@ -7,3 +7,7 @@ static
 .env.*
 src/routeTree.gen.ts
 *.tsbuildinfo
+.git
+.github
+*.patch
+*.bundle

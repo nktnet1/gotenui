@@ -223,6 +223,12 @@ Converted output is streamed rather than fully buffered by Nitro. `GOTENUI_MAX_R
 
 These routes are same-origin and do not enable CORS. Requests claiming a different `Origin` or `Sec-Fetch-Site` are rejected, but server-side HTTP clients can still access public browser-managed routes, so edge security and rate limits are essential.
 
+## Container deployment
+
+The production `Dockerfile` builds with the project's Node.js 24 / pnpm 12 toolchain, using Corepack and `pnpm install --frozen-lockfile` to resolve **exactly the dependencies recorded in `pnpm-lock.yaml`**. The final `node:24-alpine` stage copies only `.output`, runs as the unprivileged `node` user, and listens on port `3100`. No uploads, job history or credentials are written to disk by Gotenui.
+
+Refresh and commit `pnpm-lock.yaml` with your local pnpm 12 toolchain whenever `package.json` dependencies change; the Docker build and CI intentionally fail on a stale or incomplete lockfile. The Docker context excludes local environment files, `node_modules`, build outputs, `.git`, and delivered patches/bundles. Configure `GOTENBERG_ALLOWED_URLS` and any server-managed connections through runtime environment variables, not image build arguments. As with other deployments, **protect an instance carrying shared server credentials at the edge**. A real container build and gateway test remain outstanding before v1.1.0.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on pushes, pull requests and manual dispatch. The
@@ -251,6 +257,7 @@ frozen installation; no generated lockfiles are changed by incremental patches.
 | Switching server and browser connections while in flight | Vitest concurrent-proxy regression | Manual tab-level connection switch |
 | Built Nitro runtime, SPA/API routing, status/health, parallel credential isolation, PDF/ZIP responses, 401/trace handling, redirects, webhook acceptance, prompt cancellation before/during streaming, and truncated responses | `pnpm build && pnpm test:smoke` with native Node 24 TypeScript and a disposable mock upstream | Real Gotenberg behaviour and callback delivery still require Docker |
 | Package checks and production build warnings | Biome, TypeScript, Vitest unit tests, Vite/Nitro build | CI run on GitHub Actions |
+| Production container build reproducibility and least-privilege runtime | Vitest static Dockerfile/context contract checks (Node 24, pnpm 12, frozen lockfile, non-root) | Real Docker image build, launch and reverse-proxy test |
 | Actual conversion routes, overlays and remote/webhook flows | Authored Vitest Docker suite | Must run against local pinned image; not executed in this environment |
 | Dialog/drawer keyboard focus containment and restoration | Vitest modal-focus tests (no browser) | Manual keyboard, screen-reader, mobile and responsive-layout testing |
 | Desktop, mobile, accessibility, deployment checks | — | Manual browser, mobile, accessibility and release review |

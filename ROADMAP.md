@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.31 (production-stream cancellation and concurrency smoke; keyboard focus work retained).
+- **Baseline:** v1.0.32 (reproducible pnpm container build and non-root runtime; previous streaming and focus checks retained).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -36,6 +36,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.29** | Release | TypeScript smoke and gateway contract checks | Convert the smoke runner to native Node.js 24 TypeScript, include project scripts in typechecking, and extend the built-server test for webhook acceptance, upstream authentication errors and redirect rejection. |
 | **v1.0.30** | Release | Keyboard accessibility hardening | Contain keyboard focus in connection/debug/metrics dialogs and open mobile navigation; restore focus on dismissal, hide closed mobile controls from tab order, and add non-browser focus regressions. |
 | **v1.0.31** | Release | Live Nitro cancellation and isolation smoke | Fix the smoke helper overwriting caller abort signals; verify prompt abort before upstream headers and during streaming, truncated-response rejection, and overlapping browser/server credentials in the built app. |
+| **v1.0.32** | Release | Container build reproducibility | Use Node.js 24 and pnpm 12 with a frozen lockfile instead of npm resolving dependencies anew, restrict the Docker build context, and run the packaged Nitro app as a non-root user; add a static packaging contract test (real image build outstanding). |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### P0 — Correctness and request contracts
@@ -136,6 +137,8 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 - [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
 
 ## Verification and release gates
+
+**v1.0.32 image packaging:** The Dockerfile now uses Corepack and the package-manager version pinned in `package.json`, installs with `pnpm install --frozen-lockfile`, builds using `pnpm build`, and copies only Nitro output into a non-root runtime image. The unit suite verifies these packaging invariants and the Docker context exclusions. A real container build/run (with an updated, committed lockfile) is still required; this review did not run Docker.
 
 **v1.0.31 live cancellation smoke:** The native TypeScript `pnpm test:smoke` runner now combines its request timeout with any caller abort signal instead of replacing it. The built Nitro deployment is exercised with a disposable, deliberately delayed mock upstream to verify client abort propagation before headers and after a streamed PDF chunk, with explicit prompt-abort deadlines. Concurrent browser/server-managed requests retain independent upstream credentials, and an incorrect declared response length causes a rejected client download. These are genuine HTTP streaming checks against the built server, **not** a substitute for Gotenberg Docker integration or manual browser testing.
 
