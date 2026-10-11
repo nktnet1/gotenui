@@ -24,7 +24,7 @@ Gotenui already exposes the 22 Gotenberg conversion, screenshot, and PDF-engine 
 
 ## Proposed delivery sequence
 
-Versions are planning targets, **not commitments**. Each implementation patch should add focused Vitest unit tests and, where applicable, local Docker integration coverage. Manual UI checks come after the automated checks.
+The v1.x milestone numbers below describe historical development patches, not public product releases. The first public release is **v0.1.0**. Each implementation patch should add focused Vitest unit tests and, where applicable, local Docker integration coverage. Manual UI checks come after the automated checks.
 
 | Proposed patch | Priority | Deliverable | Scope |
 | --- | --- | --- | --- |
@@ -60,7 +60,7 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.46** | Usability | Local conversion presets | Save, apply, update and delete named per-operation layout and conversion presets in browser storage. Strictly whitelist benign field types and reject unsafe or corrupted stored values. Do not store documents, URLs, credentials, callbacks or Advanced JSON. |
 | **v1.0.47** | Optional usability | Browser-managed batch operations | In-tab queue for operation snapshots, bounded concurrent requests, per-job cancellation/retry, clearable downloads, truthful webhook acceptance, and regression tests. No persistent or server-side queue. |
 | **v1.0.48** | Release | Batch transport contract regressions | Test queued requests through the real browser conversion client with a mocked same-origin fetch, including connection isolation, multipart uploads, cancellation, upstream errors/retry and asynchronous acceptance. |
-| **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
+| **v0.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
 
 ### v1.0.48 batch transport contract checks
 
