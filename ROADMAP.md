@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.47 (browser-managed batch queue).
+- **Baseline:** v1.0.48 (batch request transport regression coverage).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -52,7 +52,12 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.45** | Usability | Visual PDF structure editors | Add labelled XMP metadata fields and a nested bookmark editor to dedicated write operations. Keep lossless JSON fallback, validate bookmark titles/pages/trees server-side, and preserve Gotenberg multipart fields. |
 | **v1.0.46** | Usability | Local conversion presets | Save, apply, update and delete named per-operation layout and conversion presets in browser storage. Strictly whitelist benign field types and reject unsafe or corrupted stored values. Do not store documents, URLs, credentials, callbacks or Advanced JSON. |
 | **v1.0.47** | Optional usability | Browser-managed batch operations | In-tab queue for operation snapshots, bounded concurrent requests, per-job cancellation/retry, clearable downloads, truthful webhook acceptance, and regression tests. No persistent or server-side queue. |
+| **v1.0.48** | Release | Batch transport contract regressions | Test queued requests through the real browser conversion client with a mocked same-origin fetch, including connection isolation, multipart uploads, cancellation, upstream errors/retry and asynchronous acceptance. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
+
+### v1.0.48 batch transport contract checks
+
+The unit suite now exercises `BrowserBatchQueue` with its default `convertWithGotenberg` executor, instead of checking only an injected scheduler callback. The transport regressions verify browser-managed and server-managed connection isolation, snapshot integrity for HTML sources and multipart attachments, post-processing uploads, webhook `204` acceptance without download state, independent cancellation, and upstream `401` trace propagation across retries. All requests use a mocked same-origin `fetch`. These checks do not exercise actual browser rendering, the built Nitro server, or a live Gotenberg instance. Existing built-server smoke and local Docker suites remain separate release checks.
 
 ### v1.0.47 browser batch operations
 
