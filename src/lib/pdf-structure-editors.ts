@@ -194,3 +194,49 @@ export function editBookmarks(text: string, edit: BookmarkEdit): string {
   }
   return JSON.stringify(root)
 }
+
+/** In addition to a shared outline, Gotenberg accepts a filename-keyed bookmark map. */
+export function visualBookmarkMap(text: string): Record<string, BookmarkNode[]> | null {
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!isRecord(value) || Object.keys(value).length === 0) return null
+  const mapped: Record<string, BookmarkNode[]> = Object.create(null)
+  for (const [filename, items] of Object.entries(value)) {
+    const visual = visualBookmarkList(JSON.stringify(items))
+    if (!visual) return null
+    mapped[filename] = visual
+  }
+  return mapped
+}
+
+export function addBookmarkMapping(text: string, filename: string): string {
+  if (!/^[a-z0-9][a-z0-9 _.()-]{0,150}\.pdf$/i.test(filename)) {
+    throw new Error('Enter a PDF filename without a path (for example: report.pdf).')
+  }
+  const tree = visualBookmarkList(text)
+  const map = visualBookmarkMap(text)
+  if (tree?.length) {
+    throw new Error('Remove shared bookmarks before switching to per-file bookmarks.')
+  }
+  if (tree === null && map === null) throw new Error('Fix bookmarks JSON before adding a file.')
+  if (map && Object.hasOwn(map, filename)) throw new Error('This filename already has bookmarks.')
+  return JSON.stringify({ ...map, [filename]: [] })
+}
+
+export function removeBookmarkMapping(text: string, filename: string): string {
+  const map = visualBookmarkMap(text)
+  if (!map || !Object.hasOwn(map, filename)) throw new Error('Bookmark filename not found.')
+  const next = Object.fromEntries(Object.entries(map).filter(([name]) => name !== filename))
+  return Object.keys(next).length ? JSON.stringify(next) : '[]'
+}
+
+export function editFileBookmarks(text: string, filename: string, edit: BookmarkEdit): string {
+  const map = visualBookmarkMap(text)
+  if (!map || !Object.hasOwn(map, filename)) throw new Error('Bookmark filename not found.')
+  const updated = editBookmarks(JSON.stringify(map[filename]), edit)
+  return JSON.stringify({ ...map, [filename]: JSON.parse(updated) })
+}

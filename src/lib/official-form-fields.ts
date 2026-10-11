@@ -28,5 +28,16 @@ export function encodeOfficialField(
 ): string {
   if (field?.kind === 'http-codes') return JSON.stringify(parseStatusCodes(String(value)))
   if (field?.kind === 'hostnames') return JSON.stringify(parseIgnoredDomains(String(value)))
+  if (field?.name === 'nativeWatermarkColor') {
+    if (!/^#[0-9a-f]{6}$/i.test(String(value))) throw new Error('Invalid native watermark colour.')
+    return String(Number.parseInt(String(value).slice(1), 16))
+  }
+  if (field?.name === 'nativeWatermarkRotateAngle') {
+    const degrees = Number(value)
+    if (!Number.isFinite(degrees) || Math.abs(degrees * 10 - Math.round(degrees * 10)) > 1e-7) {
+      throw new Error('Native watermark rotation supports one decimal place.')
+    }
+    return String(Math.round(degrees * 10))
+  }
   return String(value)
 }

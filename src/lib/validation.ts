@@ -823,6 +823,21 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     'hideViewerToolbar',
     'hideViewerMenubar',
     'centerWindow',
+    'resizeWindowToInitialPage',
+    'hideViewerWindowControls',
+    'useTransitionEffects',
+    'openBookmarkLevels',
+    'exportNotesInMargin',
+    'allowDuplicateFieldNames',
+    'convertOooTargetToPdfTarget',
+    'exportLinksRelativeFsys',
+    'addOriginalDocumentAsStream',
+    'nativeWatermarkText',
+    'nativeTiledWatermarkText',
+    'nativeWatermarkColor',
+    'nativeWatermarkFontName',
+    'nativeWatermarkFontHeight',
+    'nativeWatermarkRotateAngle',
     'merge',
     'losslessImageCompression',
     'reduceImageResolution',
@@ -880,6 +895,12 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     if (payload.fields.exportOnlyNotesPages === true && payload.fields.exportNotesPages !== true) {
       throw new InputError('Export only notes pages requires Export slide notes pages.')
     }
+    if (
+      payload.fields.allowDuplicateFieldNames === true &&
+      payload.fields.exportFormFields === false
+    ) {
+      throw new InputError('Duplicate form field names require interactive form fields.')
+    }
     if (payload.fields.firstPageOnLeft === true && payload.fields.pageLayout !== '3') {
       throw new InputError('First page on left requires the two-column PDF page layout.')
     }
@@ -889,6 +910,16 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       payload.fields.magnification !== '4'
     ) {
       throw new InputError('Custom PDF zoom requires Custom zoom magnification.')
+    }
+    for (const name of [
+      'nativeWatermarkText',
+      'nativeTiledWatermarkText',
+      'nativeWatermarkFontName',
+    ]) {
+      const value = payload.fields[name]
+      if (typeof value === 'string' && (value.length > 500 || /[\r\n]/.test(value))) {
+        throw new InputError(`Invalid ${name}: use a single line of at most 500 characters.`)
+      }
     }
     if (typeof payload.fields.password === 'string' && payload.fields.password.length > 1024) {
       throw new InputError('Source document password is too long.')
@@ -935,6 +966,16 @@ export function validatePayload(input: unknown): {
         ) {
           throw new InputError(`${field.label} is outside its permitted range.`)
         }
+      }
+      if (field.kind === 'color' && value && !/^#[0-9a-f]{6}$/i.test(value)) {
+        throw new InputError(`${field.label} must be a six-digit hex colour.`)
+      }
+      if (
+        field.name === 'nativeWatermarkRotateAngle' &&
+        value &&
+        Math.abs(Number(value) * 10 - Math.round(Number(value) * 10)) > 1e-7
+      ) {
+        throw new InputError('Native watermark rotation supports one decimal place.')
       }
       if (field.kind === 'json' && value) {
         try {
@@ -995,14 +1036,14 @@ export function validatePayload(input: unknown): {
   ) {
     throw new InputError('Split interval must be a positive whole number.')
   }
-  if (operation.id === 'metadata-write') {
+  if (definitions.has('metadata') && payload.fields.metadata) {
     try {
       metadataObject(String(payload.fields.metadata ?? ''))
     } catch (error) {
       throw new InputError(error instanceof Error ? error.message : 'Invalid PDF metadata.')
     }
   }
-  if (operation.id === 'bookmarks-write') {
+  if (definitions.has('bookmarks') && payload.fields.bookmarks) {
     try {
       validateBookmarkDocument(String(payload.fields.bookmarks ?? ''))
     } catch (error) {

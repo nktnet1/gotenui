@@ -61,6 +61,6 @@ test('rejects colliding names for other PDF routes and invalid merge bookmark JS
   )
   assert.throws(
     () => validatePayload({ operation: 'merge', fields: {}, advanced: { bookmarks: '{' } }),
-    /Merge bookmarks must be valid JSON/,
+    /Unsupported advanced field: bookmarks/,
   )
 })

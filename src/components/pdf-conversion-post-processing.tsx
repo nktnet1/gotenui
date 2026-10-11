@@ -2,10 +2,10 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { useId, useRef } from 'react'
 import { AttachmentMetadataEditor } from '#/components/attachment-metadata-editor'
 import { OverlayAppearanceEditor } from '#/components/overlay-appearance-editor'
+import { PdfMetadataEditor } from '#/components/pdf-structure-editors'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Switch } from '#/components/ui/switch'
-import { Textarea } from '#/components/ui/textarea'
 import { UploadZone } from '#/components/upload-zone'
 import { removeTextOverlayAppearance } from '#/lib/overlay-appearance'
 import {
@@ -385,17 +385,10 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
           )}
         </div>
         <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-          <div className="space-y-1.5">
-            <Label htmlFor={`${id}-metadata`}>PDF metadata JSON (optional)</Label>
-            <Textarea
-              id={`${id}-metadata`}
-              className="font-mono text-xs"
-              rows={3}
-              value={value.metadata ?? ''}
-              onChange={(event) => update({ metadata: event.target.value || undefined })}
-              placeholder={'{"Author":"Gotenui","Title":"Report"}'}
-            />
-          </div>
+          <PdfMetadataEditor
+            value={value.metadata ?? '{}'}
+            onChange={(metadata) => update({ metadata })}
+          />
           <div className="flex items-center justify-between gap-3">
             <Label htmlFor={`${id}-flatten`}>Flatten interactive PDF fields</Label>
             <Switch

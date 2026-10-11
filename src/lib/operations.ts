@@ -9,6 +9,7 @@ export type FieldKind =
   | 'password'
   | 'http-codes'
   | 'hostnames'
+  | 'color'
 export type OperationGroup = 'Convert' | 'Capture' | 'PDF tools'
 export type InputKind = 'url' | 'html' | 'markdown' | 'office' | 'pdf'
 
@@ -27,7 +28,7 @@ export type FieldDefinition = {
   integer?: boolean
   optionLabels?: Readonly<Record<string, string>>
   customEditor?: boolean
-  section?: 'processing' | 'compression' | 'reliability' | 'rendering'
+  section?: 'processing' | 'compression' | 'reliability' | 'rendering' | 'watermark'
   when?: { name: string; equals: string | boolean }
 }
 
@@ -61,6 +62,21 @@ const pdfa: FieldDefinition = {
   kind: 'select',
   options: ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b'],
   advanced: true,
+}
+const pdfMetadata: FieldDefinition = {
+  name: 'metadata',
+  label: 'PDF metadata',
+  kind: 'json',
+  customEditor: true,
+  advanced: true,
+  description: 'Edit common XMP fields visually; use JSON for other writable tags.',
+}
+const pdfBookmarks: FieldDefinition = {
+  name: 'bookmarks',
+  label: 'Custom PDF bookmarks',
+  kind: 'json',
+  customEditor: true,
+  description: 'A shared tree or per-input filename maps (with automatic page offsets).',
 }
 const pdfua: FieldDefinition = {
   name: 'pdfua',
@@ -284,6 +300,15 @@ export function isFieldVisible(
   values: Readonly<Record<string, string | boolean>>,
 ): boolean {
   const condition = field.when
+  if (
+    field.section === 'watermark' &&
+    !['nativeWatermarkText', 'nativeTiledWatermarkText'].includes(field.name)
+  ) {
+    return Boolean(
+      String(values.nativeWatermarkText ?? '').trim() ||
+        String(values.nativeTiledWatermarkText ?? '').trim(),
+    )
+  }
   if (!condition) return true
   const actual = values[condition.name]
   if (field.name === 'splitSpan') return actual === 'pages' || actual === 'intervals'
@@ -426,6 +451,13 @@ const screenshot: FieldDefinition[] = [
     advanced: true,
   },
   { name: 'quality', label: 'JPEG quality', kind: 'number', min: 0, max: 100, advanced: true },
+  {
+    name: 'optimizeForSpeed',
+    label: 'Prefer faster image encoding',
+    kind: 'toggle',
+    advanced: true,
+    description: 'Encode screenshots faster, potentially producing larger image files.',
+  },
   { name: 'clip', label: 'Clip to viewport', kind: 'toggle', advanced: true },
   { name: 'selector', label: 'CSS selector', kind: 'text', advanced: true },
   { name: 'omitBackground', label: 'Transparent background', kind: 'toggle', advanced: true },
@@ -516,6 +548,12 @@ export const OPERATIONS: readonly Operation[] = [
         description: 'Requires Export slide notes pages.',
       },
       {
+        name: 'exportNotesInMargin',
+        label: 'Export notes in page margins',
+        kind: 'toggle',
+        advanced: true,
+      },
+      {
         name: 'exportHiddenSlides',
         label: 'Include hidden presentation slides',
         kind: 'toggle',
@@ -561,6 +599,27 @@ export const OPERATIONS: readonly Operation[] = [
         description: 'Gotenberg default: enabled; requires source heading styles or bookmarks.',
       },
       {
+        name: 'addOriginalDocumentAsStream',
+        label: 'Embed original Office document in PDF',
+        kind: 'toggle',
+        advanced: true,
+        description: 'Include the source document stream in the output PDF for archiving.',
+      },
+      {
+        name: 'convertOooTargetToPdfTarget',
+        label: 'Convert OpenDocument link targets to PDF',
+        kind: 'toggle',
+        advanced: true,
+        description: 'Rewrite linked OpenDocument extensions to .pdf in exported hyperlinks.',
+      },
+      {
+        name: 'exportLinksRelativeFsys',
+        label: 'Use relative filesystem hyperlinks',
+        kind: 'toggle',
+        advanced: true,
+        description: 'Export file hyperlinks relative to their source document.',
+      },
+      {
         name: 'exportBookmarksToPdfDestination',
         label: 'Export named bookmark destinations',
         kind: 'toggle',
@@ -574,6 +633,13 @@ export const OPERATIONS: readonly Operation[] = [
         advanced: true,
         description:
           'Gotenberg default: enabled. Turn off to flatten Office form fields during conversion.',
+      },
+      {
+        name: 'allowDuplicateFieldNames',
+        label: 'Allow duplicate PDF form field names',
+        kind: 'toggle',
+        advanced: true,
+        when: { name: 'exportFormFields', equals: true },
       },
       {
         name: 'initialView',
@@ -659,6 +725,84 @@ export const OPERATIONS: readonly Operation[] = [
         advanced: true,
       },
       { name: 'centerWindow', label: 'Centre viewer window', kind: 'toggle', advanced: true },
+      {
+        name: 'resizeWindowToInitialPage',
+        label: 'Size viewer window to initial page',
+        kind: 'toggle',
+        advanced: true,
+      },
+      {
+        name: 'hideViewerWindowControls',
+        label: 'Hide viewer window controls',
+        kind: 'toggle',
+        advanced: true,
+      },
+      {
+        name: 'useTransitionEffects',
+        label: 'Use presentation slide transition effects',
+        kind: 'toggle',
+        defaultValue: true,
+        advanced: true,
+      },
+      {
+        name: 'openBookmarkLevels',
+        label: 'Initially expanded bookmark levels',
+        kind: 'number',
+        min: -1,
+        max: 100,
+        integer: true,
+        advanced: true,
+        placeholder: '-1 (all levels)',
+      },
+      {
+        name: 'nativeWatermarkText',
+        label: 'Single-line native watermark',
+        kind: 'text',
+        section: 'watermark',
+        placeholder: 'CONFIDENTIAL',
+        description: 'Rendered by LibreOffice behind document content (not a PDF-engine overlay).',
+      },
+      {
+        name: 'nativeTiledWatermarkText',
+        label: 'Repeated native watermark',
+        kind: 'text',
+        section: 'watermark',
+        placeholder: 'DRAFT',
+      },
+      {
+        name: 'nativeWatermarkColor',
+        label: 'Native watermark colour',
+        kind: 'color',
+        section: 'watermark',
+        description: 'Chosen as a hex colour; sent to LibreOffice as decimal RGB.',
+      },
+      {
+        name: 'nativeWatermarkFontName',
+        label: 'Native watermark font family',
+        kind: 'text',
+        section: 'watermark',
+        placeholder: 'Helvetica (default)',
+      },
+      {
+        name: 'nativeWatermarkFontHeight',
+        label: 'Native watermark font size (pt)',
+        kind: 'number',
+        min: 0,
+        max: 1000,
+        integer: true,
+        section: 'watermark',
+        placeholder: '0 (automatic)',
+      },
+      {
+        name: 'nativeWatermarkRotateAngle',
+        label: 'Native watermark rotation (degrees)',
+        kind: 'number',
+        min: -360,
+        max: 360,
+        section: 'watermark',
+        placeholder: '45',
+        description: 'Supports one decimal place; Gotenberg receives tenths of a degree.',
+      },
       pdfa,
       pdfua,
       ...officeOutput,
@@ -713,6 +857,8 @@ export const OPERATIONS: readonly Operation[] = [
     fields: [
       ...optimizeImages,
       { name: 'autoIndexBookmarks', label: 'Keep document bookmarks', kind: 'toggle' },
+      pdfBookmarks,
+      pdfMetadata,
       {
         name: 'titleBookmarks',
         label: 'Add bookmarks from titles',
@@ -851,6 +997,27 @@ export const OPERATIONS: readonly Operation[] = [
       {
         name: 'allowModifying',
         label: 'Allow editing',
+        kind: 'toggle',
+        defaultValue: true,
+        advanced: true,
+      },
+      {
+        name: 'allowAnnotating',
+        label: 'Allow annotations',
+        kind: 'toggle',
+        defaultValue: true,
+        advanced: true,
+      },
+      {
+        name: 'allowFillingForms',
+        label: 'Allow filling forms',
+        kind: 'toggle',
+        defaultValue: true,
+        advanced: true,
+      },
+      {
+        name: 'allowAssembling',
+        label: 'Allow page assembly',
         kind: 'toggle',
         defaultValue: true,
         advanced: true,

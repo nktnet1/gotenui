@@ -108,6 +108,7 @@ import {
   type PdfPostProcess,
   type PostProcessFiles,
 } from '#/lib/pdf-post-processing'
+import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
 import { formatBytes } from '#/lib/security'
 import { cn } from '#/lib/utils'
 import { InputError, parseAdvanced } from '#/lib/validation'
@@ -488,20 +489,22 @@ function FieldControl({
         <Input
           id={id}
           type={
-            field.kind === 'password'
-              ? 'password'
-              : field.kind === 'number'
-                ? 'number'
-                : field.kind === 'url'
-                  ? 'url'
-                  : 'text'
+            field.kind === 'color'
+              ? 'color'
+              : field.kind === 'password'
+                ? 'password'
+                : field.kind === 'number'
+                  ? 'number'
+                  : field.kind === 'url'
+                    ? 'url'
+                    : 'text'
           }
           min={field.min}
           max={field.max}
           step={field.kind === 'number' ? (field.integer ? 1 : 'any') : undefined}
           autoComplete={field.kind === 'password' ? 'new-password' : undefined}
           placeholder={field.placeholder}
-          value={String(value ?? '')}
+          value={String(value ?? (field.kind === 'color' ? '#7ffe7f' : ''))}
           onChange={(event) => onChange(event.target.value)}
           required={field.required}
           disabled={disabled}
@@ -820,6 +823,8 @@ function Workbench({
   const [traceparent, setTraceparent] = useState('')
   const [tracestate, setTracestate] = useState('')
   const [pending, setPending] = useState(false)
+  const [readingStructure, setReadingStructure] = useState(false)
+  const readAbort = useRef<AbortController | null>(null)
   const [lastDownload, setLastDownload] = useState<Download | null>(null)
   const fileUrl = useRef<string | null>(null)
   const requestAbort = useRef<AbortController | null>(null)
@@ -834,6 +839,7 @@ function Workbench({
   useEffect(
     () => () => {
       requestAbort.current?.abort()
+      readAbort.current?.abort()
       if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
     },
     [],
@@ -858,6 +864,8 @@ function Workbench({
     setWebhookSettings(emptyWebhook)
     setWebhookInput('')
     setAcceptedWebhook(null)
+    readAbort.current?.abort()
+    setReadingStructure(false)
     setOutputName('')
     setRequestTrace('')
     setTraceparent('')
@@ -872,10 +880,9 @@ function Workbench({
         [overlayProperty]: postProcess[overlayProperty] ?? [defaultOverlay(standaloneKind)],
       }
     : undefined
-  const hasPdfStructureEditor =
-    operation.id === 'metadata-write' ||
-    operation.id === 'bookmarks-write' ||
-    operation.id === 'embed'
+  const hasMetadataEditor = operation.fields.some((field) => field.name === 'metadata')
+  const hasBookmarksEditor = operation.fields.some((field) => field.name === 'bookmarks')
+  const hasPdfStructureEditor = hasMetadataEditor || hasBookmarksEditor || operation.id === 'embed'
   const basicFields = standaloneKind
     ? []
     : operation.fields.filter(
@@ -883,9 +890,8 @@ function Workbench({
           !field.advanced &&
           !field.section &&
           isFieldVisible(field, fields) &&
-          !(operation.id === 'metadata-write' && field.name === 'metadata') &&
-          !(operation.id === 'embed' && field.name === 'embedsMetadata') &&
-          !(operation.id === 'bookmarks-write' && field.name === 'bookmarks'),
+          !(field.customEditor && field.kind === 'json') &&
+          !(operation.id === 'embed' && field.name === 'embedsMetadata'),
       )
   const advancedFields = standaloneKind
     ? []
@@ -898,6 +904,11 @@ function Workbench({
           !(operation.id === 'embed' && field.name === 'embedsMetadata'),
       )
   const featureSections = [
+    {
+      key: 'watermark',
+      title: 'Native LibreOffice watermark',
+      description: 'Add single-line or tiled text behind the source document before PDF export.',
+    },
     {
       key: 'processing',
       title: 'Combine & split output',
@@ -939,6 +950,59 @@ function Workbench({
       }))
     }
   }
+  const readExistingPdfStructure = async () => {
+    const metadata = operation.id === 'metadata-write'
+    if (!metadata && operation.id !== 'bookmarks-write') return
+    if (
+      !files.length ||
+      (metadata && files.length !== 1) ||
+      pending ||
+      readingStructure ||
+      readAbort.current
+    )
+      return
+    if (unavailableReason) {
+      toast.error(unavailableReason)
+      return
+    }
+    const controller = new AbortController()
+    readAbort.current = controller
+    setReadingStructure(true)
+    try {
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+      const result = await convertWithGotenberg(
+        connection,
+        { operation: metadata ? 'metadata-read' : 'bookmarks-read', fields: {}, advanced: {} },
+        files,
+        [],
+        signal,
+      )
+      if (signal.aborted) return
+      if (result.mode !== 'download')
+        throw new Error('Reading requires an immediate JSON response.')
+      if (result.blob.size > 2_000_000)
+        throw new Error('The PDF structure response is too large to edit.')
+      const content: unknown = JSON.parse(await result.blob.text())
+      const editable = metadata
+        ? importReadableMetadata(content, files[0]?.name ?? '')
+        : importReadableBookmarks(
+            content,
+            files.map((file) => file.name),
+          )
+      updateField(metadata ? 'metadata' : 'bookmarks', editable)
+      toast.success(`Existing ${metadata ? 'metadata' : 'bookmarks'} loaded for editing.`)
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        toast.error(error instanceof Error ? error.message : 'Could not read the uploaded PDF.')
+      }
+    } finally {
+      if (readAbort.current === controller) {
+        readAbort.current = null
+        setReadingStructure(false)
+      }
+    }
+  }
+
   const buildCandidate = () => {
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
     const webhook = webhookPayload(webhookSettings, webhookInput)
@@ -1133,7 +1197,10 @@ function Workbench({
                       : 'Documents, slides, spreadsheets, drawings and images supported by Gotenberg.'
                 }
                 files={files}
-                onChange={setFiles}
+                onChange={(nextFiles) => {
+                  readAbort.current?.abort()
+                  setFiles(nextFiles)
+                }}
                 accept={operation.input === 'pdf' ? '.pdf,application/pdf' : OFFICE_ACCEPT}
                 multiple={true}
                 reorder={
@@ -1242,7 +1309,32 @@ function Workbench({
                 This operation works with its default settings.
               </p>
             ) : null}
-            {operation.id === 'metadata-write' && (
+            {(operation.id === 'metadata-write' || operation.id === 'bookmarks-write') && (
+              <div className="space-y-2 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    pending ||
+                    readingStructure ||
+                    Boolean(unavailableReason) ||
+                    !files.length ||
+                    (operation.id === 'metadata-write' && files.length !== 1)
+                  }
+                  onClick={readExistingPdfStructure}
+                >
+                  <RefreshCw className={cn('size-4', readingStructure && 'animate-spin')} />
+                  {readingStructure ? 'Reading uploaded PDF…' : 'Read existing PDF values'}
+                </Button>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Reads the uploaded PDF{operation.id === 'bookmarks-write' ? '(s)' : ''} into the
+                  editor without downloading or copying JSON. Metadata import excludes read-only
+                  tags.
+                  {operation.id === 'metadata-write' && ' Select exactly one PDF.'}
+                </p>
+              </div>
+            )}
+            {hasMetadataEditor && (
               <PdfMetadataEditor
                 value={String(fields.metadata ?? '{}')}
                 onChange={(value) => updateField('metadata', value)}
@@ -1255,10 +1347,12 @@ function Workbench({
                 onChange={(value) => updateField('embedsMetadata', value)}
               />
             )}
-            {operation.id === 'bookmarks-write' && (
+            {hasBookmarksEditor && (
               <PdfBookmarksEditor
                 value={String(fields.bookmarks ?? '[]')}
                 onChange={(value) => updateField('bookmarks', value)}
+                allowFilenameMap
+                filenames={files.map((file) => file.name)}
               />
             )}
             {standaloneKind && activeStandaloneSettings && (
