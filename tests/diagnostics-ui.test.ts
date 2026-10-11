@@ -39,6 +39,8 @@ describe('diagnostics visibility and accessible tabs', () => {
     expect(html).toMatch(/role="tab"[^>]*tabindex="-1"[^>]*aria-selected="false"/)
     expect(html).toContain('Read debug info')
     expect(html).toContain('Read metrics')
+    expect(html).not.toContain('Metrics may reveal internal instance details')
+    expect(html).not.toContain('lucide-shield-alert')
     expect(html).toContain('role="tabpanel"')
     expect(html).toMatch(/role="tabpanel"[^>]*hidden=""/)
     expect(html).not.toContain('API_ENABLE_DEBUG_ROUTE')

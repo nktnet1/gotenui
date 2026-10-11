@@ -1,4 +1,4 @@
-import { ClipboardCopy, Download, RefreshCw, ShieldAlert } from 'lucide-react'
+import { ClipboardCopy, Download, RefreshCw } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
@@ -83,14 +83,6 @@ export function MetricsPanel({ connection, active }: Props) {
 
   return (
     <div>
-      <div className="mb-5 flex gap-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/50 p-4 text-xs leading-5 text-amber-950 dark:text-amber-100">
-        <ShieldAlert className="size-5 shrink-0" />
-        <p>
-          Metrics may reveal internal instance details. Gotenui relies on the selected Gotenberg
-          instance to control access to /prometheus/metrics. This legacy endpoint is deprecated in
-          favour of OpenTelemetry. Responses are kept in memory only.
-        </p>
-      </div>
       <form onSubmit={(event) => void readMetrics(event)}>
         <Button type="submit" disabled={busy}>
           {busy && <RefreshCw className="size-4 animate-spin" />}

@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.43 (theme preference icons and clearer bookmark navigation).
+- **Baseline:** v1.0.44 (document preview, HTML import, and compact appearance menu).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -48,7 +48,14 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.41** | Usability | Diagnostics, button visibility and dark mode | Group the HEAD health probe inside always-accessible Diagnostics, keep debug and metrics actions independently gated, remove redundant debug warning, improve action contrast, and add an accessible persistent light/dark toggle. |
 | **v1.0.42** | Usability | Tabbed diagnostics and theme selection | Show Debug and Prometheus as accessible tabs within one dialog, keep the probe width stable while loading, and provide a System/Light/Dark dropdown that can clear the saved override. |
 | **v1.0.43** | Usability | Theme and sidebar icon polish | Add monitor/sun/moon indicators to the native theme select; use bookmark-specific read/write navigation icons and remove the decorative period from the sidebar brand. |
+| **v1.0.44** | Usability | Result preview, HTML import, and theme menu | Add an on-demand, browser-local PDF preview with download/new-tab fallback and explicit result cleanup, import HTML source into the editor, remove the Prometheus warning, and render icon-only theme control with icon-and-label menu choices. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
+
+### v1.0.44 document preview and appearance menu
+
+Completed PDF results can be previewed on demand using the browser's built-in PDF viewer and the same in-memory Blob URL used for downloads. Download and open-in-new-tab remain available as fallbacks. Clearing the latest result revokes the URL and removes only that temporary result, not the session activity list. ZIP archives are never passed to the PDF viewer. Source editors for HTML PDF and screenshot routes now import local UTF-8 `.html` or `.htm` files up to 300 KB, without adding multipart assets or changing server-side validation. The optional source import replaces the editable `index.html` text.
+
+The appearance control has an icon-only trigger and a keyboard-accessible menu with actual monitor, sun, and moon icons alongside System, Light, and Dark labels. Native HTML select options cannot display SVG icons, so the menu uses radio-style checked choices, arrow-key navigation, Home, End, Escape, and focus restoration. System remains the initial preference and clears any stored override. The Prometheus tab no longer displays a redundant warning card. The warning's operational context remains in the README. All changes are client-side and preserve stateless operation.
 
 ### v1.0.43 theme and sidebar icons
 

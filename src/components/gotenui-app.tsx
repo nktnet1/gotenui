@@ -48,12 +48,14 @@ import { ChromiumPdfAssets } from '#/components/chromium-pdf-assets'
 import { ThemeSelect } from '#/components/color-theme-provider'
 import { ConnectionManager } from '#/components/connection-manager'
 import { DiagnosticsDialog } from '#/components/diagnostics-dialog'
+import { HtmlSourceImport } from '#/components/html-source-import'
 import { MarkdownAssetsEditor, type MarkdownSource } from '#/components/markdown-assets-editor'
 import {
   defaultOverlay,
   OverlayGroupsEditor,
   PdfConversionPostProcessing,
 } from '#/components/pdf-conversion-post-processing'
+import { PdfResultPreview } from '#/components/pdf-result-preview'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
@@ -543,6 +545,7 @@ function JobPanel({
   pending,
   lastDownload,
   acceptedWebhook,
+  onClearResult,
   recent,
 }: {
   operation: Operation
@@ -553,6 +556,7 @@ function JobPanel({
   pending: boolean
   lastDownload: Download | null
   acceptedWebhook: AcceptedWebhook | null
+  onClearResult: () => void
   recent: Job[]
 }) {
   const Icon = ICONS[operation.id] ?? FileText
@@ -638,7 +642,16 @@ function JobPanel({
       {(pending || lastDownload || acceptedWebhook) && (
         <Card>
           <CardHeader>
-            <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">Latest result</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                Latest result
+              </h2>
+              {!pending && (
+                <Button type="button" variant="ghost" size="sm" onClick={onClearResult}>
+                  Clear
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             {pending ? (
@@ -702,6 +715,13 @@ function JobPanel({
                       </p>
                     </div>
                   </div>
+                  {lastDownload.type === 'application/pdf' && (
+                    <PdfResultPreview
+                      key={lastDownload.url}
+                      url={lastDownload.url}
+                      name={lastDownload.name}
+                    />
+                  )}
                   {lastDownload.type.startsWith('image/') && (
                     <img
                       className="mb-4 max-h-52 w-full rounded-lg border border-slate-100 dark:border-slate-800 object-contain"
@@ -819,6 +839,14 @@ function Workbench({
   const [lastDownload, setLastDownload] = useState<Download | null>(null)
   const fileUrl = useRef<string | null>(null)
   const requestAbort = useRef<AbortController | null>(null)
+  const clearResult = useCallback(() => {
+    setLastDownload(null)
+    setAcceptedWebhook(null)
+    if (fileUrl.current) {
+      URL.revokeObjectURL(fileUrl.current)
+      fileUrl.current = null
+    }
+  }, [])
   useEffect(
     () => () => {
       requestAbort.current?.abort()
@@ -850,12 +878,8 @@ function Workbench({
     setRequestTrace('')
     setTraceparent('')
     setTracestate('')
-    setLastDownload(null)
-    if (fileUrl.current) {
-      URL.revokeObjectURL(fileUrl.current)
-      fileUrl.current = null
-    }
-  }, [operation])
+    clearResult()
+  }, [operation, clearResult])
   const standaloneKind: OverlayKind | undefined =
     operation.id === 'watermark' || operation.id === 'stamp' ? operation.id : undefined
   const overlayProperty = standaloneKind === 'watermark' ? 'watermarks' : 'stamps'
@@ -1074,6 +1098,7 @@ function Workbench({
                   onChange={(event) => setSource(event.target.value)}
                   className="min-h-72 resize-y bg-[#0d1e2e] p-5 font-mono text-xs leading-6 text-sky-100 focus-visible:border-sky-500"
                 />
+                {operation.input === 'html' && <HtmlSourceImport onImport={setSource} />}
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {operation.input === 'html'
                     ? 'HTML renders with Chromium, including inline CSS and scripts.'
@@ -1338,6 +1363,7 @@ function Workbench({
         pending={pending}
         lastDownload={lastDownload}
         acceptedWebhook={acceptedWebhook}
+        onClearResult={clearResult}
         recent={recent}
       />
       <a

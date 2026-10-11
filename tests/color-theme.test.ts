@@ -12,20 +12,18 @@ import {
 describe('browser color theme preference', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('shows System selected by default in an accessible dropdown', () => {
+  it('shows only the System icon in the collapsed theme menu', () => {
     const html = renderToStaticMarkup(
       createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
     )
     expect(html).toContain('Appearance theme')
-    expect(html).toContain('<select')
-    expect(html).toContain('value="system"')
-    expect(html).toContain('selected=""')
-    expect(html).toContain('>System</option>')
-    expect(html).toContain('>Light</option>')
-    expect(html).toContain('>Dark</option>')
+    expect(html).toContain('aria-label="Appearance theme: System"')
+    expect(html).toContain('aria-haspopup="menu"')
+    expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('lucide-monitor')
-    expect(html).toContain('lucide-chevron-down')
-    expect(html).toContain('appearance-none')
+    expect(html).not.toContain('<select')
+    expect(html).not.toContain('>System</')
+    expect(html).not.toContain('lucide-chevron-down')
     expect(html).toContain('aria-hidden="true"')
   })
 
@@ -38,8 +36,7 @@ describe('browser color theme preference', () => {
       createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
     )
     expect(html).toContain(`lucide ${icon}`)
-    expect(html).toContain(`value="${saved}" selected=""`)
-    expect(html).toContain('<select')
+    expect(html).toContain(`aria-label="Appearance theme: ${saved === 'dark' ? 'Dark' : 'Light'}"`)
   })
 
   it('follows system settings when no preference is saved', () => {
