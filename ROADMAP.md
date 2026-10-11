@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.42 (tabbed diagnostics, fixed-width probe and System/Light/Dark preference).
+- **Baseline:** v1.0.43 (theme preference icons and clearer bookmark navigation).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -47,7 +47,12 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.40** | Fix | Conversion prefix integrity | Reject incomplete/invalid PDF version headers and declared uncompressed response lengths shorter than the binary signature or bytes already read for signature validation, before sending download headers. Retain PDF 1.x/2.0 compatibility and streaming. |
 | **v1.0.41** | Usability | Diagnostics, button visibility and dark mode | Group the HEAD health probe inside always-accessible Diagnostics, keep debug and metrics actions independently gated, remove redundant debug warning, improve action contrast, and add an accessible persistent light/dark toggle. |
 | **v1.0.42** | Usability | Tabbed diagnostics and theme selection | Show Debug and Prometheus as accessible tabs within one dialog, keep the probe width stable while loading, and provide a System/Light/Dark dropdown that can clear the saved override. |
+| **v1.0.43** | Usability | Theme and sidebar icon polish | Add monitor/sun/moon indicators to the native theme select; use bookmark-specific read/write navigation icons and remove the decorative period from the sidebar brand. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
+
+### v1.0.43 theme and sidebar icons
+
+The selected theme preference is indicated by an accessible, decorative-only monitor (System), sun (Light), or moon (Dark) icon alongside the existing native select. The native dropdown retains its text options and keyboard behaviour; icons do not become part of its accessible label. Read/Write bookmarks use different bookmark-specific sidebar icons instead of identical braces. The brand text is now simply **Gotenui** without the decorative dot; the gopher SVG is unchanged. Unit tests verify the three selected-mode icons, the bookmark icons, and the displayed brand. Manual visual verification remains outstanding.
 
 ### v1.0.42 diagnostic tabs and theme selection
 

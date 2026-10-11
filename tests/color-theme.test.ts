@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ColorThemeProvider, ThemeSelect } from '#/components/color-theme-provider'
 import {
   COLOR_THEME_STORAGE_KEY,
@@ -10,6 +10,8 @@ import {
 } from '#/lib/color-theme'
 
 describe('browser color theme preference', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
   it('shows System selected by default in an accessible dropdown', () => {
     const html = renderToStaticMarkup(
       createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
@@ -21,6 +23,23 @@ describe('browser color theme preference', () => {
     expect(html).toContain('>System</option>')
     expect(html).toContain('>Light</option>')
     expect(html).toContain('>Dark</option>')
+    expect(html).toContain('lucide-monitor')
+    expect(html).toContain('lucide-chevron-down')
+    expect(html).toContain('appearance-none')
+    expect(html).toContain('aria-hidden="true"')
+  })
+
+  it.each([
+    ['light', 'lucide-sun'],
+    ['dark', 'lucide-moon'],
+  ] as const)('uses the correct icon when %s is selected', (saved, icon) => {
+    vi.stubGlobal('window', { localStorage: { getItem: () => saved } })
+    const html = renderToStaticMarkup(
+      createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
+    )
+    expect(html).toContain(`lucide ${icon}`)
+    expect(html).toContain(`value="${saved}" selected=""`)
+    expect(html).toContain('<select')
   })
 
   it('follows system settings when no preference is saved', () => {

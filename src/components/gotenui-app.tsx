@@ -2,7 +2,8 @@ import type { LucideIcon } from 'lucide-react'
 import {
   Activity,
   ArrowDownToLine,
-  Braces,
+  BookmarkCheck,
+  BookmarkPlus,
   Camera,
   Check,
   CheckCircle2,
@@ -130,8 +131,8 @@ const ICONS: Record<string, LucideIcon> = {
   stamp: FilePlus2,
   'metadata-read': FileJson2,
   'metadata-write': FileJson2,
-  'bookmarks-read': Braces,
-  'bookmarks-write': Braces,
+  'bookmarks-read': BookmarkCheck,
+  'bookmarks-write': BookmarkPlus,
   embed: FileArchive,
   'factur-x': FileText,
 }
@@ -184,7 +185,7 @@ type Download = {
   trace?: string
 }
 
-function Brand({ compact = false }: { compact?: boolean }) {
+export function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex items-center gap-3">
       <div className="brand-mark flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl shadow-lg shadow-sky-950/15">
@@ -192,9 +193,7 @@ function Brand({ compact = false }: { compact?: boolean }) {
       </div>
       {!compact && (
         <div>
-          <p className="text-[19px] font-extrabold tracking-tight text-white">
-            Gotenui<span className="text-sky-400">.</span>
-          </p>
+          <p className="text-[19px] font-extrabold tracking-tight text-white">Gotenui</p>
           <p className="mt-[-2px] text-[10px] font-medium tracking-[.13em] text-slate-400">
             GOTENBERG WORKSPACE
           </p>
@@ -272,7 +271,7 @@ function ConnectionDialog({
   )
 }
 
-function Sidebar({
+export function Sidebar({
   selectedId,
   onSelect,
   status,
