@@ -1,5 +1,9 @@
 import * as v from 'valibot'
 import { normalizeBackendUrl } from '#/lib/backend-url'
+import {
+  type OAuth2ClientCredentials,
+  parseOAuth2TokenUrl,
+} from '#/lib/oauth2-client-credentials.server'
 import { DEMO_GOTENBERG_URL, ProxyInputError } from '#/lib/proxy-policy'
 import { parseUpstreamBasicAuth } from '#/lib/upstream-auth.server'
 
@@ -14,11 +18,20 @@ const bearerSchema = v.object({
   type: v.literal('bearer'),
   token: v.pipe(v.string(), v.minLength(1), v.maxLength(4096)),
 })
+const oauth2Schema = v.object({
+  type: v.literal('oauth2'),
+  tokenUrl: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
+  clientId: v.pipe(v.string(), v.minLength(1), v.maxLength(512)),
+  clientSecret: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
+  scope: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(1024))),
+  audience: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(1024))),
+  authMethod: v.optional(v.picklist(['client_secret_basic', 'client_secret_post'])),
+})
 const connectionSchema = v.object({
   id: idSchema,
   name: nameSchema,
   url: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
-  auth: v.optional(v.variant('type', [basicSchema, bearerSchema])),
+  auth: v.optional(v.variant('type', [basicSchema, bearerSchema, oauth2Schema])),
   metricsUrl: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(2048))),
   metricsAuth: v.optional(v.variant('type', [basicSchema, bearerSchema])),
 })
@@ -29,6 +42,7 @@ export type ServerConnection = Readonly<{
   name: string
   url: string
   authorization?: string
+  oauth2?: OAuth2ClientCredentials
   metricsUrl?: string
   metricsAuthorization?: string
 }>
@@ -110,11 +124,42 @@ export function parseServerConnections(
     if (entry.metricsAuth && !entry.metricsUrl) {
       throw new Error(`Metrics credentials for ${entry.id} require metricsUrl.`)
     }
+    if (entry.auth?.type === 'oauth2') {
+      for (const value of [
+        entry.auth.clientId,
+        entry.auth.clientSecret,
+        entry.auth.scope,
+        entry.auth.audience,
+      ]) {
+        if (
+          value !== undefined &&
+          [...value].some((char) => {
+            const code = char.charCodeAt(0)
+            return code < 32 || code === 127
+          })
+        ) {
+          throw new Error(`Invalid OAuth2 credential or parameter for ${entry.id}.`)
+        }
+      }
+    }
+    const oauth2: OAuth2ClientCredentials | undefined =
+      entry.auth?.type === 'oauth2'
+        ? {
+            tokenUrl: parseOAuth2TokenUrl(entry.auth.tokenUrl),
+            clientId: entry.auth.clientId,
+            clientSecret: entry.auth.clientSecret,
+            scope: entry.auth.scope,
+            audience: entry.auth.audience,
+            authMethod: entry.auth.authMethod ?? 'client_secret_basic',
+          }
+        : undefined
     return {
       id: entry.id,
       name: entry.name,
       url,
-      authorization: authorizationFor(entry.auth, entry.id),
+      authorization:
+        entry.auth?.type === 'oauth2' ? undefined : authorizationFor(entry.auth, entry.id),
+      oauth2,
       metricsUrl: entry.metricsUrl ? parseMetricsUrl(entry.metricsUrl) : undefined,
       metricsAuthorization: authorizationFor(entry.metricsAuth, `${entry.id} metrics`),
     }

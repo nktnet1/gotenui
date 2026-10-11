@@ -1,7 +1,11 @@
 import urlJoin from 'url-join'
 import * as v from 'valibot'
-import { resolveConnectionTarget } from '#/lib/connection-target.server'
+import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
+import {
+  invalidateOAuth2Authorization,
+  type OAuth2ClientCredentials,
+} from '#/lib/oauth2-client-credentials.server'
 import type { Operation } from '#/lib/operations'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
@@ -178,6 +182,16 @@ async function boundedProxyDiagnosticBody(
     }
     throw error
   }
+}
+
+function invalidateUnauthorized(
+  status: number,
+  target: {
+    url: string
+    oauth2?: OAuth2ClientCredentials
+  },
+): void {
+  if (status === 401) invalidateOAuth2Authorization(target.url, target.oauth2)
 }
 
 function fetchOptions(request: Request): Pick<RequestInit, 'signal' | 'redirect' | 'cache'> {
@@ -390,12 +404,14 @@ export async function proxyConversionRequest(
   if (payloadCount !== 1) throw new ProxyInputError('Exactly one conversion payload is required.')
   const { operation, payload } = validatePayload(candidate)
   validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles)
-  const { url, headers: authHeaders } = resolveConnectionTarget(
+  const target = await resolveAuthenticatedConnectionTarget(
     request,
     settings,
     request.headers.get('x-gotenberg-url'),
     request.headers.get('x-gotenui-connection-id'),
+    fetcher,
   )
+  const { url, headers: authHeaders } = target
   const form = createGotenbergForm(operation, payload, files, auxiliary, maxBytes, postFiles)
   const upstream = await fetcher(urlJoin(url, operation.path), {
     method: 'POST',
@@ -405,6 +421,7 @@ export async function proxyConversionRequest(
     credentials: 'omit',
   })
   if (!upstream.ok) {
+    invalidateUnauthorized(upstream.status, target)
     const headers = new Headers({
       ...safeResponseHeaders,
       'Content-Type': 'text/plain; charset=utf-8',
@@ -480,12 +497,14 @@ export async function proxyStatusRequest(
 ): Promise<Response> {
   requireSameOrigin(request)
   const search = new URL(request.url).searchParams
-  const { url, headers: authHeaders } = resolveConnectionTarget(
+  const target = await resolveAuthenticatedConnectionTarget(
     request,
     runtimeConfig(),
     search.get('url'),
     search.get('connection'),
+    fetcher,
   )
+  const { url, headers: authHeaders } = target
   const options = {
     ...fetchOptions(request),
     headers: authHeaders,
@@ -495,6 +514,7 @@ export async function proxyStatusRequest(
   try {
     const health = await fetcher(urlJoin(url, '/health'), options)
     if (health.status !== 200) {
+      invalidateUnauthorized(health.status, target)
       await health.body?.cancel().catch(() => {})
       throw new StatusProbeError(`Gotenberg returned HTTP ${health.status}.`)
     }
@@ -522,6 +542,7 @@ export async function proxyStatusRequest(
     try {
       const response = await fetcher(urlJoin(url, '/version'), options)
       if (response.status === 401 || response.status === 403) {
+        invalidateUnauthorized(response.status, target)
         versionAuthFailure = response.status
         await response.body?.cancel().catch(() => {})
       } else if (response.status === 200) {
@@ -559,12 +580,14 @@ export async function proxyHeadHealthRequest(
     throw new ProxyInputError('Health probes must use HEAD.', 405)
   }
   const search = new URL(request.url).searchParams
-  const { url, headers: authHeaders } = resolveConnectionTarget(
+  const target = await resolveAuthenticatedConnectionTarget(
     request,
     runtimeConfig(),
     search.get('url'),
     search.get('connection'),
+    fetcher,
   )
+  const { url, headers: authHeaders } = target
   const upstream = await fetcher(urlJoin(url, '/health'), {
     method: 'HEAD',
     ...fetchOptions(request),
@@ -573,6 +596,7 @@ export async function proxyHeadHealthRequest(
   })
   // Gotenberg reports 200 or 503. Forward an authentication failure for diagnostic
   // purposes; unexpected responses are gateway errors, not healthy probes.
+  invalidateUnauthorized(upstream.status, target)
   const status = [200, 503, 401, 403].includes(upstream.status) ? upstream.status : 502
   await upstream.body?.cancel().catch(() => {})
   return new Response(null, { status, headers: healthProbeHeaders })
@@ -595,17 +619,19 @@ export async function proxyMetricsRequest(
   }
   const settings = runtimeConfig()
   const profileId = request.headers.get('x-gotenui-connection-id')
-  const { url, headers: authHeaders } = resolveConnectionTarget(
+  const profile =
+    profileId === null ? undefined : requireServerConnection(profileId, settings.connections)
+  // Separate OTEL exporters must not trigger token acquisition for Gotenberg.
+  const isOtel = Boolean(profile?.metricsUrl)
+  const target = await resolveAuthenticatedConnectionTarget(
     request,
     settings,
     request.headers.get('x-gotenberg-url'),
     profileId,
+    fetcher,
+    !isOtel,
   )
-  const profile =
-    profileId === null ? undefined : requireServerConnection(profileId, settings.connections)
-  // A private OTEL exporter must be explicitly bound to a server-managed profile.
-  // Never inherit Gotenberg credentials when fetching the separate exporter.
-  const isOtel = Boolean(profile?.metricsUrl)
+  const { url, headers: authHeaders } = target
   const metricsUrl = profile?.metricsUrl ?? urlJoin(url, '/prometheus/metrics')
   const metricsHeaders = isOtel
     ? profile?.metricsAuthorization
@@ -619,6 +645,7 @@ export async function proxyMetricsRequest(
     credentials: 'omit',
   })
   if (upstream.status !== 200) {
+    if (!isOtel) invalidateUnauthorized(upstream.status, target)
     await upstream.body?.cancel().catch(() => {})
     const message =
       upstream.status === 404
@@ -678,12 +705,14 @@ export async function proxyDebugRequest(
   fetcher: typeof fetch = fetch,
 ): Promise<Response> {
   requireSameOrigin(request)
-  const { url, headers: authHeaders } = resolveConnectionTarget(
+  const target = await resolveAuthenticatedConnectionTarget(
     request,
     runtimeConfig(),
     request.headers.get('x-gotenberg-url'),
     request.headers.get('x-gotenui-connection-id'),
+    fetcher,
   )
+  const { url, headers: authHeaders } = target
   const upstream = await fetcher(urlJoin(url, '/debug'), {
     method: 'GET',
     ...fetchOptions(request),
@@ -691,6 +720,7 @@ export async function proxyDebugRequest(
     credentials: 'omit',
   })
   if (upstream.status !== 200) {
+    invalidateUnauthorized(upstream.status, target)
     await upstream.body?.cancel().catch(() => {})
     const message =
       upstream.status === 404

@@ -1,3 +1,4 @@
+import { authorizationForOAuth2 } from '#/lib/oauth2-client-credentials.server'
 import { DEMO_GOTENBERG_URL, ProxyInputError, requireAllowedBackend } from '#/lib/proxy-policy'
 import { requireServerConnection, type ServerConnection } from '#/lib/server-connections.server'
 
@@ -61,4 +62,45 @@ export function resolveConnectionTarget(
     throw new ProxyInputError('Do not send credentials to the public Gotenberg demo.')
   }
   return { url, headers: authorization ? { Authorization: authorization } : undefined }
+}
+
+/** Resolve deployment-managed OAuth2 only after all proxy URL and credential
+ * override checks have passed. The token is never returned in public metadata.
+ */
+async function abortableToken<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
+export async function resolveAuthenticatedConnectionTarget(
+  request: Request,
+  settings: TargetSettings,
+  urlCandidate: string | null,
+  idCandidate: string | null,
+  fetcher: typeof fetch = fetch,
+  authorizeOAuth2 = true,
+): Promise<{ url: string; headers?: HeadersInit; oauth2?: ServerConnection['oauth2'] }> {
+  const target = resolveConnectionTarget(request, settings, urlCandidate, idCandidate)
+  if (idCandidate === null) return target
+  const connection = requireServerConnection(idCandidate, settings.connections)
+  if (!authorizeOAuth2 || !connection.oauth2) return target
+  if (request.signal.aborted) throw request.signal.reason
+  const authorization = await abortableToken(
+    authorizationForOAuth2(connection.url, connection.oauth2, fetcher),
+    request.signal,
+  )
+  return { ...target, headers: { Authorization: authorization }, oauth2: connection.oauth2 }
 }

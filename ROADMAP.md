@@ -188,11 +188,12 @@ The **Diagnostics** dialog is always reachable and contains the selected connect
 
 #### 10. OIDC token acquisition
 
-**Current state:** Gotenui can forward browser-provided bearer tokens, but it does not implement OIDC sign-in or refresh tokens. This is **not required** for normal Gotenberg deployments and should not introduce a second Gotenui-only authorisation system.
+**Current state:** Since v1.0.4, Gotenui supports deployment-managed OAuth2 client-credentials acquisition and in-memory token renewal for service accounts. This is not user-interactive OIDC and does not store refresh tokens. Existing browser-provided bearer tokens remain supported. Gotenberg/gateways still enforce all permissions.
 
-- [ ] Only scope this after a concrete upstream identity-provider or gateway requirement is identified.
-- [ ] If needed, define a stateless or delegated token-acquisition flow, token expiry/refresh behaviour, and safe ephemeral handling; avoid `localStorage` secrets by default.
-- [ ] Preserve Gotenberg/gateway decisions about access and keep unrelated connection profiles isolated.
+- [x] Support optional service-to-service access-token acquisition from a fixed, operator-configured HTTPS endpoint; renew before expiry, deduplicate concurrent acquisitions, invalidate on HTTP 401, and keep tokens out of browser storage.
+- [x] Isolate tokens by upstream destination and IdP configuration; never forward one to unrelated browser connections or telemetry exporters.
+- [ ] Only scope interactive OIDC Authorization Code + PKCE login after a concrete identity-provider/gateway requirement is identified.
+- [ ] If interactive access is needed, define redirect registration, state/nonce validation, token expiry and refresh behaviour, and safe ephemeral handling; avoid `localStorage` secrets by default.
 
 ## Verification and release gates
 
