@@ -23,6 +23,7 @@ import {
   Globe2,
   Image,
   Layers3,
+  ListPlus,
   LockKeyhole,
   Menu,
   PanelLeftClose,
@@ -39,6 +40,7 @@ import {
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { RemoteInputsEditor, WebhookEditor } from '#/components/async-inputs-editor'
+import { BrowserBatchQueuePanel } from '#/components/browser-batch-queue'
 import {
   ChromiumNetworkEditor,
   type CookieRow,
@@ -75,6 +77,7 @@ import {
   webhookPayload,
 } from '#/lib/async-inputs'
 import { browserStorage } from '#/lib/backend-url'
+import { BrowserBatchQueue } from '#/lib/browser-batch-queue'
 import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
 import { chromiumNetworkFields } from '#/lib/chromium-network'
 import { DEFAULT_BACKEND_URL } from '#/lib/config'
@@ -803,11 +806,13 @@ function Workbench({
   recent,
   onCompleted,
   connection,
+  batchQueue,
 }: {
   operation: Operation
   recent: Job[]
   onCompleted: (job: Job) => void
   connection: ConnectionChoice
+  batchQueue: BrowserBatchQueue
 }) {
   const [fields, setFields] = useState<Record<string, string | boolean>>(() =>
     operationDefaults(operation),
@@ -923,44 +928,65 @@ function Workbench({
       }))
     }
   }
+  const buildCandidate = () => {
+    const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
+    const webhook = webhookPayload(webhookSettings, webhookInput)
+    const candidate = {
+      operation: operation.id,
+      fields: standaloneKind
+        ? {}
+        : hasChromiumNetwork
+          ? { ...fields, ...chromiumNetworkFields(cookies, resourceHeaders) }
+          : fields,
+      source: isSourceEditor ? source : undefined,
+      markdownName: operation.input === 'markdown' ? markdownName : undefined,
+      markdownFiles:
+        operation.input === 'markdown' && markdownFiles.length
+          ? markdownFiles.map(({ name, content }) => ({ name, content }))
+          : undefined,
+      markdownTemplate:
+        operation.input === 'markdown' ? (markdownTemplate ?? undefined) : undefined,
+      headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
+      footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
+      postProcess: standaloneKind
+        ? activeStandaloneSettings
+        : hasPostProcessing && Object.values(postProcess).some((value) => value !== undefined)
+          ? postProcess
+          : undefined,
+      advanced: parseAdvanced(advanced),
+      downloadFrom,
+      webhook,
+      outputName: outputName.trim() || undefined,
+      requestTrace: requestTrace.trim() || undefined,
+      traceparent: traceparent.trim() || undefined,
+      tracestate: tracestate.trim() || undefined,
+    }
+    return candidate
+  }
+
+  const queueCurrent = () => {
+    try {
+      const id = batchQueue.enqueue({
+        connection,
+        candidate: buildCandidate(),
+        files,
+        auxiliary: auxFiles,
+        postFiles,
+      })
+      toast.success(`Added job #${id} to the batch queue below.`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not add the job.')
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (pending) return
     setPending(true)
     setAcceptedWebhook(null)
     try {
-      const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
       const webhook = webhookPayload(webhookSettings, webhookInput)
-      const candidate = {
-        operation: operation.id,
-        fields: standaloneKind
-          ? {}
-          : hasChromiumNetwork
-            ? { ...fields, ...chromiumNetworkFields(cookies, resourceHeaders) }
-            : fields,
-        source: isSourceEditor ? source : undefined,
-        markdownName: operation.input === 'markdown' ? markdownName : undefined,
-        markdownFiles:
-          operation.input === 'markdown' && markdownFiles.length
-            ? markdownFiles.map(({ name, content }) => ({ name, content }))
-            : undefined,
-        markdownTemplate:
-          operation.input === 'markdown' ? (markdownTemplate ?? undefined) : undefined,
-        headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
-        footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
-        postProcess: standaloneKind
-          ? activeStandaloneSettings
-          : hasPostProcessing && Object.values(postProcess).some((value) => value !== undefined)
-            ? postProcess
-            : undefined,
-        advanced: parseAdvanced(advanced),
-        downloadFrom,
-        webhook,
-        outputName: outputName.trim() || undefined,
-        requestTrace: requestTrace.trim() || undefined,
-        traceparent: traceparent.trim() || undefined,
-        tracestate: tracestate.trim() || undefined,
-      }
+      const candidate = buildCandidate()
       const start = performance.now()
       const controller = new AbortController()
       requestAbort.current = controller
@@ -1368,14 +1394,25 @@ function Workbench({
               Cancel
             </Button>
           )}
-          <Button type="submit" size="lg" disabled={pending} className="min-w-44">
-            {pending ? (
-              <RefreshCw className="size-4 animate-spin" />
-            ) : (
-              <Play className="size-4 fill-current" />
-            )}
-            {pending ? 'Processing...' : 'Run operation'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              disabled={pending}
+              onClick={queueCurrent}
+            >
+              <ListPlus className="size-4" /> Add to batch
+            </Button>
+            <Button type="submit" size="lg" disabled={pending} className="min-w-44">
+              {pending ? (
+                <RefreshCw className="size-4 animate-spin" />
+              ) : (
+                <Play className="size-4 fill-current" />
+              )}
+              {pending ? 'Processing...' : 'Run operation'}
+            </Button>
+          </div>
         </div>
       </form>
       <JobPanel
@@ -1430,6 +1467,38 @@ function Workspace({
   const [status, setStatus] = useState<ServerStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [recent, setRecent] = useState<Job[]>([])
+  const [batchQueue] = useState(
+    () =>
+      new BrowserBatchQueue(undefined, (job) => {
+        const { name, size } = job
+        if (name && size !== undefined) {
+          setRecent((items) =>
+            [
+              {
+                id: job.id,
+                operation: job.operation,
+                name,
+                size,
+                elapsed: job.elapsed ?? 0,
+                trace: job.trace,
+              },
+              ...items,
+            ].slice(0, 6),
+          )
+        }
+      }),
+  )
+  const queueMounts = useRef(0)
+  useEffect(() => {
+    queueMounts.current++
+    return () => {
+      queueMounts.current--
+      // React StrictMode replays effects during development. Dispose only on real unmount.
+      queueMicrotask(() => {
+        if (queueMounts.current === 0) batchQueue.dispose()
+      })
+    }
+  }, [batchQueue])
   const [mobileOpen, setMobileOpen] = useState(false)
   const operation = OPERATION_BY_ID.get(selectedId) ?? (OPERATIONS[0] as Operation)
   const Icon = ICONS[operation.id] ?? FileText
@@ -1689,7 +1758,9 @@ function Workspace({
             recent={recent}
             onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
             connection={connection}
+            batchQueue={batchQueue}
           />
+          <BrowserBatchQueuePanel queue={batchQueue} />
           <footer className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 dark:border-slate-700 pt-5 text-[11px] text-slate-400">
             <span>Gotenui · Stateless document workbench</span>
             <span>TanStack Start · Serverless Gotenberg proxy</span>

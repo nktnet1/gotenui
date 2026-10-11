@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.46 (browser-local operation presets).
+- **Baseline:** v1.0.47 (browser-managed batch queue).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -51,7 +51,14 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.44** | Usability | Result preview, HTML import, and theme menu | Add an on-demand, browser-local PDF preview with download/new-tab fallback and explicit result cleanup, import HTML source into the editor, remove the Prometheus warning, and render icon-only theme control with icon-and-label menu choices. |
 | **v1.0.45** | Usability | Visual PDF structure editors | Add labelled XMP metadata fields and a nested bookmark editor to dedicated write operations. Keep lossless JSON fallback, validate bookmark titles/pages/trees server-side, and preserve Gotenberg multipart fields. |
 | **v1.0.46** | Usability | Local conversion presets | Save, apply, update and delete named per-operation layout and conversion presets in browser storage. Strictly whitelist benign field types and reject unsafe or corrupted stored values. Do not store documents, URLs, credentials, callbacks or Advanced JSON. |
+| **v1.0.47** | Optional usability | Browser-managed batch operations | In-tab queue for operation snapshots, bounded concurrent requests, per-job cancellation/retry, clearable downloads, truthful webhook acceptance, and regression tests. No persistent or server-side queue. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
+
+### v1.0.47 browser batch operations
+
+Users can enqueue validated, independent operation requests without any server-side job storage. The queue is kept only in React/browser memory, not in `localStorage` or Gotenui server functions. Every request captures the current selected connection and authentication, source text, multipart files, conversion settings and webhook configuration when added. Up to two requests run concurrently, with start/pause, cancel-all, individual cancel, retry and clear controls. Cancellation uses `AbortSignal` on the same-origin fetch, and cancelling or closing the page does not guarantee an asynchronous webhook accepted by Gotenberg is cancelled upstream.
+
+Up to 12 jobs, 32 MB of combined retained inputs and 200 MB of retained output Blobs are allowed. Completed and accepted requests release queued inputs and selected credentials. Failed and cancelled ones retain them in this tab for retry until removed. Every successful synchronous result has a download link and revocable object URL, with no automatic multi-download behaviour. Async webhooks are labelled **accepted, not delivered**. The UI reports job states rather than fabricated percentage progress. Unit tests cover bounded concurrency, pausing, cancellation during in-flight work, retries, connection/input snapshots, URL cleanup and resource limits. Browser-interaction and real Gotenberg testing are still separate release checks.
 
 ### v1.0.46 browser-local operation presets
 
