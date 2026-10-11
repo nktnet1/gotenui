@@ -16,11 +16,12 @@ export function readColorThemePreference(
 }
 
 export function persistColorThemePreference(
-  storage: Pick<Storage, 'setItem'> | null,
-  preference: Exclude<ColorThemePreference, 'system'>,
+  storage: Pick<Storage, 'setItem' | 'removeItem'> | null,
+  preference: ColorThemePreference,
 ): void {
   try {
-    storage?.setItem(COLOR_THEME_STORAGE_KEY, preference)
+    if (preference === 'system') storage?.removeItem(COLOR_THEME_STORAGE_KEY)
+    else storage?.setItem(COLOR_THEME_STORAGE_KEY, preference)
   } catch {
     // Private browsing or disabled localStorage must not prevent theme changes.
   }

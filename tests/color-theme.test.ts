@@ -1,4 +1,7 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { ColorThemeProvider, ThemeSelect } from '#/components/color-theme-provider'
 import {
   COLOR_THEME_STORAGE_KEY,
   persistColorThemePreference,
@@ -7,6 +10,19 @@ import {
 } from '#/lib/color-theme'
 
 describe('browser color theme preference', () => {
+  it('shows System selected by default in an accessible dropdown', () => {
+    const html = renderToStaticMarkup(
+      createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
+    )
+    expect(html).toContain('Appearance theme')
+    expect(html).toContain('<select')
+    expect(html).toContain('value="system"')
+    expect(html).toContain('selected=""')
+    expect(html).toContain('>System</option>')
+    expect(html).toContain('>Light</option>')
+    expect(html).toContain('>Dark</option>')
+  })
+
   it('follows system settings when no preference is saved', () => {
     expect(readColorThemePreference(null)).toBe('system')
     expect(resolveColorTheme('system', false)).toBe('light')
@@ -26,13 +42,24 @@ describe('browser color theme preference', () => {
     expect(readColorThemePreference({ getItem: () => 'javascript:invalid' })).toBe('system')
   })
 
-  it('uses only the dedicated theme key, not a connection or credential key', () => {
+  it('removes the saved override when System is selected again', () => {
+    const setItem = vi.fn()
+    const removeItem = vi.fn()
+    persistColorThemePreference({ setItem, removeItem }, 'system')
+    expect(removeItem).toHaveBeenCalledExactlyOnceWith(COLOR_THEME_STORAGE_KEY)
+    expect(setItem).not.toHaveBeenCalled()
+    expect(readColorThemePreference({ getItem: () => null })).toBe('system')
+  })
+
+  it('preserves the dedicated theme key and existing saved Light/Dark choices', () => {
     const getItem = vi.fn(() => 'dark')
     expect(readColorThemePreference({ getItem })).toBe('dark')
     expect(getItem).toHaveBeenCalledExactlyOnceWith(COLOR_THEME_STORAGE_KEY)
     const setItem = vi.fn()
-    persistColorThemePreference({ setItem }, 'light')
+    const removeItem = vi.fn()
+    persistColorThemePreference({ setItem, removeItem }, 'light')
     expect(setItem).toHaveBeenCalledExactlyOnceWith(COLOR_THEME_STORAGE_KEY, 'light')
+    expect(removeItem).not.toHaveBeenCalled()
   })
 
   it('survives restricted or disabled local storage', () => {
@@ -43,9 +70,13 @@ describe('browser color theme preference', () => {
       setItem: () => {
         throw new Error('Not allowed')
       },
+      removeItem: () => {
+        throw new Error('Not allowed')
+      },
     }
     expect(readColorThemePreference(failingStorage)).toBe('system')
     expect(() => persistColorThemePreference(failingStorage, 'dark')).not.toThrow()
+    expect(() => persistColorThemePreference(failingStorage, 'system')).not.toThrow()
     expect(() => persistColorThemePreference(null, 'light')).not.toThrow()
   })
 })

@@ -24,7 +24,6 @@ import {
   Layers3,
   LockKeyhole,
   Menu,
-  Moon,
   PanelLeftClose,
   Play,
   RefreshCw,
@@ -33,7 +32,6 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
-  Sun,
   WandSparkles,
   X,
 } from 'lucide-react'
@@ -46,11 +44,10 @@ import {
   type HeaderRow,
 } from '#/components/chromium-network-editor'
 import { ChromiumPdfAssets } from '#/components/chromium-pdf-assets'
-import { useColorTheme } from '#/components/color-theme-provider'
+import { ThemeSelect } from '#/components/color-theme-provider'
 import { ConnectionManager } from '#/components/connection-manager'
 import { DiagnosticsDialog } from '#/components/diagnostics-dialog'
 import { MarkdownAssetsEditor, type MarkdownSource } from '#/components/markdown-assets-editor'
-import { MetricsDialog } from '#/components/metrics-dialog'
 import {
   defaultOverlay,
   OverlayGroupsEditor,
@@ -1389,8 +1386,6 @@ function Workspace({
   const Icon = ICONS[operation.id] ?? FileText
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
-  const { theme, toggleTheme } = useColorTheme()
-  const [metricsOpen, setMetricsOpen] = useState(false)
   const statusAbort = useRef<AbortController | null>(null)
   const refreshStatus = useCallback(async () => {
     statusAbort.current?.abort()
@@ -1450,7 +1445,7 @@ function Workspace({
         setMobileOpen={setMobileOpen}
       />
       <div className="min-h-screen lg:pl-[270px]">
-        <header className="sticky top-0 z-20 flex h-[72px] items-center justify-between gap-3 border-b border-slate-200/80 dark:border-slate-700/80 bg-white/95 dark:bg-slate-900/95 px-5 backdrop-blur-xl md:px-9">
+        <header className="sticky top-0 z-20 flex h-[72px] items-center justify-between gap-3 border-b border-slate-200/80 dark:border-slate-700/80 bg-white/95 dark:bg-slate-900/95 px-3 backdrop-blur-xl sm:px-5 md:px-9">
           <div className="flex min-w-0 items-center gap-3">
             <Button
               type="button"
@@ -1464,15 +1459,15 @@ function Workspace({
             >
               <Menu className="size-5" />
             </Button>
-            <span className="truncate text-xs font-semibold text-slate-500 dark:text-slate-400">
+            <span className="hidden truncate text-xs font-semibold text-slate-500 dark:text-slate-400 sm:inline">
               Workspace
             </span>
-            <span className="text-slate-300">/</span>
-            <span className="truncate text-xs font-bold text-slate-900 dark:text-slate-100">
+            <span className="hidden text-slate-300 sm:inline">/</span>
+            <span className="hidden truncate text-xs font-bold text-slate-900 dark:text-slate-100 sm:inline">
               {operation.group}
             </span>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-1 sm:gap-2.5">
             <div
               className={cn(
                 'hidden items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold sm:flex',
@@ -1503,18 +1498,8 @@ function Workspace({
             >
               <RefreshCw className={cn('size-4', statusLoading && 'animate-spin')} />
             </Button>
-            <span className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={toggleTheme}
-              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-              title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            >
-              {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
-              <span className="hidden xl:inline">{theme === 'dark' ? 'Light' : 'Dark'}</span>
-            </Button>
+            <span className="mx-1 hidden h-5 w-px bg-slate-200 dark:bg-slate-700 sm:block" />
+            <ThemeSelect />
             <Button
               type="button"
               variant="outline"
@@ -1668,21 +1653,7 @@ function Workspace({
           connectionName={connectionName}
           onClose={() => setDiagnosticsOpen(false)}
           showDebug={features.showDebug}
-          onOpenMetrics={
-            features.showMetrics
-              ? () => {
-                  setDiagnosticsOpen(false)
-                  setMetricsOpen(true)
-                }
-              : undefined
-          }
-        />
-      )}
-      {features.showMetrics && metricsOpen && (
-        <MetricsDialog
-          connection={connection}
-          connectionName={connectionName}
-          onClose={() => setMetricsOpen(false)}
+          showMetrics={features.showMetrics}
         />
       )}
       {settingsOpen && (

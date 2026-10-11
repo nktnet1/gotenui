@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.41 (diagnostics grouping, clearer actions, and light/dark appearance).
+- **Baseline:** v1.0.42 (tabbed diagnostics, fixed-width probe and System/Light/Dark preference).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -46,7 +46,12 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.39** | Release | Diagnostic HTTP status compatibility | Reject successful-looking partial or unexpected 2xx upstream diagnostic responses; require HTTP 200 for health, version, debug and legacy metrics, cancelling unread bodies. Add unit and built Nitro smoke regressions. |
 | **v1.0.40** | Fix | Conversion prefix integrity | Reject incomplete/invalid PDF version headers and declared uncompressed response lengths shorter than the binary signature or bytes already read for signature validation, before sending download headers. Retain PDF 1.x/2.0 compatibility and streaming. |
 | **v1.0.41** | Usability | Diagnostics, button visibility and dark mode | Group the HEAD health probe inside always-accessible Diagnostics, keep debug and metrics actions independently gated, remove redundant debug warning, improve action contrast, and add an accessible persistent light/dark toggle. |
+| **v1.0.42** | Usability | Tabbed diagnostics and theme selection | Show Debug and Prometheus as accessible tabs within one dialog, keep the probe width stable while loading, and provide a System/Light/Dark dropdown that can clear the saved override. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
+
+### v1.0.42 diagnostic tabs and theme selection
+
+**Debug** and **Prometheus** now share the Diagnostics dialog as keyboard-navigable tabs, while the health probe remains visible above them with a fixed-width action in idle and probing states. Both feature flags still gate their respective tab content independently. Switching tabs preserves the loaded output and filters, and cancels an in-flight read for the panel that is no longer selected; no server-side state is introduced. The theme control is a native **System / Light / Dark** select with System as the default. Explicit Light/Dark overrides continue using `gotenui.color-theme.v1`; choosing System removes that key so subsequent OS colour-scheme changes apply again. Non-browser tests cover tab semantics, keyboard selection, visibility, stable probe width, and preference persistence. Manual browser, mobile, and assistive-technology verification remains outstanding.
 
 ### v1.0.41 appearance and diagnostics
 

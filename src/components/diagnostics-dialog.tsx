@@ -1,5 +1,6 @@
 import { Activity, Braces, ChartNoAxesColumn, RefreshCw, X } from 'lucide-react'
-import { type FormEvent, useEffect, useRef, useState } from 'react'
+import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from 'react'
+import { MetricsPanel } from '#/components/metrics-panel'
 import { Button } from '#/components/ui/button'
 import { useModalFocus } from '#/components/use-modal-focus'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
@@ -11,7 +12,24 @@ type Props = {
   connectionName: string
   onClose: () => void
   showDebug: boolean
-  onOpenMetrics?: () => void
+  showMetrics: boolean
+}
+
+type DiagnosticTab = 'debug' | 'metrics'
+
+/** Automatic-activation tabs follow the WAI-ARIA horizontal tab keyboard convention. */
+export function nextDiagnosticTab(
+  tabs: readonly DiagnosticTab[],
+  current: DiagnosticTab,
+  key: string,
+): DiagnosticTab | null {
+  if (tabs.length === 0) return null
+  if (key === 'Home') return tabs[0] ?? null
+  if (key === 'End') return tabs.at(-1) ?? null
+  if (key !== 'ArrowLeft' && key !== 'ArrowRight') return null
+  const index = tabs.indexOf(current)
+  const direction = key === 'ArrowRight' ? 1 : -1
+  return tabs[((index === -1 ? 0 : index) + direction + tabs.length) % tabs.length] ?? null
 }
 
 export function DiagnosticsDialog({
@@ -19,7 +37,7 @@ export function DiagnosticsDialog({
   connectionName,
   onClose,
   showDebug,
-  onOpenMetrics,
+  showMetrics,
 }: Props) {
   const [probeResult, setProbeResult] = useState<'healthy' | 'unhealthy' | null>(null)
   const [probeError, setProbeError] = useState<string | null>(null)
@@ -30,6 +48,13 @@ export function DiagnosticsDialog({
   const [busy, setBusy] = useState(false)
   const inFlight = useRef<AbortController | null>(null)
   const dialogRef = useModalFocus(onClose)
+  const tabs: DiagnosticTab[] = []
+  if (showDebug) tabs.push('debug')
+  if (showMetrics) tabs.push('metrics')
+  const [requestedTab, setRequestedTab] = useState<DiagnosticTab>(showDebug ? 'debug' : 'metrics')
+  const activeTab = tabs.includes(requestedTab) ? requestedTab : tabs[0]
+  const tabId = useId()
+  const tabRefs = useRef<Partial<Record<DiagnosticTab, HTMLButtonElement | null>>>({})
 
   useEffect(
     () => () => {
@@ -38,6 +63,12 @@ export function DiagnosticsDialog({
     },
     [],
   )
+  useEffect(() => {
+    if (activeTab !== 'debug') {
+      inFlight.current?.abort()
+      setBusy(false)
+    }
+  }, [activeTab])
 
   async function probeHealth() {
     probeInFlight.current?.abort()
@@ -90,6 +121,14 @@ export function DiagnosticsDialog({
     }
   }
 
+  function selectFromKeyboard(event: KeyboardEvent<HTMLButtonElement>, tab: DiagnosticTab) {
+    const next = nextDiagnosticTab(tabs, tab, event.key)
+    if (!next) return
+    event.preventDefault()
+    setRequestedTab(next)
+    tabRefs.current[next]?.focus()
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-5 pt-[7vh]">
       <button
@@ -135,7 +174,9 @@ export function DiagnosticsDialog({
             <Button
               type="button"
               variant="accent"
+              className="w-48 shrink-0"
               disabled={probing}
+              aria-busy={probing}
               onClick={() => void probeHealth()}
             >
               <Activity className={probing ? 'size-4 animate-pulse' : 'size-4'} />
@@ -161,43 +202,92 @@ export function DiagnosticsDialog({
             </p>
           )}
         </section>
-        {onOpenMetrics && (
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-3">
-            <p className="text-xs text-slate-600 dark:text-slate-300">
-              {showDebug
-                ? 'Need performance counters instead of runtime configuration?'
-                : 'View performance counters for this instance.'}
-            </p>
-            <Button type="button" variant="outline" size="sm" onClick={onOpenMetrics}>
-              <ChartNoAxesColumn className="size-4" /> Prometheus metrics
-            </Button>
-          </div>
-        )}
-        {showDebug && (
-          <form onSubmit={(event) => void inspect(event)}>
-            <Button type="submit" disabled={busy}>
-              {busy && <RefreshCw className="size-4 animate-spin" />}
-              <Braces className="size-4" />
-              {busy ? 'Reading...' : 'Read debug info'}
-            </Button>
-          </form>
-        )}
-        {error && (
-          <p
-            role="alert"
-            className="mt-4 rounded-lg bg-rose-50 dark:bg-rose-950/50 px-3 py-3 text-xs text-rose-800 dark:text-rose-200"
-          >
-            {error}
-          </p>
-        )}
-        {details && (
-          <div className="mt-5 space-y-2">
-            <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-              Runtime configuration (read-only)
-            </p>
-            <pre className="max-h-[50vh] overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 whitespace-pre text-slate-100">
-              {details}
-            </pre>
+        {tabs.length > 0 && (
+          <div>
+            <div
+              role="tablist"
+              aria-label="Diagnostic outputs"
+              className="flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-800"
+            >
+              {tabs.map((tab) => {
+                const selected = activeTab === tab
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    id={`${tabId}-${tab}-tab`}
+                    ref={(node) => {
+                      tabRefs.current[tab] = node
+                    }}
+                    role="tab"
+                    tabIndex={selected ? 0 : -1}
+                    aria-selected={selected}
+                    aria-controls={`${tabId}-${tab}-panel`}
+                    onClick={() => setRequestedTab(tab)}
+                    onKeyDown={(event) => selectFromKeyboard(event, tab)}
+                    className={cn(
+                      'inline-flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500',
+                      selected
+                        ? 'bg-white text-sky-800 shadow-sm dark:bg-slate-700 dark:text-sky-200'
+                        : 'text-slate-600 hover:bg-white/70 dark:text-slate-300 dark:hover:bg-slate-700/50',
+                    )}
+                  >
+                    {tab === 'debug' ? (
+                      <Braces className="size-4" />
+                    ) : (
+                      <ChartNoAxesColumn className="size-4" />
+                    )}
+                    {tab === 'debug' ? 'Debug' : 'Prometheus'}
+                  </button>
+                )
+              })}
+            </div>
+            {showDebug && (
+              <section
+                id={`${tabId}-debug-panel`}
+                role="tabpanel"
+                aria-labelledby={`${tabId}-debug-tab`}
+                hidden={activeTab !== 'debug'}
+                className="pt-5"
+              >
+                <form onSubmit={(event) => void inspect(event)}>
+                  <Button type="submit" disabled={busy}>
+                    {busy && <RefreshCw className="size-4 animate-spin" />}
+                    <Braces className="size-4" />
+                    {busy ? 'Reading...' : 'Read debug info'}
+                  </Button>
+                </form>
+                {error && (
+                  <p
+                    role="alert"
+                    className="mt-4 rounded-lg bg-rose-50 dark:bg-rose-950/50 px-3 py-3 text-xs text-rose-800 dark:text-rose-200"
+                  >
+                    {error}
+                  </p>
+                )}
+                {details && (
+                  <div className="mt-5 space-y-2">
+                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      Runtime configuration (read-only)
+                    </p>
+                    <pre className="max-h-[50vh] overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 whitespace-pre text-slate-100">
+                      {details}
+                    </pre>
+                  </div>
+                )}
+              </section>
+            )}
+            {showMetrics && (
+              <section
+                id={`${tabId}-metrics-panel`}
+                role="tabpanel"
+                aria-labelledby={`${tabId}-metrics-tab`}
+                hidden={activeTab !== 'metrics'}
+                className="pt-5"
+              >
+                <MetricsPanel connection={connection} active={activeTab === 'metrics'} />
+              </section>
+            )}
           </div>
         )}
       </div>
