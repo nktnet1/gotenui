@@ -4,6 +4,7 @@ export default defineConfig({
   resolve: { tsconfigPaths: true },
   test: {
     fsModuleCache: true,
+    isolate: true,
     environment: 'node',
     include: ['tests/integration/*.integration.test.ts'],
     globalSetup: ['./tests/integration/docker.setup.ts'],
