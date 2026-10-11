@@ -90,6 +90,14 @@ For file-producing operations, **Output filename** now sets both the browser dow
 
 Advanced options include a validated custom **Gotenberg request ID** (`Gotenberg-Trace`, plain log/webhook correlation ID), **W3C `traceparent`**, and optional `tracestate` for distributed tracing. Gotenberg 8.34+ continues upstream `traceparent` context into asynchronous webhook callbacks. These are different mechanisms: the correlation ID is *not* an OpenTelemetry trace ID. The app only forwards these fields from the validated conversion payload, never arbitrary browser request headers. Upstream error responses retain a safe Gotenberg correlation ID for diagnosis; credentials and cookies are not relayed. No session state or new authentication layer is added.
 
+## Saved operation presets (v1.0.46)
+
+Operations with reusable controls offer **Saved presets** in their workbench. Enter a name and choose **Save preset**, then select that name later and choose **Apply**. Saving another preset under the same name updates it. You can delete a selected preset after confirmation. Up to 25 presets are kept across operations, with each preset available only on the operation where it was created. The presets are saved in this browser's `localStorage` (`gotenui.presets.v1`) and do not require a Gotenui account, database or server storage.
+
+Only non-sensitive conversion settings are stored: supported page size and margin values, image settings, numeric options, PDF viewer preferences, boolean switches and selected choices. The preset **never saves** uploaded files, document or HTML/Markdown content, source URLs, output names, passwords, cookies, HTTP headers, webhook configuration, remote download entries, tracing IDs, free-text expressions, PDF metadata or Advanced JSON. Preset names are stored locally, so do not include personal data or secrets in them. Applying a preset updates eligible settings and preserves your current document inputs and credentials in browser memory. Settings omitted from the preset return to the operation's defaults.
+
+Presets are tied to the browser profile and are not synchronised between devices. Clearing browser storage removes them. If private browsing restrictions or storage quotas prevent saving, Gotenui reports the failure rather than claiming that the preset was saved. No new deployment environment variables or dependencies are needed.
+
 ## Visual PDF metadata and bookmark editors (v1.0.45)
 
 **Write metadata** now has labelled Title, Author, Subject, Creator, Producer, Copyright and Keywords inputs. Keywords are separated with commas and submitted as a JSON list. Use the **JSON editor** tab for less common ExifTool XMP tags and non-text values. Editing a standard field preserves other JSON properties. Metadata writing can affect PDF/A conformance, and not every XMP tag is writable by ExifTool.

@@ -47,6 +47,7 @@ import {
 import { ChromiumPdfAssets } from '#/components/chromium-pdf-assets'
 import { ThemeSelect } from '#/components/color-theme-provider'
 import { ConnectionManager } from '#/components/connection-manager'
+import { ConversionPresets } from '#/components/conversion-presets'
 import { DiagnosticsDialog } from '#/components/diagnostics-dialog'
 import { HtmlSourceImport } from '#/components/html-source-import'
 import { MarkdownAssetsEditor, type MarkdownSource } from '#/components/markdown-assets-editor'
@@ -1221,6 +1222,7 @@ function Workbench({
                 onFilesChange={setPostFiles}
               />
             )}
+            <ConversionPresets operation={operation} fields={fields} onApply={setFields} />
             <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-5">
               <Label htmlFor="output-filename">
                 Output filename <span className="font-normal text-slate-400">(optional)</span>

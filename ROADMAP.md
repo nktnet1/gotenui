@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.45 (visual PDF metadata and bookmark editors).
+- **Baseline:** v1.0.46 (browser-local operation presets).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -50,7 +50,14 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.43** | Usability | Theme and sidebar icon polish | Add monitor/sun/moon indicators to the native theme select; use bookmark-specific read/write navigation icons and remove the decorative period from the sidebar brand. |
 | **v1.0.44** | Usability | Result preview, HTML import, and theme menu | Add an on-demand, browser-local PDF preview with download/new-tab fallback and explicit result cleanup, import HTML source into the editor, remove the Prometheus warning, and render icon-only theme control with icon-and-label menu choices. |
 | **v1.0.45** | Usability | Visual PDF structure editors | Add labelled XMP metadata fields and a nested bookmark editor to dedicated write operations. Keep lossless JSON fallback, validate bookmark titles/pages/trees server-side, and preserve Gotenberg multipart fields. |
+| **v1.0.46** | Usability | Local conversion presets | Save, apply, update and delete named per-operation layout and conversion presets in browser storage. Strictly whitelist benign field types and reject unsafe or corrupted stored values. Do not store documents, URLs, credentials, callbacks or Advanced JSON. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
+
+### v1.0.46 browser-local operation presets
+
+Operations with reusable settings now offer named presets. A user can save, apply, update (by saving the same name) and delete up to 25 presets across operations. Presets are scoped to one operation and stored only in the browser under `gotenui.presets.v1`, with no server endpoint or user account. Storage failures are reported without claiming success. Applying a preset restores its eligible controls and their defaults, while leaving the current document uploads, source text, URLs and any entered credentials untouched.
+
+A strict allowlist permits common toggle, select and numeric choices along with narrowly validated page dimensions, margins, page ranges and rendering delays. No file content, remote input URL, passwords, cookies, HTTP headers, webhook targets, PDF metadata, textual overlays, browser expressions, tracing values, output filenames, post-processing assets or free-form Advanced JSON can enter the saved format. Stored records have version, count and size limits and are validated again on load and apply. Preset names are stored too, so users should not include sensitive information in names. Presets remain local to each browser and are not synchronised between devices.
 
 ### v1.0.45 visual PDF editors
 
