@@ -3,16 +3,17 @@ import { useEffect, useId, useMemo, useState } from 'react'
 import { operationIcon } from '#/components/operation-icons'
 import { useModalFocus } from '#/components/use-modal-focus'
 import { nextSearchIndex, searchOperations } from '#/lib/operation-search'
-import { GROUPS } from '#/lib/operations'
+import { GROUPS, type Operation } from '#/lib/operations'
 import { cn } from '#/lib/utils'
 
 type Props = {
   onSelect: (id: string) => void
   onClose: () => void
+  unavailableReason?: (operation: Operation) => string | null
 }
 
 /** Zero-dependency command palette; keeps focus in the query and uses a listbox for arrow navigation. */
-export function OperationSearchDialog({ onSelect, onClose }: Props) {
+export function OperationSearchDialog({ onSelect, onClose, unavailableReason }: Props) {
   const [query, setQuery] = useState('')
   const [highlighted, setHighlighted] = useState(0)
   const id = useId()
@@ -22,7 +23,12 @@ export function OperationSearchDialog({ onSelect, onClose }: Props) {
     // Keep DOM/keyboard order identical to the visible grouped order.
     return GROUPS.flatMap((group) => ranked.filter((operation) => operation.group === group))
   }, [query])
-  const activeIndex = results.length ? Math.min(highlighted, results.length - 1) : -1
+  const selectableIndices = results.flatMap((operation, index) =>
+    unavailableReason?.(operation) ? [] : [index],
+  )
+  const activeIndex = selectableIndices.includes(highlighted)
+    ? highlighted
+    : (selectableIndices[0] ?? -1)
   const activeResultId = results[activeIndex]?.id
 
   useEffect(() => {
@@ -68,14 +74,18 @@ export function OperationSearchDialog({ onSelect, onClose }: Props) {
               setHighlighted(0)
             }}
             onKeyDown={(event) => {
-              const next = nextSearchIndex(activeIndex, results.length, event.key)
+              const next = nextSearchIndex(
+                selectableIndices.indexOf(activeIndex),
+                selectableIndices.length,
+                event.key,
+              )
               if (next !== null) {
                 event.preventDefault()
-                setHighlighted(next)
+                setHighlighted(selectableIndices[next] ?? 0)
               } else if (event.key === 'Enter' && activeIndex >= 0) {
                 event.preventDefault()
                 const operation = results[activeIndex]
-                if (operation) onSelect(operation.id)
+                if (operation && !unavailableReason?.(operation)) onSelect(operation.id)
               }
             }}
             className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
@@ -116,18 +126,21 @@ export function OperationSearchDialog({ onSelect, onClose }: Props) {
                   {operations.map((operation) => {
                     const index = results.indexOf(operation)
                     const Icon = operationIcon(operation.id)
+                    const unavailable = unavailableReason?.(operation)
                     return (
                       <button
                         key={operation.id}
                         id={`${id}-result-${index}`}
                         type="button"
                         role="option"
+                        disabled={Boolean(unavailable)}
+                        title={unavailable ?? undefined}
                         aria-selected={index === activeIndex}
                         tabIndex={-1}
                         onMouseEnter={() => setHighlighted(index)}
                         onClick={() => onSelect(operation.id)}
                         className={cn(
-                          'flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-left outline-none transition-colors',
+                          'flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-left outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45',
                           index === activeIndex
                             ? 'bg-sky-50 text-sky-950 dark:bg-sky-950/60 dark:text-sky-100'
                             : 'text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800',
@@ -141,7 +154,7 @@ export function OperationSearchDialog({ onSelect, onClose }: Props) {
                             {operation.title}
                           </span>
                           <span className="block truncate text-xs text-slate-500 dark:text-slate-400">
-                            {operation.summary}
+                            {unavailable ?? operation.summary}
                           </span>
                         </span>
                         <ArrowUpRight

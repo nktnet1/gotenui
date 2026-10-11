@@ -259,7 +259,8 @@ function allowedConversionContentTypes(
   ).length
   const multipleDocuments =
     files.length + remoteDocuments > 1 &&
-    (operation.input === 'office' || (operation.input === 'pdf' && operation.id !== 'merge'))
+    ((operation.input === 'office' && payload.fields.merge !== true) ||
+      (operation.input === 'pdf' && operation.id !== 'merge'))
   const splitMode = payload.fields.splitMode ?? payload.advanced.splitMode
   const postProcessingSplit = splitMode === 'pages' || splitMode === 'intervals'
   // PDF tools (apart from merge) and LibreOffice return ZIP for multiple

@@ -1,4 +1,13 @@
-export type FieldKind = 'text' | 'url' | 'number' | 'select' | 'toggle' | 'json' | 'password'
+export type FieldKind =
+  | 'text'
+  | 'url'
+  | 'number'
+  | 'select'
+  | 'toggle'
+  | 'json'
+  | 'password'
+  | 'http-codes'
+  | 'hostnames'
 export type OperationGroup = 'Convert' | 'Capture' | 'PDF tools'
 export type InputKind = 'url' | 'html' | 'markdown' | 'office' | 'pdf'
 
@@ -17,6 +26,8 @@ export type FieldDefinition = {
   integer?: boolean
   optionLabels?: Readonly<Record<string, string>>
   customEditor?: boolean
+  section?: 'processing' | 'compression' | 'reliability'
+  when?: { name: string; equals: string | boolean }
 }
 
 export type AuxiliaryUpload = {
@@ -101,6 +112,186 @@ const chromiumNetwork: FieldDefinition[] = [
     customEditor: true,
   },
 ]
+/** Document/PDF-engine image rewriting, available since Gotenberg 8.36. */
+const optimizeImages: FieldDefinition[] = [
+  {
+    name: 'optimizeImages',
+    label: 'Optimize PDF images',
+    kind: 'toggle',
+    section: 'compression',
+    description:
+      'Re-encode eligible raster images as JPEG during PDF post-processing (Gotenberg 8.36+).',
+  },
+  {
+    name: 'imageQuality',
+    label: 'Optimized JPEG quality',
+    kind: 'number',
+    integer: true,
+    min: 1,
+    max: 100,
+    placeholder: '80 (default)',
+    section: 'compression',
+    when: { name: 'optimizeImages', equals: true },
+  },
+]
+
+const officeCompression: FieldDefinition[] = [
+  {
+    name: 'losslessImageCompression',
+    label: 'Use lossless PNG compression',
+    kind: 'toggle',
+    section: 'compression',
+    description:
+      'Preserve image detail, potentially at the cost of a larger PDF. JPEG is the default.',
+  },
+  {
+    name: 'quality',
+    label: 'LibreOffice JPEG quality',
+    kind: 'number',
+    integer: true,
+    min: 1,
+    max: 100,
+    placeholder: '90 (default)',
+    section: 'compression',
+    description:
+      'Applies to the initial Office PDF export, not the separate PDF optimization pass.',
+    when: { name: 'losslessImageCompression', equals: false },
+  },
+  {
+    name: 'reduceImageResolution',
+    label: 'Reduce embedded image resolution',
+    kind: 'toggle',
+    section: 'compression',
+  },
+  {
+    name: 'maxImageResolution',
+    label: 'Target resolution (DPI)',
+    kind: 'select',
+    options: ['75', '150', '300', '600', '1200'],
+    section: 'compression',
+    description: 'LibreOffice downsamples images above this resolution; default 300 DPI.',
+    when: { name: 'reduceImageResolution', equals: true },
+  },
+]
+
+const officeOutput: FieldDefinition[] = [
+  {
+    name: 'merge',
+    label: 'Merge converted documents into one PDF',
+    kind: 'toggle',
+    section: 'processing',
+    description:
+      'Use file arrows to reorder local documents; remote files follow Gotenberg filename sorting. Without merging, multiple documents yield a ZIP.',
+  },
+  {
+    name: 'splitMode',
+    label: 'Split output',
+    kind: 'select',
+    options: ['pages', 'intervals'],
+    optionLabels: { pages: 'Page ranges', intervals: 'Fixed page intervals' },
+    section: 'processing',
+  },
+  {
+    name: 'splitSpan',
+    label: 'Page range or interval',
+    kind: 'text',
+    placeholder: '1-3,5 or 2',
+    description:
+      'Page-range syntax depends on the configured PDF engine; intervals must be positive integers.',
+    section: 'processing',
+    when: { name: 'splitMode', equals: 'pages' },
+    // Visible for intervals as well; conditional presentation is handled by isFieldVisible.
+  },
+  {
+    name: 'splitUnify',
+    label: 'Combine selected page ranges in one file',
+    kind: 'toggle',
+    section: 'processing',
+    when: { name: 'splitMode', equals: 'pages' },
+  },
+]
+
+const chromiumReliability: FieldDefinition[] = [
+  {
+    name: 'failOnHttpStatusCodes',
+    label: 'Fail on page HTTP statuses',
+    kind: 'http-codes',
+    section: 'reliability',
+    placeholder: '499, 599 (default)',
+    description: 'Comma-separated HTTP codes; 499 and 599 mean any 4xx or 5xx response.',
+  },
+  {
+    name: 'failOnResourceHttpStatusCodes',
+    label: 'Fail on asset HTTP statuses',
+    kind: 'http-codes',
+    section: 'reliability',
+    placeholder: 'e.g. 404, 499, 599',
+    description: 'Fail if images, scripts or stylesheets return one of these codes.',
+  },
+  {
+    name: 'ignoreResourceHttpStatusDomains',
+    label: 'Exclude asset domains',
+    kind: 'hostnames',
+    section: 'reliability',
+    placeholder: 'e.g. analytics.example.com, cdn.example.com',
+    when: { name: 'failOnResourceHttpStatusCodes', equals: '' },
+    description: 'Comma-separated hostnames excluded from asset HTTP status checks.',
+  },
+  {
+    name: 'failOnResourceLoadingFailed',
+    label: 'Fail when a page resource cannot load',
+    kind: 'toggle',
+    section: 'reliability',
+  },
+  {
+    name: 'failOnConsoleExceptions',
+    label: 'Fail on browser console exceptions',
+    kind: 'toggle',
+    section: 'reliability',
+  },
+  {
+    name: 'skipNetworkIdleEvent',
+    label: 'Skip waiting for zero active connections',
+    kind: 'toggle',
+    defaultValue: true,
+    section: 'reliability',
+    description: 'Gotenberg default: enabled. Disable to wait until network activity settles.',
+  },
+  {
+    name: 'skipNetworkAlmostIdleEvent',
+    label: 'Skip waiting for almost idle network',
+    kind: 'toggle',
+    defaultValue: true,
+    section: 'reliability',
+    description: 'Gotenberg default: enabled. Disable to wait for two or fewer connections.',
+  },
+]
+
+/** Exclude conditionally hidden values from requests, including preset values. */
+export function isFieldVisible(
+  field: FieldDefinition,
+  values: Readonly<Record<string, string | boolean>>,
+): boolean {
+  const condition = field.when
+  if (!condition) return true
+  const actual = values[condition.name]
+  if (field.name === 'splitSpan') return actual === 'pages' || actual === 'intervals'
+  if (field.name === 'ignoreResourceHttpStatusDomains') return Boolean(actual)
+  // An omitted toggle has the same meaning as the upstream false default.
+  return actual === condition.equals || (actual === undefined && condition.equals === false)
+}
+
+export function activeOperationFields(
+  operation: Operation,
+  values: Readonly<Record<string, string | boolean>>,
+): Record<string, string | boolean> {
+  return Object.fromEntries(
+    operation.fields
+      .filter((field) => isFieldVisible(field, values) && values[field.name] !== undefined)
+      .map((field) => [field.name, values[field.name] as string | boolean]),
+  )
+}
+
 const chromePdf: FieldDefinition[] = [
   {
     name: 'paperWidth',
@@ -169,6 +360,8 @@ const chromePdf: FieldDefinition[] = [
   },
   ...chromiumWait,
   ...chromiumNetwork,
+  ...chromiumReliability,
+  ...optimizeImages,
   { ...pdfa },
   { ...pdfua },
 ]
@@ -210,7 +403,9 @@ const screenshot: FieldDefinition[] = [
   { name: 'omitBackground', label: 'Transparent background', kind: 'toggle', advanced: true },
   ...chromiumWait,
   ...chromiumNetwork,
+  ...chromiumReliability,
 ]
+
 const sourceUrl: FieldDefinition = {
   name: 'url',
   label: 'Website URL',
@@ -437,6 +632,9 @@ export const OPERATIONS: readonly Operation[] = [
       { name: 'centerWindow', label: 'Centre viewer window', kind: 'toggle', advanced: true },
       pdfa,
       pdfua,
+      ...officeOutput,
+      ...officeCompression,
+      ...optimizeImages,
     ],
     output: 'pdf',
     featured: true,
@@ -484,6 +682,7 @@ export const OPERATIONS: readonly Operation[] = [
     docs: 'manipulate-pdfs/merge-pdfs',
     ...pdfFiles,
     fields: [
+      ...optimizeImages,
       { name: 'autoIndexBookmarks', label: 'Keep document bookmarks', kind: 'toggle' },
       {
         name: 'titleBookmarks',
@@ -519,7 +718,13 @@ export const OPERATIONS: readonly Operation[] = [
         placeholder: '1-3,5 or 2',
         required: true,
       },
-      { name: 'splitUnify', label: 'Unify extracted ranges', kind: 'toggle' },
+      {
+        name: 'splitUnify',
+        label: 'Unify extracted ranges',
+        kind: 'toggle',
+        when: { name: 'splitMode', equals: 'pages' },
+      },
+      ...optimizeImages,
     ],
     output: 'zip',
   },

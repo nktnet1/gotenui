@@ -905,3 +905,43 @@ test('an asynchronous acceptance never forwards upstream download headers', asyn
   assert.equal(response.headers.get('content-type'), null)
   assert.equal(response.headers.get('gotenberg-trace'), 'async-job')
 })
+
+test('Office merge accepts one PDF rather than a ZIP, unless splitting is also requested', async () => {
+  const conversion = async (
+    fields: Record<string, string | boolean>,
+    type: 'application/pdf' | 'application/zip',
+  ) => {
+    const body = new FormData()
+    body.set('payload', JSON.stringify({ operation: 'office-pdf', fields, advanced: {} }))
+    body.append('files', new File(['first'], 'z.docx'))
+    body.append('files', new File(['second'], 'a.docx'))
+    const request = new Request(`${origin}/api/gotenberg/convert`, {
+      method: 'POST',
+      headers: { Origin: origin, 'X-Gotenberg-Url': 'http://127.0.0.1:3000' },
+      body,
+    })
+    return proxyConversionRequest(request, async (_, init) => {
+      const upstreamForm = init?.body
+      assert.ok(upstreamForm instanceof FormData)
+      assert.deepEqual(
+        (upstreamForm.getAll('files') as File[]).map((file) => file.name),
+        fields.merge === true ? ['01_z.docx', '02_a.docx'] : ['z.docx', 'a.docx'],
+      )
+      return new Response(type === 'application/pdf' ? '%PDF-1.7' : 'PK\u0003\u0004', {
+        headers: { 'Content-Type': type },
+      })
+    }).catch(proxyErrorResponse)
+  }
+  const merged = await conversion({ merge: true }, 'application/pdf')
+  assert.equal(merged.status, 200)
+  assert.equal(merged.headers.get('content-type'), 'application/pdf')
+  const invalidMerged = await conversion({ merge: true }, 'application/zip')
+  assert.equal(invalidMerged.status, 502)
+  assert.match(await invalidMerged.text(), /unexpected conversion response/)
+  assert.equal((await conversion({}, 'application/zip')).status, 200)
+  assert.equal(
+    (await conversion({ merge: true, splitMode: 'intervals', splitSpan: '1' }, 'application/zip'))
+      .status,
+    200,
+  )
+})

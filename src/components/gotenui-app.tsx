@@ -87,10 +87,14 @@ import {
   REQUEST_TIMEOUT_MS,
   type ServerStatus,
 } from '#/lib/gotenberg-client'
+import { OFFICE_ACCEPT } from '#/lib/office-formats'
+import { unavailableOperationReason, versionAtLeast } from '#/lib/operation-availability'
 import { isSearchShortcut } from '#/lib/operation-search'
 import {
+  activeOperationFields,
   type FieldDefinition,
   GROUPS,
+  isFieldVisible,
   OPERATION_BY_ID,
   OPERATIONS,
   type Operation,
@@ -339,20 +343,25 @@ export function Sidebar({
                   {items.map((operation) => {
                     const Icon = operationIcon(operation.id)
                     const active = selectedId === operation.id
+                    const unavailable = unavailableOperationReason(status, operation)
                     return (
                       <button
                         key={operation.id}
                         type="button"
                         aria-current={active ? 'page' : undefined}
+                        title={unavailable ?? undefined}
+                        disabled={Boolean(unavailable)}
                         onClick={() => {
                           onSelect(operation.id)
                           setMobileOpen(false)
                         }}
                         className={cn(
                           'group flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-[10px] text-left text-[13px] font-medium transition-colors',
-                          active
-                            ? 'bg-sky-500/15 text-sky-300'
-                            : 'text-slate-400 hover:bg-white/7 hover:text-white',
+                          unavailable
+                            ? 'cursor-not-allowed text-slate-600 opacity-60'
+                            : active
+                              ? 'bg-sky-500/15 text-sky-300'
+                              : 'text-slate-400 hover:bg-white/7 hover:text-white',
                         )}
                       >
                         <Icon
@@ -364,7 +373,11 @@ export function Sidebar({
                           )}
                         />
                         <span className="flex-1 truncate">{operation.title}</span>
-                        {active && <span className="size-1.5 rounded-full bg-sky-400" />}
+                        {unavailable ? (
+                          <span className="text-[9px] text-amber-300">N/A</span>
+                        ) : (
+                          active && <span className="size-1.5 rounded-full bg-sky-400" />
+                        )}
                       </button>
                     )
                   })}
@@ -411,10 +424,12 @@ function FieldControl({
   field,
   value,
   onChange,
+  disabled = false,
 }: {
   field: FieldDefinition
   value: string | boolean | undefined
   onChange: (value: string | boolean) => void
+  disabled?: boolean
 }) {
   const id = useId()
   if (field.kind === 'toggle')
@@ -428,7 +443,7 @@ function FieldControl({
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{field.description}</p>
           )}
         </div>
-        <Switch id={id} checked={value === true} onCheckedChange={onChange} />
+        <Switch id={id} checked={value === true} onCheckedChange={onChange} disabled={disabled} />
       </div>
     )
   return (
@@ -445,6 +460,7 @@ function FieldControl({
             value={String(value ?? '')}
             onChange={(event) => onChange(event.target.value)}
             required={field.required}
+            disabled={disabled}
           >
             {!field.required && <option value="">Default / not set</option>}
             {field.options?.map((option) => (
@@ -465,6 +481,7 @@ function FieldControl({
           value={String(value ?? '')}
           onChange={(event) => onChange(event.target.value)}
           required={field.required}
+          disabled={disabled}
         />
       ) : (
         <Input
@@ -486,6 +503,7 @@ function FieldControl({
           value={String(value ?? '')}
           onChange={(event) => onChange(event.target.value)}
           required={field.required}
+          disabled={disabled}
         />
       )}
       {field.description && (
@@ -757,12 +775,16 @@ function JobPanel({
 
 function Workbench({
   operation,
+  unavailableReason,
+  supportsOptimization,
   recent,
   onCompleted,
   connection,
   batchQueue,
 }: {
   operation: Operation
+  unavailableReason: string | null
+  supportsOptimization: boolean
   recent: Job[]
   onCompleted: (job: Job) => void
   connection: ConnectionChoice
@@ -856,12 +878,34 @@ function Workbench({
     : operation.fields.filter(
         (field) =>
           !field.advanced &&
+          !field.section &&
+          isFieldVisible(field, fields) &&
           !(operation.id === 'metadata-write' && field.name === 'metadata') &&
           !(operation.id === 'bookmarks-write' && field.name === 'bookmarks'),
       )
   const advancedFields = standaloneKind
     ? []
-    : operation.fields.filter((field) => field.advanced && !field.customEditor)
+    : operation.fields.filter(
+        (field) =>
+          field.advanced && !field.customEditor && !field.section && isFieldVisible(field, fields),
+      )
+  const featureSections = [
+    {
+      key: 'processing',
+      title: 'Combine & split output',
+      description: 'Build a single PDF or split pages after conversion.',
+    },
+    {
+      key: 'compression',
+      title: 'Image compression & optimization',
+      description: 'Tune the PDF image quality and output size.',
+    },
+    {
+      key: 'reliability',
+      title: 'Rendering & error checks',
+      description: 'Detect missing resources, failed HTTP responses and JavaScript errors.',
+    },
+  ] as const
   const hasUpload = operation.input === 'pdf' || operation.input === 'office'
   const isSourceEditor = operation.input === 'html' || operation.input === 'markdown'
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
@@ -885,13 +929,18 @@ function Workbench({
   const buildCandidate = () => {
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
     const webhook = webhookPayload(webhookSettings, webhookInput)
+    const selectedFields = activeOperationFields(operation, fields)
+    if (!supportsOptimization) {
+      delete selectedFields.optimizeImages
+      delete selectedFields.imageQuality
+    }
     const candidate = {
       operation: operation.id,
       fields: standaloneKind
         ? {}
         : hasChromiumNetwork
-          ? { ...fields, ...chromiumNetworkFields(cookies, resourceHeaders) }
-          : fields,
+          ? { ...selectedFields, ...chromiumNetworkFields(cookies, resourceHeaders) }
+          : selectedFields,
       source: isSourceEditor ? source : undefined,
       markdownName: operation.input === 'markdown' ? markdownName : undefined,
       markdownFiles:
@@ -919,6 +968,10 @@ function Workbench({
   }
 
   const queueCurrent = () => {
+    if (unavailableReason) {
+      toast.error(unavailableReason)
+      return
+    }
     try {
       const id = batchQueue.enqueue({
         connection,
@@ -936,6 +989,10 @@ function Workbench({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (pending) return
+    if (unavailableReason) {
+      toast.error(unavailableReason)
+      return
+    }
     setPending(true)
     setAcceptedWebhook(null)
     try {
@@ -1042,6 +1099,14 @@ function Workbench({
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
+            {unavailableReason && (
+              <p
+                role="alert"
+                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+              >
+                {unavailableReason} Choose another tool or connection.
+              </p>
+            )}
             {hasUpload && (
               <UploadZone
                 label={
@@ -1052,18 +1117,20 @@ function Workbench({
                     ? 'Select at least two PDFs. Gotenui prefixes uploaded filenames to preserve the order shown below.'
                     : operation.input === 'pdf'
                       ? 'Select PDF files to process. Multiple files may produce a ZIP archive.'
-                      : 'Word, Excel, PowerPoint, OpenDocument, images and other supported formats.'
+                      : 'Documents, slides, spreadsheets, drawings and images supported by Gotenberg.'
                 }
                 files={files}
                 onChange={setFiles}
-                accept={
-                  operation.input === 'pdf'
-                    ? '.pdf,application/pdf'
-                    : '.doc,.docx,.docm,.odt,.rtf,.txt,.xls,.xlsx,.ods,.csv,.ppt,.pptx,.odp,.pps,.pages,.numbers,.key,.svg,.png,.jpg,.jpeg,.gif,.tiff,.bmp,.html,.epub,.pdf,.xml'
-                }
+                accept={operation.input === 'pdf' ? '.pdf,application/pdf' : OFFICE_ACCEPT}
                 multiple={true}
-                reorder={operation.id === 'merge'}
-                allowDuplicateNames={operation.id === 'merge'}
+                reorder={
+                  operation.id === 'merge' ||
+                  (operation.id === 'office-pdf' && fields.merge === true)
+                }
+                allowDuplicateNames={
+                  operation.id === 'merge' ||
+                  (operation.id === 'office-pdf' && fields.merge === true)
+                }
               />
             )}
             {operation.input === 'url' && (
@@ -1202,6 +1269,52 @@ function Workbench({
                 onFilesChange={setPostFiles}
               />
             )}
+            {featureSections.map(({ key, title, description }) => {
+              const items = operation.fields.filter((field) => field.section === key)
+              if (!items.length) return null
+              return (
+                <details
+                  key={key}
+                  className="group rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                >
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 marker:hidden">
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">
+                        {title}
+                      </span>
+                      <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
+                        {description}
+                      </span>
+                    </span>
+                    <ChevronDown className="size-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180" />
+                  </summary>
+                  <div className="space-y-4 border-t border-slate-200 px-4 py-4 dark:border-slate-700">
+                    {key === 'compression' && !supportsOptimization && (
+                      <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
+                        PDF image optimization needs Gotenberg 8.36+. Native LibreOffice compression
+                        is still available.
+                      </p>
+                    )}
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {items
+                        .filter((field) => isFieldVisible(field, fields))
+                        .map((field) => (
+                          <FieldControl
+                            key={field.name}
+                            field={field}
+                            value={fields[field.name]}
+                            onChange={(value) => updateField(field.name, value)}
+                            disabled={
+                              !supportsOptimization &&
+                              ['optimizeImages', 'imageQuality'].includes(field.name)
+                            }
+                          />
+                        ))}
+                    </div>
+                  </div>
+                </details>
+              )
+            })}
             <ConversionPresets operation={operation} fields={fields} onApply={setFields} />
             <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 pt-5">
               <Label htmlFor="output-filename">
@@ -1353,12 +1466,17 @@ function Workbench({
               type="button"
               variant="outline"
               size="lg"
-              disabled={pending}
+              disabled={pending || Boolean(unavailableReason)}
               onClick={queueCurrent}
             >
               <ListPlus className="size-4" /> Add to batch
             </Button>
-            <Button type="submit" size="lg" disabled={pending} className="min-w-44">
+            <Button
+              type="submit"
+              size="lg"
+              disabled={pending || Boolean(unavailableReason)}
+              className="min-w-44"
+            >
               {pending ? (
                 <RefreshCw className="size-4 animate-spin" />
               ) : (
@@ -1456,6 +1574,8 @@ function Workspace({
   const [mobileOpen, setMobileOpen] = useState(false)
   const operation = OPERATION_BY_ID.get(selectedId) ?? (OPERATIONS[0] as Operation)
   const Icon = operationIcon(operation.id)
+  const unavailableReason = unavailableOperationReason(status, operation)
+  const supportsOptimization = !status?.online || versionAtLeast(status.version, 36) !== false
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
@@ -1698,8 +1818,10 @@ function Workspace({
                 key={item.id}
                 type="button"
                 onClick={() => setSelectedId(item.id)}
+                disabled={Boolean(unavailableOperationReason(status, item))}
+                title={unavailableOperationReason(status, item) ?? undefined}
                 className={cn(
-                  'cursor-pointer rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors',
+                  'cursor-pointer rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40',
                   selectedId === item.id
                     ? 'border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300'
                     : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-200 dark:hover:border-sky-700 hover:text-sky-700 dark:hover:text-sky-300',
@@ -1712,6 +1834,8 @@ function Workspace({
           <Workbench
             key={`${operation.id}:${selectedConnection}:${connectionEpoch}`}
             operation={operation}
+            unavailableReason={unavailableReason}
+            supportsOptimization={supportsOptimization}
             recent={recent}
             onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
             connection={connection}
@@ -1722,6 +1846,7 @@ function Workspace({
       </div>
       {searchOpen && (
         <OperationSearchDialog
+          unavailableReason={(item) => unavailableOperationReason(status, item)}
           onClose={() => setSearchOpen(false)}
           onSelect={(id) => {
             setSelectedId(id)

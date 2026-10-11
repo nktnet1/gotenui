@@ -3,6 +3,7 @@ import { normalizeBackendUrl } from '#/lib/backend-url'
 import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
+import { encodeOfficialField } from '#/lib/official-form-fields'
 import type { Operation } from '#/lib/operations'
 import {
   OVERLAY_KINDS,
@@ -183,7 +184,13 @@ export function createGotenbergForm(
             files.map((file) => file.name),
           )
         : String(value)
-    form.set(key, encoded)
+    form.set(
+      key,
+      encodeOfficialField(
+        operation.fields.find((field) => field.name === key),
+        encoded,
+      ),
+    )
   }
   if (payload.downloadFrom?.length) form.set('downloadFrom', JSON.stringify(payload.downloadFrom))
   if (operation.input === 'html' || operation.input === 'markdown') {
@@ -209,7 +216,9 @@ export function createGotenbergForm(
   } else {
     for (const [index, file] of files.entries()) {
       const name =
-        operation.id === 'merge' ? mergeUploadFilename(file.name, index, files.length) : file.name
+        operation.id === 'merge' || (operation.id === 'office-pdf' && payload.fields.merge === true)
+          ? mergeUploadFilename(file.name, index, files.length)
+          : file.name
       form.append('files', file, name)
     }
     if (operation.auxiliary) {

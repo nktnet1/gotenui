@@ -4,7 +4,9 @@ import {
   defaultMarkdownTemplate,
   markdownTemplateReferences,
 } from '#/lib/chromium-documents'
-import { OPERATION_BY_ID, type Operation } from '#/lib/operations'
+import { OFFICE_EXTENSION_SET } from '#/lib/office-formats'
+import { parseIgnoredDomains, parseStatusCodes } from '#/lib/official-form-fields'
+import { isFieldVisible, OPERATION_BY_ID, type Operation } from '#/lib/operations'
 import {
   configuredOverlays,
   countPostProcessFiles,
@@ -91,43 +93,6 @@ const forbiddenAdvanced = new Set([
   'stamp',
   'embeds',
   'facturxXml',
-])
-const officeExtensions = new Set([
-  '.doc',
-  '.docx',
-  '.docm',
-  '.odt',
-  '.rtf',
-  '.txt',
-  '.xls',
-  '.xlsx',
-  '.xlsm',
-  '.xlsb',
-  '.ods',
-  '.csv',
-  '.ppt',
-  '.pptx',
-  '.pptm',
-  '.odp',
-  '.pps',
-  '.pages',
-  '.numbers',
-  '.key',
-  '.svg',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.tif',
-  '.tiff',
-  '.bmp',
-  '.html',
-  '.htm',
-  '.epub',
-  '.pdf',
-  '.odg',
-  '.vsdx',
-  '.xml',
 ])
 
 export function safeFilename(name: string): string {
@@ -607,7 +572,10 @@ export function validateFiles(
         'Add Markdown documents through the Markdown sources editor, not assets.',
       )
     }
-    if (names.has(name.toLowerCase()) && operation.id !== 'merge') {
+    const allowsOrderedDuplicates =
+      operation.id === 'merge' ||
+      (operation.id === 'office-pdf' && payload?.fields.merge === true && files.includes(file))
+    if (names.has(name.toLowerCase()) && !allowsOrderedDuplicates) {
       throw new InputError(`Duplicate filename: ${name}`)
     }
     names.add(name.toLowerCase())
@@ -619,7 +587,11 @@ export function validateFiles(
     if (files.includes(file) && operation.input === 'pdf' && ext !== '.pdf') {
       throw new InputError('PDF tools only accept .pdf input documents.')
     }
-    if (files.includes(file) && operation.input === 'office' && !officeExtensions.has(ext ?? '')) {
+    if (
+      files.includes(file) &&
+      operation.input === 'office' &&
+      !OFFICE_EXTENSION_SET.has(ext ?? '')
+    ) {
       throw new InputError(`Unsupported Office conversion input: ${name}`)
     }
     if (auxiliary.includes(file) && operation.id === 'factur-x' && ext !== '.xml') {
@@ -806,6 +778,13 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     'preferCssPageSize',
     'generateDocumentOutline',
     'generateTaggedPdf',
+    'failOnHttpStatusCodes',
+    'failOnResourceHttpStatusCodes',
+    'ignoreResourceHttpStatusDomains',
+    'failOnResourceLoadingFailed',
+    'failOnConsoleExceptions',
+    'skipNetworkIdleEvent',
+    'skipNetworkAlmostIdleEvent',
   ]
   const chromiumPdfOnly = [
     'singlePage',
@@ -833,6 +812,10 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     'hideViewerToolbar',
     'hideViewerMenubar',
     'centerWindow',
+    'merge',
+    'losslessImageCompression',
+    'reduceImageResolution',
+    'maxImageResolution',
   ]
   for (const name of Object.keys(payload.advanced)) {
     if (
@@ -840,6 +823,28 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       (!chromiumPdf && chromiumPdfOnly.includes(name)) ||
       (!office && officeOnly.includes(name))
     ) {
+      throw new InputError(`Advanced field ${name} is not supported for ${operation.title}.`)
+    }
+  }
+  const pdfOptimizeRoute =
+    chromiumPdf || office || operation.id === 'merge' || operation.id === 'split'
+  for (const name of Object.keys(payload.advanced)) {
+    if (
+      (name === 'optimizeImages' || name === 'imageQuality') &&
+      !pdfOptimizeRoute &&
+      operation.id !== 'optimize'
+    ) {
+      throw new InputError(`Advanced field ${name} is not supported for ${operation.title}.`)
+    }
+    if (
+      ['splitMode', 'splitSpan', 'splitUnify'].includes(name) &&
+      !office &&
+      !chromiumPdf &&
+      operation.id !== 'split'
+    ) {
+      throw new InputError(`Advanced field ${name} is not supported for ${operation.title}.`)
+    }
+    if (name === 'quality' && !office && !chromium) {
       throw new InputError(`Advanced field ${name} is not supported for ${operation.title}.`)
     }
   }
@@ -892,7 +897,7 @@ export function validatePayload(input: unknown): {
   if (!operation) throw new InputError('Unknown Gotenberg operation.')
 
   const definitions = new Map(operation.fields.map((field) => [field.name, field]))
-  if (Object.keys(payload.fields).length > 45 || Object.keys(payload.advanced).length > 40) {
+  if (Object.keys(payload.fields).length > 75 || Object.keys(payload.advanced).length > 40) {
     throw new InputError('Too many form fields.')
   }
   for (const [key, value] of Object.entries(payload.fields)) {
@@ -927,7 +932,57 @@ export function validatePayload(input: unknown): {
           throw new InputError(`${field.label} is not valid JSON.`)
         }
       }
+      if (value && field.kind === 'http-codes') {
+        try {
+          parseStatusCodes(value)
+        } catch (error) {
+          throw new InputError(
+            error instanceof Error ? error.message : 'Invalid HTTP status codes.',
+          )
+        }
+      }
+      if (value && field.kind === 'hostnames') {
+        try {
+          parseIgnoredDomains(value)
+        } catch (error) {
+          throw new InputError(error instanceof Error ? error.message : 'Invalid domain names.')
+        }
+      }
     }
+  }
+  for (const field of operation.fields) {
+    const value = payload.fields[field.name]
+    if (
+      value !== undefined &&
+      value !== '' &&
+      value !== false &&
+      !isFieldVisible(field, payload.fields) &&
+      !(operation.id === 'split' && field.name === 'splitUnify')
+    ) {
+      throw new InputError(`${field.label} requires its related option to be enabled.`)
+    }
+  }
+  const splitMode = payload.fields.splitMode
+  const splitSpan = payload.fields.splitSpan
+  if (splitMode !== undefined && splitMode !== '' && !String(splitSpan ?? '').trim()) {
+    throw new InputError('A page range or interval is required when splitting output.')
+  }
+  if (
+    operation.id === 'office-pdf' &&
+    splitMode === 'intervals' &&
+    payload.fields.splitUnify === true
+  ) {
+    throw new InputError('Combine selected page ranges is available only in pages mode.')
+  }
+  if (operation.id === 'office-pdf' && !splitMode && splitSpan) {
+    throw new InputError('Choose a split mode before entering a page range or interval.')
+  }
+  if (
+    operation.id === 'office-pdf' &&
+    splitMode === 'intervals' &&
+    !/^[1-9]\d*$/.test(String(splitSpan))
+  ) {
+    throw new InputError('Split interval must be a positive whole number.')
   }
   if (operation.id === 'metadata-write') {
     try {
