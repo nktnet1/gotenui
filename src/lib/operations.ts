@@ -1,3 +1,4 @@
+import { CHROMIUM_MEDIA_OPTIONS } from '#/lib/chromium-media'
 export type FieldKind =
   | 'text'
   | 'url'
@@ -26,7 +27,7 @@ export type FieldDefinition = {
   integer?: boolean
   optionLabels?: Readonly<Record<string, string>>
   customEditor?: boolean
-  section?: 'processing' | 'compression' | 'reliability'
+  section?: 'processing' | 'compression' | 'reliability' | 'rendering'
   when?: { name: string; equals: string | boolean }
 }
 
@@ -102,6 +103,16 @@ const chromiumWait: FieldDefinition[] = [
     description: 'Overrides the User-Agent used by Chromium to fetch resources.',
   },
 ]
+const chromiumMedia: FieldDefinition[] = CHROMIUM_MEDIA_OPTIONS.map(
+  ({ name, label, options, description }) => ({
+    name,
+    label,
+    kind: 'select',
+    options,
+    description,
+    section: 'rendering',
+  }),
+)
 const chromiumNetwork: FieldDefinition[] = [
   { name: 'cookies', label: 'Browser cookies', kind: 'json', advanced: true, customEditor: true },
   {
@@ -310,6 +321,14 @@ const chromePdf: FieldDefinition[] = [
   { name: 'landscape', label: 'Landscape orientation', kind: 'toggle' },
   { name: 'printBackground', label: 'Print background graphics', kind: 'toggle' },
   {
+    name: 'omitBackground',
+    label: 'Allow transparent page background',
+    kind: 'toggle',
+    advanced: true,
+    description:
+      'Remove the default white canvas; combine with Print background graphics for CSS colours.',
+  },
+  {
     name: 'singlePage',
     label: 'Fit content on one long page',
     kind: 'toggle',
@@ -343,6 +362,14 @@ const chromePdf: FieldDefinition[] = [
   { name: 'marginBottom', label: 'Bottom margin', kind: 'text', advanced: true },
   { name: 'marginLeft', label: 'Left margin', kind: 'text', advanced: true },
   {
+    name: 'nativePageRanges',
+    label: 'Print only selected pages',
+    kind: 'text',
+    advanced: true,
+    placeholder: '1-3,5',
+    description: 'Chromium prints only these pages; ignored when fitting content on one long page.',
+  },
+  {
     name: 'emulatedMediaType',
     label: 'Media rendering',
     kind: 'select',
@@ -360,6 +387,7 @@ const chromePdf: FieldDefinition[] = [
   },
   ...chromiumWait,
   ...chromiumNetwork,
+  ...chromiumMedia,
   ...chromiumReliability,
   ...optimizeImages,
   { ...pdfa },
@@ -403,6 +431,7 @@ const screenshot: FieldDefinition[] = [
   { name: 'omitBackground', label: 'Transparent background', kind: 'toggle', advanced: true },
   ...chromiumWait,
   ...chromiumNetwork,
+  ...chromiumMedia,
   ...chromiumReliability,
 ]
 

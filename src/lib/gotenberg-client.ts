@@ -1,6 +1,7 @@
 import * as v from 'valibot'
 import { normalizeBackendUrl } from '#/lib/backend-url'
 import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
+import { CHROMIUM_MEDIA_OPTIONS, encodeChromiumMediaFeatures } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
@@ -174,7 +175,11 @@ export function createGotenbergForm(
 ): FormData {
   validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles)
   const form = new FormData()
+  const isChromium = operation.path.startsWith('/forms/chromium/')
+  const mediaFieldNames = new Set<string>(CHROMIUM_MEDIA_OPTIONS.map((feature) => feature.name))
   for (const [key, value] of Object.entries({ ...payload.fields, ...payload.advanced })) {
+    if (mediaFieldNames.has(key)) continue // UI-only controls are encoded as a single JSON array.
+
     if (value === '') continue
     // Gotenberg keys per-input bookmarks by the uploaded filename.
     const encoded =
@@ -191,6 +196,10 @@ export function createGotenbergForm(
         encoded,
       ),
     )
+  }
+  if (isChromium) {
+    const mediaFeatures = encodeChromiumMediaFeatures(payload.fields)
+    if (mediaFeatures) form.set('emulatedMediaFeatures', mediaFeatures)
   }
   if (payload.downloadFrom?.length) form.set('downloadFrom', JSON.stringify(payload.downloadFrom))
   if (operation.input === 'html' || operation.input === 'markdown') {
@@ -355,10 +364,10 @@ export async function getGotenbergDebug(
 }
 
 /** Request bounded legacy Prometheus metrics; the upstream controls authentication. */
-export async function getGotenbergMetrics(
+export async function getGotenbergMetricsReport(
   connection: string | ConnectionChoice,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<{ text: string; source: 'otel' | 'legacy' }> {
   const headers = targetHeaders(connection)
   let response: Response
   try {
@@ -384,5 +393,16 @@ export async function getGotenbergMetrics(
   ) {
     throw new Error('Metrics did not reach the Gotenui API. Check the Nitro deployment.')
   }
-  return response.text()
+  return {
+    text: await response.text(),
+    source: response.headers.get('x-gotenui-metrics-source') === 'otel' ? 'otel' : 'legacy',
+  }
+}
+
+/** Preserve plain-text callers while exposing exporter provenance to diagnostics. */
+export async function getGotenbergMetrics(
+  connection: string | ConnectionChoice,
+  signal?: AbortSignal,
+): Promise<string> {
+  return (await getGotenbergMetricsReport(connection, signal)).text
 }

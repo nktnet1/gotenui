@@ -4,7 +4,7 @@ import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
-import { getGotenbergMetrics } from '#/lib/gotenberg-client'
+import { getGotenbergMetricsReport } from '#/lib/gotenberg-client'
 import { filterPrometheusMetrics, summarizePrometheusMetrics } from '#/lib/prometheus-metrics'
 
 type Props = {
@@ -15,6 +15,7 @@ type Props = {
 /** Embedded within Diagnostics so Debug and Prometheus share one focus-managed dialog. */
 export function MetricsPanel({ connection, active }: Props) {
   const [metrics, setMetrics] = useState<string | null>(null)
+  const [source, setSource] = useState<'otel' | 'legacy' | null>(null)
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -41,12 +42,16 @@ export function MetricsPanel({ connection, active }: Props) {
     setBusy(true)
     setError(null)
     setMetrics(null)
+    setSource(null)
     try {
-      const text = await getGotenbergMetrics(
+      const result = await getGotenbergMetricsReport(
         connection,
         AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
       )
-      if (!controller.signal.aborted) setMetrics(text)
+      if (!controller.signal.aborted) {
+        setMetrics(result.text)
+        setSource(result.source)
+      }
     } catch (cause) {
       if (!controller.signal.aborted) {
         setError(cause instanceof Error ? cause.message : 'Could not load Gotenberg metrics.')
@@ -83,6 +88,10 @@ export function MetricsPanel({ connection, active }: Props) {
 
   return (
     <div>
+      <p className="mb-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
+        Server-managed connections can read a configured OpenTelemetry Prometheus exporter. Other
+        connections use the deprecated Gotenberg /prometheus/metrics endpoint.
+      </p>
       <form onSubmit={(event) => void readMetrics(event)}>
         <Button type="submit" className="w-48 shrink-0" disabled={busy} aria-busy={busy}>
           {busy ? (
@@ -105,6 +114,7 @@ export function MetricsPanel({ connection, active }: Props) {
         <div className="mt-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600 dark:text-slate-300">
             <span>
+              {source === 'otel' ? 'OpenTelemetry exporter' : 'Legacy Prometheus'} ·{' '}
               {summary?.families ?? 0} metric families · {summary?.samples ?? 0} samples
             </span>
             <div className="flex flex-wrap gap-2">

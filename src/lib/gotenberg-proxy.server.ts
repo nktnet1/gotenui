@@ -16,7 +16,11 @@ import {
 } from '#/lib/proxy-policy'
 import { verifyConversionSignature } from '#/lib/response-signature'
 import { safeAttachmentDisposition } from '#/lib/security'
-import { parseServerConnections, publicServerConnections } from '#/lib/server-connections.server'
+import {
+  parseServerConnections,
+  publicServerConnections,
+  requireServerConnection,
+} from '#/lib/server-connections.server'
 import { uiFeatures } from '#/lib/ui-features.server'
 import {
   type ConversionPayload,
@@ -589,26 +593,41 @@ export async function proxyMetricsRequest(
   if (request.method !== 'POST') {
     throw new ProxyInputError('Metrics requests must use POST.', 405)
   }
+  const settings = runtimeConfig()
+  const profileId = request.headers.get('x-gotenui-connection-id')
   const { url, headers: authHeaders } = resolveConnectionTarget(
     request,
-    runtimeConfig(),
+    settings,
     request.headers.get('x-gotenberg-url'),
-    request.headers.get('x-gotenui-connection-id'),
+    profileId,
   )
-  const upstream = await fetcher(urlJoin(url, '/prometheus/metrics'), {
+  const profile =
+    profileId === null ? undefined : requireServerConnection(profileId, settings.connections)
+  // A private OTEL exporter must be explicitly bound to a server-managed profile.
+  // Never inherit Gotenberg credentials when fetching the separate exporter.
+  const isOtel = Boolean(profile?.metricsUrl)
+  const metricsUrl = profile?.metricsUrl ?? urlJoin(url, '/prometheus/metrics')
+  const metricsHeaders = isOtel
+    ? profile?.metricsAuthorization
+      ? { Authorization: profile.metricsAuthorization }
+      : undefined
+    : authHeaders
+  const upstream = await fetcher(metricsUrl, {
     method: 'GET',
     ...fetchOptions(request),
-    headers: authHeaders,
+    headers: metricsHeaders,
     credentials: 'omit',
   })
   if (upstream.status !== 200) {
     await upstream.body?.cancel().catch(() => {})
     const message =
       upstream.status === 404
-        ? 'The legacy Gotenberg Prometheus endpoint is unavailable. Check PROMETHEUS_METRICS_PATH or configure OpenTelemetry instead.'
+        ? isOtel
+          ? 'The configured OpenTelemetry /metrics exporter endpoint is unavailable.'
+          : 'The legacy Gotenberg Prometheus endpoint is unavailable. Configure a server-managed OpenTelemetry metricsUrl instead.'
         : upstream.status === 401 || upstream.status === 403
-          ? 'Gotenberg rejected authentication for its metrics endpoint.'
-          : `Gotenberg returned HTTP ${upstream.status} from /prometheus/metrics.`
+          ? 'The configured metrics endpoint rejected authentication.'
+          : `Metrics endpoint returned HTTP ${upstream.status}.`
     return new Response(message, {
       status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
       headers: { ...safeResponseHeaders, 'Content-Type': 'text/plain; charset=utf-8' },
@@ -648,6 +667,7 @@ export async function proxyMetricsRequest(
       ...safeResponseHeaders,
       'Content-Type': 'text/plain; charset=utf-8',
       'X-Gotenui-Metrics': '1',
+      'X-Gotenui-Metrics-Source': isOtel ? 'otel' : 'legacy',
     },
   })
 }

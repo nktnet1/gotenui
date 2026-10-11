@@ -220,6 +220,22 @@ describe('browser-local operation presets', () => {
       width: '1920',
       height: '900',
       format: 'png',
+      // An omitted setting restores the current operation default, not an old snapshot.
+      skipNetworkIdleEvent: true,
+      skipNetworkAlmostIdleEvent: true,
+      url: 'https://private.test',
+    })
+    const explicit = upsertPreset(
+      [],
+      screenshot,
+      'Wait for network',
+      { skipNetworkIdleEvent: false },
+      secondId,
+    )[0]
+    assert.ok(explicit)
+    expect(applyPresetFields(screenshot, applied, explicit)).toMatchObject({
+      skipNetworkIdleEvent: false,
+      skipNetworkAlmostIdleEvent: true,
       url: 'https://private.test',
     })
   })

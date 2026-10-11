@@ -19,6 +19,8 @@ const connectionSchema = v.object({
   name: nameSchema,
   url: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
   auth: v.optional(v.variant('type', [basicSchema, bearerSchema])),
+  metricsUrl: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(2048))),
+  metricsAuth: v.optional(v.variant('type', [basicSchema, bearerSchema])),
 })
 const connectionListSchema = v.pipe(v.array(connectionSchema), v.maxLength(30))
 
@@ -27,11 +29,58 @@ export type ServerConnection = Readonly<{
   name: string
   url: string
   authorization?: string
+  metricsUrl?: string
+  metricsAuthorization?: string
 }>
 export type PublicServerConnection = Readonly<{
   id: string
   name: string
 }>
+
+/** A metrics collector is a deployment-only target, never a browser-supplied URL.
+ * The dedicated OTEL Prometheus exporter serves /metrics on port 9464 by default.
+ */
+export function parseMetricsUrl(value: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error('metricsUrl must be an absolute HTTP(S) /metrics URL.')
+  }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    !parsed.hostname ||
+    parsed.pathname !== '/metrics' ||
+    parsed.search ||
+    parsed.hash ||
+    parsed.username ||
+    parsed.password
+  ) {
+    throw new Error(
+      'metricsUrl must be an absolute HTTP(S) /metrics URL without credentials or query parameters.',
+    )
+  }
+  return parsed.href
+}
+
+function authorizationFor(
+  auth:
+    | { type: 'basic'; username: string; password: string }
+    | { type: 'bearer'; token: string }
+    | undefined,
+  label: string,
+): string | undefined {
+  if (!auth) return undefined
+  if (auth.type === 'basic') {
+    if (auth.username.includes(':'))
+      throw new Error(`Basic Auth username for ${label} must not contain a colon.`)
+    return `Basic ${Buffer.from(`${auth.username}:${auth.password}`, 'utf8').toString('base64')}`
+  }
+  if (!/^[A-Za-z0-9._~+/-]+=*$/.test(auth.token)) {
+    throw new Error(`Bearer token for ${label} contains invalid characters.`)
+  }
+  return `Bearer ${auth.token}`
+}
 
 /** Resolve deployment-defined profiles; the upstream decides access via its credentials. */
 export function parseServerConnections(
@@ -51,12 +100,6 @@ export function parseServerConnections(
     entries = result.output
   }
   const connections: ServerConnection[] = entries.map((entry) => {
-    if (entry.auth?.type === 'basic' && entry.auth.username.includes(':')) {
-      throw new Error(`Basic Auth username for ${entry.id} must not contain a colon.`)
-    }
-    if (entry.auth?.type === 'bearer' && !/^[A-Za-z0-9._~+/-]+=*$/.test(entry.auth.token)) {
-      throw new Error(`Bearer token for ${entry.id} contains invalid characters.`)
-    }
     const url = normalizeBackendUrl(entry.url)
     if (!allowed.has(url)) {
       throw new Error(`Server connection ${entry.id} must exactly match GOTENBERG_ALLOWED_URLS.`)
@@ -64,13 +107,17 @@ export function parseServerConnections(
     if (entry.auth && url === DEMO_GOTENBERG_URL) {
       throw new Error('Do not configure upstream credentials for the public Gotenberg demo.')
     }
-    const authorization =
-      entry.auth?.type === 'basic'
-        ? `Basic ${Buffer.from(`${entry.auth.username}:${entry.auth.password}`, 'utf8').toString('base64')}`
-        : entry.auth?.type === 'bearer'
-          ? `Bearer ${entry.auth.token}`
-          : undefined
-    return { id: entry.id, name: entry.name, url, authorization }
+    if (entry.metricsAuth && !entry.metricsUrl) {
+      throw new Error(`Metrics credentials for ${entry.id} require metricsUrl.`)
+    }
+    return {
+      id: entry.id,
+      name: entry.name,
+      url,
+      authorization: authorizationFor(entry.auth, entry.id),
+      metricsUrl: entry.metricsUrl ? parseMetricsUrl(entry.metricsUrl) : undefined,
+      metricsAuthorization: authorizationFor(entry.metricsAuth, `${entry.id} metrics`),
+    }
   })
   // Legacy credentials require an explicit profile ID; URL selection never inherits them.
   const legacy = parseUpstreamBasicAuth(env, allowed)

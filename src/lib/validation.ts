@@ -4,6 +4,7 @@ import {
   defaultMarkdownTemplate,
   markdownTemplateReferences,
 } from '#/lib/chromium-documents'
+import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
 import { OFFICE_EXTENSION_SET } from '#/lib/office-formats'
 import { parseIgnoredDomains, parseStatusCodes } from '#/lib/official-form-fields'
 import { isFieldVisible, OPERATION_BY_ID, type Operation } from '#/lib/operations'
@@ -1008,6 +1009,22 @@ export function validatePayload(input: unknown): {
       (payload.fields[field.name] === '' || payload.fields[field.name] === undefined)
     ) {
       throw new InputError(`${field.label} is required.`)
+    }
+  }
+  if (payload.advanced.emulatedMediaFeatures !== undefined) {
+    if (!operation.path.startsWith('/forms/chromium/')) {
+      throw new InputError('emulatedMediaFeatures is supported only by Chromium.')
+    }
+    if (encodeChromiumMediaFeatures(payload.fields)) {
+      throw new InputError('Choose media settings in the UI or Advanced JSON, not both.')
+    }
+    if (typeof payload.advanced.emulatedMediaFeatures !== 'string') {
+      throw new InputError('emulatedMediaFeatures must contain JSON text.')
+    }
+    try {
+      validateAdvancedMediaFeatures(payload.advanced.emulatedMediaFeatures)
+    } catch (error) {
+      throw new InputError(error instanceof Error ? error.message : 'Invalid media features.')
     }
   }
   for (const [name, value] of Object.entries(payload.advanced)) {

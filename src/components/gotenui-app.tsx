@@ -901,6 +901,11 @@ function Workbench({
       description: 'Tune the PDF image quality and output size.',
     },
     {
+      key: 'rendering',
+      title: 'Browser appearance & accessibility',
+      description: 'Emulate colour scheme, high contrast, reduced motion and display gamut.',
+    },
+    {
       key: 'reliability',
       title: 'Rendering & error checks',
       description: 'Detect missing resources, failed HTTP responses and JavaScript errors.',
