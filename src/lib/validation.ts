@@ -1,4 +1,5 @@
 import * as v from 'valibot'
+import { ATTACHMENT_RELATIONSHIPS, parseAttachmentMetadata } from '#/lib/attachment-metadata'
 import {
   DEFAULT_MARKDOWN_NAME,
   defaultMarkdownTemplate,
@@ -209,6 +210,24 @@ function validateAsyncInputs(payload: ConversionPayload): void {
   }
 }
 
+/** Enforce the same metadata contract for /embed and conversion-time embeds. */
+function validatedAttachmentMetadata(raw: string): string[] {
+  const metadata = parseAttachmentMetadata(raw)
+  if (!metadata)
+    throw new InputError('Attachment metadata must be a JSON object of filename properties.')
+  for (const [filename, details] of Object.entries(metadata)) {
+    safeFilename(filename)
+    if (
+      (details.mimeType !== undefined && !/^[\w.+-]+\/[\w.+-]+$/.test(details.mimeType)) ||
+      (details.relationship !== undefined &&
+        !ATTACHMENT_RELATIONSHIPS.includes(details.relationship))
+    ) {
+      throw new InputError(`Invalid attachment metadata for ${filename}.`)
+    }
+  }
+  return Object.keys(metadata)
+}
+
 /** Validate post-processing contracts before any upstream request is made. */
 function validatePostProcessSettings(operation: Operation, payload: ConversionPayload): void {
   const settings = payload.postProcess
@@ -276,27 +295,7 @@ function validatePostProcessSettings(operation: Operation, payload: ConversionPa
     }
   }
   if (settings.metadata) requireJsonObject(settings.metadata, 'PDF metadata')
-  if (settings.embedsMetadata) {
-    const metadata = requireJsonObject(settings.embedsMetadata, 'Attachments metadata')
-    for (const [filename, details] of Object.entries(metadata)) {
-      safeFilename(filename)
-      const fields = details as Record<string, unknown> | null
-      if (
-        !fields ||
-        typeof fields !== 'object' ||
-        Array.isArray(fields) ||
-        !Object.keys(fields).every((key) => key === 'mimeType' || key === 'relationship') ||
-        (fields.mimeType !== undefined &&
-          (typeof fields.mimeType !== 'string' || !/^[\w.+-]+\/[\w.+-]+$/.test(fields.mimeType))) ||
-        (fields.relationship !== undefined &&
-          !['Source', 'Data', 'Alternative', 'Supplement', 'Unspecified'].includes(
-            String(fields.relationship),
-          ))
-      ) {
-        throw new InputError(`Invalid attachment metadata for ${filename}.`)
-      }
-    }
-  }
+  if (settings.embedsMetadata) validatedAttachmentMetadata(settings.embedsMetadata)
 }
 
 function requireJsonObject(value: string, label: string): Record<string, unknown> {
@@ -364,7 +363,7 @@ function validatePostProcessFiles(
   if (settings?.embedsMetadata) {
     if (!embedded.length && !remote.embedded)
       throw new InputError('Attachment metadata needs an embedded file.')
-    const entries = Object.keys(requireJsonObject(settings.embedsMetadata, 'Attachments metadata'))
+    const entries = validatedAttachmentMetadata(settings.embedsMetadata)
     if (!remote.embedded && entries.some((name) => !embedded.some((file) => file.name === name))) {
       throw new InputError(
         'Attachment metadata references a file that was not uploaded (exact filename required).',
@@ -503,6 +502,17 @@ export function validateFiles(
 ): void {
   const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
+  if (operation.id === 'embed' && payload?.fields.embedsMetadata) {
+    const names = validatedAttachmentMetadata(String(payload.fields.embedsMetadata))
+    if (!auxiliary.length && !remote.embedded) {
+      throw new InputError('Attachment metadata needs an embedded file.')
+    }
+    if (!remote.embedded && names.some((name) => !auxiliary.some((file) => file.name === name))) {
+      throw new InputError(
+        'Attachment metadata references a file that was not uploaded (exact filename required).',
+      )
+    }
+  }
   if (operation.input === 'pdf' || operation.input === 'office') {
     if (files.length + remote.input < minFiles || files.length + remote.input > 20) {
       throw new InputError(`Upload ${minFiles} to 20 input files.`)
@@ -998,6 +1008,9 @@ export function validatePayload(input: unknown): {
     } catch (error) {
       throw new InputError(error instanceof Error ? error.message : 'Invalid PDF bookmarks.')
     }
+  }
+  if (operation.id === 'embed' && payload.fields.embedsMetadata) {
+    validatedAttachmentMetadata(String(payload.fields.embedsMetadata))
   }
   const orderedStandalone =
     (operation.id === 'watermark' && Boolean(payload.postProcess?.watermarks?.length)) ||

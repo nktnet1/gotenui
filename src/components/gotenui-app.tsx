@@ -25,6 +25,7 @@ import {
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { RemoteInputsEditor, WebhookEditor } from '#/components/async-inputs-editor'
+import { AttachmentMetadataEditor } from '#/components/attachment-metadata-editor'
 import { BrowserBatchQueuePanel } from '#/components/browser-batch-queue'
 import {
   ChromiumNetworkEditor,
@@ -872,7 +873,9 @@ function Workbench({
       }
     : undefined
   const hasPdfStructureEditor =
-    operation.id === 'metadata-write' || operation.id === 'bookmarks-write'
+    operation.id === 'metadata-write' ||
+    operation.id === 'bookmarks-write' ||
+    operation.id === 'embed'
   const basicFields = standaloneKind
     ? []
     : operation.fields.filter(
@@ -881,13 +884,18 @@ function Workbench({
           !field.section &&
           isFieldVisible(field, fields) &&
           !(operation.id === 'metadata-write' && field.name === 'metadata') &&
+          !(operation.id === 'embed' && field.name === 'embedsMetadata') &&
           !(operation.id === 'bookmarks-write' && field.name === 'bookmarks'),
       )
   const advancedFields = standaloneKind
     ? []
     : operation.fields.filter(
         (field) =>
-          field.advanced && !field.customEditor && !field.section && isFieldVisible(field, fields),
+          field.advanced &&
+          !field.customEditor &&
+          !field.section &&
+          isFieldVisible(field, fields) &&
+          !(operation.id === 'embed' && field.name === 'embedsMetadata'),
       )
   const featureSections = [
     {
@@ -1238,6 +1246,13 @@ function Workbench({
               <PdfMetadataEditor
                 value={String(fields.metadata ?? '{}')}
                 onChange={(value) => updateField('metadata', value)}
+              />
+            )}
+            {operation.id === 'embed' && (
+              <AttachmentMetadataEditor
+                files={auxFiles}
+                value={String(fields.embedsMetadata ?? '')}
+                onChange={(value) => updateField('embedsMetadata', value)}
               />
             )}
             {operation.id === 'bookmarks-write' && (

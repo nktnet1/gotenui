@@ -354,3 +354,13 @@ The Nitro build config labels its function-named library chunk group (without
 altering chunk names) and silences only `MODULE_LEVEL_DIRECTIVE` warnings about
 third-party `"use client"` markers in the **non-RSC** Nitro server bundle.
 Warnings from application files and all other Rolldown warnings still appear.
+
+### Watermark and stamp appearance (v1.0.5)
+
+Each watermark or stamp layer, including those added during PDF conversion, has an **Appearance settings** section for the default **pdfcpu** PDF engine. Set opacity (0–1), rotation (-180° to 180°), page position, relative or absolute scale, X/Y offset, and (for text layers) font size, font name, and hex colour. Selecting an explicit text size automatically switches to absolute scaling as required by pdfcpu. Blank inputs retain upstream defaults. Typed values are encoded into the same `watermarkOptions` or `stampOptions` JSON field used by Gotenberg; no new server API or dependency is needed.
+
+The **Custom PDF-engine options JSON** control remains available for advanced or alternative engine settings. Editing a normal control retains all unrelated custom keys. For other PDF engines such as pdftk, consult that engine's supported options before using pdfcpu-specific controls. Switching a layer from text to image/PDF clears invalid text-only appearance keys.
+
+### PDF attachment metadata editor (v1.0.5)
+
+The standalone **Embed attachments** tool and conversion-time **PDF attachments** section now expose per-file MIME type and PDF/A `/AFRelationship` (`Source`, `Data`, `Alternative`, `Supplement`, `Unspecified`). Local upload filenames appear automatically; use **Add filename** for a remote `downloadFrom` attachment whose exact filename comes from `Content-Disposition`. These fields serialize into Gotenberg's standard `embedsMetadata` map. Custom JSON is still available for recovery and uncommon cases; validation uses the same metadata contract for both operation types and rejects missing local filename references when no remote attachments were supplied.

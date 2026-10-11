@@ -249,3 +249,10 @@ Review the documentation for the version being targeted before implementing a fe
 - [LibreOffice conversion options](https://gotenberg.dev/docs/convert-with-libreoffice/convert-to-pdf)
 - [Webhook and remote download behaviour](https://gotenberg.dev/docs/webhook-download)
 - [PDF watermarks](https://gotenberg.dev/docs/manipulate-pdfs/watermark-pdfs) and [PDF stamps](https://gotenberg.dev/docs/manipulate-pdfs/stamp-pdfs)
+
+## Follow-on patches (post-v1.0.4)
+
+- **v1.0.5 — Native overlay appearance:** Expose the default pdfcpu engine's opacity, rotation, position, relative size, offset, text size, font and colour as ordinary controls for repeated conversion-time and standalone watermark/stamp groups. Keep `watermarkOptions`/`stampOptions` JSON as an advanced fallback for PDF-engine-specific keys; never discard unknown keys when editing the normal controls. Drop text-only options when switching a layer to an image/PDF source.
+- **Potential next step:** Execute the existing Docker integration contract tests against pinned Gotenberg 8.37, including the new overlay and attachment metadata controls. Interactive OIDC remains deferred pending a concrete identity-provider requirement.
+
+**v1.0.5 extension:** First-class per-file attachment MIME type and PDF/A associated-file relationship controls were implemented for standalone embedding and conversion-time PDF attachments. Remote attachment filenames can be registered manually; the JSON field remains an optional advanced mode. The two entry points share the same validation rules.

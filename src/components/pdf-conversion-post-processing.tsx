@@ -1,10 +1,13 @@
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { useId, useRef } from 'react'
+import { AttachmentMetadataEditor } from '#/components/attachment-metadata-editor'
+import { OverlayAppearanceEditor } from '#/components/overlay-appearance-editor'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
 import { UploadZone } from '#/components/upload-zone'
+import { removeTextOverlayAppearance } from '#/lib/overlay-appearance'
 import {
   configuredOverlays,
   OVERLAY_KINDS,
@@ -175,6 +178,8 @@ export function OverlayGroupsEditor({
                     update({
                       source,
                       expression: source === 'text' ? defaultOverlay(kind).expression : '',
+                      options:
+                        source === 'text' ? row.options : removeTextOverlayAppearance(row.options),
                     })
                   }}
                 >
@@ -234,17 +239,11 @@ export function OverlayGroupsEditor({
                   onChange={(event) => update({ pages: event.target.value })}
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor={`${id}-${index}-options`}>PDF-engine options JSON (optional)</Label>
-                <Textarea
-                  id={`${id}-${index}-options`}
-                  rows={3}
-                  className="font-mono text-xs"
-                  value={row.options ?? ''}
-                  placeholder={'{"opacity":0.25,"rotation":45}'}
-                  onChange={(event) => update({ options: event.target.value })}
-                />
-              </div>
+              <OverlayAppearanceEditor
+                source={row.source}
+                options={row.options}
+                onChange={(options) => update({ options: options || undefined })}
+              />
             </li>
           )
         })}
@@ -296,17 +295,11 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
             onChange={(embeds) => onFilesChange({ ...files, embeds })}
             multiple
           />
-          <div className="space-y-1.5">
-            <Label htmlFor={`${id}-embeds-metadata`}>Attachment metadata JSON (optional)</Label>
-            <Textarea
-              id={`${id}-embeds-metadata`}
-              className="font-mono text-xs"
-              rows={3}
-              placeholder={'{"invoice.xml":{"mimeType":"text/xml","relationship":"Alternative"}}'}
-              value={value.embedsMetadata ?? ''}
-              onChange={(event) => update({ embedsMetadata: event.target.value || undefined })}
-            />
-          </div>
+          <AttachmentMetadataEditor
+            files={files.embeds ?? []}
+            value={value.embedsMetadata}
+            onChange={(embedsMetadata) => update({ embedsMetadata: embedsMetadata || undefined })}
+          />
         </div>
         <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
           <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
