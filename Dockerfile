@@ -4,6 +4,12 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile
 COPY . .
+# Vite/TanStack Start embeds PUBLIC_ values in the browser build.
+# Pass them as build arguments; runtime environment changes cannot rewrite assets.
+ARG PUBLIC_GOTENBERG_DEFAULT_URL=https://demo.gotenberg.dev
+ARG PUBLIC_GOTENUI_MAX_UPLOAD_BYTES=4000000
+ENV PUBLIC_GOTENBERG_DEFAULT_URL=${PUBLIC_GOTENBERG_DEFAULT_URL} \
+    PUBLIC_GOTENUI_MAX_UPLOAD_BYTES=${PUBLIC_GOTENUI_MAX_UPLOAD_BYTES}
 RUN pnpm build
 
 FROM node:24-alpine

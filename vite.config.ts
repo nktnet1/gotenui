@@ -10,11 +10,14 @@ import {
 
 // The UI is an SPA shell, while Nitro serves same-origin serverless API routes.
 export default defineConfig({
+  // Only PUBLIC_ variables are embedded in client bundles. Keep secrets unprefixed.
+  envPrefix: 'PUBLIC_',
   plugins: [
     tanstackStart({
       spa: { enabled: true, prerender: { outputPath: '/index.html' } },
     }),
     nitro({
+      serverDir: './server',
       hooks: {
         'rollup:before'(_nitro, config) {
           // Nitro creates this group; do not replace its chunking strategy.

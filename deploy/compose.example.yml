@@ -1,5 +1,5 @@
 # Local test deployment; the server-side proxy reaches Gotenberg on the Docker network.
-# Bind to localhost only unless you add authentication, HTTPS and rate limiting.
+# Bind to localhost by default; optional Basic Auth is configured below.
 services:
   gotenberg:
     image: gotenberg/gotenberg:8
@@ -10,8 +10,14 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      args:
+        PUBLIC_GOTENBERG_DEFAULT_URL: ${PUBLIC_GOTENBERG_DEFAULT_URL:-https://demo.gotenberg.dev}
+        PUBLIC_GOTENUI_MAX_UPLOAD_BYTES: ${PUBLIC_GOTENUI_MAX_UPLOAD_BYTES:-4000000}
     environment:
-      GOTENBERG_ALLOWED_URLS: https://demo.gotenberg.dev,http://gotenberg:3000
+      GOTENBERG_ALLOWED_URLS: ${GOTENBERG_ALLOWED_URLS:-https://demo.gotenberg.dev,http://gotenberg:3000}
+      # Empty values leave app-level Basic Auth disabled.
+      GOTENUI_BASIC_AUTH_USERNAME: ${GOTENUI_BASIC_AUTH_USERNAME:-}
+      GOTENUI_BASIC_AUTH_PASSWORD: ${GOTENUI_BASIC_AUTH_PASSWORD:-}
     ports:
       - "127.0.0.1:3100:3100"
     depends_on:

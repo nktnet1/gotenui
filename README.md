@@ -221,7 +221,7 @@ pnpm build
 pnpm start
 ```
 
-The server entry point is `.output/server/index.mjs`; Nitro serves the generated public assets as well. Docker and a local Docker Compose example are included; Docker uses port 3100.
+The server entry point is `.output/server/index.mjs`; Nitro serves the generated public assets as well. Docker and a local Docker Compose example are included; Docker uses port 3100. The Compose example passes `PUBLIC_` build arguments and optional runtime Gotenui Basic Auth credentials.
 
 The UI is client-rendered: there is no requirement for persistent server processes, shared memory, sticky sessions, database, or disk. Each request selects a backend from the allowlist, validates the payload and files, calls Gotenberg and returns its response. Aborted requests and timeouts do not create saved jobs.
 
@@ -229,8 +229,10 @@ The UI is client-rendered: there is no requirement for persistent server process
 
 | Variable | Purpose |
 | --- | --- |
-| `VITE_GOTENBERG_DEFAULT_URL` | Optional **public build-time** default for the browser. Defaults to `https://demo.gotenberg.dev`. |
-| `VITE_GOTENUI_MAX_UPLOAD_BYTES` | Optional **public build-time** upload-file size cap. Defaults to `4000000` bytes. Keep below the request-body cap. |
+| `PUBLIC_GOTENBERG_DEFAULT_URL` | Optional **public build-time** default for the browser. Defaults to `https://demo.gotenberg.dev`. |
+| `PUBLIC_GOTENUI_MAX_UPLOAD_BYTES` | Optional **public build-time** upload-file size cap. Defaults to `4000000` bytes. Keep below the request-body cap. |
+| `GOTENUI_BASIC_AUTH_USERNAME` | Optional **server-only runtime** Basic Auth username for the Gotenui site and API; configure together with the password. |
+| `GOTENUI_BASIC_AUTH_PASSWORD` | Optional **server-only runtime** password for Gotenui site-wide Basic Auth. Unset both to keep the site public. |
 | `GOTENBERG_ALLOWED_URLS` | Comma-separated **server-side allowlist** of exact Gotenberg base URLs, including path prefixes. Defaults to `https://demo.gotenberg.dev` only. |
 | `GOTENUI_MAX_REQUEST_BYTES` | Maximum total multipart request size at the server. Defaults to `4200000` bytes. |
 | `GOTENUI_MAX_RESPONSE_BYTES` | Maximum converted response size, measured in streamed bytes. Defaults to `100000000` bytes. |
@@ -240,6 +242,19 @@ The UI is client-rendered: there is no requirement for persistent server process
 | `GOTENUI_SERVER_CONNECTIONS` | Optional server-only JSON array of named connection profiles, each with ID, name, allowed URL and optional Basic/Bearer/OAuth2 client-credentials auth. May also specify `metricsUrl` and independent `metricsAuth` for the OpenTelemetry Prometheus exporter (server-only, never browser configurable). |
 | `GOTENUI_SHOW_DEBUG` | Optional server-only runtime flag (`true` or `false`, default `true`) controlling visibility of **Read debug info** within Diagnostics. Does **not** disable the API. |
 | `GOTENUI_SHOW_METRICS` | Optional server-only runtime flag (`true` or `false`, default `true`) controlling visibility of Prometheus metrics. Does **not** disable the API. |
+
+### Optional site-wide Basic Auth
+
+To protect the **Gotenui UI and API**, configure the two server-only runtime variables together:
+
+```dotenv
+GOTENUI_BASIC_AUTH_USERNAME=admin
+GOTENUI_BASIC_AUTH_PASSWORD=replace-with-a-strong-secret
+```
+
+When enabled, Nitro challenges the UI entry route and API requests with HTTP 401 and `WWW-Authenticate`; browsers prompt for credentials automatically. Public static assets (JavaScript, CSS and icons) can be served separately by Nitro or a CDN without a challenge; they contain no server-only credentials or private documents. The setting is independent of `GOTENBERG_BASIC_AUTH_*`, which authenticates Gotenui **to upstream Gotenberg**. Omit both Gotenui variables (or set both to empty strings) to allow anonymous access; an incomplete or invalid pair fails closed. Use HTTPS for public access: HTTP Basic Auth encodes rather than encrypts credentials.
+
+The browser-visible `PUBLIC_GOTENBERG_DEFAULT_URL` and `PUBLIC_GOTENUI_MAX_UPLOAD_BYTES` are **build-time** settings, not runtime secrets. When building the Docker image, pass them as `--build-arg` values or as `build.args` in Compose. The demo URL remains the default when the variable is unset. Any custom default URL must also be included in the server's `GOTENBERG_ALLOWED_URLS` allowlist; setting a browser default does not grant the proxy additional destinations. The deployment's runtime `GOTENUI_BASIC_AUTH_*` secrets are never Docker build arguments.
 
 For example, to let the Settings UI select either the demo or a private Gotenberg instance:
 
@@ -290,7 +305,7 @@ The proxy buffers and validates incoming multipart data in memory (up to the con
 
 ### Request and response size limits
 
-The browser currently caps uploaded files at **4,000,000 bytes** and the proxy caps its entire multipart body at **4,200,000 bytes** by default. This leaves some overhead under Vercel Functions' **4.5 MB request limit**, although large form fields and generated output can still hit host limits. Vercel also applies a 4.5 MB limit to function responses; some streaming configurations behave differently. For large conversions use a Node/other hosting platform with suitable limits, then increase `VITE_GOTENUI_MAX_UPLOAD_BYTES` and `GOTENUI_MAX_REQUEST_BYTES` appropriately. For instance, on a self-hosted Node server set `VITE_GOTENUI_MAX_UPLOAD_BYTES=50000000` **before building** and `GOTENUI_MAX_REQUEST_BYTES=55000000` in the server environment (not on Vercel). The second limit covers the entire multipart request, not each file. Also verify your reverse-proxy limits and the connected Gotenberg instance's own limits. The public Gotenberg demo has its own limit of **5 MB per request** and rate limit of **2 requests per second per IP**; it is intended for evaluation, not production.
+The browser currently caps uploaded files at **4,000,000 bytes** and the proxy caps its entire multipart body at **4,200,000 bytes** by default. This leaves some overhead under Vercel Functions' **4.5 MB request limit**, although large form fields and generated output can still hit host limits. Vercel also applies a 4.5 MB limit to function responses; some streaming configurations behave differently. For large conversions use a Node/other hosting platform with suitable limits, then increase `PUBLIC_GOTENUI_MAX_UPLOAD_BYTES` and `GOTENUI_MAX_REQUEST_BYTES` appropriately. For instance, on a self-hosted Node server set `PUBLIC_GOTENUI_MAX_UPLOAD_BYTES=50000000` **before building** and `GOTENUI_MAX_REQUEST_BYTES=55000000` in the server environment (not on Vercel). The second limit covers the entire multipart request, not each file. Also verify your reverse-proxy limits and the connected Gotenberg instance's own limits. The public Gotenberg demo has its own limit of **5 MB per request** and rate limit of **2 requests per second per IP**; it is intended for evaluation, not production.
 
 Converted output is streamed rather than fully buffered by Nitro. `GOTENUI_MAX_RESPONSE_BYTES` defaults to **100,000,000 bytes** (100 MB), and can be set between **1,024 and 500,000,000 bytes**. The proxy checks the declared `Content-Length` before streaming, counts actual streamed bytes independently, rejects truncated responses when the upstream supplies an uncompressed length, and cancels the upstream stream when the browser cancels. Compressed responses are limited by decoded bytes without comparing against their compressed `Content-Length`. If an undeclared or incorrectly declared stream exceeds its budget *after response headers have been sent*, the download stream fails (rather than returning a partial document); the HTTP status cannot then change to 502. Increase this value when legitimately processing large documents, subject to your hosting platform's response limits. The proxy also rejects unexpected 2xx output media types (including HTML SPA fallbacks), unexpected partial-content responses, and asynchronous success without configured webhook delivery. It also checks the minimal file signatures of PDF, ZIP, PNG, JPEG and WebP results **before** returning HTTP 200 to the browser; if an upstream gateway returns mislabeled HTML or an incomplete binary signature, Gotenui cancels the upstream and returns HTTP 502. Only the first 3–12 bytes are inspected, so this is not a complete document-integrity or malware scan. JSON metadata responses are not binary-signature checked. Response validation allows both PDF and ZIP for split operations: a split yielding just one document can return a PDF. PDF-processing and LibreOffice operations may return ZIP for multiple independent input files; a conversion with a requested post-processing split can also return ZIP. Other operations retain exact media-type requirements. The browser derives the download extension from the actual response content type, not only the selected operation.
 

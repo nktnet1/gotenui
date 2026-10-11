@@ -278,6 +278,8 @@ async function run(): Promise<void> {
     GOTENUI_SHOW_METRICS: 'false',
     GOTENUI_MAX_RESPONSE_BYTES: '1024',
     GOTENUI_PUBLIC_ORIGIN: undefined,
+    GOTENUI_BASIC_AUTH_USERNAME: undefined,
+    GOTENUI_BASIC_AUTH_PASSWORD: undefined,
   }
   const child = spawn(process.execPath, [entry], {
     cwd: projectRoot,
@@ -737,6 +739,112 @@ async function run(): Promise<void> {
       assert.equal(seen.length, beforeRejections, 'Cross-origin traffic must not reach Gotenberg')
     } finally {
       await stopProcess(proxiedChild)
+    }
+
+    // Site-level Basic Auth must protect the SPA and API routes without forwarding
+    // site credentials upstream. Nitro/CDN public assets are intentionally static.
+    const authPort = await unusedPort()
+    const authOrigin = `http://127.0.0.1:${authPort}`
+    const authChild = spawn(process.execPath, [entry], {
+      cwd: projectRoot,
+      env: {
+        ...env,
+        PORT: String(authPort),
+        NITRO_PORT: String(authPort),
+        GOTENUI_BASIC_AUTH_USERNAME: 'smoke-user',
+        GOTENUI_BASIC_AUTH_PASSWORD: 'smoke-password',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let authLogs = ''
+    const captureAuth = (chunk: Buffer) => {
+      authLogs = `${authLogs}${chunk.toString()}`.slice(-4_000)
+    }
+    authChild.stdout.on('data', captureAuth)
+    authChild.stderr.on('data', captureAuth)
+    try {
+      const deadline = Date.now() + 20_000
+      while (Date.now() < deadline) {
+        if (authChild.exitCode !== null || authChild.signalCode !== null) {
+          throw new Error(`Authenticated Nitro server exited during startup: ${authLogs}`)
+        }
+        try {
+          const probe = await get(`${authOrigin}/api/gotenberg/connections`)
+          if (probe.status === 401) break
+        } catch {
+          // Listener not started yet.
+        }
+        await sleep(100)
+      }
+      for (const path of ['/', '/index.html', '/api/gotenberg/connections']) {
+        const anonymous = await get(`${authOrigin}${path}`)
+        assert.equal(anonymous.status, 401, `Unauthenticated ${path} should be denied`)
+        assert.equal(
+          anonymous.headers.get('www-authenticate'),
+          'Basic realm="Gotenui", charset="UTF-8"',
+        )
+        assert.equal(anonymous.headers.get('cache-control'), 'no-store')
+        checks++
+      }
+      const staticAsset = await get(`${authOrigin}/gotenui-icon.svg`)
+      assert.equal(staticAsset.status, 200, 'Public static assets must remain available')
+      checks++
+      const authorization = `Basic ${Buffer.from('smoke-user:smoke-password').toString('base64')}`
+      for (const path of ['/', '/gotenui-icon.svg', '/api/gotenberg/connections']) {
+        const authorized = await get(`${authOrigin}${path}`, {
+          headers: { Authorization: authorization },
+        })
+        assert.equal(authorized.status, 200, `Authenticated ${path} should succeed`)
+        checks++
+      }
+      const invalid = await get(`${authOrigin}/api/gotenberg/connections`, {
+        headers: { Authorization: `Basic ${Buffer.from('smoke-user:wrong').toString('base64')}` },
+      })
+      assert.equal(invalid.status, 401)
+      checks++
+      const beforeUnauthenticatedPost = seen.length
+      const anonymousPost = await get(`${authOrigin}/api/gotenberg/convert`, {
+        method: 'POST',
+        headers: {
+          Origin: authOrigin,
+          'Sec-Fetch-Site': 'same-origin',
+          'X-Gotenui-Connection-Id': 'smoke',
+        },
+        body: conversionBody('url-pdf', baseFields),
+      })
+      assert.equal(anonymousPost.status, 401)
+      assert.equal(
+        seen.length,
+        beforeUnauthenticatedPost,
+        'Unauthenticated conversion reached upstream',
+      )
+      checks++
+      const authorizedStatus = await get(`${authOrigin}/api/gotenberg/status?connection=smoke`, {
+        headers: { Authorization: authorization },
+      })
+      assert.equal(authorizedStatus.status, 200)
+      assert.equal((await authorizedStatus.json()).online, true)
+      checks++
+      const authorizedConvert = await get(`${authOrigin}/api/gotenberg/convert`, {
+        method: 'POST',
+        headers: {
+          Authorization: authorization,
+          Origin: authOrigin,
+          'Sec-Fetch-Site': 'same-origin',
+          'X-Gotenui-Connection-Id': 'smoke',
+        },
+        body: conversionBody('url-pdf', baseFields),
+      })
+      assert.equal(authorizedConvert.status, 200)
+      assert.deepEqual(Buffer.from(await authorizedConvert.arrayBuffer()), pdf)
+      assert.equal(
+        seen.at(-1)?.headers.authorization,
+        'Bearer server-only-smoke-token',
+        'Site credentials must not overwrite or leak into upstream authentication',
+      )
+      checks++
+    } finally {
+      await stopProcess(authChild)
     }
 
     console.log(`Production Nitro smoke: ${styleText('green', 'PASS')} (${checks} checks)`)

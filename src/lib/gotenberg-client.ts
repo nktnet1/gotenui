@@ -32,7 +32,7 @@ const maxUploadSchema = v.pipe(
 )
 export const MAX_UPLOAD_BYTES = v.parse(
   maxUploadSchema,
-  import.meta.env?.VITE_GOTENUI_MAX_UPLOAD_BYTES ?? '4000000',
+  import.meta.env?.PUBLIC_GOTENUI_MAX_UPLOAD_BYTES ?? '4000000',
 )
 export const REQUEST_TIMEOUT_MS = 180_000
 
