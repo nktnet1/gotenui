@@ -90,6 +90,12 @@ For file-producing operations, **Output filename** now sets both the browser dow
 
 Advanced options include a validated custom **Gotenberg request ID** (`Gotenberg-Trace`, plain log/webhook correlation ID), **W3C `traceparent`**, and optional `tracestate` for distributed tracing. Gotenberg 8.34+ continues upstream `traceparent` context into asynchronous webhook callbacks. These are different mechanisms: the correlation ID is *not* an OpenTelemetry trace ID. The app only forwards these fields from the validated conversion payload, never arbitrary browser request headers. Upstream error responses retain a safe Gotenberg correlation ID for diagnosis; credentials and cookies are not relayed. No session state or new authentication layer is added.
 
+## Visual PDF metadata and bookmark editors (v1.0.45)
+
+**Write metadata** now has labelled Title, Author, Subject, Creator, Producer, Copyright and Keywords inputs. Keywords are separated with commas and submitted as a JSON list. Use the **JSON editor** tab for less common ExifTool XMP tags and non-text values. Editing a standard field preserves other JSON properties. Metadata writing can affect PDF/A conformance, and not every XMP tag is writable by ExifTool.
+
+**Write bookmarks** now has a visual, nested tree: add top-level or child entries, edit titles and page numbers, reorder siblings, and remove entries with their children. Pages start at **1** and must exist in the selected PDF. Use the **JSON editor** tab for the advanced filename-to-bookmarks mapping supported by Gotenberg, especially when uploading several PDFs. Such maps remain untouched in visual mode. Gotenui checks bookmark titles, pages and nesting before submitting, while Gotenberg validates the actual page ranges. Both editors still submit the official `metadata` and `bookmarks` JSON multipart fields and retain per-operation Advanced options. No content is stored on the server.
+
 ## Chromium PDF headers, footers and Markdown templates (v1.0.20)
 
 The **Website to PDF**, **HTML to PDF** and **Markdown to PDF** workbenches accept optional **Header HTML** and **Footer HTML**. Paste complete HTML documents into the editors or load `.html` files into them. The API proxy creates the required `header.html` and `footer.html` file parts for Gotenberg; these are not separate form fields. Uploaded assets with reserved filenames (`header.html`, `footer.html` or `index.html`) are rejected to avoid collisions. **Screenshot** routes have no PDF header/footer controls.

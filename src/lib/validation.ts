@@ -14,6 +14,7 @@ import {
   type PostProcessFiles,
   pdfPostProcessSchema,
 } from '#/lib/pdf-post-processing'
+import { metadataObject, validateBookmarkDocument } from '#/lib/pdf-structure-editors'
 
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
@@ -926,6 +927,20 @@ export function validatePayload(input: unknown): {
           throw new InputError(`${field.label} is not valid JSON.`)
         }
       }
+    }
+  }
+  if (operation.id === 'metadata-write') {
+    try {
+      metadataObject(String(payload.fields.metadata ?? ''))
+    } catch (error) {
+      throw new InputError(error instanceof Error ? error.message : 'Invalid PDF metadata.')
+    }
+  }
+  if (operation.id === 'bookmarks-write') {
+    try {
+      validateBookmarkDocument(String(payload.fields.bookmarks ?? ''))
+    } catch (error) {
+      throw new InputError(error instanceof Error ? error.message : 'Invalid PDF bookmarks.')
     }
   }
   const orderedStandalone =

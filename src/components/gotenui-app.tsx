@@ -56,6 +56,7 @@ import {
   PdfConversionPostProcessing,
 } from '#/components/pdf-conversion-post-processing'
 import { PdfResultPreview } from '#/components/pdf-result-preview'
+import { PdfBookmarksEditor, PdfMetadataEditor } from '#/components/pdf-structure-editors'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
@@ -888,7 +889,16 @@ function Workbench({
         [overlayProperty]: postProcess[overlayProperty] ?? [defaultOverlay(standaloneKind)],
       }
     : undefined
-  const basicFields = standaloneKind ? [] : operation.fields.filter((field) => !field.advanced)
+  const hasPdfStructureEditor =
+    operation.id === 'metadata-write' || operation.id === 'bookmarks-write'
+  const basicFields = standaloneKind
+    ? []
+    : operation.fields.filter(
+        (field) =>
+          !field.advanced &&
+          !(operation.id === 'metadata-write' && field.name === 'metadata') &&
+          !(operation.id === 'bookmarks-write' && field.name === 'bookmarks'),
+      )
   const advancedFields = standaloneKind
     ? []
     : operation.fields.filter((field) => field.advanced && !field.customEditor)
@@ -1166,11 +1176,23 @@ function Workbench({
                     />
                   ))}
               </div>
-            ) : !standaloneKind ? (
+            ) : !standaloneKind && !hasPdfStructureEditor ? (
               <p className="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
                 This operation works with its default settings.
               </p>
             ) : null}
+            {operation.id === 'metadata-write' && (
+              <PdfMetadataEditor
+                value={String(fields.metadata ?? '{}')}
+                onChange={(value) => updateField('metadata', value)}
+              />
+            )}
+            {operation.id === 'bookmarks-write' && (
+              <PdfBookmarksEditor
+                value={String(fields.bookmarks ?? '[]')}
+                onChange={(value) => updateField('bookmarks', value)}
+              />
+            )}
             {standaloneKind && activeStandaloneSettings && (
               <OverlayGroupsEditor
                 kind={standaloneKind}

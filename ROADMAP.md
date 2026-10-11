@@ -1,6 +1,6 @@
 # Gotenui roadmap
 
-- **Baseline:** v1.0.44 (document preview, HTML import, and compact appearance menu).
+- **Baseline:** v1.0.45 (visual PDF metadata and bookmark editors).
 - **Scope:** Remaining Gotenberg 8.x capabilities, correctness fixes, usability, and release readiness.
 - **Status:** Tracked implementation plan; checked tasks have shipped, remaining tasks are planned.
 
@@ -49,7 +49,14 @@ Versions are planning targets, **not commitments**. Each implementation patch sh
 | **v1.0.42** | Usability | Tabbed diagnostics and theme selection | Show Debug and Prometheus as accessible tabs within one dialog, keep the probe width stable while loading, and provide a System/Light/Dark dropdown that can clear the saved override. |
 | **v1.0.43** | Usability | Theme and sidebar icon polish | Add monitor/sun/moon indicators to the native theme select; use bookmark-specific read/write navigation icons and remove the decorative period from the sidebar brand. |
 | **v1.0.44** | Usability | Result preview, HTML import, and theme menu | Add an on-demand, browser-local PDF preview with download/new-tab fallback and explicit result cleanup, import HTML source into the editor, remove the Prometheus warning, and render icon-only theme control with icon-and-label menu choices. |
+| **v1.0.45** | Usability | Visual PDF structure editors | Add labelled XMP metadata fields and a nested bookmark editor to dedicated write operations. Keep lossless JSON fallback, validate bookmark titles/pages/trees server-side, and preserve Gotenberg multipart fields. |
 | **v1.1.0 candidate** | Release | Final review | Manual browser/mobile testing, documentation verification, and release assessment. |
+
+### v1.0.45 visual PDF editors
+
+The **Write metadata** route now offers dedicated Title, Author, Subject, Creator, Producer, Copyright, and comma-separated Keywords fields. These are encoded in Gotenberg's existing `metadata` JSON multipart field. Editing a common field preserves unknown and advanced XMP properties already present in the JSON. An alternate JSON editor remains available for all supported ExifTool values. Invalid JSON or non-text common values are not silently rewritten.
+
+The **Write bookmarks** route offers a nested tree with title, 1-based page number, add-child, add-top-level, delete, and sibling reordering controls. The same `bookmarks` form field is sent to Gotenberg. A raw JSON editor supports the documented per-filename bookmark maps as well as shared lists. A map is never silently converted into a shared list. The server validates titles, positive integer pages, nesting, and overall entry limits. Page numbers must refer to actual pages in each PDF, which Gotenberg checks during processing. Neither editor adds storage, server-side jobs, or new API routes. Automated tests cover both field serialization and invalid data. Manual browser verification remains outstanding.
 
 ### v1.0.44 document preview and appearance menu
 
