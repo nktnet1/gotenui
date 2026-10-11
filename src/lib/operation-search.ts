@@ -1,4 +1,4 @@
-import { OPERATIONS, type Operation } from '#/lib/operations'
+import { GROUPS, OPERATIONS, type Operation } from '#/lib/operations'
 
 /** Human search vocabulary; the UI is small enough that a search dependency isn't necessary. */
 const KEYWORDS: Readonly<Record<string, string>> = {
@@ -80,6 +80,14 @@ export function searchOperations(
     .filter((result) => result.score > 0)
     .sort((a, b) => b.score - a.score || a.order - b.order)
     .map((result) => result.operation)
+}
+
+/** Keep relevance order while searching. Only the empty-state suggestions are grouped. */
+export function visibleSearchOperations(query: string): Operation[] {
+  const ranked = searchOperations(query)
+  return query.trim()
+    ? ranked
+    : GROUPS.flatMap((group) => ranked.filter((operation) => operation.group === group))
 }
 
 export function nextSearchIndex(index: number, count: number, key: string): number | null {

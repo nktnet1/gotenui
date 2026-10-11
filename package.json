@@ -15,7 +15,8 @@
     "test:unit": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "test:smoke": "node scripts/smoke-production.ts"
+    "test:smoke": "node scripts/smoke-production.ts",
+    "test:browser": "node scripts/smoke-browser.ts"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.16",

@@ -1693,20 +1693,31 @@ function Workspace({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const headerSearchRef = useRef<HTMLButtonElement>(null)
+  const searchOpenedFromDrawer = useRef(false)
+  const openSearch = useCallback(() => {
+    searchOpenedFromDrawer.current = mobileOpen
+    setMobileOpen(false)
+    setSearchOpen(true)
+  }, [mobileOpen])
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false)
+    if (searchOpenedFromDrawer.current) {
+      searchOpenedFromDrawer.current = false
+      // The drawer's search trigger is hidden after closing it. Return keyboard
+      // focus to the visible mobile-header trigger instead.
+      requestAnimationFrame(() => headerSearchRef.current?.focus())
+    }
+  }, [])
   useEffect(() => {
     const handleSearchShortcut = (event: KeyboardEvent) => {
       if (!isSearchShortcut(event) || settingsOpen || diagnosticsOpen) return
       event.preventDefault()
-      setMobileOpen(false)
-      setSearchOpen(true)
+      if (!searchOpen) openSearch()
     }
     document.addEventListener('keydown', handleSearchShortcut)
     return () => document.removeEventListener('keydown', handleSearchShortcut)
-  }, [settingsOpen, diagnosticsOpen])
-  const openSearch = () => {
-    setMobileOpen(false)
-    setSearchOpen(true)
-  }
+  }, [settingsOpen, diagnosticsOpen, openSearch, searchOpen])
   const statusAbort = useRef<AbortController | null>(null)
   const refreshStatus = useCallback(async () => {
     statusAbort.current?.abort()
@@ -1786,6 +1797,7 @@ function Workspace({
               variant="ghost"
               size="icon"
               className="lg:hidden"
+              ref={headerSearchRef}
               aria-label="Search tools"
               aria-keyshortcuts="Control+K Meta+K"
               onClick={openSearch}
@@ -1961,10 +1973,10 @@ function Workspace({
       {searchOpen && (
         <OperationSearchDialog
           unavailableReason={(item) => unavailableOperationReason(status, item)}
-          onClose={() => setSearchOpen(false)}
+          onClose={closeSearch}
           onSelect={(id) => {
             setSelectedId(id)
-            setSearchOpen(false)
+            closeSearch()
           }}
         />
       )}

@@ -144,6 +144,21 @@ describe('dialog keyboard accessibility', () => {
     expect(invokingControl.focus).toHaveBeenCalledOnce()
   })
 
+  it('keeps body scroll locked during overlapping modal transitions', () => {
+    const doc = {
+      activeElement: control(),
+      body: { style: { overflow: 'auto' } },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    const first = activateModalFocus(dialog([control()]), vi.fn(), doc as unknown as Document)
+    const second = activateModalFocus(dialog([control()]), vi.fn(), doc as unknown as Document)
+    first()
+    expect(doc.body.style.overflow).toBe('hidden')
+    second()
+    expect(doc.body.style.overflow).toBe('auto')
+  })
+
   it('does not restore focus to an element removed while the modal was open', () => {
     const invokingControl = control()
     const parent = dialog([control()])

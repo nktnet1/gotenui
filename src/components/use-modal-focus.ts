@@ -38,6 +38,29 @@ export function containTabFocus(
   }
 }
 
+/** Multiple dialogs may overlap for one render while switching from the mobile drawer
+ * to search. Keep the page locked until the final dialog has closed.
+ */
+const scrollLocks = new WeakMap<Document, { count: number; previous: string }>()
+
+function holdScrollLock(doc: Document): () => void {
+  let lock = scrollLocks.get(doc)
+  if (!lock) {
+    lock = { count: 0, previous: doc.body.style.overflow }
+    scrollLocks.set(doc, lock)
+    doc.body.style.overflow = 'hidden'
+  }
+  lock.count++
+  return () => {
+    if (!lock) return
+    lock.count--
+    if (lock.count === 0) {
+      doc.body.style.overflow = lock.previous
+      scrollLocks.delete(doc)
+    }
+  }
+}
+
 /** Install dialog keyboard behaviour without depending on a particular modal component. */
 export function activateModalFocus(
   dialog: HTMLElement,
@@ -45,8 +68,7 @@ export function activateModalFocus(
   doc: Document = document,
 ): () => void {
   const previouslyFocused = doc.activeElement
-  const previousOverflow = doc.body.style.overflow
-  doc.body.style.overflow = 'hidden'
+  const releaseScrollLock = holdScrollLock(doc)
 
   const focusInside = () => (tabbableWithin(dialog)[0] ?? dialog).focus()
   focusInside()
@@ -67,7 +89,7 @@ export function activateModalFocus(
   return () => {
     doc.removeEventListener('keydown', onKeyDown, true)
     doc.removeEventListener('focusin', onFocusIn)
-    doc.body.style.overflow = previousOverflow
+    releaseScrollLock()
     if (previouslyFocused?.isConnected && 'focus' in previouslyFocused) {
       ;(previouslyFocused as HTMLElement).focus()
     }

@@ -2,7 +2,7 @@ import { ArrowUpRight, Search, X } from 'lucide-react'
 import { useEffect, useId, useMemo, useState } from 'react'
 import { operationIcon } from '#/components/operation-icons'
 import { useModalFocus } from '#/components/use-modal-focus'
-import { nextSearchIndex, searchOperations } from '#/lib/operation-search'
+import { nextSearchIndex, visibleSearchOperations } from '#/lib/operation-search'
 import { GROUPS, type Operation } from '#/lib/operations'
 import { cn } from '#/lib/utils'
 
@@ -18,11 +18,15 @@ export function OperationSearchDialog({ onSelect, onClose, unavailableReason }: 
   const [highlighted, setHighlighted] = useState(0)
   const id = useId()
   const dialogRef = useModalFocus(onClose)
-  const results = useMemo(() => {
-    const ranked = searchOperations(query)
-    // Keep DOM/keyboard order identical to the visible grouped order.
-    return GROUPS.flatMap((group) => ranked.filter((operation) => operation.group === group))
-  }, [query])
+  const searching = Boolean(query.trim())
+  const results = useMemo(() => visibleSearchOperations(query), [query])
+  const displayedGroups = searching
+    ? [{ key: 'matches', title: 'Matching tools', operations: results }]
+    : GROUPS.map((group) => ({
+        key: group,
+        title: `Popular · ${group}`,
+        operations: results.filter((operation) => operation.group === group),
+      }))
   const selectableIndices = results.flatMap((operation, index) =>
     unavailableReason?.(operation) ? [] : [index],
   )
@@ -113,15 +117,14 @@ export function OperationSearchDialog({ onSelect, onClose, unavailableReason }: 
               No tools found. Try another keyword.
             </p>
           ) : (
-            GROUPS.map((group) => {
-              const operations = results.filter((operation) => operation.group === group)
+            displayedGroups.map(({ key, title, operations }) => {
               if (operations.length === 0) return null
               return (
                 // A listbox's named group uses ARIA; a form fieldset would be misleading here.
                 // biome-ignore lint/a11y/useSemanticElements: Listbox grouping is not a form fieldset.
-                <div key={group} role="group" aria-label={group} className="mb-2 last:mb-0">
+                <div key={key} role="group" aria-label={title} className="mb-2 last:mb-0">
                   <p className="px-3 py-2 text-[11px] font-bold tracking-wide text-slate-500 uppercase dark:text-slate-400">
-                    {query.trim() ? group : `Popular · ${group}`}
+                    {title}
                   </p>
                   {operations.map((operation) => {
                     const index = results.indexOf(operation)
@@ -154,6 +157,7 @@ export function OperationSearchDialog({ onSelect, onClose, unavailableReason }: 
                             {operation.title}
                           </span>
                           <span className="block truncate text-xs text-slate-500 dark:text-slate-400">
+                            {searching && <>{operation.group} · </>}
                             {unavailable ?? operation.summary}
                           </span>
                         </span>

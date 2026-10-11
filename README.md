@@ -204,6 +204,12 @@ An exporter URL must be an absolute HTTP(S) URL ending exactly in `/metrics`, wi
 
 Legacy profiles still require the default `/prometheus/metrics` endpoint path; if an instance changes `PROMETHEUS_METRICS_PATH`, restore the default or use the new exporter option. This remains an **on-demand admin viewer**, not a metrics collector, production monitoring database, or substitute for your normal Prometheus/OTEL monitoring infrastructure.
 
+### Real-browser smoke checks (v1.0.7)
+
+Run `pnpm build` then `pnpm test:browser` to exercise the **built Nitro app** in headless Chrome/Chromium. The dependency-free check uses Node 24's WebSocket API to connect to the local Chrome DevTools Protocol; it launches and cleans up its own server, browser and temporary profile. Use `GOTENUI_BROWSER_BIN=/path/to/chrome` when Chrome is not installed in a standard Linux location. CI runs this after the production smoke checks.
+
+The browser suite covers desktop theme labels, Ctrl+K tool search and match relevance, keyboard selection, theme switching, horizontal overflow at 320/375/768/1440 pixels, mobile navigation and focus restoration, search from the mobile drawer, and scroll lock cleanup. Search results now preserve relevance order across operation categories instead of sorting category-first; categories remain grouped in the empty-query suggestions. **Neither browser smoke tests nor Docker tests replace manual cross-browser/accessibility audits.** The Chrome DevTools listener binds only to loopback and uses a disposable profile. A centrally enforced browser URL blocklist can prevent local browser execution; that is a test-environment restriction, not a passing check.
+
 ## Vercel and other serverless providers
 
 TanStack Start uses **SPA shell mode for its UI**, while Nitro produces server endpoints and the server runtime. Deploy the **whole project** to Vercel (the included `vercel.json` selects `tanstack-start`) or another Nitro-compatible runtime. **Do not deploy only a `static/` directory:** the `/api/gotenberg/*` routes are required.

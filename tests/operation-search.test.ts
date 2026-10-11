@@ -2,7 +2,12 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { OperationSearchDialog } from '#/components/operation-search-dialog'
-import { isSearchShortcut, nextSearchIndex, searchOperations } from '#/lib/operation-search'
+import {
+  isSearchShortcut,
+  nextSearchIndex,
+  searchOperations,
+  visibleSearchOperations,
+} from '#/lib/operation-search'
 import { OPERATIONS } from '#/lib/operations'
 
 describe('tool search', () => {
@@ -36,6 +41,17 @@ describe('tool search', () => {
     expect(searchOperations('PPTX')).toEqual(searchOperations('pptx'))
     expect(searchOperations('word impossiblekeyword')).toEqual([])
     expect(searchOperations('zzzzzzz')).toEqual([])
+  })
+
+  it('keeps match relevance ahead of navigation categories', () => {
+    expect(visibleSearchOperations('comp')[0]?.id).toBe('optimize')
+    expect(visibleSearchOperations('compliance')[0]?.id).toBe('pdfa')
+    expect(visibleSearchOperations('')).toEqual(
+      ['Convert', 'Capture', 'PDF tools'].flatMap((group) =>
+        OPERATIONS.filter((operation) => operation.featured && operation.group === group),
+      ),
+    )
+    expect(visibleSearchOperations('zzzzzzz')).toEqual([])
   })
 
   it('wraps arrow keys but leaves Home, End and editing keys available to the input', () => {

@@ -39,6 +39,8 @@ jobs:
           fi
       - name: Smoke-test built Nitro deployment without Docker
         run: pnpm test:smoke
+      - name: Exercise desktop and mobile UI in headless Chrome
+        run: pnpm test:browser
 
   integration:
     name: Integration tests (local Gotenberg Docker)

@@ -1,3 +1,10 @@
+## v1.0.7 — Browser-release smoke gate
+
+- [x] Keep command-palette relevance order across operation groups instead of overriding matches with group order.
+- [x] Add a no-dependency headless Chromium smoke suite for desktop/mobile navigation, theme, keyboard search, and horizontal overflow.
+- [x] Run the smoke suite in CI against the production Nitro build.
+- [ ] Cross-browser/manual assistive-technology testing (Safari, Firefox, VoiceOver, TalkBack), and authenticated edge-deployment reviews remain outside automated Chrome coverage.
+
 # Gotenui roadmap
 
 - **Baseline:** v1.0.48 (batch request transport regression coverage).
