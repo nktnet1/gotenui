@@ -19,10 +19,14 @@ describe('sidebar branding and bookmark navigation', () => {
         onSelect: vi.fn(),
         status: null,
         onSettings: vi.fn(),
+        onSearch: vi.fn(),
         mobileOpen: false,
         setMobileOpen: vi.fn(),
       }),
     )
+    expect(html).toContain('aria-label="Search tools"')
+    expect(html).toContain('aria-keyshortcuts="Control+K Meta+K"')
+    expect(html).not.toContain('type="search"')
     for (const [label, icon] of [
       ['Read bookmarks', 'lucide-bookmark-check'],
       ['Write bookmarks', 'lucide-bookmark-plus'],

@@ -1,7 +1,12 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { nextThemeMenuIndex, ThemeMenuOptions } from '#/components/color-theme-provider'
+import {
+  ColorThemeProvider,
+  nextThemeMenuIndex,
+  ThemeMenuOptions,
+  ThemeSelect,
+} from '#/components/color-theme-provider'
 
 describe('icon-and-label appearance menu', () => {
   it('renders accessible checked choices with the corresponding icons and visible text', () => {
@@ -26,6 +31,16 @@ describe('icon-and-label appearance menu', () => {
       expect(html).toContain('aria-checked="true"')
       expect(html.match(/lucide-check/g)).toHaveLength(1)
     }
+  })
+
+  it('shows the selected theme label alongside its icon at desktop widths', () => {
+    const html = renderToStaticMarkup(
+      createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
+    )
+    expect(html).toContain('aria-label="Appearance theme: System"')
+    expect(html).toContain('lucide-monitor')
+    expect(html).toContain('lg:w-28')
+    expect(html).toContain('lg:inline">System</span>')
   })
 
   it('supports ArrowUp/ArrowDown wrapping and Home/End navigation', () => {

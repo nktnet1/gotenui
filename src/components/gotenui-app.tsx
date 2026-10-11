@@ -1,40 +1,25 @@
-import type { LucideIcon } from 'lucide-react'
 import {
   Activity,
   ArrowDownToLine,
-  BookmarkCheck,
-  BookmarkPlus,
-  Camera,
   Check,
   CheckCircle2,
   ChevronDown,
   Clock3,
   Code2,
   ExternalLink,
-  FileArchive,
-  FileCode2,
   FileDown,
-  FileJson2,
-  FilePlus2,
-  FileStack,
-  Files,
   FileText,
   FileUp,
   Globe2,
-  Image,
   Layers3,
   ListPlus,
-  LockKeyhole,
   Menu,
   PanelLeftClose,
   Play,
   RefreshCw,
-  RotateCw,
   Search,
   Settings2,
   ShieldCheck,
-  Sparkles,
-  WandSparkles,
   X,
 } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -53,6 +38,8 @@ import { ConversionPresets } from '#/components/conversion-presets'
 import { DiagnosticsDialog } from '#/components/diagnostics-dialog'
 import { HtmlSourceImport } from '#/components/html-source-import'
 import { MarkdownAssetsEditor, type MarkdownSource } from '#/components/markdown-assets-editor'
+import { operationIcon } from '#/components/operation-icons'
+import { OperationSearchDialog } from '#/components/operation-search-dialog'
 import {
   defaultOverlay,
   OverlayGroupsEditor,
@@ -100,6 +87,7 @@ import {
   REQUEST_TIMEOUT_MS,
   type ServerStatus,
 } from '#/lib/gotenberg-client'
+import { isSearchShortcut } from '#/lib/operation-search'
 import {
   type FieldDefinition,
   GROUPS,
@@ -118,31 +106,6 @@ import {
 import { formatBytes } from '#/lib/security'
 import { cn } from '#/lib/utils'
 import { InputError, parseAdvanced } from '#/lib/validation'
-
-const ICONS: Record<string, LucideIcon> = {
-  'url-pdf': Globe2,
-  'html-pdf': Code2,
-  'markdown-pdf': FileCode2,
-  'office-pdf': FileUp,
-  'url-shot': Camera,
-  'html-shot': Image,
-  'markdown-shot': Image,
-  merge: Files,
-  split: FileStack,
-  pdfa: ShieldCheck,
-  optimize: WandSparkles,
-  rotate: RotateCw,
-  flatten: Layers3,
-  encrypt: LockKeyhole,
-  watermark: FileText,
-  stamp: FilePlus2,
-  'metadata-read': FileJson2,
-  'metadata-write': FileJson2,
-  'bookmarks-read': BookmarkCheck,
-  'bookmarks-write': BookmarkPlus,
-  embed: FileArchive,
-  'factur-x': FileText,
-}
 
 const EXAMPLE_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -283,6 +246,7 @@ export function Sidebar({
   onSelect,
   status,
   onSettings,
+  onSearch,
   mobileOpen,
   setMobileOpen,
 }: {
@@ -290,10 +254,10 @@ export function Sidebar({
   onSelect: (id: string) => void
   status: ServerStatus | null
   onSettings: () => void
+  onSearch: () => void
   mobileOpen: boolean
   setMobileOpen: (state: boolean) => void
 }) {
-  const [search, setSearch] = useState('')
   const navRef = useModalFocus<HTMLElement>(() => setMobileOpen(false), mobileOpen)
   useEffect(() => {
     if (!mobileOpen) return
@@ -306,15 +270,6 @@ export function Sidebar({
     closeOnDesktop()
     return () => desktop.removeEventListener('change', closeOnDesktop)
   }, [mobileOpen, setMobileOpen])
-  const matches = useMemo(
-    () =>
-      OPERATIONS.filter((operation) =>
-        `${operation.title} ${operation.summary}`
-          .toLowerCase()
-          .includes(search.toLowerCase().trim()),
-      ),
-    [search],
-  )
   return (
     <>
       {mobileOpen && (
@@ -354,24 +309,26 @@ export function Sidebar({
           </Button>
         </div>
         <div className="px-4 pt-5">
-          <div className="relative">
-            <Search className="absolute top-2.5 left-3 size-4 text-slate-500 dark:text-slate-400" />
-            <input
-              aria-label="Search operations"
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Find a tool..."
-              className="h-9 w-full rounded-lg border border-white/10 bg-white/5 pr-3 pl-9 text-xs text-white outline-none placeholder:text-slate-500 focus:border-sky-500 focus:ring-2 focus:ring-sky-900"
-            />
-          </div>
+          <button
+            type="button"
+            aria-label="Search tools"
+            aria-keyshortcuts="Control+K Meta+K"
+            onClick={onSearch}
+            className="flex h-10 w-full cursor-pointer items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 text-left text-xs text-slate-400 transition-colors hover:border-sky-500/50 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+          >
+            <Search aria-hidden="true" className="size-4 shrink-0" />
+            <span className="flex-1">Search tools...</span>
+            <kbd className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] font-medium">
+              Ctrl K
+            </kbd>
+          </button>
         </div>
         <nav
           className="nav-scroll mt-5 flex-1 overflow-y-auto px-3 pb-6"
           aria-label="Gotenberg operations"
         >
           {GROUPS.map((group) => {
-            const items = matches.filter((operation) => operation.group === group)
+            const items = OPERATIONS.filter((operation) => operation.group === group)
             if (items.length === 0) return null
             return (
               <div key={group} className="mb-5">
@@ -380,7 +337,7 @@ export function Sidebar({
                 </p>
                 <div className="space-y-0.5">
                   {items.map((operation) => {
-                    const Icon = ICONS[operation.id] ?? FileText
+                    const Icon = operationIcon(operation.id)
                     const active = selectedId === operation.id
                     return (
                       <button
@@ -415,9 +372,6 @@ export function Sidebar({
               </div>
             )
           })}
-          {matches.length === 0 && (
-            <p className="px-3 text-xs text-slate-400">No operations match that search.</p>
-          )}
         </nav>
         <div className="border-t border-white/10 px-4 py-4">
           <div className="mb-3 flex items-center gap-3 rounded-xl bg-white/5 p-3">
@@ -564,7 +518,7 @@ function JobPanel({
   onClearResult: () => void
   recent: Job[]
 }) {
-  const Icon = ICONS[operation.id] ?? FileText
+  const Icon = operationIcon(operation.id)
   return (
     <div className="space-y-5 lg:sticky lg:top-7 lg:self-start">
       <Card>
@@ -1501,9 +1455,24 @@ function Workspace({
   }, [batchQueue])
   const [mobileOpen, setMobileOpen] = useState(false)
   const operation = OPERATION_BY_ID.get(selectedId) ?? (OPERATIONS[0] as Operation)
-  const Icon = ICONS[operation.id] ?? FileText
+  const Icon = operationIcon(operation.id)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  useEffect(() => {
+    const handleSearchShortcut = (event: KeyboardEvent) => {
+      if (!isSearchShortcut(event) || settingsOpen || diagnosticsOpen) return
+      event.preventDefault()
+      setMobileOpen(false)
+      setSearchOpen(true)
+    }
+    document.addEventListener('keydown', handleSearchShortcut)
+    return () => document.removeEventListener('keydown', handleSearchShortcut)
+  }, [settingsOpen, diagnosticsOpen])
+  const openSearch = () => {
+    setMobileOpen(false)
+    setSearchOpen(true)
+  }
   const statusAbort = useRef<AbortController | null>(null)
   const refreshStatus = useCallback(async () => {
     statusAbort.current?.abort()
@@ -1559,6 +1528,7 @@ function Workspace({
           setMobileOpen(false)
           setSettingsOpen(true)
         }}
+        onSearch={openSearch}
         mobileOpen={mobileOpen}
         setMobileOpen={setMobileOpen}
       />
@@ -1577,6 +1547,17 @@ function Workspace({
             >
               <Menu className="size-5" />
             </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="lg:hidden"
+              aria-label="Search tools"
+              aria-keyshortcuts="Control+K Meta+K"
+              onClick={openSearch}
+            >
+              <Search className="size-5" />
+            </Button>
             <span className="hidden truncate text-xs font-semibold text-slate-500 dark:text-slate-400 sm:inline">
               Workspace
             </span>
@@ -1586,26 +1567,6 @@ function Workspace({
             </span>
           </div>
           <div className="flex items-center gap-1 sm:gap-2.5">
-            <div
-              className={cn(
-                'hidden items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold sm:flex',
-                status?.online
-                  ? 'border-emerald-100 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
-                  : 'border-amber-100 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
-              )}
-            >
-              <span
-                className={cn(
-                  'size-1.5 rounded-full',
-                  status?.online ? 'bg-emerald-500' : 'bg-amber-500',
-                )}
-              />
-              {status?.online
-                ? 'Service online'
-                : statusLoading
-                  ? 'Checking...'
-                  : 'Service offline'}
-            </div>
             <Button
               type="button"
               variant="ghost"
@@ -1644,10 +1605,6 @@ function Workspace({
         <main className="mx-auto max-w-[1390px] px-5 pt-8 pb-14 md:px-9 md:pt-10">
           <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
             <div className="max-w-2xl">
-              <p className="mb-3 flex items-center gap-2 text-[11px] font-extrabold tracking-[.16em] text-sky-700 dark:text-sky-300 uppercase">
-                <Sparkles className="size-3.5" />
-                Document operations
-              </p>
               <div className="flex items-center gap-3">
                 <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-sky-100 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400">
                   <Icon className="size-6" />
@@ -1657,7 +1614,7 @@ function Workspace({
                 </h1>
               </div>
               <p className="mt-3 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-                {operation.summary} Configure your output and let Gotenberg take care of the rest.
+                {operation.summary}
               </p>
             </div>
             <a
@@ -1761,12 +1718,17 @@ function Workspace({
             batchQueue={batchQueue}
           />
           <BrowserBatchQueuePanel queue={batchQueue} />
-          <footer className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 dark:border-slate-700 pt-5 text-[11px] text-slate-400">
-            <span>Gotenui · Stateless document workbench</span>
-            <span>TanStack Start · Serverless Gotenberg proxy</span>
-          </footer>
         </main>
       </div>
+      {searchOpen && (
+        <OperationSearchDialog
+          onClose={() => setSearchOpen(false)}
+          onSelect={(id) => {
+            setSelectedId(id)
+            setSearchOpen(false)
+          }}
+        />
+      )}
       {diagnosticsOpen && (
         <DiagnosticsDialog
           connection={connection}

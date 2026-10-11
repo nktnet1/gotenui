@@ -1,4 +1,4 @@
-import { Activity, Braces, ChartNoAxesColumn, RefreshCw, X } from 'lucide-react'
+import { Activity, Bug, ChartNoAxesColumn, RefreshCw, X } from 'lucide-react'
 import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from 'react'
 import { MetricsPanel } from '#/components/metrics-panel'
 import { Button } from '#/components/ui/button'
@@ -233,7 +233,7 @@ export function DiagnosticsDialog({
                     )}
                   >
                     {tab === 'debug' ? (
-                      <Braces className="size-4" />
+                      <Bug className="size-4" />
                     ) : (
                       <ChartNoAxesColumn className="size-4" />
                     )}
@@ -251,10 +251,13 @@ export function DiagnosticsDialog({
                 className="pt-5"
               >
                 <form onSubmit={(event) => void inspect(event)}>
-                  <Button type="submit" disabled={busy}>
-                    {busy && <RefreshCw className="size-4 animate-spin" />}
-                    <Braces className="size-4" />
-                    {busy ? 'Reading...' : 'Read debug info'}
+                  <Button type="submit" className="w-48 shrink-0" disabled={busy} aria-busy={busy}>
+                    {busy ? (
+                      <RefreshCw className="size-4 animate-spin" />
+                    ) : (
+                      <Bug className="size-4" />
+                    )}
+                    {busy ? 'Reading…' : 'Read debug info'}
                   </Button>
                 </form>
                 {error && (

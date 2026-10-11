@@ -12,6 +12,7 @@
 }
 
 :root {
+  overscroll-behavior: none;
   color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -24,6 +25,7 @@
 }
 
 body {
+  overscroll-behavior: none;
   margin: 0;
   min-width: 320px;
   font-family: var(--font-sans);
@@ -55,6 +57,7 @@ button {
 .nav-scroll {
   scrollbar-width: thin;
   scrollbar-color: #294056 transparent;
+  overscroll-behavior: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

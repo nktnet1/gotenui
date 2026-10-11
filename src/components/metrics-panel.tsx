@@ -1,4 +1,4 @@
-import { ClipboardCopy, Download, RefreshCw } from 'lucide-react'
+import { ChartNoAxesColumn, ClipboardCopy, Download, RefreshCw } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
@@ -84,9 +84,13 @@ export function MetricsPanel({ connection, active }: Props) {
   return (
     <div>
       <form onSubmit={(event) => void readMetrics(event)}>
-        <Button type="submit" disabled={busy}>
-          {busy && <RefreshCw className="size-4 animate-spin" />}
-          {busy ? 'Reading...' : metrics ? 'Refresh metrics' : 'Read metrics'}
+        <Button type="submit" className="w-48 shrink-0" disabled={busy} aria-busy={busy}>
+          {busy ? (
+            <RefreshCw className="size-4 animate-spin" />
+          ) : (
+            <ChartNoAxesColumn className="size-4" />
+          )}
+          {busy ? 'Reading…' : metrics ? 'Refresh metrics' : 'Read metrics'}
         </Button>
       </form>
       {error && (
