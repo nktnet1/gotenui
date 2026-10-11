@@ -12,7 +12,7 @@ import {
 describe('browser color theme preference', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('shows only the System icon in the collapsed theme menu', () => {
+  it('shows the System icon on mobile and includes its label on desktop', () => {
     const html = renderToStaticMarkup(
       createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
     )
@@ -22,7 +22,8 @@ describe('browser color theme preference', () => {
     expect(html).toContain('aria-expanded="false"')
     expect(html).toContain('lucide-monitor')
     expect(html).not.toContain('<select')
-    expect(html).not.toContain('>System</')
+    expect(html).toContain('lg:w-28')
+    expect(html).toContain('class="hidden text-xs font-semibold lg:inline">System</span>')
     expect(html).not.toContain('lucide-chevron-down')
     expect(html).toContain('aria-hidden="true"')
   })

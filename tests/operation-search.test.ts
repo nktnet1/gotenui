@@ -30,6 +30,9 @@ describe('tool search', () => {
 
   it('allows prefixes, requires every search word and ignores unmatched queries', () => {
     expect(searchOperations('comp')[0]?.id).toBe('optimize')
+    expect(searchOperations('compr')[0]?.id).toBe('optimize')
+    expect(searchOperations('compli')[0]?.id).toBe('pdfa')
+    expect(searchOperations('compliance')[0]?.id).toBe('pdfa')
     expect(searchOperations('PPTX')).toEqual(searchOperations('pptx'))
     expect(searchOperations('word impossiblekeyword')).toEqual([])
     expect(searchOperations('zzzzzzz')).toEqual([])

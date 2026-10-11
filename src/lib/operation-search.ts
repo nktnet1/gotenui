@@ -41,8 +41,12 @@ function tokenScore(token: string, text: string, weight: number): number {
   if (text === token) return weight + 4
   const words = text.split(' ')
   if (words.includes(token)) return weight + 3
-  if (words.some((word) => word.startsWith(token))) return weight + 1
-  return 0
+  // Prefer closer prefix completions (e.g. "compress" over "compliance" for "comp").
+  let bestPrefix = 0
+  for (const word of words) {
+    if (word.startsWith(token)) bestPrefix = Math.max(bestPrefix, token.length / word.length)
+  }
+  return bestPrefix ? weight + 1 + bestPrefix : 0
 }
 
 export function searchOperations(
