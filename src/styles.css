@@ -56,8 +56,11 @@ button {
 }
 .nav-scroll {
   scrollbar-width: thin;
-  scrollbar-color: #294056 transparent;
+  scrollbar-color: #cbd5e1 transparent;
   overscroll-behavior: none;
+}
+.dark .nav-scroll {
+  scrollbar-color: #294056 transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

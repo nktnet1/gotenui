@@ -39,4 +39,37 @@ describe('sidebar branding and bookmark navigation', () => {
       expect(button).not.toContain('lucide-braces')
     }
   })
+
+  it('has contrasting light and dark surfaces throughout the sidebar', () => {
+    const html = renderToStaticMarkup(
+      createElement(Sidebar, {
+        selectedId: 'bookmarks-read',
+        onSelect: vi.fn(),
+        status: null,
+        onSettings: vi.fn(),
+        onSearch: vi.fn(),
+        mobileOpen: false,
+        setMobileOpen: vi.fn(),
+      }),
+    )
+
+    const sidebar = html.match(/<aside\b[^>]*>/)?.[0] ?? ''
+    expect(sidebar).toContain('bg-white')
+    expect(sidebar).toContain('text-slate-900')
+    expect(sidebar).toContain('dark:bg-[#0c1b2c]')
+    expect(sidebar).toContain('dark:text-white')
+    expect(html).toContain('tracking-tight text-slate-900 dark:text-white')
+
+    const search = html.match(/<button[^>]*aria-label="Search tools"[^>]*>/)?.[0] ?? ''
+    expect(search).toContain('bg-slate-50')
+    expect(search).toContain('dark:bg-white/5')
+
+    const selected = html.match(/<button[^>]*aria-current="page"[^>]*>/)?.[0] ?? ''
+    expect(selected).toContain('bg-sky-100 text-sky-800')
+    expect(selected).toContain('dark:bg-sky-500/15 dark:text-sky-300')
+
+    expect(html).toContain('text-slate-800 dark:text-white">Gotenberg service')
+    expect(html).toContain('bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5')
+    expect(html).toContain('text-slate-600 transition-colors hover:bg-slate-100')
+  })
 })

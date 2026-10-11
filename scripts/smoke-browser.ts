@@ -291,6 +291,24 @@ async function run(): Promise<void> {
     )
     checks++
 
+    await page.evaluate("document.querySelector('button[aria-haspopup=menu]').click()")
+    await page.waitUntil("document.querySelector('[role=menu]') !== null", 'appearance menu')
+    await page.evaluate(
+      "[...document.querySelectorAll('[role=menuitemradio]')].find(el => el.textContent.includes('Light')).click()",
+    )
+    await page.waitUntil(
+      "!document.documentElement.classList.contains('dark')",
+      'light theme selection',
+    )
+    const sidebarBackground =
+      "getComputedStyle(document.querySelector('#gotenui-navigation')).backgroundColor"
+    const lightSidebar = await page.evaluate(sidebarBackground)
+    assert.equal(lightSidebar, 'rgb(255, 255, 255)', 'Light sidebar must be white.')
+    const sidebarText =
+      "getComputedStyle(document.querySelector('#gotenui-navigation nav button:not([aria-current])')).color"
+    const lightSidebarText = await page.evaluate(sidebarText)
+    checks++
+
     await page.evaluate(
       'document.querySelector(\'aside button[aria-label="Search tools"]\').focus()',
     )
@@ -341,6 +359,16 @@ async function run(): Promise<void> {
     await page.waitUntil(
       "document.documentElement.classList.contains('dark')",
       'dark theme selection',
+    )
+    assert.equal(
+      await page.evaluate(sidebarBackground),
+      'rgb(12, 27, 44)',
+      'Dark sidebar must use the original navy surface.',
+    )
+    assert.notEqual(
+      await page.evaluate(sidebarText),
+      lightSidebarText,
+      'Sidebar navigation text must adapt to the selected theme.',
     )
     checks++
 

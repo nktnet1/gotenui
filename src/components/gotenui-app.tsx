@@ -169,8 +169,10 @@ export function Brand({ compact = false }: { compact?: boolean }) {
       </div>
       {!compact && (
         <div>
-          <p className="text-[19px] font-extrabold tracking-tight text-white">Gotenui</p>
-          <p className="mt-[-2px] text-[10px] font-medium tracking-[.13em] text-slate-400">
+          <p className="text-[19px] font-extrabold tracking-tight text-slate-900 dark:text-white">
+            Gotenui
+          </p>
+          <p className="mt-[-2px] text-[10px] font-medium tracking-[.13em] text-slate-500 dark:text-slate-400">
             GOTENBERG WORKSPACE
           </p>
         </div>
@@ -297,18 +299,18 @@ export function Sidebar({
         tabIndex={mobileOpen ? -1 : undefined}
         aria-label={mobileOpen ? 'Navigation menu' : undefined}
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-[270px] flex-col bg-[#0c1b2c] text-white shadow-2xl transition-transform lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-40 flex w-[270px] flex-col border-r border-slate-200 bg-white text-slate-900 shadow-xl shadow-slate-900/5 transition-transform dark:border-white/10 dark:bg-[#0c1b2c] dark:text-white dark:shadow-2xl dark:shadow-black/30 lg:translate-x-0',
           mobileOpen ? 'visible translate-x-0' : 'invisible -translate-x-full lg:visible',
         )}
       >
-        <div className="flex items-center justify-between border-b border-white/8 px-6 py-6">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-6 dark:border-white/10">
           <Brand />
           <Button
             variant="ghost"
             size="icon"
             type="button"
             aria-label="Close menu"
-            className="text-slate-300 lg:hidden"
+            className="text-slate-600 dark:text-slate-300 lg:hidden"
             onClick={() => setMobileOpen(false)}
           >
             <PanelLeftClose className="size-5" />
@@ -320,11 +322,11 @@ export function Sidebar({
             aria-label="Search tools"
             aria-keyshortcuts="Control+K Meta+K"
             onClick={onSearch}
-            className="flex h-10 w-full cursor-pointer items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 text-left text-xs text-slate-400 transition-colors hover:border-sky-500/50 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+            className="flex h-10 w-full cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-left text-xs text-slate-600 transition-colors hover:border-sky-300 hover:bg-sky-50 hover:text-sky-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-white/10 dark:bg-white/5 dark:text-slate-400 dark:hover:border-sky-500/50 dark:hover:bg-white/10 dark:hover:text-white"
           >
             <Search aria-hidden="true" className="size-4 shrink-0" />
             <span className="flex-1">Search tools...</span>
-            <kbd className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] font-medium">
+            <kbd className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-medium dark:border-white/10 dark:bg-white/5">
               Ctrl K
             </kbd>
           </button>
@@ -358,27 +360,29 @@ export function Sidebar({
                           setMobileOpen(false)
                         }}
                         className={cn(
-                          'group flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-[10px] text-left text-[13px] font-medium transition-colors',
+                          'group flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-[10px] text-left text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500',
                           unavailable
-                            ? 'cursor-not-allowed text-slate-600 opacity-60'
+                            ? 'cursor-not-allowed text-slate-400 dark:text-slate-600'
                             : active
-                              ? 'bg-sky-500/15 text-sky-300'
-                              : 'text-slate-400 hover:bg-white/7 hover:text-white',
+                              ? 'bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300'
+                              : 'text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/7 dark:hover:text-white',
                         )}
                       >
                         <Icon
                           className={cn(
                             'size-4 shrink-0',
                             active
-                              ? 'text-sky-400'
-                              : 'text-slate-500 dark:text-slate-400 group-hover:text-slate-300',
+                              ? 'text-sky-600 dark:text-sky-400'
+                              : 'text-slate-500 group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-300',
                           )}
                         />
                         <span className="flex-1 truncate">{operation.title}</span>
                         {unavailable ? (
-                          <span className="text-[9px] text-amber-300">N/A</span>
+                          <span className="text-[9px] text-amber-700 dark:text-amber-300">N/A</span>
                         ) : (
-                          active && <span className="size-1.5 rounded-full bg-sky-400" />
+                          active && (
+                            <span className="size-1.5 rounded-full bg-sky-600 dark:bg-sky-400" />
+                          )
                         )}
                       </button>
                     )
@@ -388,17 +392,21 @@ export function Sidebar({
             )
           })}
         </nav>
-        <div className="border-t border-white/10 px-4 py-4">
-          <div className="mb-3 flex items-center gap-3 rounded-xl bg-white/5 p-3">
+        <div className="border-t border-slate-200 px-4 py-4 dark:border-white/10">
+          <div className="mb-3 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5">
             <span
               className={cn(
                 'relative flex size-2 shrink-0 rounded-full',
-                status?.online ? 'bg-emerald-400' : 'bg-amber-400',
+                status?.online
+                  ? 'bg-emerald-500 dark:bg-emerald-400'
+                  : 'bg-amber-500 dark:bg-amber-400',
               )}
             />
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-white">Gotenberg service</p>
-              <p className="truncate text-[11px] text-slate-400">
+              <p className="text-xs font-semibold text-slate-800 dark:text-white">
+                Gotenberg service
+              </p>
+              <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">
                 {status
                   ? status.online
                     ? `Online · ${status.version}`
@@ -410,7 +418,7 @@ export function Sidebar({
           </div>
           <button
             type="button"
-            className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-xs font-medium text-slate-400 transition-colors hover:bg-white/7 hover:text-white"
+            className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 dark:text-slate-400 dark:hover:bg-white/7 dark:hover:text-white"
             onClick={onSettings}
           >
             <Settings2 className="size-4" />
