@@ -1695,6 +1695,9 @@ function Workspace({
   }, [batchQueue])
   const [mobileOpen, setMobileOpen] = useState(false)
   const operation = OPERATION_BY_ID.get(selectedId) ?? (OPERATIONS[0] as Operation)
+  useEffect(() => {
+    document.title = `${operation.title} · Gotenui`
+  }, [operation.title])
   const Icon = operationIcon(operation.id)
   const unavailableReason = unavailableOperationReason(status, operation)
   const supportsOptimization = !status?.online || versionAtLeast(status.version, 36) !== false

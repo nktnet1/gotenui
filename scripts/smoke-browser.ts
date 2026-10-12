@@ -281,6 +281,8 @@ async function run(): Promise<void> {
         throw error
       })
     checks++
+    assert.equal(await page.evaluate('document.title'), 'Website to PDF · Gotenui')
+    checks++
 
     assert.equal(
       await page.evaluate(
@@ -349,6 +351,7 @@ async function run(): Promise<void> {
       "document.querySelector('h1')?.textContent?.includes('Optimize PDFs')",
       'search selection',
     )
+    await page.waitUntil("document.title === 'Optimize PDFs · Gotenui'", 'search tool title')
     checks++
 
     await page.evaluate("document.querySelector('button[aria-haspopup=menu]').click()")
