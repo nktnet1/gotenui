@@ -1,5 +1,5 @@
-# Local test deployment; the server-side proxy reaches Gotenberg on the Docker network.
-# Bind to localhost by default; optional Basic Auth is configured below.
+# Local deployment. Gotenui reaches Gotenberg on the Docker network.
+# The UI binds to localhost. Optional Basic Auth is configured below.
 services:
   gotenberg:
     image: gotenberg/gotenberg:8
