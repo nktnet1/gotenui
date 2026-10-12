@@ -54,7 +54,7 @@ export function verifyAppBasicAuth(
   return timingSafeEqual(receivedHash, expectedHash)
 }
 
-/** Returning a response from Nitro middleware terminates the request before routing. */
+/** Return a challenge when site-wide authentication is configured and not satisfied. */
 export function appBasicAuthChallenge(
   authorization: string | null,
   env: Environment = process.env,

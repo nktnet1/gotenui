@@ -17,7 +17,8 @@ Open <http://localhost:3100>. The public Gotenberg demo is selected by default u
 | --- | --- |
 | `src/components/` | React interface and reusable controls |
 | `src/lib/` | Operations, validation, client requests and shared logic |
-| `server/` | Nitro API routes, authentication and request middleware |
+| `src/start.ts` | Global request middleware and optional site authentication |
+| `src/routes/api/` | Gotenberg proxy API endpoints |
 | `tests/` | Vitest unit and Docker integration tests |
 | `scripts/` | Production and browser smoke tests |
 | `deploy/` | Example Docker Compose deployment |
