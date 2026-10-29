@@ -25,6 +25,8 @@ Open <http://localhost:3100>. The public Gotenberg demo is selected by default u
 
 The browser sends conversions through `/api/gotenberg/*`. The server validates requests, checks the configured upstream allowlist and forwards them to Gotenberg. Gotenui has no database, persistent job queue or document storage.
 
+For tag-driven GitHub releases and container publishing, see [Releasing](RELEASING.md).
+
 ## Checks
 
 | Command | Purpose |
