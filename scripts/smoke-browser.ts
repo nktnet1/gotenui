@@ -5,9 +5,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
+import { Readable, Writable } from 'node:stream'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
+import { ChromeDevToolsPipe } from './chrome-devtools.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = resolve(root, '.output/server/index.mjs')
@@ -19,116 +21,42 @@ const chromium = [
   '/opt/google/chrome/chrome',
 ].find((path) => path && existsSync(path))
 
-type CdpReply = {
-  id?: number
-  result?: Record<string, unknown>
-  error?: { message: string }
-}
-
-type PendingCommand = {
-  resolve: (value: Record<string, unknown>) => void
-  reject: (error: Error) => void
-  timeout: ReturnType<typeof setTimeout>
-}
-
 class BrowserPage {
-  private socket: WebSocket
-  private id = 0
-  private pending = new Map<number, PendingCommand>()
   private sessionId?: string
+  private readonly devtools: ChromeDevToolsPipe
 
-  constructor(socket: WebSocket) {
-    this.socket = socket
-    socket.addEventListener('message', (event) => {
-      const response = JSON.parse(String(event.data)) as CdpReply
-      if (response.id === undefined) return
-      const waiter = this.pending.get(response.id)
-      if (!waiter) return
-      this.pending.delete(response.id)
-      clearTimeout(waiter.timeout)
-      if (response.error) waiter.reject(new Error(response.error.message))
-      else waiter.resolve(response.result ?? {})
-    })
-    socket.addEventListener('close', () => {
-      for (const waiter of this.pending.values()) {
-        clearTimeout(waiter.timeout)
-        waiter.reject(new Error('Chrome disconnected.'))
-      }
-      this.pending.clear()
-    })
+  private constructor(devtools: ChromeDevToolsPipe) {
+    this.devtools = devtools
   }
 
-  static async connect(url: string): Promise<BrowserPage> {
-    const socket = new WebSocket(url)
+  static async connect(browser: ChildProcess): Promise<BrowserPage> {
+    const input = browser.stdio[3]
+    const output = browser.stdio[4]
+    assert.ok(input instanceof Writable && output instanceof Readable)
+    const page = new BrowserPage(new ChromeDevToolsPipe(input, output))
     try {
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(
-          () => reject(new Error('Chrome DevTools connection timed out.')),
-          8_000,
-        )
-        socket.addEventListener(
-          'open',
-          () => {
-            clearTimeout(timeout)
-            resolve()
-          },
-          { once: true },
-        )
-        socket.addEventListener(
-          'error',
-          () => {
-            clearTimeout(timeout)
-            reject(new Error('Chrome DevTools connection failed.'))
-          },
-          { once: true },
-        )
-      })
-      const page = new BrowserPage(socket)
-      // The browser WebSocket works even when Chrome does not expose /json/list.
-      const { targetInfos } = await page.command('Target.getTargets')
-      assert.ok(Array.isArray(targetInfos), 'Chrome did not expose debugging targets.')
-      const target = targetInfos.find(
-        (value: unknown): value is { type: 'page'; targetId: string } =>
-          value !== null &&
-          typeof value === 'object' &&
-          'type' in value &&
-          value.type === 'page' &&
-          'targetId' in value &&
-          typeof value.targetId === 'string',
-      )
-      assert.ok(target, 'Chrome did not create a debugging page target.')
+      // Creating the target explicitly avoids racing Chrome's initial blank tab.
+      const { targetId } = await page.command('Target.createTarget', { url: 'about:blank' }, 20_000)
+      assert.ok(typeof targetId === 'string', 'Chrome did not create a debugging page target.')
       const { sessionId } = await page.command('Target.attachToTarget', {
-        targetId: target.targetId,
+        targetId,
         flatten: true,
       })
       assert.ok(typeof sessionId === 'string', 'Chrome did not attach to the page target.')
       page.sessionId = sessionId
       return page
     } catch (error) {
-      if (socket.readyState === WebSocket.OPEN) socket.close()
+      page.close()
       throw error
     }
   }
 
-  async command(
+  command(
     method: string,
     params: Record<string, unknown> = {},
+    timeoutMs?: number,
   ): Promise<Record<string, unknown>> {
-    const id = ++this.id
-    return new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error(`Chrome DevTools command timed out: ${method}`))
-      }, 8_000)
-      this.pending.set(id, { resolve, reject, timeout })
-      try {
-        this.socket.send(JSON.stringify({ id, method, params, sessionId: this.sessionId }))
-      } catch (error) {
-        clearTimeout(timeout)
-        this.pending.delete(id)
-        reject(error instanceof Error ? error : new Error('Cannot send to Chrome DevTools.'))
-      }
-    })
+    return this.devtools.command(method, params, this.sessionId, timeoutMs)
   }
 
   async evaluate(expression: string): Promise<unknown> {
@@ -187,7 +115,7 @@ class BrowserPage {
   }
 
   close() {
-    this.socket.close()
+    this.devtools.close()
   }
 }
 
@@ -222,23 +150,6 @@ async function waitForEndpoint(
     await sleep(100)
   }
   throw new Error(`Process did not open ${url}: ${logs()}`)
-}
-
-async function waitForChromeDevTools(
-  child: ChildProcess,
-  endpoint: () => string | undefined,
-  logs: () => string,
-): Promise<string> {
-  const deadline = Date.now() + 20_000
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(`Chrome exited before announcing DevTools: ${logs()}`)
-    }
-    const url = endpoint()
-    if (url) return url
-    await sleep(100)
-  }
-  throw new Error(`Chrome did not announce DevTools: ${logs()}`)
 }
 
 async function terminate(child: ChildProcess): Promise<void> {
@@ -284,32 +195,27 @@ async function run(): Promise<void> {
       '--no-default-browser-check',
       '--disable-background-networking',
       `--user-data-dir=${temp}`,
-      '--remote-debugging-port=0',
-      '--remote-debugging-address=127.0.0.1',
-      '--remote-allow-origins=*',
-      'about:blank',
+      '--remote-debugging-pipe',
     ],
-    { stdio: ['ignore', 'ignore', 'pipe'] },
+    { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] },
   )
   let chromeLogs = ''
-  let chromeEndpoint: string | undefined
+  assert.ok(browser.stderr, 'Chrome did not expose its stderr pipe.')
   browser.stderr.on('data', (data: Buffer) => {
     chromeLogs = `${chromeLogs}${data.toString()}`.slice(-4_000)
-    chromeEndpoint ??= chromeLogs.match(
-      /DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[^\s]+)/,
-    )?.[1]
   })
   let page: BrowserPage | undefined
   let checks = 0
   try {
     const origin = `http://127.0.0.1:${appPort}`
     await waitForEndpoint(`${origin}/`, app, () => logs)
-    const endpoint = await waitForChromeDevTools(
-      browser,
-      () => chromeEndpoint,
-      () => chromeLogs,
-    )
-    page = await BrowserPage.connect(endpoint)
+    try {
+      page = await BrowserPage.connect(browser)
+    } catch (error) {
+      throw new Error(`Chrome DevTools failed to start: ${chromeLogs || '(no stderr)'}`, {
+        cause: error,
+      })
+    }
     await page.command('Page.enable')
     await page.command('Runtime.enable')
     await page.resize(1440)
