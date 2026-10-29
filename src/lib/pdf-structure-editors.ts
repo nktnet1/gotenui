@@ -11,6 +11,52 @@ export const METADATA_TEXT_FIELDS = [
 export type MetadataTextKey = (typeof METADATA_TEXT_FIELDS)[number]['name']
 export type MetadataKey = MetadataTextKey | 'Keywords'
 
+/** Match Gotenberg 8.39's ExifTool option and filesystem pseudo-tag protections. */
+const EXIFTOOL_OPTIONS = new Set([
+  'addtagsfromfile',
+  'alltagsfromfile',
+  'api',
+  'argfile',
+  'charset',
+  'common_args',
+  'config',
+  'csv',
+  'diff',
+  'echo',
+  'efile',
+  'execute',
+  'ext',
+  'fileorder',
+  'geotag',
+  'geosync',
+  'htmldump',
+  'if',
+  'j',
+  'json',
+  'lang',
+  'listitem',
+  'o',
+  'out',
+  'p',
+  'php',
+  'require',
+  'srcfile',
+  'stay_open',
+  'tagsfromfile',
+  'textout',
+  'use',
+  'w',
+  'wm',
+  'xmlformat',
+])
+const EXIFTOOL_FILESYSTEM_TAGS = new Set([
+  'filename',
+  'directory',
+  'hardlink',
+  'symlink',
+  'filepermissions',
+])
+
 export function metadataObject(text: string): Record<string, unknown> {
   let value: unknown
   try {
@@ -20,6 +66,17 @@ export function metadataObject(text: string): Record<string, unknown> {
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Metadata must be a JSON object, not an array or null.')
+  }
+  for (const key of Object.keys(value)) {
+    if (!/^[a-zA-Z0-9_.:][a-zA-Z0-9\-_.:]*$/.test(key)) {
+      throw new Error(`Metadata key "${key}" contains unsupported characters.`)
+    }
+    if (!key.includes(':') && EXIFTOOL_OPTIONS.has(key.toLowerCase())) {
+      throw new Error(`Metadata key "${key}" is an ExifTool option. Use a group prefix.`)
+    }
+    if (EXIFTOOL_FILESYSTEM_TAGS.has(key.split(':').at(-1)?.toLowerCase() ?? '')) {
+      throw new Error(`Metadata key "${key}" is not a writable PDF metadata tag.`)
+    }
   }
   return value as Record<string, unknown>
 }

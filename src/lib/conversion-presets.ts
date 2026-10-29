@@ -1,4 +1,5 @@
 import * as v from 'valibot'
+import { parseConsoleMessageTypes } from '#/lib/official-form-fields'
 import { OPERATION_BY_ID, type Operation, operationDefaults } from '#/lib/operations'
 
 /** Only public, non-sensitive, repeatable operation settings may enter localStorage. */
@@ -36,7 +37,7 @@ const SAFE_TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
   waitDelay: /^\d+(?:\.\d+)?(?:ms|s|m)$/,
 }
 
-/** Deliberately exclude URL, password, JSON and free text fields from persisted presets. */
+/** Exclude secrets and free-form JSON; the bounded Chromium message enum is safe to persist. */
 export function reusableFieldNames(operation: Operation): string[] {
   return operation.fields
     .filter(
@@ -44,6 +45,7 @@ export function reusableFieldNames(operation: Operation): string[] {
         field.kind === 'toggle' ||
         field.kind === 'select' ||
         field.kind === 'number' ||
+        field.kind === 'console-message-types' ||
         (field.kind === 'text' && Object.hasOwn(SAFE_TEXT_FIELDS, field.name)),
     )
     .map((field) => field.name)
@@ -67,7 +69,13 @@ export function capturePresetFields(
     }
     if (typeof value !== 'string') throw new Error(`Invalid ${definition.label} preset value.`)
     if (value.length > 100) throw new Error(`Invalid ${definition.label} preset value.`)
-    if (definition.kind === 'select') {
+    if (definition.kind === 'console-message-types') {
+      try {
+        parseConsoleMessageTypes(value)
+      } catch {
+        throw new Error(`Invalid ${definition.label} preset value.`)
+      }
+    } else if (definition.kind === 'select') {
       if (!definition.options?.includes(value))
         throw new Error(`Invalid ${definition.label} preset value.`)
     } else if (definition.kind === 'number') {

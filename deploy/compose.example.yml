@@ -2,7 +2,7 @@
 # The UI binds to localhost. Optional Basic Auth is configured below.
 services:
   gotenberg:
-    image: gotenberg/gotenberg:8
+    image: gotenberg/gotenberg:8.39.0
     restart: unless-stopped
     expose:
       - "3000"

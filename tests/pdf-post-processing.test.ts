@@ -305,12 +305,12 @@ describe('Single-request PDF post-processing', () => {
     )
   })
 
-  test('rejects PDF/A 1/2 with attachments, bad Factur-X combinations and missing XML', () => {
-    for (const pdfa of ['PDF/A-1b', 'PDF/A-2b']) {
+  test('only PDF/A-3 supports attachments and Factur-X, including on Gotenberg 8.39', () => {
+    for (const pdfa of ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-4']) {
       assert.throws(
         () =>
           form('url-pdf', { fields: { url: 'https://example.com', pdfa } }, { embeds: [first] }),
-        /do not support embedded attachments/,
+        /Only PDF\/A-3 supports embedded attachments/,
       )
       assert.throws(
         () =>

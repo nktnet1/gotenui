@@ -228,6 +228,16 @@ function upstreamConversionHeaders(
   return headers
 }
 
+/** Preserve Gotenberg's diagnostic headers, not arbitrary upstream response headers. */
+function copyUpstreamDiagnostics(upstream: Response, headers: Headers): void {
+  const trace = upstream.headers.get('gotenberg-trace')
+  if (trace) headers.set('Gotenberg-Trace', trace)
+  const version = upstream.headers.get('gotenberg-version')
+  if (version && version.length <= 80 && /^v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version)) {
+    headers.set('Gotenberg-Version', version)
+  }
+}
+
 async function upstreamErrorText(response: Response): Promise<string> {
   const reader = response.body?.getReader()
   if (!reader) return `Gotenberg returned HTTP ${response.status}.`
@@ -426,16 +436,14 @@ export async function proxyConversionRequest(
       ...safeResponseHeaders,
       'Content-Type': 'text/plain; charset=utf-8',
     })
-    const trace = upstream.headers.get('gotenberg-trace')
-    if (trace) headers.set('Gotenberg-Trace', trace)
+    copyUpstreamDiagnostics(upstream, headers)
     return new Response(await upstreamErrorText(upstream), {
       status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
       headers,
     })
   }
   const headers = new Headers(safeResponseHeaders)
-  const trace = upstream.headers.get('gotenberg-trace')
-  if (trace) headers.set('Gotenberg-Trace', trace)
+  copyUpstreamDiagnostics(upstream, headers)
   if (upstream.status === 204 || upstream.status === 202) {
     await upstream.body?.cancel().catch(() => {})
     if (!payload.webhook) {

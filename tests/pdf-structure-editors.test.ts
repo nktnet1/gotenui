@@ -61,6 +61,42 @@ describe('visual metadata fields', () => {
     expect(submittedField('metadata-write', 'metadata', raw)).toBe(raw)
   })
 
+  it('blocks ExifTool option aliases and filesystem side effects on old Gotenberg instances', () => {
+    for (const key of [
+      'j',
+      'J',
+      'json',
+      'CSV',
+      'addTagsFromFile',
+      'allTagsFromFile',
+      'XMP:HardLink',
+      'System:FileName',
+      '-config',
+    ]) {
+      const raw = JSON.stringify({ [key]: '/etc/passwd' })
+      expect(() => metadataObject(raw)).toThrow(/Metadata key/)
+      expect(() => submittedField('metadata-write', 'metadata', raw)).toThrow(/Metadata key/)
+      expect(() =>
+        validatePayload({
+          operation: 'url-pdf',
+          fields: { url: 'https://example.test' },
+          advanced: {},
+          postProcess: { metadata: raw },
+        }),
+      ).toThrow(/Metadata key/)
+    }
+
+    const grouped = '{"XMP:j":"legitimate","XMP-dc:json":"tag"}'
+    expect(metadataObject(grouped)).toEqual({ 'XMP:j': 'legitimate', 'XMP-dc:json': 'tag' })
+    expect(() =>
+      validatePayload({
+        operation: 'url-pdf',
+        fields: { url: 'https://example.test' },
+        advanced: { metadata: '{"j":"file"}' },
+      }),
+    ).toThrow(/Metadata key/)
+  })
+
   it('renders common fields with a separate JSON mode and accessible control labels', () => {
     const html = renderToStaticMarkup(
       createElement(PdfMetadataEditor, { value: '{"Author":"Author"}', onChange: vi.fn() }),

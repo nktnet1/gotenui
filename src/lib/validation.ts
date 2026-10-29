@@ -7,7 +7,11 @@ import {
 } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
 import { OFFICE_EXTENSION_SET } from '#/lib/office-formats'
-import { parseIgnoredDomains, parseStatusCodes } from '#/lib/official-form-fields'
+import {
+  parseConsoleMessageTypes,
+  parseIgnoredDomains,
+  parseStatusCodes,
+} from '#/lib/official-form-fields'
 import { isFieldVisible, OPERATION_BY_ID, type Operation } from '#/lib/operations'
 import {
   configuredOverlays,
@@ -294,7 +298,13 @@ function validatePostProcessSettings(operation: Operation, payload: ConversionPa
       if (overlay.options) requireJsonObject(overlay.options, `${label} options`)
     }
   }
-  if (settings.metadata) requireJsonObject(settings.metadata, 'PDF metadata')
+  if (settings.metadata) {
+    try {
+      metadataObject(settings.metadata)
+    } catch (error) {
+      throw new InputError(error instanceof Error ? error.message : 'Invalid PDF metadata.')
+    }
+  }
   if (settings.embedsMetadata) validatedAttachmentMetadata(settings.embedsMetadata)
 }
 
@@ -372,9 +382,9 @@ function validatePostProcessFiles(
   }
   if (
     (embedded.length || remote.embedded) &&
-    ['PDF/A-1b', 'PDF/A-2b'].includes(String(payload?.fields.pdfa))
+    ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-4'].includes(String(payload?.fields.pdfa))
   ) {
-    throw new InputError('PDF/A-1b and PDF/A-2b do not support embedded attachments. Use PDF/A-3b.')
+    throw new InputError('Only PDF/A-3 supports embedded attachments. Use PDF/A-3b.')
   }
   const allNames = new Set<string>()
   for (const kind of OVERLAY_KINDS) {
@@ -464,7 +474,10 @@ function validatePostProcessFiles(
   if (Boolean(files.facturxXml) !== Boolean(settings?.facturxConformanceLevel)) {
     throw new InputError('Factur-X requires both a local XML upload and a conformance level.')
   }
-  if (files.facturxXml && ['PDF/A-1b', 'PDF/A-2b'].includes(String(payload?.fields.pdfa))) {
+  if (
+    files.facturxXml &&
+    ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-4'].includes(String(payload?.fields.pdfa))
+  ) {
     throw new InputError('Factur-X requires PDF/A-3.')
   }
 }
@@ -788,7 +801,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     'singlePage',
     'preferCssPageSize',
     'generateDocumentOutline',
-    'generateTaggedPdf',
+    'failOnConsoleMessageTypes',
     'failOnHttpStatusCodes',
     'failOnResourceHttpStatusCodes',
     'ignoreResourceHttpStatusDomains',
@@ -797,12 +810,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     'skipNetworkIdleEvent',
     'skipNetworkAlmostIdleEvent',
   ]
-  const chromiumPdfOnly = [
-    'singlePage',
-    'preferCssPageSize',
-    'generateTaggedPdf',
-    'generateDocumentOutline',
-  ]
+  const chromiumPdfOnly = ['singlePage', 'preferCssPageSize', 'generateDocumentOutline']
   const officeOnly = [
     'password',
     'exportOnlyNotesPages',
@@ -847,6 +855,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     if (
       (!chromium && chromiumOnly.includes(name)) ||
       (!chromiumPdf && chromiumPdfOnly.includes(name)) ||
+      (!chromiumPdf && !office && name === 'generateTaggedPdf') ||
       (!office && officeOnly.includes(name))
     ) {
       throw new InputError(`Advanced field ${name} is not supported for ${operation.title}.`)
@@ -1000,6 +1009,15 @@ export function validatePayload(input: unknown): {
           throw new InputError(error instanceof Error ? error.message : 'Invalid domain names.')
         }
       }
+      if (value && field.kind === 'console-message-types') {
+        try {
+          parseConsoleMessageTypes(value)
+        } catch (error) {
+          throw new InputError(
+            error instanceof Error ? error.message : 'Invalid console message types.',
+          )
+        }
+      }
     }
   }
   for (const field of operation.fields) {
@@ -1036,9 +1054,10 @@ export function validatePayload(input: unknown): {
   ) {
     throw new InputError('Split interval must be a positive whole number.')
   }
-  if (definitions.has('metadata') && payload.fields.metadata) {
+  const metadata = payload.fields.metadata ?? payload.advanced.metadata
+  if (metadata) {
     try {
-      metadataObject(String(payload.fields.metadata ?? ''))
+      metadataObject(String(metadata))
     } catch (error) {
       throw new InputError(error instanceof Error ? error.message : 'Invalid PDF metadata.')
     }
@@ -1095,7 +1114,7 @@ export function validatePayload(input: unknown): {
   validateChromiumDocuments(operation, payload)
   validateConversionOptions(operation, payload)
   validatePostProcessSettings(operation, payload)
-  if (PDF_CONVERSION_IDS.has(operation.id) || operation.id === 'pdfa') {
+  if (definitions.has('pdfa')) {
     const pdfa = payload.fields.pdfa ?? payload.advanced.pdfa
     const pdfua = payload.fields.pdfua ?? payload.advanced.pdfua
     const userPassword = payload.postProcess?.userPassword ?? payload.advanced.userPassword
@@ -1104,7 +1123,9 @@ export function validatePayload(input: unknown): {
       throw new InputError('PDF/A and PDF encryption cannot be combined.')
     }
     if (pdfa === 'PDF/A-1b' && pdfua === true) {
-      throw new InputError('PDF/UA is not supported with PDF/A-1b. Use PDF/A-2b or PDF/A-3b.')
+      throw new InputError(
+        'PDF/UA is not supported with PDF/A-1b. Use PDF/A-2b, PDF/A-3b or PDF/A-4.',
+      )
     }
   }
   if (operation.id === 'encrypt' && !payload.fields.userPassword && !payload.fields.ownerPassword) {

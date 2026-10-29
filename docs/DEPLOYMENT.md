@@ -2,6 +2,16 @@
 
 Gotenui needs a running Gotenberg 8.x instance and a server runtime for its same-origin API proxy. The UI alone cannot make conversions.
 
+Gotenberg **8.39.0+** is recommended for the latest conversion controls and security fixes. PDF/A-4 and Chromium console-message checks require 8.39, while LibreOffice tagged PDF export requires 8.38. The example Compose configuration pins 8.39.0 for reproducibility; update the image tag as security releases arrive.
+
+### Securing untrusted conversions
+
+Gotenberg 8.32+ does **not** deny private-IP outbound requests by default. If users can submit untrusted URLs, HTML, remote files, documents or webhook destinations, configure the Gotenberg container with `--chromium-deny-private-ips`, `--libreoffice-deny-private-ips`, `--api-download-from-deny-private-ips` and `--webhook-deny-private-ips` as appropriate. Check any configured allow-list patterns: matching entries bypass the private-IP checks. Internal network access may need a deliberately scoped exception.
+
+Gotenberg 8.38 isolates Chromium cookies and storage between conversions by default. Do not enable `--chromium-shared-browser-context` on a multi-user instance; that flag restores the previous shared-session behaviour. The Gotenui proxy does not replace the backend's outbound-network policy or security updates.
+
+Gotenberg 8.39 fixes an ExifTool metadata-writing vulnerability. Gotenui rejects known ExifTool option aliases and filesystem pseudo-tags in its metadata editors, but **upgrading Gotenberg is still required** to obtain the full backend fix. Since 8.38, Gotenberg's `--api-body-limit` counts multipart headers and boundaries too, so allow some headroom beyond the maximum file size.
+
 ## Docker Compose
 
 From the repository root:
@@ -37,19 +47,19 @@ Vercel and other Nitro-compatible platforms must deploy both the UI and the `/ap
 
 ## Environment variables
 
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `PUBLIC_GOTENBERG_DEFAULT_URL` | Browser's initial Gotenberg URL | `https://demo.gotenberg.dev` |
-| `PUBLIC_GOTENUI_MAX_UPLOAD_BYTES` | Browser upload limit in bytes | `4000000` |
-| `GOTENBERG_ALLOWED_URLS` | Comma-separated list of permitted upstream base URLs | Public demo only |
-| `GOTENUI_BASIC_AUTH_USERNAME` | Optional site-wide Basic Auth username | Unset |
-| `GOTENUI_BASIC_AUTH_PASSWORD` | Optional site-wide Basic Auth password | Unset |
-| `GOTENUI_MAX_REQUEST_BYTES` | Maximum complete request size in bytes | `4200000` |
-| `GOTENUI_MAX_RESPONSE_BYTES` | Maximum streamed output size in bytes | `100000000` |
-| `GOTENUI_SERVER_CONNECTIONS` | Server-managed connection profiles as a JSON array | Unset |
-| `GOTENUI_PUBLIC_ORIGIN` | Browser-visible origin behind a TLS-terminating proxy | Request origin |
-| `GOTENUI_SHOW_DEBUG` | Show the debug action | `true` |
-| `GOTENUI_SHOW_METRICS` | Show the metrics action | `true` |
+| Variable                          | Purpose                                               | Default                      |
+| --------------------------------- | ----------------------------------------------------- | ---------------------------- |
+| `PUBLIC_GOTENBERG_DEFAULT_URL`    | Browser's initial Gotenberg URL                       | `https://demo.gotenberg.dev` |
+| `PUBLIC_GOTENUI_MAX_UPLOAD_BYTES` | Browser upload limit in bytes                         | `4000000`                    |
+| `GOTENBERG_ALLOWED_URLS`          | Comma-separated list of permitted upstream base URLs  | Public demo only             |
+| `GOTENUI_BASIC_AUTH_USERNAME`     | Optional site-wide Basic Auth username                | Unset                        |
+| `GOTENUI_BASIC_AUTH_PASSWORD`     | Optional site-wide Basic Auth password                | Unset                        |
+| `GOTENUI_MAX_REQUEST_BYTES`       | Maximum complete request size in bytes                | `4200000`                    |
+| `GOTENUI_MAX_RESPONSE_BYTES`      | Maximum streamed output size in bytes                 | `100000000`                  |
+| `GOTENUI_SERVER_CONNECTIONS`      | Server-managed connection profiles as a JSON array    | Unset                        |
+| `GOTENUI_PUBLIC_ORIGIN`           | Browser-visible origin behind a TLS-terminating proxy | Request origin               |
+| `GOTENUI_SHOW_DEBUG`              | Show the debug action                                 | `true`                       |
+| `GOTENUI_SHOW_METRICS`            | Show the metrics action                               | `true`                       |
 
 The `PUBLIC_` variables are **build-time settings**. Supply them as Docker build arguments or Compose `build.args`, then rebuild to change them. They are visible to browsers and must not contain secrets. All other settings above are server runtime variables.
 

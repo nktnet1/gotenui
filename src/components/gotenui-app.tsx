@@ -89,6 +89,11 @@ import {
   type ServerStatus,
 } from '#/lib/gotenberg-client'
 import { OFFICE_ACCEPT } from '#/lib/office-formats'
+import {
+  CONSOLE_MESSAGE_TYPES,
+  parseConsoleMessageTypes,
+  updateConsoleMessageTypes,
+} from '#/lib/official-form-fields'
 import { unavailableOperationReason, versionAtLeast } from '#/lib/operation-availability'
 import { isSearchShortcut } from '#/lib/operation-search'
 import {
@@ -430,18 +435,57 @@ export function Sidebar({
   )
 }
 
-function FieldControl({
+export function FieldControl({
   field,
   value,
   onChange,
   disabled = false,
+  backendVersion,
 }: {
   field: FieldDefinition
   value: string | boolean | undefined
   onChange: (value: string | boolean) => void
   disabled?: boolean
+  backendVersion?: string
 }) {
   const id = useId()
+  const unsupported =
+    field.minGotenbergMinor !== undefined &&
+    versionAtLeast(backendVersion, field.minGotenbergMinor) === false
+  const inactive = disabled || unsupported
+  if (field.kind === 'console-message-types') {
+    let selected: string[] = []
+    try {
+      if (typeof value === 'string' && value) selected = parseConsoleMessageTypes(value)
+    } catch {
+      // An invalid saved draft can still be corrected without crashing the editor.
+    }
+    const encoded = selected.length ? JSON.stringify(selected) : ''
+    return (
+      <fieldset className="col-span-full space-y-2">
+        <legend className="text-sm font-medium">{field.label}</legend>
+        <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50/50 p-3 sm:grid-cols-3 dark:border-slate-700 dark:bg-slate-800/40">
+          {CONSOLE_MESSAGE_TYPES.map((type) => (
+            <label key={type} className="flex items-center gap-2 text-sm capitalize">
+              <input
+                type="checkbox"
+                checked={selected.includes(type)}
+                onChange={(event) =>
+                  onChange(updateConsoleMessageTypes(encoded, type, event.target.checked))
+                }
+                disabled={disabled || (unsupported && !selected.includes(type))}
+                className="size-4 accent-sky-600"
+              />
+              {type}
+            </label>
+          ))}
+        </div>
+        {field.description && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">{field.description}</p>
+        )}
+      </fieldset>
+    )
+  }
   if (field.kind === 'toggle')
     return (
       <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 px-3.5 py-3">
@@ -453,7 +497,12 @@ function FieldControl({
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{field.description}</p>
           )}
         </div>
-        <Switch id={id} checked={value === true} onCheckedChange={onChange} disabled={disabled} />
+        <Switch
+          id={id}
+          checked={value === true}
+          onCheckedChange={onChange}
+          disabled={disabled || (unsupported && value !== true)}
+        />
       </div>
     )
   return (
@@ -470,11 +519,15 @@ function FieldControl({
             value={String(value ?? '')}
             onChange={(event) => onChange(event.target.value)}
             required={field.required}
-            disabled={disabled}
+            disabled={inactive}
           >
             {!field.required && <option value="">Default / not set</option>}
             {field.options?.map((option) => (
-              <option key={option} value={option}>
+              <option
+                key={option}
+                value={option}
+                disabled={option === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false}
+              >
                 {field.optionLabels?.[option] ?? option}
               </option>
             ))}
@@ -491,7 +544,7 @@ function FieldControl({
           value={String(value ?? '')}
           onChange={(event) => onChange(event.target.value)}
           required={field.required}
-          disabled={disabled}
+          disabled={inactive}
         />
       ) : (
         <Input
@@ -515,7 +568,7 @@ function FieldControl({
           value={String(value ?? (field.kind === 'color' ? '#7ffe7f' : ''))}
           onChange={(event) => onChange(event.target.value)}
           required={field.required}
-          disabled={disabled}
+          disabled={inactive}
         />
       )}
       {field.description && (
@@ -789,6 +842,7 @@ function Workbench({
   operation,
   unavailableReason,
   supportsOptimization,
+  backendVersion,
   recent,
   onCompleted,
   connection,
@@ -797,6 +851,7 @@ function Workbench({
   operation: Operation
   unavailableReason: string | null
   supportsOptimization: boolean
+  backendVersion?: string
   recent: Job[]
   onCompleted: (job: Job) => void
   connection: ConnectionChoice
@@ -1015,6 +1070,19 @@ function Workbench({
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
     const webhook = webhookPayload(webhookSettings, webhookInput)
     const selectedFields = activeOperationFields(operation, fields)
+    if (selectedFields.pdfa === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false) {
+      throw new Error('PDF/A-4 requires Gotenberg 8.39 or newer.')
+    }
+    if (selectedFields.failOnConsoleMessageTypes && versionAtLeast(backendVersion, 39) === false) {
+      throw new Error('Console message checks require Gotenberg 8.39 or newer.')
+    }
+    if (
+      operation.id === 'office-pdf' &&
+      selectedFields.generateTaggedPdf === true &&
+      versionAtLeast(backendVersion, 38) === false
+    ) {
+      throw new Error('LibreOffice PDF tagging requires Gotenberg 8.38 or newer.')
+    }
     if (!supportsOptimization) {
       delete selectedFields.optimizeImages
       delete selectedFields.imageQuality
@@ -1226,6 +1294,7 @@ function Workbench({
                 field={operation.fields[0] as FieldDefinition}
                 value={fields.url}
                 onChange={(value) => updateField('url', value)}
+                backendVersion={backendVersion}
               />
             )}
             {isSourceEditor && (
@@ -1309,6 +1378,7 @@ function Workbench({
                       field={field}
                       value={fields[field.name]}
                       onChange={(value) => updateField(field.name, value)}
+                      backendVersion={backendVersion}
                     />
                   ))}
               </div>
@@ -1426,6 +1496,7 @@ function Workbench({
                             field={field}
                             value={fields[field.name]}
                             onChange={(value) => updateField(field.name, value)}
+                            backendVersion={backendVersion}
                             disabled={
                               !supportsOptimization &&
                               ['optimizeImages', 'imageQuality'].includes(field.name)
@@ -1475,6 +1546,7 @@ function Workbench({
                         field={field}
                         value={fields[field.name]}
                         onChange={(value) => updateField(field.name, value)}
+                        backendVersion={backendVersion}
                       />
                     ))}
                   </div>
@@ -1973,6 +2045,7 @@ function Workspace({
             operation={operation}
             unavailableReason={unavailableReason}
             supportsOptimization={supportsOptimization}
+            backendVersion={status?.online ? status.version : undefined}
             recent={recent}
             onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
             connection={connection}

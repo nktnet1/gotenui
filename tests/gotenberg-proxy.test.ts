@@ -100,6 +100,7 @@ test('proxies only the operation path, revalidating fields before forwarding', a
         'Content-Type': 'application/pdf',
         'Content-Disposition': 'attachment; filename="converted.pdf"',
         'Gotenberg-Trace': 'trace-42',
+        'Gotenberg-Version': '8.39.0',
         'Set-Cookie': 'secret=1',
       },
     })
@@ -109,9 +110,40 @@ test('proxies only the operation path, revalidating fields before forwarding', a
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('content-type'), 'application/pdf')
   assert.equal(response.headers.get('gotenberg-trace'), 'trace-42')
+  assert.equal(response.headers.get('gotenberg-version'), '8.39.0')
   assert.equal(response.headers.get('set-cookie'), null)
   assert.equal(response.headers.get('cache-control'), 'no-store')
   assert.equal(await response.text(), '%PDF-1.7')
+})
+
+test('Chromium console errors retain HTTP 409 and the safe Gotenberg diagnostics', async () => {
+  const response = await proxyConversionRequest(
+    conversionRequest(),
+    async () =>
+      new Response('Console message error: warning from example', {
+        status: 409,
+        headers: {
+          'Gotenberg-Version': '8.39.0',
+          'Gotenberg-Trace': 'console-check-42',
+          'Set-Cookie': 'private-session=1',
+        },
+      }),
+  )
+  assert.equal(response.status, 409)
+  assert.equal(await response.text(), 'Console message error: warning from example')
+  assert.equal(response.headers.get('gotenberg-version'), '8.39.0')
+  assert.equal(response.headers.get('gotenberg-trace'), 'console-check-42')
+  assert.equal(response.headers.get('set-cookie'), null)
+
+  const invalidVersion = await proxyConversionRequest(
+    conversionRequest(),
+    async () =>
+      new Response('Bad Request', {
+        status: 400,
+        headers: { 'Gotenberg-Version': 'untrusted value' },
+      }),
+  )
+  assert.equal(invalidVersion.headers.get('gotenberg-version'), null)
 })
 
 test('validates uploaded PDFs and forwards only Gotenberg file fields', async () => {
@@ -466,11 +498,16 @@ test('Gotenberg request correlation is exposed on errors without forwarding cred
     async () =>
       new Response('Invalid conversion options', {
         status: 400,
-        headers: { 'Gotenberg-Trace': 'rejected-job-42', 'Set-Cookie': 'secret=1' },
+        headers: {
+          'Gotenberg-Trace': 'rejected-job-42',
+          'Gotenberg-Version': 'v8.39.0',
+          'Set-Cookie': 'secret=1',
+        },
       }),
   )
   assert.equal(response.status, 400)
   assert.equal(response.headers.get('gotenberg-trace'), 'rejected-job-42')
+  assert.equal(response.headers.get('gotenberg-version'), 'v8.39.0')
   assert.equal(response.headers.get('set-cookie'), null)
   assert.equal(await response.text(), 'Invalid conversion options')
 })
@@ -897,6 +934,7 @@ test('an asynchronous acceptance never forwards upstream download headers', asyn
           'Content-Disposition': 'inline; filename="malicious.html"',
           'Content-Type': 'text/html',
           'Gotenberg-Trace': 'async-job',
+          'Gotenberg-Version': '8.39.0',
         },
       }),
   )
@@ -904,6 +942,7 @@ test('an asynchronous acceptance never forwards upstream download headers', asyn
   assert.equal(response.headers.get('content-disposition'), null)
   assert.equal(response.headers.get('content-type'), null)
   assert.equal(response.headers.get('gotenberg-trace'), 'async-job')
+  assert.equal(response.headers.get('gotenberg-version'), '8.39.0')
 })
 
 test('Office merge accepts one PDF rather than a ZIP, unless splitting is also requested', async () => {

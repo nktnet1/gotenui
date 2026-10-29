@@ -3,9 +3,12 @@ import { test } from 'vitest'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { OFFICE_ACCEPT, OFFICE_EXTENSIONS } from '#/lib/office-formats'
 import {
+  CONSOLE_MESSAGE_TYPES,
   encodeOfficialField,
+  parseConsoleMessageTypes,
   parseIgnoredDomains,
   parseStatusCodes,
+  updateConsoleMessageTypes,
 } from '#/lib/official-form-fields'
 import { unavailableOperationReason, versionAtLeast } from '#/lib/operation-availability'
 import {
@@ -96,6 +99,124 @@ test('PDF image optimization is a typed native control across supported routes',
     assert.ok(!operation(id).fields.some(({ name }) => name === 'optimizeImages'))
     assert.throws(() => validatePayload(request(id, { optimizeImages: true })), /Unsupported field/)
   }
+})
+
+test('Gotenberg 8.39 supports PDF/A-4 in all PDF format routes except Factur-X', () => {
+  const routes = ['url-pdf', 'html-pdf', 'markdown-pdf', 'office-pdf', 'merge', 'split', 'pdfa']
+  for (const id of routes) {
+    const spec = operation(id)
+    assert.ok(spec.fields.find((field) => field.name === 'pdfa')?.options?.includes('PDF/A-4'))
+    assert.ok(
+      spec.fields.some((field) => field.name === 'pdfua'),
+      id,
+    )
+    const validated = validatePayload(
+      request(id, {
+        pdfa: 'PDF/A-4',
+        ...(id === 'split' ? { splitMode: 'pages', splitSpan: '1' } : {}),
+      }),
+    )
+    const files =
+      spec.input === 'office'
+        ? [doc('document.docx')]
+        : spec.input === 'pdf'
+          ? id === 'merge'
+            ? [pdf('a.pdf'), pdf('b.pdf')]
+            : [pdf('a.pdf')]
+          : []
+    const form = createGotenbergForm(validated.operation, validated.payload, files, [])
+    assert.equal(form.get('pdfa'), 'PDF/A-4', id)
+    assert.throws(() => validatePayload(request(id, { pdfa: 'PDF/A-4f' })), /Invalid option/)
+  }
+  assert.ok(
+    !operation('factur-x')
+      .fields.find((field) => field.name === 'pdfa')
+      ?.options?.includes('PDF/A-4'),
+  )
+})
+
+test('Gotenberg 8.38 LibreOffice tagging is distinct from PDF/UA', () => {
+  const spec = operation('office-pdf')
+  assert.equal(
+    spec.fields.find((field) => field.name === 'generateTaggedPdf')?.minGotenbergMinor,
+    38,
+  )
+  const validated = validatePayload(request(spec.id, { generateTaggedPdf: true, pdfua: false }))
+  const form = createGotenbergForm(spec, validated.payload, [doc('document.docx')], [])
+  assert.equal(form.get('generateTaggedPdf'), 'true')
+  assert.equal(form.get('pdfua'), 'false')
+  assert.doesNotThrow(() => validatePayload(request(spec.id, { generateTaggedPdf: false })))
+  for (const id of ['url-shot', 'html-shot', 'markdown-shot', 'merge', 'pdfa']) {
+    assert.ok(!operation(id).fields.some((field) => field.name === 'generateTaggedPdf'))
+    assert.throws(
+      () => validatePayload({ ...request(id), advanced: { generateTaggedPdf: true } }),
+      /not supported/,
+      id,
+    )
+  }
+})
+
+test('Gotenberg 8.39 console message types use the exact Chromium JSON array contract', () => {
+  assert.deepEqual(CONSOLE_MESSAGE_TYPES, ['log', 'debug', 'info', 'warning', 'error', 'assert'])
+  let current = ''
+  current = updateConsoleMessageTypes(current, 'warning', true)
+  current = updateConsoleMessageTypes(current, 'error', true)
+  assert.equal(current, '["warning","error"]')
+  assert.equal(updateConsoleMessageTypes(current, 'warning', true), current)
+  assert.equal(updateConsoleMessageTypes(current, 'warning', false), '["error"]')
+  assert.equal(updateConsoleMessageTypes('["error"]', 'error', false), '')
+  assert.deepEqual(parseConsoleMessageTypes('[]'), [])
+
+  for (const id of [
+    'url-pdf',
+    'html-pdf',
+    'markdown-pdf',
+    'url-shot',
+    'html-shot',
+    'markdown-shot',
+  ]) {
+    const spec = operation(id)
+    assert.equal(
+      spec.fields.find((field) => field.name === 'failOnConsoleMessageTypes')?.minGotenbergMinor,
+      39,
+      id,
+    )
+    const validated = validatePayload(request(id, { failOnConsoleMessageTypes: current }))
+    const form = createGotenbergForm(validated.operation, validated.payload, [], [])
+    assert.equal(form.get('failOnConsoleMessageTypes'), current, id)
+    const omitted = validatePayload(request(id, { failOnConsoleMessageTypes: '' }))
+    assert.equal(
+      createGotenbergForm(omitted.operation, omitted.payload, [], []).has(
+        'failOnConsoleMessageTypes',
+      ),
+      false,
+    )
+  }
+  for (const value of [
+    '"error"',
+    'null',
+    '{}',
+    '["warn"]',
+    '["error",1]',
+    '["error","error"]',
+    '[',
+    'true',
+  ]) {
+    assert.throws(
+      () => validatePayload(request('url-pdf', { failOnConsoleMessageTypes: value })),
+      /console message types|Console message types/i,
+      value,
+    )
+  }
+  assert.throws(
+    () => validatePayload(request('office-pdf', { failOnConsoleMessageTypes: '["error"]' })),
+    /Unsupported field/,
+  )
+  assert.throws(
+    () =>
+      validatePayload({ ...request('office-pdf'), advanced: { failOnConsoleMessageTypes: '[]' } }),
+    /not supported/,
+  )
 })
 
 test('Office compression has separate controls from post-conversion image optimization', () => {

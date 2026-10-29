@@ -9,6 +9,7 @@ export type FieldKind =
   | 'password'
   | 'http-codes'
   | 'hostnames'
+  | 'console-message-types'
   | 'color'
 export type OperationGroup = 'Convert' | 'Capture' | 'PDF tools'
 export type InputKind = 'url' | 'html' | 'markdown' | 'office' | 'pdf'
@@ -28,6 +29,7 @@ export type FieldDefinition = {
   integer?: boolean
   optionLabels?: Readonly<Record<string, string>>
   customEditor?: boolean
+  minGotenbergMinor?: number
   section?: 'processing' | 'compression' | 'reliability' | 'rendering' | 'watermark'
   when?: { name: string; equals: string | boolean }
 }
@@ -60,8 +62,9 @@ const pdfa: FieldDefinition = {
   name: 'pdfa',
   label: 'PDF/A standard',
   kind: 'select',
-  options: ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b'],
+  options: ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b', 'PDF/A-4'],
   advanced: true,
+  description: 'PDF/A-4 requires Gotenberg 8.39+ and the LibreOffice PDF engine.',
 }
 const pdfMetadata: FieldDefinition = {
   name: 'metadata',
@@ -275,6 +278,15 @@ const chromiumReliability: FieldDefinition[] = [
     label: 'Fail on browser console exceptions',
     kind: 'toggle',
     section: 'reliability',
+  },
+  {
+    name: 'failOnConsoleMessageTypes',
+    label: 'Fail on console message types',
+    kind: 'console-message-types',
+    section: 'reliability',
+    minGotenbergMinor: 39,
+    description:
+      'Fail with HTTP 409 when page JavaScript logs a selected message type (Gotenberg 8.39+). This does not include resource-loading failures.',
   },
   {
     name: 'skipNetworkIdleEvent',
@@ -805,6 +817,15 @@ export const OPERATIONS: readonly Operation[] = [
       },
       pdfa,
       pdfua,
+      {
+        name: 'generateTaggedPdf',
+        label: 'Generate accessible structure tags',
+        kind: 'toggle',
+        advanced: true,
+        minGotenbergMinor: 38,
+        description:
+          'Create a tagged PDF without claiming PDF/UA compliance (Gotenberg 8.38+). PDF/UA implies tagging.',
+      },
       ...officeOutput,
       ...officeCompression,
       ...optimizeImages,
@@ -856,6 +877,8 @@ export const OPERATIONS: readonly Operation[] = [
     ...pdfFiles,
     fields: [
       ...optimizeImages,
+      pdfa,
+      pdfua,
       { name: 'autoIndexBookmarks', label: 'Keep document bookmarks', kind: 'toggle' },
       pdfBookmarks,
       pdfMetadata,
@@ -900,6 +923,8 @@ export const OPERATIONS: readonly Operation[] = [
         when: { name: 'splitMode', equals: 'pages' },
       },
       ...optimizeImages,
+      pdfa,
+      pdfua,
     ],
     output: 'zip',
   },

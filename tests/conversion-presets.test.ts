@@ -64,6 +64,7 @@ describe('browser-local operation presets', () => {
       }
     }
     expect(reusableFieldNames(operation)).toContain('landscape')
+    expect(reusableFieldNames(operation)).toContain('failOnConsoleMessageTypes')
     expect(reusableFieldNames(operation)).not.toContain('url')
     for (const secretField of Object.keys(sensitive)) {
       expect(reusableFieldNames(operation)).not.toContain(secretField)
@@ -91,6 +92,26 @@ describe('browser-local operation presets', () => {
     const saved = upsertPreset([], operation, ' A4 print ', { ...sensitive, ...fields }, firstId)
     const serialized = JSON.stringify(saved)
     for (const secret of Object.values(sensitive)) expect(serialized).not.toContain(secret)
+  })
+
+  it('persists only validated Chromium console message selections', () => {
+    const fields = capturePresetFields(operation, {
+      failOnConsoleMessageTypes: '["warning","error"]',
+      pdfa: 'PDF/A-4',
+    })
+    expect(fields).toEqual({ pdfa: 'PDF/A-4', failOnConsoleMessageTypes: '["warning","error"]' })
+    const saved = upsertPreset([], operation, 'Console checks', fields, firstId)
+    const stored = storage()
+    expect(persistPresets(stored, saved)).toBe(true)
+    const [restored] = loadPresets(stored)
+    assert.ok(restored)
+    expect(applyPresetFields(operation, {}, restored)).toMatchObject(fields)
+
+    for (const invalid of ['not JSON', '["warn"]', '["error","error"]', '{"error":true}']) {
+      expect(() => capturePresetFields(operation, { failOnConsoleMessageTypes: invalid })).toThrow(
+        /Invalid/,
+      )
+    }
   })
 
   it('preserves safe Office viewer choices but excludes source passwords', () => {
