@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { Brand, Sidebar } from '#/components/gotenui-app'
+import { version as appVersion } from '../package.json'
 
 describe('sidebar branding and bookmark navigation', () => {
   it('shows the plain brand name without a decorative full stop', () => {
@@ -9,7 +10,8 @@ describe('sidebar branding and bookmark navigation', () => {
     expect(html).toContain('src="/gotenui-icon.svg"')
     expect(html).toContain('>Gotenui</p>')
     expect(html).not.toContain('Gotenui<span')
-    expect(html).toContain('GOTENBERG WORKSPACE')
+    expect(html).toContain(`>v${appVersion}</p>`)
+    expect(html).not.toContain('GOTENBERG WORKSPACE')
   })
 
   it('distinguishes reading from writing PDF bookmarks with semantic icons', () => {

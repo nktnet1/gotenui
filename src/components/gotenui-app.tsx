@@ -117,6 +117,7 @@ import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-
 import { formatBytes } from '#/lib/security'
 import { cn } from '#/lib/utils'
 import { InputError, parseAdvanced } from '#/lib/validation'
+import { version as appVersion } from '../../package.json'
 
 const EXAMPLE_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -178,7 +179,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
             Gotenui
           </p>
           <p className="mt-[-2px] text-[10px] font-medium tracking-[.13em] text-slate-500 dark:text-slate-400">
-            GOTENBERG WORKSPACE
+            v{appVersion}
           </p>
         </div>
       )}
@@ -1802,36 +1803,49 @@ function Workspace({
     return () => document.removeEventListener('keydown', handleSearchShortcut)
   }, [settingsOpen, diagnosticsOpen, openSearch, searchOpen])
   const statusAbort = useRef<AbortController | null>(null)
-  const refreshStatus = useCallback(async () => {
-    statusAbort.current?.abort()
-    const controller = new AbortController()
-    statusAbort.current = controller
-    setStatusLoading(true)
-    const timeout = window.setTimeout(() => controller.abort(), 7_000)
-    try {
-      const result = await getGotenbergStatus(connection, controller.signal)
-      if (!controller.signal.aborted) setStatus(result)
-    } catch {
-      if (statusAbort.current === controller) {
-        setStatus({
-          online: false,
-          version: 'Unavailable',
-          modules: [],
-          error: 'Connection test timed out.',
-        })
+  const refreshStatus = useCallback(
+    async (notify = false) => {
+      statusAbort.current?.abort()
+      const controller = new AbortController()
+      statusAbort.current = controller
+      setStatusLoading(true)
+      const timeout = window.setTimeout(() => controller.abort(), 7_000)
+      try {
+        const result = await getGotenbergStatus(connection, controller.signal)
+        if (!controller.signal.aborted) {
+          setStatus(result)
+          if (notify) {
+            if (result.online) toast.success('Gotenberg status refreshed - service online.')
+            else toast.error('Gotenberg status refreshed - service unavailable.')
+          }
+        }
+      } catch {
+        if (statusAbort.current === controller) {
+          setStatus({
+            online: false,
+            version: 'Unavailable',
+            modules: [],
+            error: 'Connection test timed out.',
+          })
+          if (notify) toast.error('Gotenberg status refresh timed out.')
+        }
+      } finally {
+        window.clearTimeout(timeout)
+        if (statusAbort.current === controller) {
+          statusAbort.current = null
+          setStatusLoading(false)
+        }
       }
-    } finally {
-      window.clearTimeout(timeout)
-      if (statusAbort.current === controller) {
-        statusAbort.current = null
-        setStatusLoading(false)
-      }
-    }
-  }, [connection])
+    },
+    [connection],
+  )
   useEffect(() => {
     setStatus(null)
     void refreshStatus()
-    const timer = window.setInterval(() => void refreshStatus(), 30_000)
+    const timer = window.setInterval(() => {
+      // An automatic poll must not cancel a manually requested refresh and its toast.
+      if (!statusAbort.current) void refreshStatus()
+    }, 30_000)
     return () => {
       window.clearInterval(timer)
       statusAbort.current?.abort()
@@ -1901,7 +1915,8 @@ function Workspace({
               variant="ghost"
               size="icon"
               aria-label="Refresh service status"
-              onClick={() => void refreshStatus()}
+              title="Recheck the selected Gotenberg connection's health, version, and modules"
+              onClick={() => void refreshStatus(true)}
               disabled={statusLoading}
             >
               <RefreshCw className={cn('size-4', statusLoading && 'animate-spin')} />

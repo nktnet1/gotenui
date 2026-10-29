@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { type ChildProcess, spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -13,6 +13,9 @@ import { ChromeDevToolsPipe } from './chrome-devtools.ts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = resolve(root, '.output/server/index.mjs')
+const { version: appVersion } = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
+  version: string
+}
 const chromium = [
   process.env.GOTENUI_BROWSER_BIN,
   '/usr/bin/google-chrome',
@@ -233,6 +236,60 @@ async function run(): Promise<void> {
       })
     checks++
     assert.equal(await page.evaluate('document.title'), 'Website to PDF · Gotenui')
+    checks++
+
+    assert.equal(
+      await page.evaluate(
+        `document.querySelector('#gotenui-navigation')?.textContent?.includes('v${appVersion}')`,
+      ),
+      true,
+      'Sidebar must display the app release version.',
+    )
+    checks++
+
+    const refreshButton = 'button[aria-label="Refresh service status"]'
+    await page.waitUntil(
+      `!document.querySelector('${refreshButton}')?.disabled`,
+      'initial background status check',
+    )
+    assert.equal(
+      await page.evaluate(`document.querySelector('${refreshButton}')?.getAttribute('title')`),
+      "Recheck the selected Gotenberg connection's health, version, and modules",
+      'Refresh button must explain its action on hover.',
+    )
+    assert.equal(
+      await page.evaluate("document.querySelectorAll('[data-sonner-toast]').length"),
+      0,
+      'Background status checks must not display notifications.',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const originalFetch = window.fetch.bind(window)
+      window.__smokeStatus = { online: true, version: '8.37.0', modules: [] }
+      window.fetch = (input, options) => String(input).startsWith('/api/gotenberg/status?')
+        ? Promise.resolve(Response.json(window.__smokeStatus))
+        : originalFetch(input, options)
+    })()`)
+    await page.evaluate(`document.querySelector('${refreshButton}').click()`)
+    await page.waitUntil(
+      "[...document.querySelectorAll('[data-sonner-toast][data-type=success]')].some(el => el.textContent.includes('Gotenberg status refreshed - service online.'))",
+      'manual refresh success toast',
+    )
+    await page.waitUntil(
+      `!document.querySelector('${refreshButton}')?.disabled`,
+      'manual refresh completion',
+    )
+    checks++
+
+    await page.evaluate(
+      `window.__smokeStatus = { online: false, version: 'Unavailable', modules: [] }`,
+    )
+    await page.evaluate(`document.querySelector('${refreshButton}').click()`)
+    await page.waitUntil(
+      "[...document.querySelectorAll('[data-sonner-toast][data-type=error]')].some(el => el.textContent.includes('Gotenberg status refreshed - service unavailable.'))",
+      'manual refresh unavailable toast',
+    )
     checks++
 
     assert.equal(
