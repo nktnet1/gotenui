@@ -187,6 +187,8 @@ async function run(): Promise<void> {
       PORT: String(appPort),
       NITRO_PORT: String(appPort),
       NITRO_HOST: '127.0.0.1',
+      GOTENUI_SHOW_DEBUG: 'true',
+      GOTENUI_SHOW_METRICS: 'true',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -283,6 +285,73 @@ async function run(): Promise<void> {
       false,
       'Theme selector must not use native browser tooltips.',
     )
+
+    const diagnosticsButton = 'button[aria-label="Open diagnostics"]'
+    await page.hover(diagnosticsButton)
+    await page.waitUntil(
+      `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes("Check the selected Gotenberg instance's health and available diagnostics"))`,
+      'shadcn diagnostics tooltip',
+    )
+    assert.equal(
+      await page.evaluate(
+        `document.querySelector(${JSON.stringify(diagnosticsButton)})?.hasAttribute('title')`,
+      ),
+      false,
+      'Diagnostics must not use a native browser tooltip.',
+    )
+    checks++
+
+    await page.evaluate(`document.querySelector(${JSON.stringify(diagnosticsButton)}).click()`)
+    await page.waitUntil(
+      "document.querySelector('#diagnostics-heading') !== null",
+      'diagnostics dialog',
+    )
+    const rightAlignedDiagnosticAction = `(() => {
+      const panel = [...document.querySelectorAll('[role="tabpanel"]')].find(el => !el.hidden)
+      const button = panel?.querySelector('form button[type="submit"]')
+      if (!panel || !button) return false
+      const panelBounds = panel.getBoundingClientRect()
+      const actionBounds = button.getBoundingClientRect()
+      return actionBounds.left > panelBounds.left + panelBounds.width / 2 &&
+        Math.abs(actionBounds.right - panelBounds.right) < 4
+    })()`
+    assert.equal(
+      await page.evaluate(rightAlignedDiagnosticAction),
+      true,
+      'Read debug info should align with the right edge of its panel.',
+    )
+    checks++
+    await page.evaluate(
+      `[...document.querySelectorAll('[role="tab"]')].find(el => el.textContent.includes('Prometheus')).click()`,
+    )
+    await page.waitUntil(
+      `document.querySelector('[role="tab"][aria-controls$="-metrics-panel"]')?.getAttribute('aria-selected') === 'true'`,
+      'Prometheus tab activation',
+    )
+    assert.equal(
+      await page.evaluate(rightAlignedDiagnosticAction),
+      true,
+      'Read metrics should align with the right edge of its panel.',
+    )
+    checks++
+    await page.resize(375)
+    const mobileDiagnosticAction = `(() => {
+      const panel = [...document.querySelectorAll('[role="tabpanel"]')].find(el => !el.hidden)
+      const button = panel?.querySelector('form button[type="submit"]')
+      if (!panel || !button) return false
+      const panelBounds = panel.getBoundingClientRect()
+      const actionBounds = button.getBoundingClientRect()
+      return Math.abs(actionBounds.width - panelBounds.width) < 4 &&
+        Math.abs(actionBounds.right - panelBounds.right) < 4
+    })()`
+    assert.equal(
+      await page.evaluate(mobileDiagnosticAction),
+      true,
+      'Diagnostic actions should span the panel on mobile.',
+    )
+    checks++
+    await page.resize(1440)
+    await page.evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()")
     assert.equal(
       await page.evaluate("document.querySelectorAll('[data-sonner-toast]').length"),
       0,
@@ -399,6 +468,27 @@ async function run(): Promise<void> {
     checks++
 
     assert.equal(lightSidebar, 'rgb(255, 255, 255)', 'Light sidebar must be white.')
+    const sourceEditorColors = `(() => {
+      const editor = document.querySelector('#source-editor')
+      if (!editor) return null
+      const style = getComputedStyle(editor)
+      return { background: style.backgroundColor, text: style.color }
+    })()`
+    for (const operationName of ['HTML to PDF', 'Markdown to PDF']) {
+      await page.evaluate(
+        `[...document.querySelectorAll('#gotenui-navigation nav button')].find(el => el.textContent.trim() === ${JSON.stringify(operationName)}).click()`,
+      )
+      await page.waitUntil(
+        `document.querySelector('h1')?.textContent?.includes(${JSON.stringify(operationName)}) && !!document.querySelector('#source-editor')`,
+        `${operationName} source editor in light mode`,
+      )
+      assert.deepEqual(
+        await page.evaluate(sourceEditorColors),
+        { background: 'rgb(255, 255, 255)', text: 'rgb(15, 23, 42)' },
+        `${operationName} source should use the light textarea theme.`,
+      )
+      checks++
+    }
     const sidebarText =
       "getComputedStyle(document.querySelector('#gotenui-navigation nav button:not([aria-current])')).color"
     const lightSidebarText = await page.evaluate(sidebarText)
@@ -484,6 +574,22 @@ async function run(): Promise<void> {
       'Tooltip should use a muted dark surface, not an inverted light background.',
     )
     checks++
+
+    for (const operationName of ['HTML to PDF', 'Markdown to PDF']) {
+      await page.evaluate(
+        `[...document.querySelectorAll('#gotenui-navigation nav button')].find(el => el.textContent.trim() === ${JSON.stringify(operationName)}).click()`,
+      )
+      await page.waitUntil(
+        `document.querySelector('h1')?.textContent?.includes(${JSON.stringify(operationName)}) && !!document.querySelector('#source-editor')`,
+        `${operationName} source editor in dark mode`,
+      )
+      assert.deepEqual(
+        await page.evaluate(sourceEditorColors),
+        { background: 'rgb(15, 23, 42)', text: 'rgb(241, 245, 249)' },
+        `${operationName} source should use the dark textarea theme.`,
+      )
+      checks++
+    }
 
     for (const width of [1440, 768, 375, 320]) {
       await page.resize(width)

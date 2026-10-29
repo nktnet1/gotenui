@@ -88,20 +88,27 @@ export function MetricsPanel({ connection, active }: Props) {
 
   return (
     <div>
-      <p className="mb-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
-        Server-managed connections can read a configured OpenTelemetry Prometheus exporter. Other
-        connections use the deprecated Gotenberg /prometheus/metrics endpoint.
-      </p>
-      <form onSubmit={(event) => void readMetrics(event)}>
-        <Button type="submit" className="w-48 shrink-0" disabled={busy} aria-busy={busy}>
-          {busy ? (
-            <RefreshCw className="size-4 animate-spin" />
-          ) : (
-            <ChartNoAxesColumn className="size-4" />
-          )}
-          {busy ? 'Reading…' : metrics ? 'Refresh metrics' : 'Read metrics'}
-        </Button>
-      </form>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+            Prometheus metrics
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+            Server-managed connections can read a configured OpenTelemetry Prometheus exporter.
+            Other connections use the deprecated Gotenberg /prometheus/metrics endpoint.
+          </p>
+        </div>
+        <form className="sm:shrink-0" onSubmit={(event) => void readMetrics(event)}>
+          <Button type="submit" className="w-full sm:w-48" disabled={busy} aria-busy={busy}>
+            {busy ? (
+              <RefreshCw className="size-4 animate-spin" />
+            ) : (
+              <ChartNoAxesColumn className="size-4" />
+            )}
+            {busy ? 'Reading…' : metrics ? 'Refresh metrics' : 'Read metrics'}
+          </Button>
+        </form>
+      </div>
       {error && (
         <p
           role="alert"

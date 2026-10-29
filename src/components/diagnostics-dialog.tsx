@@ -250,16 +250,31 @@ export function DiagnosticsDialog({
                 hidden={activeTab !== 'debug'}
                 className="pt-5"
               >
-                <form onSubmit={(event) => void inspect(event)}>
-                  <Button type="submit" className="w-48 shrink-0" disabled={busy} aria-busy={busy}>
-                    {busy ? (
-                      <RefreshCw className="size-4 animate-spin" />
-                    ) : (
-                      <Bug className="size-4" />
-                    )}
-                    {busy ? 'Reading…' : 'Read debug info'}
-                  </Button>
-                </form>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Runtime debug info
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                      Read the selected instance's current debug output.
+                    </p>
+                  </div>
+                  <form className="sm:shrink-0" onSubmit={(event) => void inspect(event)}>
+                    <Button
+                      type="submit"
+                      className="w-full sm:w-48"
+                      disabled={busy}
+                      aria-busy={busy}
+                    >
+                      {busy ? (
+                        <RefreshCw className="size-4 animate-spin" />
+                      ) : (
+                        <Bug className="size-4" />
+                      )}
+                      {busy ? 'Reading…' : 'Read debug info'}
+                    </Button>
+                  </form>
+                </div>
                 {error && (
                   <p
                     role="alert"

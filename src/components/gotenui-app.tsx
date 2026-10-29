@@ -1320,7 +1320,7 @@ function Workbench({
                   rows={14}
                   value={source}
                   onChange={(event) => setSource(event.target.value)}
-                  className="min-h-72 resize-y bg-[#0d1e2e] p-5 font-mono text-xs leading-6 text-sky-100 focus-visible:border-sky-500"
+                  className="min-h-72 resize-y p-5 font-mono text-xs leading-6 focus-visible:border-sky-500"
                 />
                 {operation.input === 'html' && <HtmlSourceImport onImport={setSource} />}
                 <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -1935,16 +1935,18 @@ function Workspace({
             </ButtonTooltip>
             <span className="mx-1 hidden h-5 w-px bg-slate-200 dark:bg-slate-700 sm:block" />
             <ThemeSelect />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setDiagnosticsOpen(true)}
-              aria-label="Open diagnostics"
-            >
-              <Activity className="size-4" />
-              <span className="hidden md:inline">Diagnostics</span>
-            </Button>
+            <ButtonTooltip description="Check the selected Gotenberg instance's health and available diagnostics">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setDiagnosticsOpen(true)}
+                aria-label="Open diagnostics"
+              >
+                <Activity className="size-4" />
+                <span className="hidden md:inline">Diagnostics</span>
+              </Button>
+            </ButtonTooltip>
             <ButtonTooltip description={connectionName}>
               <Button
                 type="button"

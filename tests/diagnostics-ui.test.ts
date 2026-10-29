@@ -41,8 +41,14 @@ describe('diagnostics visibility and accessible tabs', () => {
     expect(html).toContain('Read metrics')
     expect(html).toContain('lucide-bug')
     expect(html).toContain('lucide-chart-no-axes-column')
-    expect(html).toMatch(/w-48 shrink-0[^>]*>.*Read debug info<\/button>/)
-    expect(html).toMatch(/w-48 shrink-0[^>]*>.*Read metrics<\/button>/)
+    expect(html).toContain('Runtime debug info')
+    expect(html).toContain('Prometheus metrics')
+    expect(html).toMatch(
+      /<form class="sm:shrink-0"[^>]*>.*w-full sm:w-48[^>]*>.*Read debug info<\/button><\/form>/,
+    )
+    expect(html).toMatch(
+      /<form class="sm:shrink-0"[^>]*>.*w-full sm:w-48[^>]*>.*Read metrics<\/button><\/form>/,
+    )
     expect(html).not.toContain('lucide-braces')
     expect(html).not.toContain('Metrics may reveal internal instance details')
     expect(html).not.toContain('lucide-shield-alert')
