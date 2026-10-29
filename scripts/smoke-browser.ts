@@ -35,6 +35,7 @@ class BrowserPage {
   private socket: WebSocket
   private id = 0
   private pending = new Map<number, PendingCommand>()
+  private sessionId?: string
 
   constructor(socket: WebSocket) {
     this.socket = socket
@@ -59,29 +60,54 @@ class BrowserPage {
 
   static async connect(url: string): Promise<BrowserPage> {
     const socket = new WebSocket(url)
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error('Chrome DevTools connection timed out.')),
-        8_000,
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error('Chrome DevTools connection timed out.')),
+          8_000,
+        )
+        socket.addEventListener(
+          'open',
+          () => {
+            clearTimeout(timeout)
+            resolve()
+          },
+          { once: true },
+        )
+        socket.addEventListener(
+          'error',
+          () => {
+            clearTimeout(timeout)
+            reject(new Error('Chrome DevTools connection failed.'))
+          },
+          { once: true },
+        )
+      })
+      const page = new BrowserPage(socket)
+      // The browser WebSocket works even when Chrome does not expose /json/list.
+      const { targetInfos } = await page.command('Target.getTargets')
+      assert.ok(Array.isArray(targetInfos), 'Chrome did not expose debugging targets.')
+      const target = targetInfos.find(
+        (value: unknown): value is { type: 'page'; targetId: string } =>
+          value !== null &&
+          typeof value === 'object' &&
+          'type' in value &&
+          value.type === 'page' &&
+          'targetId' in value &&
+          typeof value.targetId === 'string',
       )
-      socket.addEventListener(
-        'open',
-        () => {
-          clearTimeout(timeout)
-          resolve()
-        },
-        { once: true },
-      )
-      socket.addEventListener(
-        'error',
-        () => {
-          clearTimeout(timeout)
-          reject(new Error('Chrome DevTools connection failed.'))
-        },
-        { once: true },
-      )
-    })
-    return new BrowserPage(socket)
+      assert.ok(target, 'Chrome did not create a debugging page target.')
+      const { sessionId } = await page.command('Target.attachToTarget', {
+        targetId: target.targetId,
+        flatten: true,
+      })
+      assert.ok(typeof sessionId === 'string', 'Chrome did not attach to the page target.')
+      page.sessionId = sessionId
+      return page
+    } catch (error) {
+      if (socket.readyState === WebSocket.OPEN) socket.close()
+      throw error
+    }
   }
 
   async command(
@@ -96,7 +122,7 @@ class BrowserPage {
       }, 8_000)
       this.pending.set(id, { resolve, reject, timeout })
       try {
-        this.socket.send(JSON.stringify({ id, method, params }))
+        this.socket.send(JSON.stringify({ id, method, params, sessionId: this.sessionId }))
       } catch (error) {
         clearTimeout(timeout)
         this.pending.delete(id)
@@ -198,6 +224,23 @@ async function waitForEndpoint(
   throw new Error(`Process did not open ${url}: ${logs()}`)
 }
 
+async function waitForChromeDevTools(
+  child: ChildProcess,
+  endpoint: () => string | undefined,
+  logs: () => string,
+): Promise<string> {
+  const deadline = Date.now() + 20_000
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Chrome exited before announcing DevTools: ${logs()}`)
+    }
+    const url = endpoint()
+    if (url) return url
+    await sleep(100)
+  }
+  throw new Error(`Chrome did not announce DevTools: ${logs()}`)
+}
+
 async function terminate(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return
   const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
@@ -214,7 +257,6 @@ async function run(): Promise<void> {
   assert.ok(chromium, 'Chrome/Chromium not found. Set GOTENUI_BROWSER_BIN to its executable path.')
   const temp = await mkdtemp(resolve(tmpdir(), 'gotenui-browser-'))
   const appPort = await unusedPort()
-  const debugPort = await unusedPort()
   const app = spawn(process.execPath, [entry], {
     cwd: root,
     env: {
@@ -242,7 +284,7 @@ async function run(): Promise<void> {
       '--no-default-browser-check',
       '--disable-background-networking',
       `--user-data-dir=${temp}`,
-      `--remote-debugging-port=${debugPort}`,
+      '--remote-debugging-port=0',
       '--remote-debugging-address=127.0.0.1',
       '--remote-allow-origins=*',
       'about:blank',
@@ -250,21 +292,24 @@ async function run(): Promise<void> {
     { stdio: ['ignore', 'ignore', 'pipe'] },
   )
   let chromeLogs = ''
+  let chromeEndpoint: string | undefined
   browser.stderr.on('data', (data: Buffer) => {
     chromeLogs = `${chromeLogs}${data.toString()}`.slice(-4_000)
+    chromeEndpoint ??= chromeLogs.match(
+      /DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[^\s]+)/,
+    )?.[1]
   })
   let page: BrowserPage | undefined
   let checks = 0
   try {
     const origin = `http://127.0.0.1:${appPort}`
     await waitForEndpoint(`${origin}/`, app, () => logs)
-    await waitForEndpoint(`http://127.0.0.1:${debugPort}/json/version`, browser, () => chromeLogs)
-    const targets = (await fetch(`http://127.0.0.1:${debugPort}/json/list`).then((res) =>
-      res.json(),
-    )) as Array<{ type: string; webSocketDebuggerUrl: string }>
-    const target = targets.find((item) => item.type === 'page')
-    assert.ok(target, 'Chrome did not create a debugging target.')
-    page = await BrowserPage.connect(target.webSocketDebuggerUrl)
+    const endpoint = await waitForChromeDevTools(
+      browser,
+      () => chromeEndpoint,
+      () => chromeLogs,
+    )
+    page = await BrowserPage.connect(endpoint)
     await page.command('Page.enable')
     await page.command('Runtime.enable')
     await page.resize(1440)
@@ -440,16 +485,16 @@ async function run(): Promise<void> {
       'restore focus to visible mobile search button',
     )
     checks++
-
-    console.log(
-      `Browser smoke: ${styleText('green', 'PASS')} (${checks} checks, desktop and mobile Chromium)`,
-    )
   } finally {
     page?.close()
     await terminate(browser)
     await terminate(app)
-    await rm(temp, { recursive: true, force: true })
+    // Chromium helpers may still be writing to the profile after the parent exits.
+    await rm(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   }
+  console.log(
+    `Browser smoke: ${styleText('green', 'PASS')} (${checks} checks, desktop and mobile Chromium)`,
+  )
 }
 
 run().catch((error) => {
