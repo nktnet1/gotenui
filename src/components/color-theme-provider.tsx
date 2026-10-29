@@ -188,7 +188,7 @@ export function ThemeSelect() {
             setOpen(false)
           }
         }}
-        className="flex h-9 w-9 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 text-sky-700 outline-none transition-colors hover:border-sky-400 hover:bg-sky-50 focus-visible:ring-4 focus-visible:ring-sky-100 lg:w-28 dark:border-slate-600 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-slate-700 dark:focus-visible:ring-sky-900"
+        className="flex h-8 w-9 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-50 text-sky-700 outline-none transition-colors hover:border-sky-400 hover:bg-sky-50 focus-visible:ring-4 focus-visible:ring-sky-100 lg:w-28 dark:border-slate-600 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-slate-700 dark:focus-visible:ring-sky-900"
       >
         <Icon aria-hidden="true" className="size-4 shrink-0" />
         <span className="hidden text-xs font-semibold lg:inline">{current.label}</span>
