@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { Brand, Sidebar } from '#/components/gotenui-app'
+import { TooltipProvider } from '#/components/ui/tooltip'
 import { version as appVersion } from '../package.json'
 
 describe('sidebar branding and bookmark navigation', () => {
@@ -16,15 +17,19 @@ describe('sidebar branding and bookmark navigation', () => {
 
   it('distinguishes reading from writing PDF bookmarks with semantic icons', () => {
     const html = renderToStaticMarkup(
-      createElement(Sidebar, {
-        selectedId: 'bookmarks-read',
-        onSelect: vi.fn(),
-        status: null,
-        onSettings: vi.fn(),
-        onSearch: vi.fn(),
-        mobileOpen: false,
-        setMobileOpen: vi.fn(),
-      }),
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(Sidebar, {
+          selectedId: 'bookmarks-read',
+          onSelect: vi.fn(),
+          status: null,
+          onSettings: vi.fn(),
+          onSearch: vi.fn(),
+          mobileOpen: false,
+          setMobileOpen: vi.fn(),
+        }),
+      ),
     )
     expect(html).toContain('aria-label="Search tools"')
     expect(html).toContain('aria-keyshortcuts="Control+K Meta+K"')
@@ -44,15 +49,19 @@ describe('sidebar branding and bookmark navigation', () => {
 
   it('has contrasting light and dark surfaces throughout the sidebar', () => {
     const html = renderToStaticMarkup(
-      createElement(Sidebar, {
-        selectedId: 'bookmarks-read',
-        onSelect: vi.fn(),
-        status: null,
-        onSettings: vi.fn(),
-        onSearch: vi.fn(),
-        mobileOpen: false,
-        setMobileOpen: vi.fn(),
-      }),
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(Sidebar, {
+          selectedId: 'bookmarks-read',
+          onSelect: vi.fn(),
+          status: null,
+          onSettings: vi.fn(),
+          onSearch: vi.fn(),
+          mobileOpen: false,
+          setMobileOpen: vi.fn(),
+        }),
+      ),
     )
 
     const sidebar = html.match(/<aside\b[^>]*>/)?.[0] ?? ''

@@ -49,6 +49,7 @@ import {
 import { PdfResultPreview } from '#/components/pdf-result-preview'
 import { PdfBookmarksEditor, PdfMetadataEditor } from '#/components/pdf-structure-editors'
 import { Button } from '#/components/ui/button'
+import { ButtonTooltip } from '#/components/ui/button-tooltip'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
@@ -355,42 +356,49 @@ export function Sidebar({
                     const active = selectedId === operation.id
                     const unavailable = unavailableOperationReason(status, operation)
                     return (
-                      <button
+                      <ButtonTooltip
                         key={operation.id}
-                        type="button"
-                        aria-current={active ? 'page' : undefined}
-                        title={unavailable ?? undefined}
+                        description={unavailable}
                         disabled={Boolean(unavailable)}
-                        onClick={() => {
-                          onSelect(operation.id)
-                          setMobileOpen(false)
-                        }}
-                        className={cn(
-                          'group flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-[10px] text-left text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500',
-                          unavailable
-                            ? 'cursor-not-allowed text-slate-400 dark:text-slate-600'
-                            : active
-                              ? 'bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300'
-                              : 'text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/7 dark:hover:text-white',
-                        )}
+                        wrapperClassName="block w-full"
                       >
-                        <Icon
+                        <button
+                          type="button"
+                          aria-current={active ? 'page' : undefined}
+                          disabled={Boolean(unavailable)}
+                          onClick={() => {
+                            onSelect(operation.id)
+                            setMobileOpen(false)
+                          }}
                           className={cn(
-                            'size-4 shrink-0',
-                            active
-                              ? 'text-sky-600 dark:text-sky-400'
-                              : 'text-slate-500 group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-300',
+                            'group flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-[10px] text-left text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500',
+                            unavailable
+                              ? 'pointer-events-none cursor-not-allowed text-slate-400 dark:text-slate-600'
+                              : active
+                                ? 'bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300'
+                                : 'text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/7 dark:hover:text-white',
                           )}
-                        />
-                        <span className="flex-1 truncate">{operation.title}</span>
-                        {unavailable ? (
-                          <span className="text-[9px] text-amber-700 dark:text-amber-300">N/A</span>
-                        ) : (
-                          active && (
-                            <span className="size-1.5 rounded-full bg-sky-600 dark:bg-sky-400" />
-                          )
-                        )}
-                      </button>
+                        >
+                          <Icon
+                            className={cn(
+                              'size-4 shrink-0',
+                              active
+                                ? 'text-sky-600 dark:text-sky-400'
+                                : 'text-slate-500 group-hover:text-slate-700 dark:text-slate-400 dark:group-hover:text-slate-300',
+                            )}
+                          />
+                          <span className="flex-1 truncate">{operation.title}</span>
+                          {unavailable ? (
+                            <span className="text-[9px] text-amber-700 dark:text-amber-300">
+                              N/A
+                            </span>
+                          ) : (
+                            active && (
+                              <span className="size-1.5 rounded-full bg-sky-600 dark:bg-sky-400" />
+                            )
+                          )}
+                        </button>
+                      </ButtonTooltip>
                     )
                   })}
                 </div>
@@ -1910,17 +1918,21 @@ function Workspace({
             </span>
           </div>
           <div className="flex items-center gap-1 sm:gap-2.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Refresh service status"
-              title="Recheck the selected Gotenberg connection's health, version, and modules"
-              onClick={() => void refreshStatus(true)}
+            <ButtonTooltip
+              description="Recheck the selected Gotenberg connection's health, version, and modules"
               disabled={statusLoading}
             >
-              <RefreshCw className={cn('size-4', statusLoading && 'animate-spin')} />
-            </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Refresh service status"
+                onClick={() => void refreshStatus(true)}
+                disabled={statusLoading}
+              >
+                <RefreshCw className={cn('size-4', statusLoading && 'animate-spin')} />
+              </Button>
+            </ButtonTooltip>
             <span className="mx-1 hidden h-5 w-px bg-slate-200 dark:bg-slate-700 sm:block" />
             <ThemeSelect />
             <Button
@@ -1933,17 +1945,18 @@ function Workspace({
               <Activity className="size-4" />
               <span className="hidden md:inline">Diagnostics</span>
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setSettingsOpen(true)}
-              title={connectionName}
-            >
-              <Settings2 className="size-4" />
-              <span className="hidden max-w-44 truncate md:inline">{connectionName}</span>
-              <span className="hidden sm:inline md:hidden">Settings</span>
-            </Button>
+            <ButtonTooltip description={connectionName}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSettingsOpen(true)}
+              >
+                <Settings2 className="size-4" />
+                <span className="hidden max-w-44 truncate md:inline">{connectionName}</span>
+                <span className="hidden sm:inline md:hidden">Settings</span>
+              </Button>
+            </ButtonTooltip>
           </div>
         </header>
         <main className="mx-auto max-w-[1390px] px-5 pt-8 pb-14 md:px-9 md:pt-10">
@@ -2037,23 +2050,30 @@ function Workspace({
             <p className="mr-1 text-xs font-bold text-slate-500 dark:text-slate-400">
               Quick access
             </p>
-            {OPERATIONS.filter((item) => item.featured).map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setSelectedId(item.id)}
-                disabled={Boolean(unavailableOperationReason(status, item))}
-                title={unavailableOperationReason(status, item) ?? undefined}
-                className={cn(
-                  'cursor-pointer rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40',
-                  selectedId === item.id
-                    ? 'border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300'
-                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-200 dark:hover:border-sky-700 hover:text-sky-700 dark:hover:text-sky-300',
-                )}
-              >
-                {item.title}
-              </button>
-            ))}
+            {OPERATIONS.filter((item) => item.featured).map((item) => {
+              const unavailable = unavailableOperationReason(status, item)
+              return (
+                <ButtonTooltip
+                  key={item.id}
+                  description={unavailable}
+                  disabled={Boolean(unavailable)}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(item.id)}
+                    disabled={Boolean(unavailable)}
+                    className={cn(
+                      'cursor-pointer rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40',
+                      selectedId === item.id
+                        ? 'border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300'
+                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-200 dark:hover:border-sky-700 hover:text-sky-700 dark:hover:text-sky-300',
+                    )}
+                  >
+                    {item.title}
+                  </button>
+                </ButtonTooltip>
+              )
+            })}
           </div>
           <Workbench
             key={`${operation.id}:${selectedConnection}:${connectionEpoch}`}

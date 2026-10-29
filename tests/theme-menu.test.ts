@@ -8,6 +8,7 @@ import {
   ThemeSelect,
 } from '#/components/color-theme-provider'
 import { buttonVariants } from '#/components/ui/button'
+import { TooltipProvider } from '#/components/ui/tooltip'
 
 describe('icon-and-label appearance menu', () => {
   it('renders accessible checked choices with the corresponding icons and visible text', () => {
@@ -36,7 +37,11 @@ describe('icon-and-label appearance menu', () => {
 
   it('shows the selected theme label alongside its icon at desktop widths', () => {
     const html = renderToStaticMarkup(
-      createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
+      createElement(
+        ColorThemeProvider,
+        null,
+        createElement(TooltipProvider, null, createElement(ThemeSelect)),
+      ),
     )
     expect(html).toContain('aria-label="Appearance theme: System"')
     expect(html).toContain('lucide-monitor')
@@ -46,7 +51,11 @@ describe('icon-and-label appearance menu', () => {
 
   it('matches the height of the Diagnostics and Settings buttons', () => {
     const html = renderToStaticMarkup(
-      createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
+      createElement(
+        ColorThemeProvider,
+        null,
+        createElement(TooltipProvider, null, createElement(ThemeSelect)),
+      ),
     )
     const trigger = html.match(/<button[^>]*aria-label="Appearance theme: System"[^>]*>/)?.[0] ?? ''
     const smallButtonHeight = buttonVariants({ variant: 'outline', size: 'sm' }).match(

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, it } from 'vitest'
 import { PdfConversionPostProcessing } from '#/components/pdf-conversion-post-processing'
 import { PdfBookmarksEditor } from '#/components/pdf-structure-editors'
+import { TooltipProvider } from '#/components/ui/tooltip'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { isFieldVisible, OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
 import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
@@ -222,12 +223,16 @@ describe('v1.0.6 official native fields', () => {
     )
     assert.throws(() => validated('merge', { bookmarks: '{' }), /valid JSON/)
     const html = renderToStaticMarkup(
-      createElement(PdfBookmarksEditor, {
-        value: numbered,
-        onChange: () => {},
-        allowFilenameMap: true,
-        filenames: ['a.pdf', 'b.pdf'],
-      }),
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(PdfBookmarksEditor, {
+          value: numbered,
+          onChange: () => {},
+          allowFilenameMap: true,
+          filenames: ['a.pdf', 'b.pdf'],
+        }),
+      ),
     )
     assert.ok(html.includes('Bookmarks for PDF'))
     assert.ok(html.includes('Add filename mapping'))

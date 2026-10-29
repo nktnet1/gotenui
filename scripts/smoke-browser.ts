@@ -107,6 +107,15 @@ class BrowserPage {
     })
   }
 
+  async hover(selector: string): Promise<void> {
+    const center = (await this.evaluate(`(() => {
+      const rect = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect()
+      return rect ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } : null
+    })()`)) as { x: number; y: number } | null
+    assert.ok(center, `Cannot hover missing element: ${selector}`)
+    await this.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...center })
+  }
+
   async resize(width: number, height = 850): Promise<void> {
     await this.command('Emulation.setDeviceMetricsOverride', {
       width,
@@ -253,9 +262,26 @@ async function run(): Promise<void> {
       'initial background status check',
     )
     assert.equal(
-      await page.evaluate(`document.querySelector('${refreshButton}')?.getAttribute('title')`),
-      "Recheck the selected Gotenberg connection's health, version, and modules",
-      'Refresh button must explain its action on hover.',
+      await page.evaluate(`document.querySelector('${refreshButton}')?.hasAttribute('title')`),
+      false,
+      'Refresh must not use the native browser title tooltip.',
+    )
+    await page.hover(refreshButton)
+    await page.waitUntil(
+      `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules"))`,
+      'shadcn refresh tooltip on hover',
+    )
+    await page.hover('button[aria-haspopup="menu"]')
+    await page.waitUntil(
+      `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes('Appearance: System'))`,
+      'shadcn theme selector tooltip',
+    )
+    assert.equal(
+      await page.evaluate(
+        "document.querySelector('button[aria-haspopup=menu]')?.hasAttribute('title')",
+      ),
+      false,
+      'Theme selector must not use native browser tooltips.',
     )
     assert.equal(
       await page.evaluate("document.querySelectorAll('[data-sonner-toast]').length"),
@@ -292,6 +318,36 @@ async function run(): Promise<void> {
     )
     checks++
 
+    await page.waitUntil(
+      `!document.querySelector('${refreshButton}')?.disabled`,
+      'unavailable refresh completion',
+    )
+    await page.evaluate(`window.__smokeStatus = { online: true, version: '8.35.0', modules: [] }`)
+    await page.evaluate(`document.querySelector('${refreshButton}').click()`)
+    const unavailableTooltip =
+      '#gotenui-navigation [data-slot="tooltip-trigger"][aria-label="Optimize PDFs requires Gotenberg 8.36 or newer."]'
+    await page.waitUntil(
+      `document.querySelector(${JSON.stringify(unavailableTooltip)})?.querySelector('button:disabled') !== null`,
+      'disabled navigation tooltip trigger',
+    )
+    await page.evaluate(`document.querySelector(${JSON.stringify(unavailableTooltip)}).focus()`)
+    await page.waitUntil(
+      "[...document.querySelectorAll('[data-slot=tooltip-content]')].some(el => el.textContent.includes('Optimize PDFs requires Gotenberg 8.36 or newer.'))",
+      'disabled operation tooltip on keyboard focus',
+    )
+    checks++
+
+    await page.waitUntil(
+      `!document.querySelector('${refreshButton}')?.disabled`,
+      'old-version refresh completion',
+    )
+    await page.evaluate(`window.__smokeStatus = { online: true, version: '8.37.0', modules: [] }`)
+    await page.evaluate(`document.querySelector('${refreshButton}').click()`)
+    await page.waitUntil(
+      `!document.querySelector('${refreshButton}')?.disabled && !document.querySelector(${JSON.stringify(unavailableTooltip)})`,
+      'restored module availability',
+    )
+
     assert.equal(
       await page.evaluate(
         "getComputedStyle(document.querySelector('[aria-haspopup=menu] span')).display !== 'none'",
@@ -313,6 +369,35 @@ async function run(): Promise<void> {
     const sidebarBackground =
       "getComputedStyle(document.querySelector('#gotenui-navigation')).backgroundColor"
     const lightSidebar = await page.evaluate(sidebarBackground)
+    await page.hover(refreshButton)
+    await page.waitUntil(
+      `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules"))`,
+      'light theme refresh tooltip',
+    )
+    const tooltipColors = `(() => {
+      const content = [...document.querySelectorAll('[data-slot="tooltip-content"]')].find(
+        el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules")
+      )
+      const contentStyle = getComputedStyle(content)
+      return {
+        background: contentStyle.backgroundColor,
+        text: contentStyle.color,
+        border: contentStyle.borderTopColor,
+        arrow: getComputedStyle(content.querySelector('svg')).fill,
+      }
+    })()`
+    assert.deepEqual(
+      await page.evaluate(tooltipColors),
+      {
+        background: 'rgb(255, 255, 255)',
+        text: 'rgb(51, 65, 85)',
+        border: 'rgb(226, 232, 240)',
+        arrow: 'rgb(255, 255, 255)',
+      },
+      'Tooltip should use a soft light surface, not an inverted dark background.',
+    )
+    checks++
+
     assert.equal(lightSidebar, 'rgb(255, 255, 255)', 'Light sidebar must be white.')
     const sidebarText =
       "getComputedStyle(document.querySelector('#gotenui-navigation nav button:not([aria-current])')).color"
@@ -380,6 +465,23 @@ async function run(): Promise<void> {
       await page.evaluate(sidebarText),
       lightSidebarText,
       'Sidebar navigation text must adapt to the selected theme.',
+    )
+    checks++
+
+    await page.hover(refreshButton)
+    await page.waitUntil(
+      `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules"))`,
+      'dark theme refresh tooltip',
+    )
+    assert.deepEqual(
+      await page.evaluate(tooltipColors),
+      {
+        background: 'rgb(30, 41, 59)',
+        text: 'rgb(226, 232, 240)',
+        border: 'rgb(51, 65, 85)',
+        arrow: 'rgb(30, 41, 59)',
+      },
+      'Tooltip should use a muted dark surface, not an inverted light background.',
     )
     checks++
 

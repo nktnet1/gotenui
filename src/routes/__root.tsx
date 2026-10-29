@@ -2,6 +2,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/react-r
 import type { ReactNode } from 'react'
 import { Toaster } from 'sonner'
 import { ColorThemeProvider, useColorTheme } from '#/components/color-theme-provider'
+import { TooltipProvider } from '#/components/ui/tooltip'
 import appCss from '#/styles.css?url'
 
 export const Route = createRootRoute({
@@ -40,8 +41,10 @@ function Document({ children }: { children: ReactNode }) {
       </head>
       <body>
         <ColorThemeProvider>
-          {children}
-          <ThemeToaster />
+          <TooltipProvider>
+            {children}
+            <ThemeToaster />
+          </TooltipProvider>
         </ColorThemeProvider>
         <Scripts />
       </body>

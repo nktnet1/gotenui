@@ -1,6 +1,7 @@
 import { ArrowUpRight, Search, X } from 'lucide-react'
 import { useEffect, useId, useMemo, useState } from 'react'
 import { operationIcon } from '#/components/operation-icons'
+import { ButtonTooltip } from '#/components/ui/button-tooltip'
 import { useModalFocus } from '#/components/use-modal-focus'
 import { nextSearchIndex, visibleSearchOperations } from '#/lib/operation-search'
 import { GROUPS, type Operation } from '#/lib/operations'
@@ -131,41 +132,46 @@ export function OperationSearchDialog({ onSelect, onClose, unavailableReason }: 
                     const Icon = operationIcon(operation.id)
                     const unavailable = unavailableReason?.(operation)
                     return (
-                      <button
+                      <ButtonTooltip
                         key={operation.id}
-                        id={`${id}-result-${index}`}
-                        type="button"
-                        role="option"
+                        description={unavailable}
                         disabled={Boolean(unavailable)}
-                        title={unavailable ?? undefined}
-                        aria-selected={index === activeIndex}
-                        tabIndex={-1}
-                        onMouseEnter={() => setHighlighted(index)}
-                        onClick={() => onSelect(operation.id)}
-                        className={cn(
-                          'flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-left outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45',
-                          index === activeIndex
-                            ? 'bg-sky-50 text-sky-950 dark:bg-sky-950/60 dark:text-sky-100'
-                            : 'text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800',
-                        )}
+                        wrapperClassName="block w-full"
                       >
-                        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sky-700 dark:border-slate-700 dark:bg-slate-800 dark:text-sky-300">
-                          <Icon aria-hidden="true" className="size-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold">
-                            {operation.title}
+                        <button
+                          id={`${id}-result-${index}`}
+                          type="button"
+                          role="option"
+                          disabled={Boolean(unavailable)}
+                          aria-selected={index === activeIndex}
+                          tabIndex={-1}
+                          onMouseEnter={() => setHighlighted(index)}
+                          onClick={() => onSelect(operation.id)}
+                          className={cn(
+                            'flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-left outline-none transition-colors disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-45',
+                            index === activeIndex
+                              ? 'bg-sky-50 text-sky-950 dark:bg-sky-950/60 dark:text-sky-100'
+                              : 'text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800',
+                          )}
+                        >
+                          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sky-700 dark:border-slate-700 dark:bg-slate-800 dark:text-sky-300">
+                            <Icon aria-hidden="true" className="size-4" />
                           </span>
-                          <span className="block truncate text-xs text-slate-500 dark:text-slate-400">
-                            {searching && <>{operation.group} · </>}
-                            {unavailable ?? operation.summary}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold">
+                              {operation.title}
+                            </span>
+                            <span className="block truncate text-xs text-slate-500 dark:text-slate-400">
+                              {searching && <>{operation.group} · </>}
+                              {unavailable ?? operation.summary}
+                            </span>
                           </span>
-                        </span>
-                        <ArrowUpRight
-                          aria-hidden="true"
-                          className="size-4 shrink-0 text-slate-400"
-                        />
-                      </button>
+                          <ArrowUpRight
+                            aria-hidden="true"
+                            className="size-4 shrink-0 text-slate-400"
+                          />
+                        </button>
+                      </ButtonTooltip>
                     )
                   })}
                 </div>

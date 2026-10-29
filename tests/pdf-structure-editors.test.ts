@@ -3,6 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { PdfBookmarksEditor, PdfMetadataEditor } from '#/components/pdf-structure-editors'
+import { TooltipProvider } from '#/components/ui/tooltip'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import {
   editBookmarks,
@@ -225,7 +226,11 @@ describe('bookmark tree editing and route contract', () => {
 
   it('renders a nested, accessible tree with a raw JSON fallback', () => {
     const html = renderToStaticMarkup(
-      createElement(PdfBookmarksEditor, { value: original, onChange: vi.fn() }),
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(PdfBookmarksEditor, { value: original, onChange: vi.fn() }),
+      ),
     )
     expect(html).toContain('Bookmark 1 title')
     expect(html).toContain('Bookmark 1.1 title')
@@ -234,10 +239,14 @@ describe('bookmark tree editing and route contract', () => {
     expect(html).toContain('Add top-level bookmark')
     expect(html).toContain('JSON editor')
     const mapped = renderToStaticMarkup(
-      createElement(PdfBookmarksEditor, {
-        value: '{"document.pdf":[]}',
-        onChange: vi.fn(),
-      }),
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(PdfBookmarksEditor, {
+          value: '{"document.pdf":[]}',
+          onChange: vi.fn(),
+        }),
+      ),
     )
     expect(mapped).toContain('Switch to JSON mode')
     expect(mapped).not.toContain('Add top-level bookmark')

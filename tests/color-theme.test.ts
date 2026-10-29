@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ColorThemeProvider, ThemeSelect } from '#/components/color-theme-provider'
+import { TooltipProvider } from '#/components/ui/tooltip'
 import {
   COLOR_THEME_STORAGE_KEY,
   persistColorThemePreference,
@@ -14,7 +15,11 @@ describe('browser color theme preference', () => {
 
   it('shows the System icon on mobile and includes its label on desktop', () => {
     const html = renderToStaticMarkup(
-      createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
+      createElement(
+        ColorThemeProvider,
+        null,
+        createElement(TooltipProvider, null, createElement(ThemeSelect)),
+      ),
     )
     expect(html).toContain('Appearance theme')
     expect(html).toContain('aria-label="Appearance theme: System"')
@@ -34,7 +39,11 @@ describe('browser color theme preference', () => {
   ] as const)('uses the correct icon when %s is selected', (saved, icon) => {
     vi.stubGlobal('window', { localStorage: { getItem: () => saved } })
     const html = renderToStaticMarkup(
-      createElement(ColorThemeProvider, null, createElement(ThemeSelect)),
+      createElement(
+        ColorThemeProvider,
+        null,
+        createElement(TooltipProvider, null, createElement(ThemeSelect)),
+      ),
     )
     expect(html).toContain(`lucide ${icon}`)
     expect(html).toContain(`aria-label="Appearance theme: ${saved === 'dark' ? 'Dark' : 'Light'}"`)

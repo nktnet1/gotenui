@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, Code2, ListTree, Plus, Trash2 } from 'lucide-react'
 import { useId, useState } from 'react'
 import { Button } from '#/components/ui/button'
+import { ButtonTooltip } from '#/components/ui/button-tooltip'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Textarea } from '#/components/ui/textarea'
@@ -202,38 +203,41 @@ function BookmarkItems({
                 />
               </div>
               <div className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="outline"
-                  aria-label={`Move ${label} up`}
-                  title="Move up"
-                  disabled={index === 0}
-                  onClick={() => onEdit({ kind: 'move', path, direction: -1 })}
-                >
-                  <ArrowUp className="size-4" />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="outline"
-                  aria-label={`Move ${label} down`}
-                  title="Move down"
-                  disabled={index === items.length - 1}
-                  onClick={() => onEdit({ kind: 'move', path, direction: 1 })}
-                >
-                  <ArrowDown className="size-4" />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="outline"
-                  aria-label={`Remove ${label}`}
-                  title="Remove bookmark and its children"
-                  onClick={() => onEdit({ kind: 'remove', path })}
-                >
-                  <Trash2 className="size-4 text-rose-600 dark:text-rose-400" />
-                </Button>
+                <ButtonTooltip description="Move up" disabled={index === 0}>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    aria-label={`Move ${label} up`}
+                    disabled={index === 0}
+                    onClick={() => onEdit({ kind: 'move', path, direction: -1 })}
+                  >
+                    <ArrowUp className="size-4" />
+                  </Button>
+                </ButtonTooltip>
+                <ButtonTooltip description="Move down" disabled={index === items.length - 1}>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    aria-label={`Move ${label} down`}
+                    disabled={index === items.length - 1}
+                    onClick={() => onEdit({ kind: 'move', path, direction: 1 })}
+                  >
+                    <ArrowDown className="size-4" />
+                  </Button>
+                </ButtonTooltip>
+                <ButtonTooltip description="Remove bookmark and its children">
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    aria-label={`Remove ${label}`}
+                    onClick={() => onEdit({ kind: 'remove', path })}
+                  >
+                    <Trash2 className="size-4 text-rose-600 dark:text-rose-400" />
+                  </Button>
+                </ButtonTooltip>
               </div>
             </div>
             {pageInvalid && (

@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { OperationSearchDialog } from '#/components/operation-search-dialog'
+import { TooltipProvider } from '#/components/ui/tooltip'
 import {
   isSearchShortcut,
   nextSearchIndex,
@@ -73,7 +74,11 @@ describe('tool search', () => {
 
   it('renders a modal combobox, accessible grouped results, and shortcut hints', () => {
     const html = renderToStaticMarkup(
-      createElement(OperationSearchDialog, { onSelect: vi.fn(), onClose: vi.fn() }),
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(OperationSearchDialog, { onSelect: vi.fn(), onClose: vi.fn() }),
+      ),
     )
     expect(html).toContain('role="dialog"')
     expect(html).toContain('aria-modal="true"')
