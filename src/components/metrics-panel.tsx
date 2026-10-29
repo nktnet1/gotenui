@@ -1,11 +1,13 @@
 import { ChartNoAxesColumn, ClipboardCopy, Download, RefreshCw } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { codeOutputClasses } from '#/components/code-output'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { getGotenbergMetricsReport } from '#/lib/gotenberg-client'
 import { filterPrometheusMetrics, summarizePrometheusMetrics } from '#/lib/prometheus-metrics'
+import { cn } from '#/lib/utils'
 
 type Props = {
   connection: ConnectionChoice
@@ -143,7 +145,7 @@ export function MetricsPanel({ connection, active }: Props) {
               onChange={(event) => setFilter(event.target.value)}
             />
           </div>
-          <pre className="max-h-[48vh] min-h-24 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 whitespace-pre text-slate-100">
+          <pre className={cn(codeOutputClasses, 'max-h-[48vh] min-h-24')}>
             {filtered || 'No matching metric lines.'}
           </pre>
         </div>

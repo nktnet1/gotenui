@@ -489,6 +489,102 @@ async function run(): Promise<void> {
       )
       checks++
     }
+    // Exercise real output rendering rather than testing only Tailwind class strings.
+    await page.evaluate(`(() => {
+      const originalFetch = window.fetch.bind(window)
+      window.fetch = (input, init) => {
+        if (String(input) === '/api/gotenberg/debug') {
+          return Promise.resolve(Response.json({ enabled: true, requests: 2, name: 'example', empty: null }))
+        }
+        if (String(input) === '/api/gotenberg/metrics') {
+          return Promise.resolve(new Response('# HELP demo_counter Example\\ndemo_counter 2\\n', {
+            headers: {
+              'content-type': 'text/plain',
+              'x-gotenui-metrics': '1',
+              'x-gotenui-metrics-source': 'legacy',
+            },
+          }))
+        }
+        return originalFetch(input, init)
+      }
+    })()`)
+    const diagnosticOutputColors = `(() => {
+      const panel = [...document.querySelectorAll('[role="tabpanel"]')].find(el => !el.hidden)
+      const output = panel?.querySelector('pre')
+      if (!output) return null
+      const style = getComputedStyle(output)
+      return {
+        background: style.backgroundColor,
+        text: style.color,
+        border: style.borderTopColor,
+      }
+    })()`
+    await page.evaluate(`document.querySelector(${JSON.stringify(diagnosticsButton)}).click()`)
+    await page.waitUntil(
+      "document.querySelector('#diagnostics-heading') !== null",
+      'light diagnostics',
+    )
+    await page.evaluate(
+      "document.querySelector('[role=tabpanel]:not([hidden]) button[type=submit]').click()",
+    )
+    await page.waitUntil(
+      "document.querySelector('[data-slot=json-code-output]')?.textContent.includes('enabled')",
+      'light debug JSON output',
+    )
+    const lightDebugColors = await page.evaluate(diagnosticOutputColors)
+    assert.ok(lightDebugColors, 'Light debug JSON must render a visible code surface.')
+    assert.equal(
+      await page.evaluate("document.querySelector('[data-json-token=key]')?.textContent"),
+      '"enabled"',
+      'Debug JSON must highlight object keys.',
+    )
+    assert.equal(
+      await page.evaluate("document.querySelector('[data-json-token=boolean]')?.textContent"),
+      'true',
+      'Debug JSON must highlight typed values.',
+    )
+    checks++
+    await page.evaluate(
+      "[...document.querySelectorAll('[role=tab]')].find(el => el.textContent.includes('Prometheus')).click()",
+    )
+    await page.evaluate(
+      "document.querySelector('[role=tabpanel]:not([hidden]) button[type=submit]').click()",
+    )
+    await page.waitUntil(
+      "document.querySelector('[role=tabpanel]:not([hidden]) pre')?.textContent.includes('demo_counter')",
+      'light metrics output',
+    )
+    assert.deepEqual(await page.evaluate(diagnosticOutputColors), lightDebugColors)
+    checks++
+    await page.evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()")
+
+    await page.evaluate(`
+      [...document.querySelectorAll('#gotenui-navigation button')]
+        .find(el => el.textContent.trim() === 'Connection settings').click()
+    `)
+    await page.waitUntil(
+      "document.querySelector('#connection-heading') !== null",
+      'connection settings dialog',
+    )
+    assert.equal(
+      await page.evaluate(`(() => {
+        const footer = [...document.querySelectorAll('[role=dialog] form div')]
+          .find(el => el.classList.contains('justify-end') && el.querySelector('button[type=submit]'))
+        if (!footer) return false
+        const actions = [...footer.querySelectorAll('button')]
+        const primary = actions.at(-1)
+        if (!primary || primary.type !== 'submit' || primary.textContent.trim() !== 'Save and use') {
+          return false
+        }
+        return Math.abs(primary.getBoundingClientRect().right - footer.getBoundingClientRect().right) < 4
+      })()`),
+      true,
+      'Connection settings actions should be right-aligned with Save and use last.',
+    )
+    checks++
+    await page.evaluate(
+      'document.querySelector(\'[role=dialog] button[aria-label="Close settings"]\').click()',
+    )
     const sidebarText =
       "getComputedStyle(document.querySelector('#gotenui-navigation nav button:not([aria-current])')).color"
     const lightSidebarText = await page.evaluate(sidebarText)
@@ -574,6 +670,40 @@ async function run(): Promise<void> {
       'Tooltip should use a muted dark surface, not an inverted light background.',
     )
     checks++
+
+    await page.evaluate(`document.querySelector(${JSON.stringify(diagnosticsButton)}).click()`)
+    await page.waitUntil(
+      "document.querySelector('#diagnostics-heading') !== null",
+      'dark diagnostics',
+    )
+    await page.evaluate(
+      "document.querySelector('[role=tabpanel]:not([hidden]) button[type=submit]').click()",
+    )
+    await page.waitUntil(
+      "document.querySelector('[data-slot=json-code-output]')?.textContent.includes('enabled')",
+      'dark debug JSON output',
+    )
+    const darkDebugColors = await page.evaluate(diagnosticOutputColors)
+    assert.ok(darkDebugColors, 'Dark debug JSON must render a visible code surface.')
+    assert.notDeepEqual(
+      darkDebugColors,
+      lightDebugColors,
+      'Debug JSON colours must follow the theme.',
+    )
+    checks++
+    await page.evaluate(
+      "[...document.querySelectorAll('[role=tab]')].find(el => el.textContent.includes('Prometheus')).click()",
+    )
+    await page.evaluate(
+      "document.querySelector('[role=tabpanel]:not([hidden]) button[type=submit]').click()",
+    )
+    await page.waitUntil(
+      "document.querySelector('[role=tabpanel]:not([hidden]) pre')?.textContent.includes('demo_counter')",
+      'dark metrics output',
+    )
+    assert.deepEqual(await page.evaluate(diagnosticOutputColors), darkDebugColors)
+    checks++
+    await page.evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()")
 
     for (const operationName of ['HTML to PDF', 'Markdown to PDF']) {
       await page.evaluate(

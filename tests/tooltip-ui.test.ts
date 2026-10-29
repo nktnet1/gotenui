@@ -39,8 +39,11 @@ describe('shadcn tooltips', () => {
     expect(html).toContain('role="button"')
     expect(html).toContain('aria-disabled="true"')
     expect(html).toContain('tabindex="0"')
-    expect(html).toContain('class="inline-flex cursor-not-allowed')
-    expect(html).toContain('block w-full')
+    const trigger = html.match(/<span[^>]*data-slot="tooltip-trigger"[^>]*>/)?.[0]
+    const classes = trigger?.match(/class="([^"]*)"/)?.[1]?.split(/\s+/)
+    expect(classes).toEqual(expect.arrayContaining(['cursor-not-allowed', 'block', 'w-full']))
+    // twMerge removes inline-flex when a caller requests the full-width block layout.
+    expect(classes).not.toContain('inline-flex')
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Disabled tool<\/button>/)
   })
 

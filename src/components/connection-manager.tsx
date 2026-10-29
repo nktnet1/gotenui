@@ -243,13 +243,7 @@ export function ConnectionManager({
           {feedback}
         </p>
       )}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" disabled={!isBrowser && !server}>
-          {isBrowser ? 'Save and use' : 'Use connection'}
-        </Button>
-        <Button type="button" variant="accent" disabled={testing} onClick={() => void test()}>
-          {testing ? 'Testing…' : 'Test connection'}
-        </Button>
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {canDelete && existing && (
           <Button
             type="button"
@@ -262,6 +256,12 @@ export function ConnectionManager({
             Remove
           </Button>
         )}
+        <Button type="button" variant="accent" disabled={testing} onClick={() => void test()}>
+          {testing ? 'Testing…' : 'Test connection'}
+        </Button>
+        <Button type="submit" disabled={!isBrowser && !server}>
+          {isBrowser ? 'Save and use' : 'Use connection'}
+        </Button>
       </div>
       <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
         Gotenui uses a stateless server-side proxy. Browser profile names and URLs are saved

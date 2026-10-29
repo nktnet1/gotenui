@@ -107,6 +107,46 @@ describe('higher-contrast connection controls', () => {
     expect(html).toMatch(/bg-rose-50[^>]*>Remove<\/button>/)
   })
 
+  it('right-aligns connection actions with the primary action last', () => {
+    const html = renderToStaticMarkup(
+      createElement(ConnectionManager, {
+        browserProfiles: browsers,
+        managedProfiles: [],
+        selected: 'browser-default',
+        onApply: vi.fn(),
+        onUpsert: vi.fn(),
+        onRemove: vi.fn(),
+      }),
+    )
+    const actions = html.match(
+      /<div class="flex flex-wrap items-center justify-end gap-2">([\s\S]*?)<\/div>/,
+    )?.[1]
+    expect(actions).toBeDefined()
+    expect(
+      [...(actions ?? '').matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]),
+    ).toEqual(['Remove', 'Test connection', 'Save and use'])
+  })
+
+  it('keeps the server-managed connection action on the far right', () => {
+    const html = renderToStaticMarkup(
+      createElement(ConnectionManager, {
+        browserProfiles: browsers,
+        managedProfiles: [{ id: 'primary', name: 'Production' }],
+        selected: 'server:primary',
+        onApply: vi.fn(),
+        onUpsert: vi.fn(),
+        onRemove: vi.fn(),
+      }),
+    )
+    const actions = html.match(
+      /<div class="flex flex-wrap items-center justify-end gap-2">([\s\S]*?)<\/div>/,
+    )?.[1]
+    expect(actions).toBeDefined()
+    expect(
+      [...(actions ?? '').matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]),
+    ).toEqual(['Test connection', 'Use connection'])
+  })
+
   it('provides distinguishable light and dark styles for important secondary actions', () => {
     expect(buttonVariants({ variant: 'accent' })).toContain('bg-sky-100')
     expect(buttonVariants({ variant: 'accent' })).toContain('dark:bg-sky-950')

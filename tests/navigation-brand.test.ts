@@ -1,11 +1,20 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { Brand, Sidebar } from '#/components/gotenui-app'
+import { Brand, GotenuiApp, Sidebar } from '#/components/gotenui-app'
 import { TooltipProvider } from '#/components/ui/tooltip'
 import { version as appVersion } from '../package.json'
 
 describe('sidebar branding and bookmark navigation', () => {
+  it('uses the selected colour theme even while connection settings are loading', () => {
+    const html = renderToStaticMarkup(createElement(GotenuiApp))
+    expect(html).toContain('bg-[#f6f8fb]')
+    expect(html).toContain('text-slate-900')
+    expect(html).toContain('dark:bg-[#0c1b2c]')
+    expect(html).toContain('dark:text-slate-100')
+    expect(html).toContain('Opening Gotenui...')
+  })
+
   it('shows the plain brand name without a decorative full stop', () => {
     const html = renderToStaticMarkup(createElement(Brand))
     expect(html).toContain('src="/gotenui-icon.svg"')

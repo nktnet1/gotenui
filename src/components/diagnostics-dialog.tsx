@@ -1,5 +1,6 @@
 import { Activity, Bug, ChartNoAxesColumn, RefreshCw, X } from 'lucide-react'
 import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from 'react'
+import { JsonCodeOutput } from '#/components/code-output'
 import { MetricsPanel } from '#/components/metrics-panel'
 import { Button } from '#/components/ui/button'
 import { useModalFocus } from '#/components/use-modal-focus'
@@ -288,9 +289,7 @@ export function DiagnosticsDialog({
                     <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
                       Runtime configuration (read-only)
                     </p>
-                    <pre className="max-h-[50vh] overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 whitespace-pre text-slate-100">
-                      {details}
-                    </pre>
+                    <JsonCodeOutput value={details} />
                   </div>
                 )}
               </section>

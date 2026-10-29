@@ -33,6 +33,7 @@ import {
   type HeaderRow,
 } from '#/components/chromium-network-editor'
 import { ChromiumPdfAssets } from '#/components/chromium-pdf-assets'
+import { codeOutputClasses } from '#/components/code-output'
 import { ThemeSelect } from '#/components/color-theme-provider'
 import { ConnectionManager } from '#/components/connection-manager'
 import { ConversionPresets } from '#/components/conversion-presets'
@@ -781,7 +782,9 @@ function JobPanel({
                     />
                   )}
                   {lastDownload.preview && (
-                    <pre className="mb-4 max-h-56 overflow-auto rounded-lg bg-slate-950 p-3 text-[11px] leading-5 text-sky-100">
+                    <pre
+                      className={cn(codeOutputClasses, 'mb-4 max-h-56 rounded-lg p-3 text-[11px]')}
+                    >
                       {lastDownload.preview}
                     </pre>
                   )}
@@ -2225,9 +2228,10 @@ export function GotenuiApp() {
 
   if (loading)
     return (
-      <div className="grid min-h-screen place-items-center bg-[#0c1b2c]">
-        <div className="flex items-center gap-3 text-sm font-semibold text-white">
-          <RefreshCw className="size-5 animate-spin text-sky-400" /> Opening Gotenui...
+      <div className="grid min-h-screen place-items-center bg-[#f6f8fb] text-slate-900 dark:bg-[#0c1b2c] dark:text-slate-100">
+        <div className="flex items-center gap-3 text-sm font-semibold">
+          <RefreshCw className="size-5 animate-spin text-sky-600 dark:text-sky-400" /> Opening
+          Gotenui...
         </div>
       </div>
     )
