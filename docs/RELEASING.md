@@ -5,7 +5,7 @@ Gotenui publishes a **Docker container** to GitHub Packages (GitHub Container Re
 ## Create a release
 
 1. Update `package.json`'s `version` to the intended SemVer version, such as `0.1.2` or `0.2.0-rc.1`. Do not reuse an existing release version.
-2. Add a Markdown file named `changelogs/v<version>.md`, such as `changelogs/v0.1.2.md`. Start it with `# v0.1.2` (matching the version) and write the user-facing changes. Use `changelogs/TEMPLATE.md` as a guide. **The tag validation fails before CI and container publishing if its matching changelog is missing, empty or has a mismatched heading.** Commit the version and changelog together, open a pull request and merge into the default branch after CI passes.
+2. Add a Markdown file named `changelogs/v<version>.md`, such as `changelogs/v0.1.2.md`. Follow the existing changelog convention of `## Changes` followed by a bullet list of user-facing changes. **The tag validation fails before CI and container publishing if the matching changelog is missing, empty or contains no description of the changes.** The filename determines the version, so no specific heading is enforced and existing Markdown formatting is preserved in the GitHub Release. Commit the version and changelog together, open a pull request and merge into the default branch after CI passes.
 3. On the updated default branch, create and push an annotated tag matching that version exactly:
 
    ```sh
@@ -46,3 +46,7 @@ A published Gotenui image contains the web application **only**. It still needs 
 - Publishing uses the built-in `GITHUB_TOKEN` with `packages: write`; creating the GitHub Release uses `contents: write`. No personal access token or third-party registry credentials are needed for a newly linked package.
 - GHCR packages are **private by default**. To allow public pulls, change the package's visibility in GitHub Packages settings. For an existing unlinked GHCR package with the same name, grant this repository access under the package's **Manage Actions access** settings.
 - Re-running a release workflow may repush the same image tags. Do not move or reuse Git release tags; protect them with a repository ruleset. An existing GitHub Release, including a manually edited draft, is left unchanged on a rerun.
+
+## GHCR architecture labels
+
+GitHub Packages may display an `unknown/unknown` entry in addition to `linux/amd64` and `linux/arm64`. This entry contains BuildKit's build provenance and SBOM attestations, not a third runnable image. See [Docker's attestation storage documentation](https://docs.docker.com/build/metadata/attestations/attestation-storage/) for how these entries are represented. The release workflow deliberately retains `provenance: mode=max` and `sbom: true` for build transparency. Disabling both would hide the extra entry but remove that metadata.

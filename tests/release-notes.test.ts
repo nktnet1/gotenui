@@ -19,23 +19,46 @@ const tag = `v${version}`
 const image = 'ghcr.io/example/gotenui'
 const digest = `sha256:${'a'.repeat(64)}`
 
-test('has a nonempty, correctly headed changelog for the current application version', () => {
+test('has a substantive changelog for the current application version', () => {
   const notes = readReleaseChangelog(tag)
-  assert.match(notes, new RegExp(`^# ${tag.replaceAll('.', '\\.')}$`, 'm'))
-  assert.match(notes, /## Highlights/)
+  assert.ok(notes.length > 0)
+  assert.equal(validateReleaseChangelog(tag, notes), notes)
 })
 
-test('validates changelog headings and refuses empty notes and invalid tags', () => {
+test('preserves conventional, customised, and heading-free changelog formats', () => {
+  assert.equal(
+    validateReleaseChangelog('v1.2.3', '## Changes\n\n- Added PDF/A support.\n- Fixed errors.'),
+    '## Changes\n\n- Added PDF/A support.\n- Fixed errors.',
+  )
   assert.equal(
     validateReleaseChangelog('v1.2.3-rc.1', '# v1.2.3-rc.1\n\nNotes'),
     '# v1.2.3-rc.1\n\nNotes',
   )
+  assert.equal(
+    validateReleaseChangelog('v1.2.3', '## [1.2.3] - 2026-10-30\n\n### Fixed\n\n- Resolved issue'),
+    '## [1.2.3] - 2026-10-30\n\n### Fixed\n\n- Resolved issue',
+  )
+  assert.equal(
+    validateReleaseChangelog('v1.2.3', '# Release notes\n\n## What changed\n\n- Fix'),
+    '# Release notes\n\n## What changed\n\n- Fix',
+  )
+  assert.equal(
+    validateReleaseChangelog('v1.2.3', '\uFEFF# Gotenui 1.2.3\r\n\r\n- Fix'),
+    '# Gotenui 1.2.3\r\n\r\n- Fix',
+  )
+  assert.equal(validateReleaseChangelog('v1.2.3', '- Fixed bug'), '- Fixed bug')
+})
+
+test('rejects empty release notes, heading-only files, and invalid tags', () => {
   assert.throws(() => validateReleaseChangelog('v1.2.3', ''), /empty/)
   assert.throws(() => validateReleaseChangelog('v1.2.3', '  \n  '), /empty/)
-  assert.throws(() => validateReleaseChangelog('v1.2.3', '# v1.2.2\nNotes'), /must start with/)
   assert.throws(() => validateReleaseChangelog('v1.2.3', '# v1.2.3'), /must describe changes/)
   assert.throws(
-    () => validateReleaseChangelog('v1.2.3', '# v1.2.3\n## Highlights'),
+    () => validateReleaseChangelog('v1.2.3', '# Release notes\n## Highlights'),
+    /must describe changes/,
+  )
+  assert.throws(
+    () => validateReleaseChangelog('v1.2.3', '# Heading\n\n---'),
     /must describe changes/,
   )
   assert.throws(() => validateReleaseChangelog('../secret', '# ../secret'), /Invalid release tag/)

@@ -6,11 +6,14 @@ export function validateReleaseChangelog(tag: string, markdown: string): string 
   validateReleaseTag(tag, tag.slice(1))
   const notes = markdown.trim()
   if (!notes) throw new Error(`Release changelog changelogs/${tag}.md is empty.`)
-  const [heading, ...body] = notes.split(/\r?\n/)
-  if (heading !== `# ${tag}`) {
-    throw new Error(`Release changelog changelogs/${tag}.md must start with "# ${tag}".`)
-  }
-  if (!body.some((line) => line.trim() && !line.trim().startsWith('#'))) {
+  // The file path identifies the version. Do not force a particular Markdown
+  // heading or section layout on release notes maintained by a human.
+  if (
+    !notes.split(/\r?\n/).some((line) => {
+      const content = line.trim()
+      return !content.startsWith('#') && /[\p{L}\p{N}]/u.test(content)
+    })
+  ) {
     throw new Error(`Release changelog changelogs/${tag}.md must describe changes.`)
   }
   return notes
