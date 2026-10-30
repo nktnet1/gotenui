@@ -460,20 +460,67 @@ async function run(): Promise<void> {
     const unavailableTooltip =
       '#gotenui-navigation [data-slot="tooltip-trigger"][aria-label="Optimize PDFs requires Gotenberg 8.36 or newer."]'
     await page.waitUntil(
-      `document.querySelector(${JSON.stringify(unavailableTooltip)})?.querySelector('button:disabled') !== null`,
-      'disabled navigation tooltip trigger',
+      `document.querySelector(${JSON.stringify(unavailableTooltip)})?.querySelector('button:disabled') !== null &&
+        !document.querySelector('${refreshButton}')?.disabled`,
+      'disabled navigation tooltip trigger after refresh',
     )
-    await page.evaluate(`document.querySelector(${JSON.stringify(unavailableTooltip)}).focus()`)
+    // Optimize PDFs is below the sidebar's visible scroll area at desktop height.
+    // Focusing it directly scrolls the nav, which can immediately dismiss Radix's
+    // tooltip (Radix closes an open tooltip when its trigger's ancestor scrolls).
+    await page.evaluate(`document.querySelector(${JSON.stringify(unavailableTooltip)}).scrollIntoView({
+      block: 'center', inline: 'nearest', behavior: 'instant'
+    })`)
     await page.waitUntil(
-      "[...document.querySelectorAll('[data-slot=tooltip-content]')].some(el => el.textContent.includes('Optimize PDFs requires Gotenberg 8.36 or newer.'))",
-      'disabled operation tooltip on keyboard focus',
+      `(() => {
+        const trigger = document.querySelector(${JSON.stringify(unavailableTooltip)})
+        const nav = trigger?.closest('nav')
+        if (!nav) return false
+        const item = trigger.getBoundingClientRect()
+        const area = nav.getBoundingClientRect()
+        return item.top >= area.top && item.bottom <= area.bottom
+      })()`,
+      'disabled navigation item scrolled into view',
     )
+    // Let the scroll event reach Radix before opening the tooltip by focus.
+    await page.evaluate(
+      'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+    )
+    assert.equal(
+      await page.evaluate(`(() => {
+        const trigger = document.querySelector(${JSON.stringify(unavailableTooltip)})
+        trigger.focus({ preventScroll: true })
+        return document.activeElement === trigger
+      })()`),
+      true,
+      'Disabled operation must remain keyboard-focusable.',
+    )
+    const disabledTooltipOpen = `(() => {
+      const trigger = document.querySelector(${JSON.stringify(unavailableTooltip)})
+      const id = trigger?.getAttribute('aria-describedby')
+      const tooltip = id ? document.getElementById(id) : null
+      return document.activeElement === trigger && tooltip?.getAttribute('role') === 'tooltip' &&
+        tooltip.textContent.includes('Optimize PDFs requires Gotenberg 8.36 or newer.')
+    })()`
+    try {
+      await page.waitUntil(disabledTooltipOpen, 'disabled operation tooltip on keyboard focus')
+    } catch (error) {
+      const details = await page.evaluate(`(() => {
+        const trigger = document.querySelector(${JSON.stringify(unavailableTooltip)})
+        return {
+          focused: document.activeElement === trigger,
+          state: trigger?.getAttribute('data-state'),
+          describedBy: trigger?.getAttribute('aria-describedby'),
+          openTooltips: [...document.querySelectorAll('[data-slot=tooltip-content]')]
+            .map(el => el.textContent.trim()),
+          navScrollTop: trigger?.closest('nav')?.scrollTop
+        }
+      })()`)
+      throw new Error(`Disabled operation tooltip did not open: ${JSON.stringify(details)}`, {
+        cause: error,
+      })
+    }
     checks++
 
-    await page.waitUntil(
-      `!document.querySelector('${refreshButton}')?.disabled`,
-      'old-version refresh completion',
-    )
     await page.evaluate(`window.__smokeStatus = { online: true, version: '8.37.0', modules: [] }`)
     await page.evaluate(`document.querySelector('${refreshButton}').click()`)
     await page.waitUntil(
