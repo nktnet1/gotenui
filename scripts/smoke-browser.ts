@@ -273,11 +273,14 @@ async function run(): Promise<void> {
       `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules"))`,
       'shadcn refresh tooltip on hover',
     )
-    await page.hover('button[aria-haspopup="menu"]')
+    // Focus is deterministic in headless Chromium. Moving directly from one hovered
+    // Radix trigger to another can race its pointer grace-area/closing transition.
+    await page.evaluate(`document.querySelector('button[aria-haspopup="menu"]').focus()`)
     await page.waitUntil(
       `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes('Appearance: System'))`,
-      'shadcn theme selector tooltip',
+      'keyboard-accessible shadcn theme selector tooltip',
     )
+    await page.evaluate('document.activeElement.blur()')
     assert.equal(
       await page.evaluate(
         "document.querySelector('button[aria-haspopup=menu]')?.hasAttribute('title')",
