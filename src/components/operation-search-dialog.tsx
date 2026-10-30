@@ -4,8 +4,8 @@ import { operationIcon } from '#/components/operation-icons'
 import { ButtonTooltip } from '#/components/ui/button-tooltip'
 import { useModalFocus } from '#/components/use-modal-focus'
 import { nextSearchIndex, visibleSearchOperations } from '#/lib/operation-search'
-import { GROUPS, type Operation } from '#/lib/operations'
 import { cn } from '#/lib/utils'
+import { GROUPS, type Operation } from '#/tools/registry'
 
 type Props = {
   onSelect: (id: string) => void

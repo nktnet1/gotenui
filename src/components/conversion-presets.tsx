@@ -13,7 +13,7 @@ import {
   reusableFieldNames,
   upsertPreset,
 } from '#/lib/conversion-presets'
-import type { Operation } from '#/lib/operations'
+import type { Operation } from '#/tools/registry'
 
 export function ConversionPresets({
   operation,

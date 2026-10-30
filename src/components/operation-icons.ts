@@ -21,7 +21,7 @@ import {
   ShieldCheck,
   WandSparkles,
 } from 'lucide-react'
-import type { Operation } from '#/lib/operations'
+import type { Operation } from '#/tools/registry'
 
 const ICONS: Record<Operation['id'], LucideIcon> = {
   'url-pdf': Globe2,

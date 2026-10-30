@@ -12,7 +12,6 @@ import {
   parseIgnoredDomains,
   parseStatusCodes,
 } from '#/lib/official-form-fields'
-import { isFieldVisible, OPERATION_BY_ID, type Operation } from '#/lib/operations'
 import {
   configuredOverlays,
   countPostProcessFiles,
@@ -23,6 +22,7 @@ import {
   pdfPostProcessSchema,
 } from '#/lib/pdf-post-processing'
 import { metadataObject, validateBookmarkDocument } from '#/lib/pdf-structure-editors'
+import { isFieldVisible, OPERATION_BY_ID, type Operation } from '#/tools/registry'
 
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])

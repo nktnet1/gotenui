@@ -1,5 +1,5 @@
 import type { ServerStatus } from '#/lib/gotenberg-client'
-import type { Operation } from '#/lib/operations'
+import type { Operation } from '#/tools/registry'
 
 /** The status API returns /health and /version; absence of details is not proof a module is missing. */
 export function versionAtLeast(version: string | undefined, minor: number): boolean | null {

@@ -1,4 +1,4 @@
-import { GROUPS, OPERATIONS, type Operation } from '#/lib/operations'
+import { GROUPS, OPERATIONS, type Operation } from '#/tools/registry'
 
 /** Human search vocabulary; the UI is small enough that a search dependency isn't necessary. */
 const KEYWORDS: Readonly<Record<string, string>> = {

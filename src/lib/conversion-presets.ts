@@ -1,6 +1,6 @@
 import * as v from 'valibot'
 import { parseConsoleMessageTypes } from '#/lib/official-form-fields'
-import { OPERATION_BY_ID, type Operation, operationDefaults } from '#/lib/operations'
+import { OPERATION_BY_ID, type Operation, operationDefaults } from '#/tools/registry'
 
 /** Only public, non-sensitive, repeatable operation settings may enter localStorage. */
 export const PRESETS_STORAGE_KEY = 'gotenui.presets.v1'

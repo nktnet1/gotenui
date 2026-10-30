@@ -3,7 +3,7 @@ import { operationIcon } from '#/components/operation-icons'
 import { ButtonTooltip } from '#/components/ui/button-tooltip'
 import type { ServerStatus } from '#/lib/gotenberg-client'
 import { unavailableOperationReason } from '#/lib/operation-availability'
-import { GROUPS, OPERATIONS } from '#/lib/operations'
+import { GROUPS, OPERATIONS } from '#/tools/registry'
 
 /** The same operation registry powers the home page, sidebar, and command palette. */
 export function ToolsHome({

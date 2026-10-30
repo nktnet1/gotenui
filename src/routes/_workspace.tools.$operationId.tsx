@@ -1,5 +1,5 @@
 import { createFileRoute, notFound } from '@tanstack/react-router'
-import { OPERATION_BY_ID } from '#/lib/operations'
+import { OPERATION_BY_ID } from '#/tools/registry'
 
 export const Route = createFileRoute('/_workspace/tools/$operationId')({
   beforeLoad: ({ params }) => {

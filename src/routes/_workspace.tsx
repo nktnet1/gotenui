@@ -1,7 +1,7 @@
 import { createFileRoute, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useCallback } from 'react'
 import { GotenuiApp } from '#/components/gotenui-app'
-import { OPERATION_BY_ID } from '#/lib/operations'
+import { OPERATION_BY_ID } from '#/tools/registry'
 
 export const Route = createFileRoute('/_workspace')({
   component: WorkspaceRoute,

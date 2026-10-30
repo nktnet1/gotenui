@@ -15,8 +15,11 @@ Open <http://localhost:3100>. The public Gotenberg demo is selected by default u
 
 | Path | Purpose |
 | --- | --- |
-| `src/components/` | React interface and reusable controls |
-| `src/lib/` | Operations, validation, client requests and shared logic |
+| `src/components/` | Workspace interface and reusable controls |
+| `src/tools/<tool-id>/config.ts` | Individual tool definition: endpoint, fields and output |
+| `src/tools/registry.ts` | Ordered catalogue used by the homepage, sidebar, search and routes |
+| `src/tools/shared/` | Reusable field groups, form, field renderer and result panel |
+| `src/lib/` | Validation, client requests and shared backend logic |
 | `src/start.ts` | Global request middleware and optional site authentication |
 | `src/routes/api/` | Gotenberg proxy API endpoints |
 | `tests/` | Vitest unit and Docker integration tests |
@@ -60,4 +63,6 @@ Keep `pnpm-lock.yaml` in sync when updating dependencies. Do not edit generated 
 
 Conversion requests use multipart `payload`, `files` and `auxiliary` fields. Browser-managed requests select a backend URL, while managed requests use an approved connection ID. The server never returns managed credentials to browsers.
 
-For supported options and payload behavior, see the operation definitions and validation in `src/lib/`. Upstream API documentation is at [gotenberg.dev](https://gotenberg.dev/docs/getting-started/routes).
+To add a tool, create `src/tools/<tool-id>/config.ts` exporting an `Operation`, then import it in `src/tools/registry.ts` in the desired display order. The homepage, sidebar, search and `/tools/$operationId` route use that single registry. Reuse field groups and components in `src/tools/shared/`; `src/lib/operations.ts` is a compatibility re-export.
+
+For payload options, see `src/tools/` and `src/lib/validation.ts`. Upstream API documentation is at [gotenberg.dev](https://gotenberg.dev/docs/getting-started/routes).

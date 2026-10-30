@@ -6,7 +6,6 @@ import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
-import type { Operation } from '#/lib/operations'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
@@ -32,6 +31,7 @@ import {
   validateFiles,
   validatePayload,
 } from '#/lib/validation'
+import type { Operation } from '#/tools/registry'
 
 const serverEnvSchema = v.object({
   GOTENBERG_ALLOWED_URLS: v.optional(v.pipe(v.string(), v.maxLength(20_000))),

@@ -5,7 +5,6 @@ import { CHROMIUM_MEDIA_OPTIONS, encodeChromiumMediaFeatures } from '#/lib/chrom
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
-import type { Operation } from '#/lib/operations'
 import {
   OVERLAY_KINDS,
   orderedOverlayUploads,
@@ -20,6 +19,7 @@ import {
   validateFiles,
   validatePayload,
 } from '#/lib/validation'
+import type { Operation } from '#/tools/registry'
 
 // The browser retains input files in memory; this is an application-side safety cap.
 const maxUploadSchema = v.pipe(
