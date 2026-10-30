@@ -3,6 +3,7 @@ import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import react from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
 import { defineConfig } from 'vite'
+import { vercelCommitSha } from '#/lib/app-version.ts'
 import {
   filterBundledDependencyClientDirectives,
   labelDynamicChunkGroups,
@@ -12,6 +13,12 @@ import {
 export default defineConfig({
   // Only PUBLIC_ variables are embedded in client bundles. Keep secrets unprefixed.
   envPrefix: 'PUBLIC_',
+  // Expose only the non-sensitive Vercel revision to client and prerendered HTML.
+  define: {
+    'import.meta.env.PUBLIC_GOTENUI_VERCEL_COMMIT_SHA': JSON.stringify(
+      vercelCommitSha(process.env),
+    ),
+  },
   plugins: [
     tanstackStart({
       spa: { enabled: true, prerender: { outputPath: '/index.html' } },

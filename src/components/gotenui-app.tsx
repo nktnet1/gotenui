@@ -58,6 +58,7 @@ import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
 import { UploadZone } from '#/components/upload-zone'
 import { useModalFocus } from '#/components/use-modal-focus'
+import { appVersionLabel } from '#/lib/app-version'
 import {
   emptyWebhook,
   type RemoteInputRow,
@@ -181,7 +182,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
             Gotenui
           </p>
           <p className="mt-[-2px] text-[10px] font-medium tracking-[.13em] text-slate-500 dark:text-slate-400">
-            v{appVersion}
+            {appVersionLabel(appVersion, import.meta.env.PUBLIC_GOTENUI_VERCEL_COMMIT_SHA)}
           </p>
         </div>
       )}

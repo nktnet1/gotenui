@@ -175,6 +175,25 @@ async function terminate(child: ChildProcess): Promise<void> {
   }
 }
 
+/** Allow small sRGB rounding differences between CSS rgb() and oklch() palettes. */
+function assertTooltipPalette(
+  actual: unknown,
+  expected: Record<'background' | 'text' | 'border' | 'arrow', number[]>,
+  description: string,
+): void {
+  assert.ok(actual && typeof actual === 'object', description)
+  for (const [part, channels] of Object.entries(expected)) {
+    const rgb = (actual as Record<string, unknown>)[part]
+    assert.ok(Array.isArray(rgb) && rgb.length === 3, `${description} ${part}: invalid RGB`)
+    assert.ok(
+      rgb.every(
+        (channel, index) => typeof channel === 'number' && Math.abs(channel - channels[index]) <= 5,
+      ),
+      `${description} ${part}: expected near rgb(${channels.join(', ')}), got ${JSON.stringify(rgb)}`,
+    )
+  }
+}
+
 async function run(): Promise<void> {
   assert.ok(existsSync(entry), 'Build Gotenui before running the browser smoke suite.')
   assert.ok(chromium, 'Chrome/Chromium not found. Set GOTENUI_BROWSER_BIN to its executable path.')
@@ -446,25 +465,35 @@ async function run(): Promise<void> {
       `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules"))`,
       'light theme refresh tooltip',
     )
+    // Modern Chromium can serialize Tailwind colours as oklch() rather than rgb().
+    // Rasterise computed colours into sRGB before checking the visible palette.
     const tooltipColors = `(() => {
       const content = [...document.querySelectorAll('[data-slot="tooltip-content"]')].find(
         el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules")
       )
       const contentStyle = getComputedStyle(content)
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      const rgb = (color) => {
+        context.clearRect(0, 0, 1, 1)
+        context.fillStyle = color
+        context.fillRect(0, 0, 1, 1)
+        return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3)
+      }
       return {
-        background: contentStyle.backgroundColor,
-        text: contentStyle.color,
-        border: contentStyle.borderTopColor,
-        arrow: getComputedStyle(content.querySelector('svg')).fill,
+        background: rgb(contentStyle.backgroundColor),
+        text: rgb(contentStyle.color),
+        border: rgb(contentStyle.borderTopColor),
+        arrow: rgb(getComputedStyle(content.querySelector('svg')).fill),
       }
     })()`
-    assert.deepEqual(
+    assertTooltipPalette(
       await page.evaluate(tooltipColors),
       {
-        background: 'rgb(255, 255, 255)',
-        text: 'rgb(51, 65, 85)',
-        border: 'rgb(226, 232, 240)',
-        arrow: 'rgb(255, 255, 255)',
+        background: [255, 255, 255],
+        text: [51, 65, 85],
+        border: [226, 232, 240],
+        arrow: [255, 255, 255],
       },
       'Tooltip should use a soft light surface, not an inverted dark background.',
     )
@@ -662,13 +691,13 @@ async function run(): Promise<void> {
       `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules"))`,
       'dark theme refresh tooltip',
     )
-    assert.deepEqual(
+    assertTooltipPalette(
       await page.evaluate(tooltipColors),
       {
-        background: 'rgb(30, 41, 59)',
-        text: 'rgb(226, 232, 240)',
-        border: 'rgb(51, 65, 85)',
-        arrow: 'rgb(30, 41, 59)',
+        background: [30, 41, 59],
+        text: [226, 232, 240],
+        border: [51, 65, 85],
+        arrow: [30, 41, 59],
       },
       'Tooltip should use a muted dark surface, not an inverted light background.',
     )

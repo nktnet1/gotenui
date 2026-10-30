@@ -24,6 +24,18 @@ describe('sidebar branding and bookmark navigation', () => {
     expect(html).not.toContain('GOTENBERG WORKSPACE')
   })
 
+  it('renders the deployed Vercel revision instead of the release version', () => {
+    const commit = '0123456789abcdef0123456789abcdef01234567'
+    vi.stubEnv('PUBLIC_GOTENUI_VERCEL_COMMIT_SHA', commit)
+    try {
+      const html = renderToStaticMarkup(createElement(Brand))
+      expect(html).toContain('>0123456</p>')
+      expect(html).not.toContain(`>v${appVersion}</p>`)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('distinguishes reading from writing PDF bookmarks with semantic icons', () => {
     const html = renderToStaticMarkup(
       createElement(
