@@ -12,6 +12,6 @@ export function vercelCommitSha(environment: {
 /** Show the deployed revision on Vercel, otherwise the package release version. */
 export function appVersionLabel(version: string, commitSha?: string): string {
   return commitSha && fullCommitSha.test(commitSha)
-    ? commitSha.slice(0, 7).toLowerCase()
+    ? `commit-${commitSha.slice(0, 7).toLowerCase()}`
     : `v${version}`
 }

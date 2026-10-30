@@ -175,10 +175,21 @@ async function terminate(child: ChildProcess): Promise<void> {
   }
 }
 
+/** Convert computed CSS colours to sRGB before comparing theme palettes in Chromium. */
+const toRgbScript = `((color) => {
+  const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
+  if (!context) throw new Error('Cannot create a canvas 2D context to inspect theme colours')
+  context.fillStyle = color
+  context.fillRect(0, 0, 1, 1)
+  return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3)
+})`
+
 /** Allow small sRGB rounding differences between CSS rgb() and oklch() palettes. */
-function assertTooltipPalette(
+const RGB_CHANNEL_TOLERANCE = 5
+
+function assertRgbPalette(
   actual: unknown,
-  expected: Record<'background' | 'text' | 'border' | 'arrow', number[]>,
+  expected: Record<string, readonly number[]>,
   description: string,
 ): void {
   assert.ok(actual && typeof actual === 'object', description)
@@ -187,11 +198,42 @@ function assertTooltipPalette(
     assert.ok(Array.isArray(rgb) && rgb.length === 3, `${description} ${part}: invalid RGB`)
     assert.ok(
       rgb.every(
-        (channel, index) => typeof channel === 'number' && Math.abs(channel - channels[index]) <= 5,
+        (channel, index) =>
+          typeof channel === 'number' &&
+          Number.isFinite(channel) &&
+          Math.abs(channel - channels[index]) <= RGB_CHANNEL_TOLERANCE,
       ),
       `${description} ${part}: expected near rgb(${channels.join(', ')}), got ${JSON.stringify(rgb)}`,
     )
   }
+}
+
+/** Wait for the computed colour to settle, including any Tailwind transition-colors animation. */
+async function waitForRgbColor(
+  page: BrowserPage,
+  expression: string,
+  expected: readonly number[],
+  description: string,
+): Promise<void> {
+  try {
+    await page.waitUntil(
+      `(() => {
+        const actual = ${expression}
+        const target = ${JSON.stringify(expected)}
+        return Array.isArray(actual) && actual.length === target.length &&
+          actual.every((channel, index) => typeof channel === 'number' &&
+            Number.isFinite(channel) && Math.abs(channel - target[index]) <= ${RGB_CHANNEL_TOLERANCE})
+      })()`,
+      description,
+    )
+  } catch (error) {
+    const actual = await page.evaluate(expression)
+    throw new Error(
+      `${description}: expected near rgb(${expected.join(', ')}), got ${JSON.stringify(actual)}`,
+      { cause: error },
+    )
+  }
+  assertRgbPalette({ text: await page.evaluate(expression) }, { text: expected }, description)
 }
 
 async function run(): Promise<void> {
@@ -457,8 +499,10 @@ async function run(): Promise<void> {
       "!document.documentElement.classList.contains('dark')",
       'light theme selection',
     )
-    const sidebarBackground =
-      "getComputedStyle(document.querySelector('#gotenui-navigation')).backgroundColor"
+    const sidebarBackground = `(() => {
+      const rgb = ${toRgbScript}
+      return rgb(getComputedStyle(document.querySelector('#gotenui-navigation')).backgroundColor)
+    })()`
     const lightSidebar = await page.evaluate(sidebarBackground)
     await page.hover(refreshButton)
     await page.waitUntil(
@@ -472,14 +516,7 @@ async function run(): Promise<void> {
         el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules")
       )
       const contentStyle = getComputedStyle(content)
-      const canvas = document.createElement('canvas')
-      const context = canvas.getContext('2d', { willReadFrequently: true })
-      const rgb = (color) => {
-        context.clearRect(0, 0, 1, 1)
-        context.fillStyle = color
-        context.fillRect(0, 0, 1, 1)
-        return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3)
-      }
+      const rgb = ${toRgbScript}
       return {
         background: rgb(contentStyle.backgroundColor),
         text: rgb(contentStyle.color),
@@ -487,7 +524,7 @@ async function run(): Promise<void> {
         arrow: rgb(getComputedStyle(content.querySelector('svg')).fill),
       }
     })()`
-    assertTooltipPalette(
+    assertRgbPalette(
       await page.evaluate(tooltipColors),
       {
         background: [255, 255, 255],
@@ -499,12 +536,17 @@ async function run(): Promise<void> {
     )
     checks++
 
-    assert.equal(lightSidebar, 'rgb(255, 255, 255)', 'Light sidebar must be white.')
+    assertRgbPalette(
+      { background: lightSidebar },
+      { background: [255, 255, 255] },
+      'Light sidebar must be white.',
+    )
     const sourceEditorColors = `(() => {
       const editor = document.querySelector('#source-editor')
       if (!editor) return null
       const style = getComputedStyle(editor)
-      return { background: style.backgroundColor, text: style.color }
+      const rgb = ${toRgbScript}
+      return { background: rgb(style.backgroundColor), text: rgb(style.color) }
     })()`
     for (const operationName of ['HTML to PDF', 'Markdown to PDF']) {
       await page.evaluate(
@@ -514,9 +556,9 @@ async function run(): Promise<void> {
         `document.querySelector('h1')?.textContent?.includes(${JSON.stringify(operationName)}) && !!document.querySelector('#source-editor')`,
         `${operationName} source editor in light mode`,
       )
-      assert.deepEqual(
+      assertRgbPalette(
         await page.evaluate(sourceEditorColors),
-        { background: 'rgb(255, 255, 255)', text: 'rgb(15, 23, 42)' },
+        { background: [255, 255, 255], text: [15, 23, 42] },
         `${operationName} source should use the light textarea theme.`,
       )
       checks++
@@ -545,10 +587,11 @@ async function run(): Promise<void> {
       const output = panel?.querySelector('pre')
       if (!output) return null
       const style = getComputedStyle(output)
+      const rgb = ${toRgbScript}
       return {
-        background: style.backgroundColor,
-        text: style.color,
-        border: style.borderTopColor,
+        background: rgb(style.backgroundColor),
+        text: rgb(style.color),
+        border: rgb(style.borderTopColor),
       }
     })()`
     await page.evaluate(`document.querySelector(${JSON.stringify(diagnosticsButton)}).click()`)
@@ -617,9 +660,21 @@ async function run(): Promise<void> {
     await page.evaluate(
       'document.querySelector(\'[role=dialog] button[aria-label="Close settings"]\').click()',
     )
-    const sidebarText =
-      "getComputedStyle(document.querySelector('#gotenui-navigation nav button:not([aria-current])')).color"
-    const lightSidebarText = await page.evaluate(sidebarText)
+    // Use the same inactive navigation item in both themes, even when the
+    // selected operation changes between assertions.
+    const sidebarText = `(() => {
+      const button = [...document.querySelectorAll('#gotenui-navigation nav button')]
+        .find(el => el.textContent.trim() === 'Website to PDF')
+      if (!button || button.disabled || button.hasAttribute('aria-current')) return null
+      const rgb = ${toRgbScript}
+      return rgb(getComputedStyle(button).color)
+    })()`
+    await waitForRgbColor(
+      page,
+      sidebarText,
+      [51, 65, 85],
+      'Light sidebar navigation must use readable text.',
+    )
     checks++
 
     await page.evaluate(
@@ -674,15 +729,16 @@ async function run(): Promise<void> {
       "document.documentElement.classList.contains('dark')",
       'dark theme selection',
     )
-    assert.equal(
-      await page.evaluate(sidebarBackground),
-      'rgb(12, 27, 44)',
+    assertRgbPalette(
+      { background: await page.evaluate(sidebarBackground) },
+      { background: [12, 27, 44] },
       'Dark sidebar must use the original navy surface.',
     )
-    assert.notEqual(
-      await page.evaluate(sidebarText),
-      lightSidebarText,
-      'Sidebar navigation text must adapt to the selected theme.',
+    await waitForRgbColor(
+      page,
+      sidebarText,
+      [148, 163, 184],
+      'Sidebar navigation text must adapt to the selected dark theme.',
     )
     checks++
 
@@ -691,7 +747,7 @@ async function run(): Promise<void> {
       `[...document.querySelectorAll('[data-slot="tooltip-content"]')].some(el => el.textContent.includes("Recheck the selected Gotenberg connection's health, version, and modules"))`,
       'dark theme refresh tooltip',
     )
-    assertTooltipPalette(
+    assertRgbPalette(
       await page.evaluate(tooltipColors),
       {
         background: [30, 41, 59],
@@ -745,9 +801,9 @@ async function run(): Promise<void> {
         `document.querySelector('h1')?.textContent?.includes(${JSON.stringify(operationName)}) && !!document.querySelector('#source-editor')`,
         `${operationName} source editor in dark mode`,
       )
-      assert.deepEqual(
+      assertRgbPalette(
         await page.evaluate(sourceEditorColors),
-        { background: 'rgb(15, 23, 42)', text: 'rgb(241, 245, 249)' },
+        { background: [15, 23, 42], text: [241, 245, 249] },
         `${operationName} source should use the dark textarea theme.`,
       )
       checks++

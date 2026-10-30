@@ -18,9 +18,9 @@ describe('deployment version label', () => {
     }
   })
 
-  it('shows the first seven hexadecimal characters for Vercel builds', () => {
-    assert.equal(appVersionLabel('0.1.2', commit), '0123456')
-    assert.equal(appVersionLabel('0.1.2', commit.toUpperCase()), '0123456')
+  it('prefixes the abbreviated Vercel commit with commit-', () => {
+    assert.equal(appVersionLabel('0.1.2', commit), 'commit-0123456')
+    assert.equal(appVersionLabel('0.1.2', commit.toUpperCase()), 'commit-0123456')
   })
 
   it('preserves package version on non-Vercel builds', () => {

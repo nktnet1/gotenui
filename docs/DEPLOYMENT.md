@@ -45,7 +45,7 @@ Set `PORT=3100` to serve the Node app at `http://localhost:3100`. Keep runtime e
 
 Vercel and other Nitro-compatible platforms must deploy both the UI and the `/api/gotenberg/*` routes. The repository includes `vercel.json` for Vercel.
 
-On Vercel, the sidebar shows the first seven characters of the Git commit SHA instead of the package version. Vite embeds Vercel's `VERCEL_GIT_COMMIT_SHA` into the browser bundle at build time, without broadening the app's `PUBLIC_` environment-variable policy. Enable **Automatically expose System Environment Variables** in Vercel's project settings if your project does not already expose them. Deployments without that Git metadata, and non-Vercel builds, continue showing the package version. The displayed revision updates on the next deployment, not at runtime.
+On Vercel, the sidebar shows `commit-` followed by the first seven characters of the Git commit SHA instead of the package version. Vite embeds Vercel's `VERCEL_GIT_COMMIT_SHA` into the browser bundle at build time, without broadening the app's `PUBLIC_` environment-variable policy. Enable **Automatically expose System Environment Variables** in Vercel's project settings if your project does not already expose them. Deployments without that Git metadata, and non-Vercel builds, continue showing the package version. The displayed revision updates on the next deployment, not at runtime.
 
 ## Environment variables
 

@@ -29,7 +29,7 @@ describe('sidebar branding and bookmark navigation', () => {
     vi.stubEnv('PUBLIC_GOTENUI_VERCEL_COMMIT_SHA', commit)
     try {
       const html = renderToStaticMarkup(createElement(Brand))
-      expect(html).toContain('>0123456</p>')
+      expect(html).toContain('>commit-0123456</p>')
       expect(html).not.toContain(`>v${appVersion}</p>`)
     } finally {
       vi.unstubAllEnvs()
