@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --configLoader native --host 0.0.0.0",
+    "dev": "vite dev",
     "build": "vite build --configLoader native",
     "preview": "node .output/server/index.mjs",
     "check": "biome check .",

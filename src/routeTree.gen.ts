@@ -9,7 +9,9 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as WorkspaceRouteImport } from './routes/_workspace'
+import { Route as WorkspaceIndexRouteImport } from './routes/_workspace.index'
+import { Route as WorkspaceToolsOperationIdRouteImport } from './routes/_workspace.tools.$operationId'
 import { Route as ApiGotenbergConnectionsRouteImport } from './routes/api/gotenberg/connections'
 import { Route as ApiGotenbergConvertRouteImport } from './routes/api/gotenberg/convert'
 import { Route as ApiGotenbergDebugRouteImport } from './routes/api/gotenberg/debug'
@@ -17,11 +19,21 @@ import { Route as ApiGotenbergHealthRouteImport } from './routes/api/gotenberg/h
 import { Route as ApiGotenbergMetricsRouteImport } from './routes/api/gotenberg/metrics'
 import { Route as ApiGotenbergStatusRouteImport } from './routes/api/gotenberg/status'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const WorkspaceRoute = WorkspaceRouteImport.update({
+  id: '/_workspace',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceToolsOperationIdRoute =
+  WorkspaceToolsOperationIdRouteImport.update({
+    id: '/tools/$operationId',
+    path: '/tools/$operationId',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
 const ApiGotenbergConnectionsRoute = ApiGotenbergConnectionsRouteImport.update({
   id: '/api/gotenberg/connections',
   path: '/api/gotenberg/connections',
@@ -54,7 +66,8 @@ const ApiGotenbergStatusRoute = ApiGotenbergStatusRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof WorkspaceIndexRoute
+  '/tools/$operationId': typeof WorkspaceToolsOperationIdRoute
   '/api/gotenberg/connections': typeof ApiGotenbergConnectionsRoute
   '/api/gotenberg/convert': typeof ApiGotenbergConvertRoute
   '/api/gotenberg/debug': typeof ApiGotenbergDebugRoute
@@ -63,7 +76,8 @@ export interface FileRoutesByFullPath {
   '/api/gotenberg/status': typeof ApiGotenbergStatusRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/': typeof WorkspaceIndexRoute
+  '/tools/$operationId': typeof WorkspaceToolsOperationIdRoute
   '/api/gotenberg/connections': typeof ApiGotenbergConnectionsRoute
   '/api/gotenberg/convert': typeof ApiGotenbergConvertRoute
   '/api/gotenberg/debug': typeof ApiGotenbergDebugRoute
@@ -73,7 +87,9 @@ export interface FileRoutesByTo {
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_workspace': typeof WorkspaceRouteWithChildren
+  '/_workspace/': typeof WorkspaceIndexRoute
+  '/_workspace/tools/$operationId': typeof WorkspaceToolsOperationIdRoute
   '/api/gotenberg/connections': typeof ApiGotenbergConnectionsRoute
   '/api/gotenberg/convert': typeof ApiGotenbergConvertRoute
   '/api/gotenberg/debug': typeof ApiGotenbergDebugRoute
@@ -85,6 +101,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/tools/$operationId'
     | '/api/gotenberg/connections'
     | '/api/gotenberg/convert'
     | '/api/gotenberg/debug'
@@ -94,6 +111,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/tools/$operationId'
     | '/api/gotenberg/connections'
     | '/api/gotenberg/convert'
     | '/api/gotenberg/debug'
@@ -102,7 +120,9 @@ export interface FileRouteTypes {
     | '/api/gotenberg/status'
   id:
     | '__root__'
-    | '/'
+    | '/_workspace'
+    | '/_workspace/'
+    | '/_workspace/tools/$operationId'
     | '/api/gotenberg/connections'
     | '/api/gotenberg/convert'
     | '/api/gotenberg/debug'
@@ -112,7 +132,7 @@ export interface FileRouteTypes {
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  WorkspaceRoute: typeof WorkspaceRouteWithChildren
   ApiGotenbergConnectionsRoute: typeof ApiGotenbergConnectionsRoute
   ApiGotenbergConvertRoute: typeof ApiGotenbergConvertRoute
   ApiGotenbergDebugRoute: typeof ApiGotenbergDebugRoute
@@ -123,12 +143,26 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_workspace': {
+      id: '/_workspace'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof WorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_workspace/': {
+      id: '/_workspace/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof WorkspaceIndexRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/_workspace/tools/$operationId': {
+      id: '/_workspace/tools/$operationId'
+      path: '/tools/$operationId'
+      fullPath: '/tools/$operationId'
+      preLoaderRoute: typeof WorkspaceToolsOperationIdRouteImport
+      parentRoute: typeof WorkspaceRoute
     }
     '/api/gotenberg/connections': {
       id: '/api/gotenberg/connections'
@@ -175,8 +209,22 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface WorkspaceRouteChildren {
+  WorkspaceIndexRoute: typeof WorkspaceIndexRoute
+  WorkspaceToolsOperationIdRoute: typeof WorkspaceToolsOperationIdRoute
+}
+
+const WorkspaceRouteChildren: WorkspaceRouteChildren = {
+  WorkspaceIndexRoute: WorkspaceIndexRoute,
+  WorkspaceToolsOperationIdRoute: WorkspaceToolsOperationIdRoute,
+}
+
+const WorkspaceRouteWithChildren = WorkspaceRoute._addFileChildren(
+  WorkspaceRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  WorkspaceRoute: WorkspaceRouteWithChildren,
   ApiGotenbergConnectionsRoute: ApiGotenbergConnectionsRoute,
   ApiGotenbergConvertRoute: ApiGotenbergConvertRoute,
   ApiGotenbergDebugRoute: ApiGotenbergDebugRoute,

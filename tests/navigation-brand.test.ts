@@ -8,7 +8,9 @@ import { version as appVersion } from '../package.json'
 
 describe('sidebar branding and bookmark navigation', () => {
   it('uses the selected colour theme even while connection settings are loading', () => {
-    const html = renderToStaticMarkup(createElement(GotenuiApp))
+    const html = renderToStaticMarkup(
+      createElement(GotenuiApp, { selectedId: 'home', onSelect: vi.fn() }),
+    )
     expect(html).toContain('bg-[#f6f8fb]')
     expect(html).toContain('text-slate-900')
     expect(html).toContain('dark:bg-[#0c1b2c]')

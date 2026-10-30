@@ -1749,7 +1749,11 @@ function Workspace({
   onApply,
   onUpsert,
   onRemove,
+  selectedId,
+  onSelect,
 }: {
+  selectedId: string
+  onSelect: (id: string) => void
   connection: ConnectionChoice
   connectionName: string
   selectedConnection: string
@@ -1761,7 +1765,6 @@ function Workspace({
   onUpsert: (profile: BrowserConnection, username: string, secret: string) => void
   onRemove: (id: string) => void
 }) {
-  const [selectedId, setSelectedId] = useState('home')
   const [status, setStatus] = useState<ServerStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [recent, setRecent] = useState<Job[]>([])
@@ -1895,7 +1898,7 @@ function Workspace({
     <div className="min-h-screen bg-[#f6f8fb] dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       <Sidebar
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        onSelect={onSelect}
         status={status}
         onSettings={() => {
           setMobileOpen(false)
@@ -1986,7 +1989,7 @@ function Workspace({
         </header>
         <main className="mx-auto max-w-[1390px] px-5 pt-8 pb-14 md:px-9 md:pt-10">
           {selectedId === 'home' ? (
-            <ToolsHome status={status} onSelect={setSelectedId} onSearch={openSearch} />
+            <ToolsHome status={status} onSelect={onSelect} onSearch={openSearch} />
           ) : (
             <>
               <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
@@ -2089,7 +2092,7 @@ function Workspace({
                     >
                       <button
                         type="button"
-                        onClick={() => setSelectedId(item.id)}
+                        onClick={() => onSelect(item.id)}
                         disabled={Boolean(unavailable)}
                         className={cn(
                           'cursor-pointer rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40',
@@ -2125,7 +2128,7 @@ function Workspace({
           unavailableReason={(item) => unavailableOperationReason(status, item)}
           onClose={closeSearch}
           onSelect={(id) => {
-            setSelectedId(id)
+            onSelect(id)
             closeSearch()
           }}
         />
@@ -2154,7 +2157,13 @@ function Workspace({
   )
 }
 
-export function GotenuiApp() {
+export function GotenuiApp({
+  selectedId,
+  onSelect,
+}: {
+  selectedId: string
+  onSelect: (id: string) => void
+}) {
   const [loading, setLoading] = useState(true)
   const [saved, setSaved] = useState<SavedConnections>(() =>
     loadConnections(null, DEFAULT_BACKEND_URL),
@@ -2273,6 +2282,8 @@ export function GotenuiApp() {
       onApply={apply}
       onUpsert={upsert}
       onRemove={remove}
+      selectedId={selectedId}
+      onSelect={onSelect}
     />
   )
 }

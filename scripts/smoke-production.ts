@@ -302,6 +302,20 @@ async function run(): Promise<void> {
     assert.match(await page.text(), /Gotenui/)
     checks++
 
+    // Tool routes must be bookmarkable and load directly after a hard refresh.
+    for (const path of ['/tools/url-pdf', '/tools/metadata-read', '/tools/split']) {
+      const response = await get(`${origin}${path}`)
+      assert.equal(response.status, 200, `Deep link ${path} must serve the workspace`)
+      assert.match(response.headers.get('content-type') ?? '', /^text\/html/)
+      assert.match(await response.text(), /Gotenui/)
+      checks++
+    }
+    for (const path of ['/tools/no-such-operation', '/tools/url-pdf/extra']) {
+      const unknownTool = await get(`${origin}${path}`)
+      assert.equal(unknownTool.status, 404, `Invalid tool URL ${path} must not open the home page`)
+      checks++
+    }
+
     const logo = await get(`${origin}/gotenui-icon.svg`)
     assert.equal(logo.status, 200)
     assert.match(logo.headers.get('content-type') ?? '', /image\/svg\+xml/)
@@ -776,7 +790,7 @@ async function run(): Promise<void> {
         }
         await sleep(100)
       }
-      for (const path of ['/', '/index.html', '/api/gotenberg/connections']) {
+      for (const path of ['/', '/index.html', '/tools/url-pdf', '/api/gotenberg/connections']) {
         const anonymous = await get(`${authOrigin}${path}`)
         assert.equal(anonymous.status, 401, `Unauthenticated ${path} should be denied`)
         assert.equal(
@@ -790,7 +804,12 @@ async function run(): Promise<void> {
       assert.equal(staticAsset.status, 200, 'Public static assets must remain available')
       checks++
       const authorization = `Basic ${Buffer.from('smoke-user:smoke-password').toString('base64')}`
-      for (const path of ['/', '/gotenui-icon.svg', '/api/gotenberg/connections']) {
+      for (const path of [
+        '/',
+        '/tools/url-pdf',
+        '/gotenui-icon.svg',
+        '/api/gotenberg/connections',
+      ]) {
         const authorized = await get(`${authOrigin}${path}`, {
           headers: { Authorization: authorization },
         })

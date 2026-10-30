@@ -27,10 +27,6 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Check formatting and lint
         run: pnpm check
-      - name: Typecheck
-        run: pnpm typecheck
-      - name: Unit tests
-        run: pnpm test:unit
       - name: Build with native Vite config without known warnings
         shell: bash
         run: |
@@ -40,6 +36,11 @@ jobs:
             echo '::error::Vite/Nitro build warnings have regressed.'
             exit 1
           fi
+      # Building generates the TanStack file-route types used by tsc and Vitest.
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test:unit
       - name: Smoke-test built Nitro deployment without Docker
         run: pnpm test:smoke
       - name: Exercise desktop and mobile UI in headless Chrome

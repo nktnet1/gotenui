@@ -332,14 +332,14 @@ async function run(): Promise<void> {
       card.click()
     })()`)
     await page.waitUntil(
-      "document.querySelector('h1')?.textContent?.includes('Website to PDF') && document.title === 'Website to PDF · Gotenui'",
-      'home tool selection',
+      "document.querySelector('h1')?.textContent?.includes('Website to PDF') && document.title === 'Website to PDF · Gotenui' && location.pathname === '/tools/url-pdf'",
+      'home tool selection updates URL',
     )
     checks++
     await page.evaluate('document.querySelector(\'button[aria-label="Go to all tools"]\').click()')
     await page.waitUntil(
-      "document.querySelector('[data-slot=tools-home]') !== null && document.title === 'All tools · Gotenui'",
-      'return to all tools through the brand',
+      "document.querySelector('[data-slot=tools-home]') !== null && document.title === 'All tools · Gotenui' && location.pathname === '/'",
+      'return to all tools through the brand and URL',
     )
     checks++
     await page.evaluate(`(() => {
@@ -348,8 +348,46 @@ async function run(): Promise<void> {
       card.click()
     })()`)
     await page.waitUntil(
-      "document.querySelector('h1')?.textContent?.includes('Website to PDF')",
+      "document.querySelector('h1')?.textContent?.includes('Website to PDF') && location.pathname === '/tools/url-pdf'",
       'return to selected tool',
+    )
+    checks++
+    // The sidebar, browser history, and hard reload must all derive the selected
+    // tool from the URL rather than a transient React state value.
+    await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('#gotenui-navigation nav button')]
+        .find(el => el.textContent.includes('Read metadata'))
+      if (!button) throw new Error('Missing Read metadata navigation button')
+      button.click()
+    })()`)
+    await page.waitUntil(
+      "location.pathname === '/tools/metadata-read' && document.querySelector('h1')?.textContent === 'Read metadata'",
+      'sidebar navigation updates URL',
+    )
+    checks++
+    await page.evaluate('history.back()')
+    await page.waitUntil(
+      "location.pathname === '/tools/url-pdf' && document.querySelector('h1')?.textContent === 'Website to PDF'",
+      'browser back restores the previous tool',
+    )
+    checks++
+    await page.evaluate('history.forward()')
+    await page.waitUntil(
+      "location.pathname === '/tools/metadata-read' && document.querySelector('h1')?.textContent === 'Read metadata'",
+      'browser forward restores the next tool',
+    )
+    checks++
+    await page.evaluate('window.__gotenuiBeforeReload = true')
+    await page.command('Page.reload', { ignoreCache: true })
+    await page.waitUntil(
+      "window.__gotenuiBeforeReload === undefined && location.pathname === '/tools/metadata-read' && document.querySelector('h1')?.textContent === 'Read metadata' && document.title === 'Read metadata · Gotenui'",
+      'deep link survives full page reload',
+    )
+    checks++
+    await page.evaluate('history.back()')
+    await page.waitUntil(
+      "location.pathname === '/tools/url-pdf' && document.querySelector('h1')?.textContent === 'Website to PDF'",
+      'return to PDF conversion after reload',
     )
     checks++
 
