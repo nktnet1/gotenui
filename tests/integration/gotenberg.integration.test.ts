@@ -13,6 +13,7 @@ import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
 import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import type { ConversionPayload } from '#/lib/validation'
 import type { CallbackReceipt } from './async-fixture-server'
+import { retryTransientConversion } from './transient-conversion'
 
 const backendUrl = inject('gotenbergTestUrl')
 const fixtureUrl = inject('gotenbergFixtureUrl')
@@ -312,10 +313,26 @@ test.each([
         ? pdfFile(name)
         : new File(['Gotenui multi-document conversion'], name, { type: 'text/plain' }),
     )
-    const response = await proxyConversionRequest(request(operation, { fields }, files))
+    const convertDocuments = () => proxyConversionRequest(request(operation, { fields }, files))
+    // Gotenberg's PDF/A conversion can sporadically return a transient 5xx while
+    // LibreOffice or the PDF engine is busy. Retry only this known flaky case,
+    // without suppressing permanent failures or weakening the ZIP assertions.
+    const response =
+      id === 'pdfa'
+        ? await retryTransientConversion(convertDocuments, {
+            onRetry: ({ attempt, status, body, trace }) => {
+              console.warn(
+                `PDF/A multi-document attempt ${attempt} returned HTTP ${status}` +
+                  `${trace ? ` (trace: ${trace})` : ''}: ${body}`,
+              )
+            },
+          })
+        : await convertDocuments()
     if (!response.ok) {
+      const trace = response.headers.get('gotenberg-trace')
       throw new Error(
-        `${id} multi-document conversion failed: ${response.status} ${await response.text()}`,
+        `${id} multi-document conversion failed after ${id === 'pdfa' ? 'up to 3 attempts' : '1 attempt'}: ` +
+          `${response.status}${trace ? ` (trace: ${trace})` : ''} ${await response.text()}`,
       )
     }
     expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/zip')

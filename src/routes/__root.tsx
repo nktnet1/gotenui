@@ -10,7 +10,7 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'Website to PDF · Gotenui' },
+      { title: 'All tools · Gotenui' },
       {
         name: 'description',
         content: 'A stateless document workspace using a same-origin Gotenberg API proxy.',

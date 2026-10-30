@@ -1,5 +1,15 @@
-import { Activity, Bug, ChartNoAxesColumn, RefreshCw, X } from 'lucide-react'
+import {
+  Activity,
+  Bug,
+  ChartNoAxesColumn,
+  CheckCircle2,
+  CircleAlert,
+  CircleHelp,
+  RefreshCw,
+  X,
+} from 'lucide-react'
 import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { JsonCodeOutput } from '#/components/code-output'
 import { MetricsPanel } from '#/components/metrics-panel'
 import { Button } from '#/components/ui/button'
@@ -40,8 +50,7 @@ export function DiagnosticsDialog({
   showDebug,
   showMetrics,
 }: Props) {
-  const [probeResult, setProbeResult] = useState<'healthy' | 'unhealthy' | null>(null)
-  const [probeError, setProbeError] = useState<string | null>(null)
+  const [probeResult, setProbeResult] = useState<'healthy' | 'unhealthy' | 'error' | null>(null)
   const [probing, setProbing] = useState(false)
   const probeInFlight = useRef<AbortController | null>(null)
   const [details, setDetails] = useState<string | null>(null)
@@ -76,17 +85,23 @@ export function DiagnosticsDialog({
     const controller = new AbortController()
     probeInFlight.current = controller
     setProbing(true)
-    setProbeError(null)
     setProbeResult(null)
     try {
       const healthy = await probeGotenbergHealth(
         connection,
         AbortSignal.any([controller.signal, AbortSignal.timeout(7_000)]),
       )
-      if (!controller.signal.aborted) setProbeResult(healthy ? 'healthy' : 'unhealthy')
+      if (!controller.signal.aborted) {
+        setProbeResult(healthy ? 'healthy' : 'unhealthy')
+        if (healthy) toast.success('Health probe: 200 - Healthy')
+        else toast.warning('Health probe: 503 - Unhealthy')
+      }
     } catch (cause) {
       if (!controller.signal.aborted) {
-        setProbeError(cause instanceof Error ? cause.message : 'Health probe failed.')
+        setProbeResult('error')
+        toast.error('Health probe failed', {
+          description: cause instanceof Error ? cause.message : 'Could not check Gotenberg health.',
+        })
       }
     } finally {
       if (probeInFlight.current === controller) {
@@ -95,6 +110,15 @@ export function DiagnosticsDialog({
       }
     }
   }
+
+  const probeState = probing ? 'probing' : (probeResult ?? 'idle')
+  const probeMessage = {
+    idle: 'Health not checked',
+    probing: 'Checking health',
+    healthy: 'Healthy (HTTP 200)',
+    unhealthy: 'Unhealthy (HTTP 503)',
+    error: 'Health probe failed',
+  }[probeState]
 
   async function inspect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -172,36 +196,44 @@ export function DiagnosticsDialog({
                 Check whether this Gotenberg instance reports healthy (200) or unhealthy (503).
               </p>
             </div>
-            <Button
-              type="button"
-              variant="accent"
-              className="w-48 shrink-0"
-              disabled={probing}
-              aria-busy={probing}
-              onClick={() => void probeHealth()}
-            >
-              <Activity className={probing ? 'size-4 animate-pulse' : 'size-4'} />
-              {probing ? 'Probing…' : 'Run health probe'}
-            </Button>
+            <div className="flex shrink-0 items-center gap-3">
+              <span
+                role="status"
+                aria-live="polite"
+                data-probe-state={probeState}
+                className={cn(
+                  'flex size-5 shrink-0 items-center justify-center',
+                  probeState === 'healthy' && 'text-emerald-600 dark:text-emerald-400',
+                  probeState === 'unhealthy' && 'text-amber-700 dark:text-amber-400',
+                  probeState === 'error' && 'text-rose-600 dark:text-rose-400',
+                  (probeState === 'idle' || probeState === 'probing') &&
+                    'text-slate-400 dark:text-slate-500',
+                )}
+              >
+                <span className="sr-only">{probeMessage}</span>
+                {probeState === 'healthy' ? (
+                  <CheckCircle2 aria-hidden="true" className="size-5" />
+                ) : probeState === 'unhealthy' || probeState === 'error' ? (
+                  <CircleAlert aria-hidden="true" className="size-5" />
+                ) : probeState === 'probing' ? (
+                  <RefreshCw aria-hidden="true" className="size-4 animate-spin" />
+                ) : (
+                  <CircleHelp aria-hidden="true" className="size-4" />
+                )}
+              </span>
+              <Button
+                type="button"
+                variant="accent"
+                className="w-48 shrink-0"
+                disabled={probing}
+                aria-busy={probing}
+                onClick={() => void probeHealth()}
+              >
+                <Activity className={probing ? 'size-4 animate-pulse' : 'size-4'} />
+                {probing ? 'Probing…' : 'Run health probe'}
+              </Button>
+            </div>
           </div>
-          {probeResult && (
-            <p
-              role="status"
-              className={cn(
-                'mt-3 text-xs font-semibold',
-                probeResult === 'healthy'
-                  ? 'text-emerald-700 dark:text-emerald-300'
-                  : 'text-amber-800 dark:text-amber-300',
-              )}
-            >
-              {probeResult === 'healthy' ? '200 — Healthy' : '503 — Unhealthy'}
-            </p>
-          )}
-          {probeError && (
-            <p role="alert" className="mt-3 text-xs text-rose-800 dark:text-rose-200">
-              {probeError}
-            </p>
-          )}
         </section>
         {tabs.length > 0 && (
           <div>

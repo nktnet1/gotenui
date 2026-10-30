@@ -12,6 +12,7 @@ import {
   FileUp,
   Globe2,
   Layers3,
+  LayoutGrid,
   ListPlus,
   Menu,
   PanelLeftClose,
@@ -49,6 +50,7 @@ import {
 } from '#/components/pdf-conversion-post-processing'
 import { PdfResultPreview } from '#/components/pdf-result-preview'
 import { PdfBookmarksEditor, PdfMetadataEditor } from '#/components/pdf-structure-editors'
+import { ToolsHome } from '#/components/tools-home'
 import { Button } from '#/components/ui/button'
 import { ButtonTooltip } from '#/components/ui/button-tooltip'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
@@ -313,7 +315,17 @@ export function Sidebar({
         )}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-6 dark:border-white/10">
-          <Brand />
+          <button
+            type="button"
+            aria-label="Go to all tools"
+            onClick={() => {
+              onSelect('home')
+              setMobileOpen(false)
+            }}
+            className="cursor-pointer rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+          >
+            <Brand />
+          </button>
           <Button
             variant="ghost"
             size="icon"
@@ -344,6 +356,23 @@ export function Sidebar({
           className="nav-scroll mt-5 flex-1 overflow-y-auto px-3 pb-6"
           aria-label="Gotenberg operations"
         >
+          <button
+            type="button"
+            aria-current={selectedId === 'home' ? 'page' : undefined}
+            onClick={() => {
+              onSelect('home')
+              setMobileOpen(false)
+            }}
+            className={cn(
+              'mb-5 flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-[10px] text-left text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500',
+              selectedId === 'home'
+                ? 'bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300'
+                : 'text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/7 dark:hover:text-white',
+            )}
+          >
+            <LayoutGrid aria-hidden="true" className="size-4 shrink-0" />
+            <span className="flex-1">All tools</span>
+          </button>
           {GROUPS.map((group) => {
             const items = OPERATIONS.filter((operation) => operation.group === group)
             if (items.length === 0) return null
@@ -1749,7 +1778,7 @@ function Workspace({
   onUpsert: (profile: BrowserConnection, username: string, secret: string) => void
   onRemove: (id: string) => void
 }) {
-  const [selectedId, setSelectedId] = useState('url-pdf')
+  const [selectedId, setSelectedId] = useState('home')
   const [status, setStatus] = useState<ServerStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [recent, setRecent] = useState<Job[]>([])
@@ -1788,8 +1817,8 @@ function Workspace({
   const [mobileOpen, setMobileOpen] = useState(false)
   const operation = OPERATION_BY_ID.get(selectedId) ?? (OPERATIONS[0] as Operation)
   useEffect(() => {
-    document.title = `${operation.title} · Gotenui`
-  }, [operation.title])
+    document.title = `${selectedId === 'home' ? 'All tools' : operation.title} · Gotenui`
+  }, [selectedId, operation.title])
   const Icon = operationIcon(operation.id)
   const unavailableReason = unavailableOperationReason(status, operation)
   const supportsOptimization = !status?.online || versionAtLeast(status.version, 36) !== false
@@ -1925,7 +1954,7 @@ function Workspace({
             </span>
             <span className="hidden text-slate-300 sm:inline">/</span>
             <span className="hidden truncate text-xs font-bold text-slate-900 dark:text-slate-100 sm:inline">
-              {operation.group}
+              {selectedId === 'home' ? 'All tools' : operation.group}
             </span>
           </div>
           <div className="flex items-center gap-1 sm:gap-2.5">
@@ -1973,132 +2002,138 @@ function Workspace({
           </div>
         </header>
         <main className="mx-auto max-w-[1390px] px-5 pt-8 pb-14 md:px-9 md:pt-10">
-          <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
-            <div className="max-w-2xl">
-              <div className="flex items-center gap-3">
-                <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-sky-100 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400">
-                  <Icon className="size-6" />
+          {selectedId === 'home' ? (
+            <ToolsHome status={status} onSelect={setSelectedId} onSearch={openSearch} />
+          ) : (
+            <>
+              <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
+                <div className="max-w-2xl">
+                  <div className="flex items-center gap-3">
+                    <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-sky-100 dark:border-sky-900 bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400">
+                      <Icon className="size-6" />
+                    </div>
+                    <h1 className="text-[29px] font-extrabold tracking-[-.04em] text-slate-950 dark:text-white sm:text-[36px]">
+                      {operation.title}
+                    </h1>
+                  </div>
+                  <p className="mt-3 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+                    {operation.summary}
+                  </p>
                 </div>
-                <h1 className="text-[29px] font-extrabold tracking-[-.04em] text-slate-950 dark:text-white sm:text-[36px]">
-                  {operation.title}
-                </h1>
-              </div>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-                {operation.summary}
-              </p>
-            </div>
-            <a
-              href="https://gotenberg.dev/docs/getting-started/routes"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 text-xs font-bold text-slate-600 dark:text-slate-300 shadow-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-700"
-            >
-              <FileText className="size-4" />
-              API reference
-              <ExternalLink className="size-3.5" />
-            </a>
-          </div>
-          <div className="mb-7 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-900 px-4 py-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  Connection
-                </span>
-                <Activity className="size-4 text-slate-400" />
-              </div>
-              <p className="mt-2 flex items-center gap-2 text-base font-extrabold text-slate-900 dark:text-slate-100">
-                <span
-                  className={cn(
-                    'size-2 rounded-full',
-                    status?.online ? 'bg-emerald-500' : 'bg-amber-500',
-                  )}
-                />
-                {status?.online ? 'Operational' : statusLoading ? 'Checking' : 'Unavailable'}
-              </p>
-            </div>
-            <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-900 px-4 py-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  Gotenberg version
-                </span>
-                <Layers3 className="size-4 text-slate-400" />
-              </div>
-              <p className="mt-2 truncate text-base font-extrabold text-slate-900 dark:text-slate-100">
-                {status?.version ?? '—'}
-              </p>
-            </div>
-            <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-900 px-4 py-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  Modules healthy
-                </span>
-                <CheckCircle2 className="size-4 text-slate-400" />
-              </div>
-              <p className="mt-2 text-base font-extrabold text-slate-900 dark:text-slate-100">
-                {status?.modules.length
-                  ? `${status.modules.filter((module) => module.status === 'up').length} / ${status.modules.length}`
-                  : '—'}
-              </p>
-            </div>
-          </div>
-          {status?.error && (
-            <div
-              role="status"
-              className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/50 px-4 py-3"
-            >
-              <p className="max-w-3xl text-xs leading-5 text-amber-900 dark:text-amber-200">
-                {status.error}
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setSettingsOpen(true)}
-              >
-                Manage connections
-              </Button>
-            </div>
-          )}
-          <div className="mb-6 flex flex-wrap items-center gap-2">
-            <p className="mr-1 text-xs font-bold text-slate-500 dark:text-slate-400">
-              Quick access
-            </p>
-            {OPERATIONS.filter((item) => item.featured).map((item) => {
-              const unavailable = unavailableOperationReason(status, item)
-              return (
-                <ButtonTooltip
-                  key={item.id}
-                  description={unavailable}
-                  disabled={Boolean(unavailable)}
+                <a
+                  href="https://gotenberg.dev/docs/getting-started/routes"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 text-xs font-bold text-slate-600 dark:text-slate-300 shadow-sm transition-colors hover:bg-slate-50 dark:hover:bg-slate-700"
                 >
-                  <button
+                  <FileText className="size-4" />
+                  API reference
+                  <ExternalLink className="size-3.5" />
+                </a>
+              </div>
+              <div className="mb-7 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-900 px-4 py-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      Connection
+                    </span>
+                    <Activity className="size-4 text-slate-400" />
+                  </div>
+                  <p className="mt-2 flex items-center gap-2 text-base font-extrabold text-slate-900 dark:text-slate-100">
+                    <span
+                      className={cn(
+                        'size-2 rounded-full',
+                        status?.online ? 'bg-emerald-500' : 'bg-amber-500',
+                      )}
+                    />
+                    {status?.online ? 'Operational' : statusLoading ? 'Checking' : 'Unavailable'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-900 px-4 py-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      Gotenberg version
+                    </span>
+                    <Layers3 className="size-4 text-slate-400" />
+                  </div>
+                  <p className="mt-2 truncate text-base font-extrabold text-slate-900 dark:text-slate-100">
+                    {status?.version ?? '—'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-900 px-4 py-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      Modules healthy
+                    </span>
+                    <CheckCircle2 className="size-4 text-slate-400" />
+                  </div>
+                  <p className="mt-2 text-base font-extrabold text-slate-900 dark:text-slate-100">
+                    {status?.modules.length
+                      ? `${status.modules.filter((module) => module.status === 'up').length} / ${status.modules.length}`
+                      : '—'}
+                  </p>
+                </div>
+              </div>
+              {status?.error && (
+                <div
+                  role="status"
+                  className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/50 px-4 py-3"
+                >
+                  <p className="max-w-3xl text-xs leading-5 text-amber-900 dark:text-amber-200">
+                    {status.error}
+                  </p>
+                  <Button
                     type="button"
-                    onClick={() => setSelectedId(item.id)}
-                    disabled={Boolean(unavailable)}
-                    className={cn(
-                      'cursor-pointer rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40',
-                      selectedId === item.id
-                        ? 'border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300'
-                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-200 dark:hover:border-sky-700 hover:text-sky-700 dark:hover:text-sky-300',
-                    )}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSettingsOpen(true)}
                   >
-                    {item.title}
-                  </button>
-                </ButtonTooltip>
-              )
-            })}
-          </div>
-          <Workbench
-            key={`${operation.id}:${selectedConnection}:${connectionEpoch}`}
-            operation={operation}
-            unavailableReason={unavailableReason}
-            supportsOptimization={supportsOptimization}
-            backendVersion={status?.online ? status.version : undefined}
-            recent={recent}
-            onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
-            connection={connection}
-            batchQueue={batchQueue}
-          />
+                    Manage connections
+                  </Button>
+                </div>
+              )}
+              <div className="mb-6 flex flex-wrap items-center gap-2">
+                <p className="mr-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+                  Quick access
+                </p>
+                {OPERATIONS.filter((item) => item.featured).map((item) => {
+                  const unavailable = unavailableOperationReason(status, item)
+                  return (
+                    <ButtonTooltip
+                      key={item.id}
+                      description={unavailable}
+                      disabled={Boolean(unavailable)}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setSelectedId(item.id)}
+                        disabled={Boolean(unavailable)}
+                        className={cn(
+                          'cursor-pointer rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40',
+                          selectedId === item.id
+                            ? 'border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300'
+                            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:border-sky-200 dark:hover:border-sky-700 hover:text-sky-700 dark:hover:text-sky-300',
+                        )}
+                      >
+                        {item.title}
+                      </button>
+                    </ButtonTooltip>
+                  )
+                })}
+              </div>
+              <Workbench
+                key={`${operation.id}:${selectedConnection}:${connectionEpoch}`}
+                operation={operation}
+                unavailableReason={unavailableReason}
+                supportsOptimization={supportsOptimization}
+                backendVersion={status?.online ? status.version : undefined}
+                recent={recent}
+                onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
+                connection={connection}
+                batchQueue={batchQueue}
+              />
+            </>
+          )}
           <BrowserBatchQueuePanel queue={batchQueue} />
         </main>
       </div>

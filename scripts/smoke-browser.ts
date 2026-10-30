@@ -297,8 +297,8 @@ async function run(): Promise<void> {
     await page.command('Page.navigate', { url: origin })
     await page
       .waitUntil(
-        "document.querySelector('h1')?.textContent?.includes('Website to PDF')",
-        'workspace hydration',
+        "document.querySelector('[data-slot=tools-home] h1')?.textContent?.includes('All tools') && document.title === 'All tools · Gotenui'",
+        'all tools home hydration',
       )
       .catch(async (error: unknown) => {
         if (await page?.evaluate("location.href === 'chrome-error://chromewebdata/'")) {
@@ -307,7 +307,42 @@ async function run(): Promise<void> {
         throw error
       })
     checks++
-    assert.equal(await page.evaluate('document.title'), 'Website to PDF · Gotenui')
+    assert.equal(
+      await page.evaluate(`(() => {
+      const cards = document.querySelectorAll('[data-slot="tool-card"]')
+      const navigation = document.querySelectorAll('#gotenui-navigation nav button')
+      return cards.length > 0 && cards.length === navigation.length - 1
+    })()`),
+      true,
+      'Home must list every sidebar operation from the shared registry.',
+    )
+    checks++
+    await page.evaluate(`(() => {
+      const card = [...document.querySelectorAll('[data-slot="tool-card"]')]
+        .find(el => el.textContent.includes('Website to PDF'))
+      if (!card) throw new Error('Missing Website to PDF card on home')
+      card.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent?.includes('Website to PDF') && document.title === 'Website to PDF · Gotenui'",
+      'home tool selection',
+    )
+    checks++
+    await page.evaluate("document.querySelector('#gotenui-navigation nav button').click()")
+    await page.waitUntil(
+      "document.querySelector('[data-slot=tools-home]') !== null && document.title === 'All tools · Gotenui'",
+      'return to all tools through the sidebar',
+    )
+    checks++
+    await page.evaluate(`(() => {
+      const card = [...document.querySelectorAll('[data-slot="tool-card"]')]
+        .find(el => el.textContent.includes('Website to PDF'))
+      card.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent?.includes('Website to PDF')",
+      'return to selected tool',
+    )
     checks++
 
     assert.equal(
@@ -370,6 +405,49 @@ async function run(): Promise<void> {
       "document.querySelector('#diagnostics-heading') !== null",
       'diagnostics dialog',
     )
+    // An inline status icon occupies the same space in every probe state;
+    // success and failure details appear in Sonner instead of expanding the dialog.
+    await page.evaluate(`(() => {
+      const originalFetch = window.fetch.bind(window)
+      window.__smokeProbeStatus = 200
+      window.fetch = (input, init) =>
+        String(input).startsWith('/api/gotenberg/health?') && init?.method === 'HEAD'
+          ? Promise.resolve(new Response(null, {
+              status: window.__smokeProbeStatus,
+              headers: { 'x-gotenui-health-probe': '1' },
+            }))
+          : originalFetch(input, init)
+    })()`)
+    const probeHeight = await page.evaluate(
+      'document.querySelector(\'[aria-label="Health probe"]\')?.getBoundingClientRect().height',
+    )
+    await page.evaluate('document.querySelector(\'[aria-label="Health probe"] button\').click()')
+    await page.waitUntil(
+      "document.querySelector('[data-probe-state=healthy]') !== null && [...document.querySelectorAll('[data-sonner-toast][data-type=success]')].some(el => el.textContent.includes('Health probe: 200 - Healthy'))",
+      'healthy probe status and Sonner toast',
+    )
+    assert.equal(
+      await page.evaluate(
+        'document.querySelector(\'[aria-label="Health probe"]\')?.getBoundingClientRect().height',
+      ),
+      probeHeight,
+      'Health probe result must not shift the Diagnostics layout.',
+    )
+    checks++
+    await page.evaluate('window.__smokeProbeStatus = 503')
+    await page.evaluate('document.querySelector(\'[aria-label="Health probe"] button\').click()')
+    await page.waitUntil(
+      "document.querySelector('[data-probe-state=unhealthy]') !== null && [...document.querySelectorAll('[data-sonner-toast][data-type=warning]')].some(el => el.textContent.includes('Health probe: 503 - Unhealthy'))",
+      'unhealthy probe status and Sonner toast',
+    )
+    assert.equal(
+      await page.evaluate(
+        'document.querySelector(\'[aria-label="Health probe"]\')?.getBoundingClientRect().height',
+      ),
+      probeHeight,
+      'Unhealthy probe must not shift the Diagnostics layout.',
+    )
+    checks++
     const rightAlignedDiagnosticAction = `(() => {
       const panel = [...document.querySelectorAll('[role="tabpanel"]')].find(el => !el.hidden)
       const button = panel?.querySelector('form button[type="submit"]')
@@ -417,8 +495,10 @@ async function run(): Promise<void> {
     await page.resize(1440)
     await page.evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()")
     assert.equal(
-      await page.evaluate("document.querySelectorAll('[data-sonner-toast]').length"),
-      0,
+      await page.evaluate(
+        "[...document.querySelectorAll('[data-sonner-toast]')].every(el => !el.textContent.includes('Gotenberg status refreshed'))",
+      ),
+      true,
       'Background status checks must not display notifications.',
     )
     checks++

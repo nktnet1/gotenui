@@ -36,6 +36,27 @@ describe('sidebar branding and bookmark navigation', () => {
     }
   })
 
+  it('provides a home link selected independently of the operation navigation', () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(Sidebar, {
+          selectedId: 'home',
+          onSelect: vi.fn(),
+          status: null,
+          onSettings: vi.fn(),
+          onSearch: vi.fn(),
+          mobileOpen: false,
+          setMobileOpen: vi.fn(),
+        }),
+      ),
+    )
+    expect(html).toContain('aria-label="Go to all tools"')
+    expect(html).toMatch(/<button[^>]*aria-current="page"[^>]*>.*All tools<\/span><\/button>/)
+    expect(html.match(/aria-current="page"/g)).toHaveLength(1)
+  })
+
   it('distinguishes reading from writing PDF bookmarks with semantic icons', () => {
     const html = renderToStaticMarkup(
       createElement(
