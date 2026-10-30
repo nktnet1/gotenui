@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { Brand, GotenuiApp, Sidebar } from '#/components/gotenui-app'
 import { TooltipProvider } from '#/components/ui/tooltip'
+import { OPERATIONS } from '#/lib/operations'
 import { version as appVersion } from '../package.json'
 
 describe('sidebar branding and bookmark navigation', () => {
@@ -36,7 +37,7 @@ describe('sidebar branding and bookmark navigation', () => {
     }
   })
 
-  it('provides a home link selected independently of the operation navigation', () => {
+  it('uses the brand as the home link without adding a redundant sidebar item', () => {
     const html = renderToStaticMarkup(
       createElement(
         TooltipProvider,
@@ -52,9 +53,40 @@ describe('sidebar branding and bookmark navigation', () => {
         }),
       ),
     )
-    expect(html).toContain('aria-label="Go to all tools"')
-    expect(html).toMatch(/<button[^>]*aria-current="page"[^>]*>.*All tools<\/span><\/button>/)
+    const home = html.match(/<button[^>]*aria-label="Go to all tools"[^>]*>/)?.[0] ?? ''
+    expect(home).toContain('aria-current="page"')
+    const nav = html.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/)?.[0] ?? ''
+    expect(nav).not.toContain('All tools')
+    expect(nav.match(/<button\b/g)).toHaveLength(OPERATIONS.length)
     expect(html.match(/aria-current="page"/g)).toHaveLength(1)
+  })
+
+  it('uses distinct semantic icons for reading and writing PDF metadata', () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(Sidebar, {
+          selectedId: 'metadata-read',
+          onSelect: vi.fn(),
+          status: null,
+          onSettings: vi.fn(),
+          onSearch: vi.fn(),
+          mobileOpen: false,
+          setMobileOpen: vi.fn(),
+        }),
+      ),
+    )
+
+    for (const [label, icon] of [
+      ['Read metadata', 'lucide-file-search'],
+      ['Write metadata', 'lucide-file-pen-line'],
+    ]) {
+      const labelPosition = html.indexOf(`>${label}</span>`)
+      expect(labelPosition).toBeGreaterThan(0)
+      const button = html.slice(html.lastIndexOf('<button', labelPosition), labelPosition)
+      expect(button).toContain(`lucide ${icon}`)
+    }
   })
 
   it('distinguishes reading from writing PDF bookmarks with semantic icons', () => {

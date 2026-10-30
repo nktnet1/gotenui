@@ -311,10 +311,18 @@ async function run(): Promise<void> {
       await page.evaluate(`(() => {
       const cards = document.querySelectorAll('[data-slot="tool-card"]')
       const navigation = document.querySelectorAll('#gotenui-navigation nav button')
-      return cards.length > 0 && cards.length === navigation.length - 1
+      return cards.length > 0 && cards.length === navigation.length
     })()`),
       true,
       'Home must list every sidebar operation from the shared registry.',
+    )
+    checks++
+    assert.equal(
+      await page.evaluate(
+        `[...document.querySelectorAll('#gotenui-navigation nav button')].some(button => button.textContent.trim() === 'All tools')`,
+      ),
+      false,
+      'Home should be accessed through the brand, not a duplicate sidebar item.',
     )
     checks++
     await page.evaluate(`(() => {
@@ -328,10 +336,10 @@ async function run(): Promise<void> {
       'home tool selection',
     )
     checks++
-    await page.evaluate("document.querySelector('#gotenui-navigation nav button').click()")
+    await page.evaluate('document.querySelector(\'button[aria-label="Go to all tools"]\').click()')
     await page.waitUntil(
       "document.querySelector('[data-slot=tools-home]') !== null && document.title === 'All tools · Gotenui'",
-      'return to all tools through the sidebar',
+      'return to all tools through the brand',
     )
     checks++
     await page.evaluate(`(() => {

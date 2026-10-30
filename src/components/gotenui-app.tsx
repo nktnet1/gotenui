@@ -12,7 +12,6 @@ import {
   FileUp,
   Globe2,
   Layers3,
-  LayoutGrid,
   ListPlus,
   Menu,
   PanelLeftClose,
@@ -318,6 +317,7 @@ export function Sidebar({
           <button
             type="button"
             aria-label="Go to all tools"
+            aria-current={selectedId === 'home' ? 'page' : undefined}
             onClick={() => {
               onSelect('home')
               setMobileOpen(false)
@@ -356,23 +356,6 @@ export function Sidebar({
           className="nav-scroll mt-5 flex-1 overflow-y-auto px-3 pb-6"
           aria-label="Gotenberg operations"
         >
-          <button
-            type="button"
-            aria-current={selectedId === 'home' ? 'page' : undefined}
-            onClick={() => {
-              onSelect('home')
-              setMobileOpen(false)
-            }}
-            className={cn(
-              'mb-5 flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-[10px] text-left text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500',
-              selectedId === 'home'
-                ? 'bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300'
-                : 'text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-white/7 dark:hover:text-white',
-            )}
-          >
-            <LayoutGrid aria-hidden="true" className="size-4 shrink-0" />
-            <span className="flex-1">All tools</span>
-          </button>
           {GROUPS.map((group) => {
             const items = OPERATIONS.filter((operation) => operation.group === group)
             if (items.length === 0) return null
