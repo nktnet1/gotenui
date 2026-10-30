@@ -112,7 +112,7 @@ import {
 import {
   type OverlayKind,
   overlayUploads,
-  PDF_CONVERSION_IDS,
+  PDF_POST_PROCESS_IDS,
   type PdfPostProcess,
   type PostProcessFiles,
 } from '#/lib/pdf-post-processing'
@@ -1011,7 +1011,7 @@ function Workbench({
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
   const operationHasFileAssets = isSourceEditor
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
-  const hasPostProcessing = PDF_CONVERSION_IDS.has(operation.id)
+  const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id)
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
   const docsUrl = `https://gotenberg.dev/docs/${operation.docs}`
 
@@ -1468,6 +1468,13 @@ function Workbench({
             )}
             {hasPostProcessing && (
               <PdfConversionPostProcessing
+                mode={
+                  operation.id === 'merge'
+                    ? 'merge'
+                    : operation.id === 'split'
+                      ? 'split'
+                      : 'convert'
+                }
                 value={postProcess}
                 onChange={setPostProcess}
                 files={postFiles}

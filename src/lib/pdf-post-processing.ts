@@ -1,7 +1,10 @@
 import * as v from 'valibot'
 
-/** Only PDF-producing conversion routes accept the full PDF-engine settings. */
+/** PDF-producing conversions share the native PDF-engine post-processing fields. */
 export const PDF_CONVERSION_IDS = new Set(['url-pdf', 'html-pdf', 'markdown-pdf', 'office-pdf'])
+
+/** Merge and Split accept those same fields on the upstream PDF Engines routes. */
+export const PDF_POST_PROCESS_IDS = new Set([...PDF_CONVERSION_IDS, 'merge', 'split'])
 export const OVERLAY_KINDS = ['watermark', 'stamp'] as const
 export type OverlayKind = (typeof OVERLAY_KINDS)[number]
 
@@ -29,6 +32,8 @@ export const pdfPostProcessSchema = v.strictObject({
   ),
   facturxVersion: v.optional(v.pipe(v.string(), v.maxLength(30))),
   flatten: v.optional(v.boolean()),
+  rotateAngle: v.optional(v.picklist(['90', '180', '270'])),
+  rotatePages: v.optional(v.pipe(v.string(), v.maxLength(200))),
   userPassword: v.optional(v.pipe(v.string(), v.maxLength(256))),
   ownerPassword: v.optional(v.pipe(v.string(), v.maxLength(256))),
   allowPrinting: v.optional(v.boolean()),

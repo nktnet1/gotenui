@@ -15,7 +15,7 @@ Choose a tool in the sidebar or open search with **Ctrl+K** or **Cmd+K**. Gotenu
 
 - For multi-file merges, arrange local uploads in the order they should appear.
 - For metadata and bookmarks, use **Read existing PDF values** to load values into the editor before writing them back.
-- PDF conversions can apply watermarks, stamps, attachments and other post-processing in the same request.
+- PDF conversions, merges and splits can apply watermarks, stamps, rotation, attachments, Factur-X, flattening and encryption in the same request. For Merge PDFs, use the existing metadata editor above the post-processing panel.
 - Advanced JSON is available for unusual Gotenberg options. You don't need it for the settings exposed in the form.
 
 Gotenberg can return a PDF or a ZIP archive depending on the operation and number of outputs. Gotenui downloads the format actually returned.

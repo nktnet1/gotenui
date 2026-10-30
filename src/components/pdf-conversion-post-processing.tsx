@@ -19,6 +19,7 @@ import {
 } from '#/lib/pdf-post-processing'
 
 type Props = {
+  mode?: 'convert' | 'merge' | 'split'
   value: PdfPostProcess
   onChange: (value: PdfPostProcess) => void
   files: PostProcessFiles
@@ -252,7 +253,13 @@ export function OverlayGroupsEditor({
   )
 }
 
-export function PdfConversionPostProcessing({ value, onChange, files, onFilesChange }: Props) {
+export function PdfConversionPostProcessing({
+  mode = 'convert',
+  value,
+  onChange,
+  files,
+  onFilesChange,
+}: Props) {
   const id = useId()
   const update = (patch: Partial<PdfPostProcess>) => onChange({ ...value, ...patch })
   return (
@@ -262,8 +269,11 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
       </summary>
       <div className="space-y-5 border-t border-slate-200 dark:border-slate-700 px-4 py-5">
         <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
-          Apply PDF-engine features as part of this conversion. Gotenberg processes the document in
-          a single request; no intermediate PDF is stored in Gotenui.
+          {mode === 'merge'
+            ? 'Add overlays, attachments and security to the merged PDF in one request.'
+            : mode === 'split'
+              ? 'Apply overlays, attachments and security to the split PDFs in one request.'
+              : 'Apply PDF-engine features during conversion in one request, without an intermediate PDF.'}
         </p>
         {OVERLAY_KINDS.map((kind) => {
           const plural = kind === 'watermark' ? 'watermarks' : 'stamps'
@@ -285,12 +295,55 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
           )
         })}
         <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Rotate pages</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Rotate all pages or specific page ranges without running another PDF operation.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor={`${id}-rotate-angle`}>Rotation angle</Label>
+              <select
+                id={`${id}-rotate-angle`}
+                value={value.rotateAngle ?? ''}
+                onChange={(event) => {
+                  const angle = event.target.value as PdfPostProcess['rotateAngle'] | ''
+                  update({
+                    rotateAngle: angle || undefined,
+                    rotatePages: angle ? value.rotatePages : undefined,
+                  })
+                }}
+                className="h-10 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
+              >
+                <option value="">Do not rotate</option>
+                <option value="90">90°</option>
+                <option value="180">180°</option>
+                <option value="270">270°</option>
+              </select>
+            </div>
+            {value.rotateAngle && (
+              <div className="space-y-1.5">
+                <Label htmlFor={`${id}-rotate-pages`}>Pages to rotate (optional)</Label>
+                <Input
+                  id={`${id}-rotate-pages`}
+                  value={value.rotatePages ?? ''}
+                  placeholder="All pages (or 1-3, 5)"
+                  onChange={(event) => update({ rotatePages: event.target.value || undefined })}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
           <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
             PDF attachments
           </h3>
           <UploadZone
             label="Embed files"
-            description="Attach files to the resulting PDF, not the HTML or Office source. Remote attachments use downloadFrom field: embedded. PDF/A-3 supports attachments; PDF/A-1/2 do not."
+            description={
+              mode === 'split'
+                ? 'Embed files in the split PDFs. Remote attachments use downloadFrom field: embedded. PDF/A-3 supports attachments; PDF/A-1/2 do not.'
+                : 'Attach files to the resulting PDF. Remote attachments use downloadFrom field: embedded. PDF/A-3 supports attachments; PDF/A-1/2 do not.'
+            }
             files={files.embeds ?? []}
             onChange={(embeds) => onFilesChange({ ...files, embeds })}
             multiple
@@ -385,10 +438,12 @@ export function PdfConversionPostProcessing({ value, onChange, files, onFilesCha
           )}
         </div>
         <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-          <PdfMetadataEditor
-            value={value.metadata ?? '{}'}
-            onChange={(metadata) => update({ metadata })}
-          />
+          {mode !== 'merge' && (
+            <PdfMetadataEditor
+              value={value.metadata ?? '{}'}
+              onChange={(metadata) => update({ metadata })}
+            />
+          )}
           <div className="flex items-center justify-between gap-3">
             <Label htmlFor={`${id}-flatten`}>Flatten interactive PDF fields</Label>
             <Switch

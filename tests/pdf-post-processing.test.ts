@@ -173,12 +173,12 @@ describe('Single-request PDF post-processing', () => {
     )
   })
 
-  test.each(['url-shot', 'html-shot', 'markdown-shot', 'merge', 'encrypt'])(
-    '%s rejects conversion-only post processing',
+  test.each(['url-shot', 'html-shot', 'markdown-shot', 'pdfa', 'encrypt'])(
+    '%s rejects unsupported post processing',
     (id) => {
       assert.throws(
         () => validatePayload(candidate(id, { postProcess: { flatten: true } })),
-        /only on PDF conversion/,
+        /require.*PDF conversion, merge or split operation/,
       )
       const operation = OPERATION_BY_ID.get(id)
       assert.ok(operation)
@@ -191,7 +191,7 @@ describe('Single-request PDF post-processing', () => {
           : []
       assert.throws(
         () => validateFiles(operation, originalFiles, [], 4000, undefined, { embeds: [first] }),
-        /only on PDF conversion/,
+        /require.*PDF conversion, merge or split operation/,
       )
     },
   )

@@ -18,7 +18,7 @@ import {
   countPostProcessFiles,
   OVERLAY_KINDS,
   overlayUploads,
-  PDF_CONVERSION_IDS,
+  PDF_POST_PROCESS_IDS,
   type PostProcessFiles,
   pdfPostProcessSchema,
 } from '#/lib/pdf-post-processing'
@@ -236,10 +236,10 @@ function validatedAttachmentMetadata(raw: string): string[] {
 function validatePostProcessSettings(operation: Operation, payload: ConversionPayload): void {
   const settings = payload.postProcess
   if (!settings) return
-  const isConversion = PDF_CONVERSION_IDS.has(operation.id)
+  const supportsPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id)
   const standalone = operation.id === 'watermark' || operation.id === 'stamp'
-  if (!isConversion && !standalone) {
-    throw new InputError('PDF post-processing is supported only on PDF conversion operations.')
+  if (!supportsPostProcessing && !standalone) {
+    throw new InputError('PDF post-processing requires a PDF conversion, merge or split operation.')
   }
   if (standalone) {
     const permitted = operation.id === 'watermark' ? 'watermarks' : 'stamps'
@@ -286,6 +286,15 @@ function validatePostProcessSettings(operation: Operation, payload: ConversionPa
   ) {
     throw new InputError('PDF permissions require a user or owner password.')
   }
+  if (settings.rotatePages && !settings.rotateAngle) {
+    throw new InputError('Choose a rotation angle before selecting pages to rotate.')
+  }
+  if (
+    settings.rotatePages &&
+    !/^\d+(?:-\d+)?(?:\s*,\s*\d+(?:-\d+)?)*$/.test(settings.rotatePages)
+  ) {
+    throw new InputError('Rotation pages must be page numbers or ranges, e.g. 1-3, 5.')
+  }
   for (const kind of OVERLAY_KINDS) {
     for (const [index, overlay] of configuredOverlays(settings, kind).entries()) {
       const label = `${kind} ${index + 1}`
@@ -323,7 +332,9 @@ function requireJsonObject(value: string, label: string): Record<string, unknown
 
 function validatePostProcessFiles(
   operation: Operation,
-  payload: Pick<ConversionPayload, 'postProcess' | 'fields' | 'downloadFrom'> | undefined,
+  payload:
+    | Pick<ConversionPayload, 'postProcess' | 'fields' | 'advanced' | 'downloadFrom'>
+    | undefined,
   files: PostProcessFiles,
   maxBytes: number,
   currentBytes: number,
@@ -338,8 +349,8 @@ function validatePostProcessFiles(
     throw new InputError('Overlay and Factur-X uploads require post-processing settings.')
   }
   const standalone = operation.id === 'watermark' || operation.id === 'stamp'
-  if (!PDF_CONVERSION_IDS.has(operation.id) && !standalone && countPostProcessFiles(files)) {
-    throw new InputError('PDF processing files are supported only on PDF conversion operations.')
+  if (!PDF_POST_PROCESS_IDS.has(operation.id) && !standalone && countPostProcessFiles(files)) {
+    throw new InputError('PDF processing files require a PDF conversion, merge or split operation.')
   }
   const remote = remoteCounts(payload)
   const embedded = files.embeds ?? []
@@ -382,7 +393,9 @@ function validatePostProcessFiles(
   }
   if (
     (embedded.length || remote.embedded) &&
-    ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-4'].includes(String(payload?.fields.pdfa))
+    ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-4'].includes(
+      String(payload?.fields.pdfa ?? payload?.advanced.pdfa),
+    )
   ) {
     throw new InputError('Only PDF/A-3 supports embedded attachments. Use PDF/A-3b.')
   }
@@ -476,7 +489,9 @@ function validatePostProcessFiles(
   }
   if (
     files.facturxXml &&
-    ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-4'].includes(String(payload?.fields.pdfa))
+    ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-4'].includes(
+      String(payload?.fields.pdfa ?? payload?.advanced.pdfa),
+    )
   ) {
     throw new InputError('Factur-X requires PDF/A-3.')
   }
@@ -510,6 +525,7 @@ export function validateFiles(
     | 'headerHtml'
     | 'footerHtml'
     | 'postProcess'
+    | 'advanced'
   >,
   postFiles: PostProcessFiles = {},
 ): void {
