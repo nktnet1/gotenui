@@ -379,7 +379,7 @@ test('Chromium reliability controls convert friendly strings to upstream JSON ar
   )
 })
 
-test('Gotenberg backend capability checks are conservative about unknown module details or versions', () => {
+test('Gotenberg backend capability checks reject unknown versions without guessing', () => {
   const good = {
     online: true,
     version: '8.37.0',
@@ -411,9 +411,9 @@ test('Gotenberg backend capability checks are conservative about unknown module 
     unavailableOperationReason({ ...good, version: '8.35.2' }, operation('optimize')) ?? '',
     /8\.36/,
   )
-  assert.equal(
-    unavailableOperationReason({ ...good, version: 'Unknown' }, operation('optimize')),
-    null,
+  assert.match(
+    unavailableOperationReason({ ...good, version: 'Unknown' }, operation('optimize')) ?? '',
+    /version/,
   )
   assert.equal(versionAtLeast('v8.36.0', 36), true)
   assert.equal(versionAtLeast('8.35.1', 36), false)

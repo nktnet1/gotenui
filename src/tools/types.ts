@@ -1,4 +1,5 @@
 /** The shared contract for a Gotenberg tool and its form fields. */
+import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 export type FieldKind =
   | 'text'
   | 'url'
@@ -51,6 +52,8 @@ export type Operation = {
   group: OperationGroup
   summary: string
   path: `/forms/${string}`
+  /** Unspecified means v8 only; opt in to v9 after its form fields and responses are verified. */
+  supportedGotenbergMajors?: readonly SupportedGotenbergMajor[]
   docs: string
   input: InputKind
   fields: readonly FieldDefinition[]

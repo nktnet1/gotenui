@@ -40,7 +40,11 @@ import {
   type UiFeatures,
 } from '#/lib/connection-profiles'
 import { getGotenbergStatus, type ServerStatus } from '#/lib/gotenberg-client'
-import { unavailableOperationReason, versionAtLeast } from '#/lib/operation-availability'
+import {
+  backendCompatibilityNotice,
+  unavailableOperationReason,
+  versionAtLeast,
+} from '#/lib/operation-availability'
 import { isSearchShortcut } from '#/lib/operation-search'
 import { cn } from '#/lib/utils'
 import { GROUPS, OPERATION_BY_ID, OPERATIONS, type Operation } from '#/tools/registry'
@@ -405,8 +409,11 @@ function Workspace({
     document.title = `${selectedId === 'home' ? 'All tools' : operation.title} · Gotenui`
   }, [selectedId, operation.title])
   const Icon = operationIcon(operation.id)
-  const unavailableReason = unavailableOperationReason(status, operation)
+  const unavailableReason = status
+    ? unavailableOperationReason(status, operation)
+    : 'Checking the selected Gotenberg version…'
   const supportsOptimization = !status?.online || versionAtLeast(status.version, 36) !== false
+  const compatibilityNotice = backendCompatibilityNotice(status)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
@@ -587,6 +594,14 @@ function Workspace({
           </div>
         </header>
         <main className="mx-auto max-w-[1390px] px-5 pt-8 pb-14 md:px-9 md:pt-10">
+          {compatibilityNotice && (
+            <p
+              role="status"
+              className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+            >
+              {compatibilityNotice}
+            </p>
+          )}
           {selectedId === 'home' ? (
             <ToolsHome status={status} onSelect={onSelect} onSearch={openSearch} />
           ) : (

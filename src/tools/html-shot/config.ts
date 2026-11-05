@@ -7,6 +7,7 @@ export const operation: Operation = {
   title: 'HTML screenshot',
   group: 'Capture',
   summary: 'Capture rendered HTML at any viewport size.',
+  supportedGotenbergMajors: [8, 9],
   path: '/forms/chromium/screenshot/html',
   docs: 'convert-with-chromium/screenshot-html',
   input: 'html',

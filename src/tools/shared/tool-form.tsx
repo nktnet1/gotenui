@@ -48,6 +48,7 @@ import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
 import { chromiumNetworkFields } from '#/lib/chromium-network'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { convertWithGotenberg, REQUEST_TIMEOUT_MS } from '#/lib/gotenberg-client'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { OFFICE_ACCEPT } from '#/lib/office-formats'
 import { versionAtLeast } from '#/lib/operation-availability'
 import {
@@ -329,6 +330,13 @@ export function Workbench({
   const buildCandidate = () => {
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
     const webhook = webhookPayload(webhookSettings, webhookInput)
+    // v9 requires the events callback and no longer supports the v8 error callback headers.
+    // Keep asynchronous v9 requests disabled until the webhook adapter validates both formats.
+    if (parseGotenbergVersion(backendVersion)?.major === 9 && webhook) {
+      throw new InputError(
+        'Webhooks on Gotenberg 9 are not yet supported. Disable webhooks to capture screenshots.',
+      )
+    }
     const selectedFields = activeOperationFields(operation, fields)
     if (selectedFields.pdfa === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false) {
       throw new Error('PDF/A-4 requires Gotenberg 8.39 or newer.')
