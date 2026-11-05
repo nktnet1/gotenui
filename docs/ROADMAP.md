@@ -11,7 +11,8 @@
 - [x] **Patch 1:** Show an explanation in the workspace and unavailable-tool controls. An unknown/unsupported _online_ version is not silently treated as v8; offline troubleshooting remains available. v9 screenshot webhooks remain blocked until the v9 callback model is implemented.
 - [x] **Patch 2:** The proxy fetches the selected, authenticated upstream `/version` **for every conversion request** (including queued and direct API calls), refuses unknown/unsupported majors, and chooses a v8 or v9 request adapter. A connection changing versions cannot silently send the wrong form.
 - [x] **Patch 2:** Pin the real integration-test matrix to **`gotenberg/gotenberg:8.40.0` and `gotenberg/gotenberg:9.0.0`**, verify `/version` against the selected image, and add version-specific assertions. Unit tests test both major-version encodings without Docker.
-- [ ] **Integration verification pending:** Run both pinned Docker image suites in CI or a Docker-enabled environment; Docker is unavailable in the local Chat environment.
+- [x] **Patch 3:** Run both pinned Docker images by default in local `pnpm test`/`pnpm test:integration`, stream image-pull progress, and name each CI matrix job by version. The earlier local integration command exercised **only v8.40.0** unless `GOTENBERG_TEST_VERSION` was set; the four v9-only cases were skipped, not passed.
+- [ ] **Integration verification pending:** Observe passing suites for **both** v8.40.0 and v9.0.0 on a Docker-enabled host; the previously reported local run confirmed v8.40.0 only. Docker is unavailable in this environment.
 
 ### Compatibility baseline after patch 2
 

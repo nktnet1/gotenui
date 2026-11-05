@@ -47,7 +47,7 @@ jobs:
         run: pnpm test:browser
 
   integration:
-    name: Integration tests (local Gotenberg Docker)
+    name: Integration tests (Gotenberg ${{ matrix.gotenberg-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:

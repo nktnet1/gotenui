@@ -13,7 +13,9 @@
     "test": "pnpm test:unit && pnpm test:integration",
     "start": "node .output/server/index.mjs",
     "test:unit": "vitest run --config vitest.config.ts",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:integration": "node scripts/run-integration-tests.ts",
+    "test:integration:v8": "node scripts/run-integration-tests.ts 8.40.0",
+    "test:integration:v9": "node scripts/run-integration-tests.ts 9.0.0",
     "test:watch": "vitest --config vitest.config.ts",
     "test:smoke": "node scripts/smoke-production.ts",
     "test:browser": "node scripts/smoke-browser.ts"

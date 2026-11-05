@@ -38,7 +38,9 @@ For tag-driven GitHub releases and container publishing, see [Releasing](RELEASI
 | `pnpm check` | Check formatting and lint rules |
 | `pnpm typecheck` | Run TypeScript checks |
 | `pnpm test:unit` | Run unit tests without Docker |
-| `pnpm test:integration` | Run tests against disposable Gotenberg in Docker |
+| `pnpm test:integration` | Run Docker integration tests against **both** pinned Gotenberg versions |
+| `pnpm test:integration:v8` | Run only the Gotenberg 8.40.0 integration suite |
+| `pnpm test:integration:v9` | Run only the Gotenberg 9.0.0 integration suite |
 | `pnpm build` | Build the production app |
 | `pnpm test:smoke` | Test built Nitro routes using a local mock upstream |
 | `pnpm test:browser` | Exercise the built UI in headless Chrome |
@@ -46,7 +48,7 @@ For tag-driven GitHub releases and container publishing, see [Releasing](RELEASI
 
 Build before running `test:smoke` or `test:browser`. Browser tests need Chrome or Chromium. Override discovery with `GOTENUI_BROWSER_BIN` when needed.
 
-Integration tests require Docker and use `gotenberg/gotenberg:8.37.0` by default. `GOTENBERG_TEST_IMAGE` overrides the image. Tests do not depend on the public demo. CI runs unit, build, production smoke, browser smoke and Docker integration checks.
+Integration tests require Docker. `pnpm test` and `pnpm test:integration` run **both** `gotenberg/gotenberg:8.40.0` and `gotenberg/gotenberg:9.0.0` sequentially, with separate results for each version. Missing images are pulled with visible Docker download progress; locally cached images are reused. The version-specific commands above select just one image, as does the CI `GOTENBERG_TEST_VERSION` matrix variable. Tests verify the actual upstream `/version`, use local fixtures and never contact the public demo. Version-specific tests are expected to be skipped when the *other* image is running, but both suites must finish successfully. CI runs unit, build, production smoke, browser smoke and both Docker integration checks.
 
 Keep `pnpm-lock.yaml` in sync when updating dependencies. Do not edit generated files by hand.
 
