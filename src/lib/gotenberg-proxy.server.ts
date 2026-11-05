@@ -2,6 +2,8 @@ import urlJoin from 'url-join'
 import * as v from 'valibot'
 import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
+import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
+import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
@@ -206,6 +208,7 @@ function upstreamConversionHeaders(
   auth: HeadersInit | undefined,
   payload: ConversionPayload,
   acceptsOutputFilename: boolean,
+  version: SupportedGotenbergMajor,
 ): Headers {
   const headers = new Headers(auth)
   if (acceptsOutputFilename && payload.outputName) {
@@ -218,14 +221,54 @@ function upstreamConversionHeaders(
   if (webhook) {
     headers.set('Gotenberg-Webhook-Url', webhook.url)
     if (webhook.method) headers.set('Gotenberg-Webhook-Method', webhook.method)
-    if (webhook.errorUrl) headers.set('Gotenberg-Webhook-Error-Url', webhook.errorUrl)
-    if (webhook.errorMethod) headers.set('Gotenberg-Webhook-Error-Method', webhook.errorMethod)
+    if (version === 8 && webhook.errorUrl)
+      headers.set('Gotenberg-Webhook-Error-Url', webhook.errorUrl)
+    if (version === 8 && webhook.errorMethod)
+      headers.set('Gotenberg-Webhook-Error-Method', webhook.errorMethod)
     if (webhook.eventsUrl) headers.set('Gotenberg-Webhook-Events-Url', webhook.eventsUrl)
     if (webhook.extraHttpHeaders) {
       headers.set('Gotenberg-Webhook-Extra-Http-Headers', JSON.stringify(webhook.extraHttpHeaders))
     }
   }
   return headers
+}
+
+/** Resolve the actual upstream major for every request, including queued/direct API calls.
+ * Do not cache this across connection changes or upstream upgrades.
+ */
+async function conversionTargetVersion(
+  request: Request,
+  fetcher: typeof fetch,
+  target: { url: string; headers?: HeadersInit; oauth2?: OAuth2ClientCredentials },
+): Promise<SupportedGotenbergMajor> {
+  const response = await fetcher(urlJoin(target.url, '/version'), {
+    method: 'GET',
+    ...fetchOptions(request),
+    headers: target.headers,
+    credentials: 'omit',
+  })
+  if (!response.ok) {
+    invalidateUnauthorized(response.status, target)
+    await response.body?.cancel().catch(() => {})
+    throw new ProxyInputError(
+      `Could not verify the Gotenberg version (HTTP ${response.status}).`,
+      response.status === 401 || response.status === 403 ? response.status : 502,
+    )
+  }
+  let raw: string
+  try {
+    raw = (await boundedStatusText(response, 1_024)).trim()
+  } catch {
+    throw new ProxyInputError('Gotenberg returned an invalid /version response.', 502)
+  }
+  const parsed = parseGotenbergVersion(raw)
+  if (!parsed || (parsed.major !== 8 && parsed.major !== 9)) {
+    throw new ProxyInputError(
+      `Unsupported Gotenberg version: ${raw.slice(0, 80) || 'Unknown'}. Use v8 or v9.`,
+      409,
+    )
+  }
+  return parsed.major
 }
 
 /** Preserve Gotenberg's diagnostic headers, not arbitrary upstream response headers. */
@@ -422,12 +465,37 @@ export async function proxyConversionRequest(
     fetcher,
   )
   const { url, headers: authHeaders } = target
-  const form = createGotenbergForm(operation, payload, files, auxiliary, maxBytes, postFiles)
+  const major = await conversionTargetVersion(request, fetcher, target)
+  if (!(operation.supportedGotenbergMajors ?? [8]).includes(major)) {
+    throw new ProxyInputError(
+      `The ${operation.title} tool is not available on Gotenberg ${major} yet.`,
+      409,
+    )
+  }
+  if (major === 9 && postFiles.embeds?.length) {
+    throw new InputError(
+      'Embedded PDF attachments require a Gotenberg 9 attach stage, which is not yet available. Use a Gotenberg 8 connection for this workflow.',
+    )
+  }
+  if (payload.webhook && major === 9) {
+    if (!payload.webhook.eventsUrl) {
+      throw new InputError('Gotenberg 9 webhooks require an events callback URL.')
+    }
+    if (payload.webhook.errorUrl || payload.webhook.errorMethod) {
+      throw new InputError('Gotenberg 9 removed the separate webhook error callback.')
+    }
+  }
+  const form = adaptConversionForm(
+    operation,
+    payload,
+    createGotenbergForm(operation, payload, files, auxiliary, maxBytes, postFiles),
+    major,
+  )
   const upstream = await fetcher(urlJoin(url, operation.path), {
     method: 'POST',
     ...fetchOptions(request),
     body: form,
-    headers: upstreamConversionHeaders(authHeaders, payload, operation.output !== 'json'),
+    headers: upstreamConversionHeaders(authHeaders, payload, operation.output !== 'json', major),
     credentials: 'omit',
   })
   if (!upstream.ok) {

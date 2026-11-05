@@ -9,6 +9,7 @@ import {
   proxyMetricsRequest,
   proxyStatusRequest,
 } from '#/lib/gotenberg-proxy.server'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
 import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import type { ConversionPayload } from '#/lib/validation'
@@ -16,6 +17,8 @@ import type { CallbackReceipt } from './async-fixture-server'
 import { retryTransientConversion } from './transient-conversion'
 
 const backendUrl = inject('gotenbergTestUrl')
+const testVersion = inject('gotenbergTestVersion')
+const isV9 = testVersion === '9.0.0'
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -181,7 +184,9 @@ beforeAll(async () => {
     new Request(`${proxyOrigin}/api/gotenberg/status?connection=legacy-basic`),
   )
   expect(status.status).toBe(200)
-  expect(await status.json()).toMatchObject({ online: true })
+  const verified = await status.json()
+  expect(verified).toMatchObject({ online: true })
+  expect(parseGotenbergVersion(verified.version)).toEqual(parseGotenbergVersion(testVersion))
 
   const html = OPERATIONS.find((operation) => operation.id === 'html-pdf')
   if (!html) throw new Error('Missing HTML conversion operation')
@@ -191,8 +196,8 @@ beforeAll(async () => {
   pdfBytes = await response.arrayBuffer()
   expect(new TextDecoder().decode(new Uint8Array(pdfBytes).subarray(0, 5))).toBe('%PDF-')
 
-  // Merge two single-page documents into a deterministic two-page split input.
-  // Splitting the original single-page fixture returns a PDF, not a ZIP.
+  // The v8-only PDF engines merge route supplies the split fixture.
+  if (isV9) return
   const merge = OPERATIONS.find((operation) => operation.id === 'merge')
   if (!merge) throw new Error('Missing PDF merge operation')
   const merged = await proxyConversionRequest(
@@ -232,7 +237,9 @@ function zipEntryCount(bytes: Uint8Array): number {
 
 // Drive each UI operation through the real server-side proxy into the local Docker instance.
 // No mocks and no network calls to demo.gotenberg.dev are used in this suite.
-test.each(OPERATIONS)(
+test.each(
+  OPERATIONS.filter((operation) => !isV9 || operation.supportedGotenbergMajors?.includes(9)),
+)(
   '$id - $path',
   async (operation) => {
     const response = await convert(operation)
@@ -283,25 +290,29 @@ test('the local proxy still rejects unapproved destinations', async () => {
   await expect(proxyConversionRequest(rejected)).rejects.toMatchObject({ status: 403 })
 })
 
-test('a single-page split returns a PDF without an unnecessary ZIP', async () => {
-  const operation = OPERATIONS.find((value) => value.id === 'split')
-  if (!operation) throw new Error('Missing PDF split operation')
-  const response = await proxyConversionRequest(
-    request(operation, { fields: { splitMode: 'intervals', splitSpan: '1' } }, [pdfFile()]),
-  )
-  if (!response.ok) {
-    throw new Error(`Single-page split failed: ${response.status} ${await response.text()}`)
-  }
-  expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
-  const bytes = new Uint8Array(await response.arrayBuffer())
-  expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
-}, 120_000)
+test.skipIf(isV9)(
+  'a single-page split returns a PDF without an unnecessary ZIP',
+  async () => {
+    const operation = OPERATIONS.find((value) => value.id === 'split')
+    if (!operation) throw new Error('Missing PDF split operation')
+    const response = await proxyConversionRequest(
+      request(operation, { fields: { splitMode: 'intervals', splitSpan: '1' } }, [pdfFile()]),
+    )
+    if (!response.ok) {
+      throw new Error(`Single-page split failed: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
+  },
+  120_000,
+)
 
 // Multi-document routes produce ZIP rather than PDF, even though a single
 // document uses the same endpoint with a PDF result.
 test.each([
   { id: 'office-pdf', filenames: ['first.txt', 'second.txt'] },
-  { id: 'pdfa', filenames: ['first.pdf', 'second.pdf'] },
+  ...(!isV9 ? [{ id: 'pdfa', filenames: ['first.pdf', 'second.pdf'] }] : []),
 ])(
   '$id accepts multiple documents as a ZIP result',
   async ({ id, filenames }) => {
@@ -408,11 +419,11 @@ test('the proxy returns an upstream 401 when the configured Basic Auth password 
       online: false,
       error: expect.stringContaining('401'),
     })
-    const response = await proxyConversionRequest(
-      request(operation, { source: '<!doctype html><h1>Local authenticated test</h1>' }),
-    )
-    expect(response.status).toBe(401)
-    expect(response.headers.get('www-authenticate')).toBeNull()
+    await expect(
+      proxyConversionRequest(
+        request(operation, { source: '<!doctype html><h1>Local authenticated test</h1>' }),
+      ),
+    ).rejects.toMatchObject({ status: 401 })
   } finally {
     if (originalPassword === undefined) delete process.env.GOTENBERG_BASIC_AUTH_PASSWORD
     else process.env.GOTENBERG_BASIC_AUTH_PASSWORD = originalPassword
@@ -427,8 +438,7 @@ test('browser-managed Basic Auth works against the local protected Gotenberg wit
   })
   browser.headers.delete('X-Gotenui-Connection-Id')
   browser.headers.set('X-Gotenberg-Url', backendUrl)
-  const unauthenticated = await proxyConversionRequest(browser.clone())
-  expect(unauthenticated.status).toBe(401)
+  await expect(proxyConversionRequest(browser.clone())).rejects.toMatchObject({ status: 401 })
   browser.headers.set(
     'X-Gotenui-Upstream-Authorization',
     `Basic ${Buffer.from(`${testUsername}:${testPassword}`).toString('base64')}`,
@@ -448,8 +458,7 @@ test('local server-managed credentials cannot be reached by supplying only the U
   const urlOnly = request(operation, { source: '<!doctype html><h1>Anonymous</h1>' })
   urlOnly.headers.delete('X-Gotenui-Connection-Id')
   urlOnly.headers.set('X-Gotenberg-Url', backendUrl)
-  const response = await proxyConversionRequest(urlOnly)
-  expect(response.status).toBe(401)
+  await expect(proxyConversionRequest(urlOnly)).rejects.toMatchObject({ status: 401 })
 }, 120_000)
 
 test('debug diagnostics return real JSON from the authenticated local Gotenberg container', async () => {
@@ -480,37 +489,41 @@ test('debug diagnostics return real JSON from the authenticated local Gotenberg 
   expect(missingUpstreamAuth.status).toBe(401)
 }, 120_000)
 
-test('legacy Prometheus metrics are read from local Docker through the authenticated proxy', async () => {
-  const request = new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
-    method: 'POST',
-    headers: {
-      Origin: proxyOrigin,
-      'X-Gotenui-Connection-Id': 'legacy-basic',
-    },
-  })
-  const response = await proxyMetricsRequest(request)
-  if (!response.ok) throw new Error(`Metrics failed: ${response.status} ${await response.text()}`)
-  expect(response.headers.get('content-type')).toContain('text/plain')
-  expect(response.headers.get('cache-control')).toBe('no-store')
-  expect(response.headers.get('x-gotenui-metrics')).toBe('1')
-  expect(response.headers.get('authorization')).toBeNull()
-  const text = await response.text()
-  expect(text).toContain('# HELP ')
-  expect(text).toContain('# TYPE ')
-  expect(text.length).toBeGreaterThan(100)
-
-  const missingUpstreamAuth = await proxyMetricsRequest(
-    new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
+test.skipIf(isV9)(
+  'legacy Prometheus metrics are read from local Docker through the authenticated proxy',
+  async () => {
+    const request = new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
       method: 'POST',
-      headers: { Origin: proxyOrigin, 'X-Gotenberg-Url': backendUrl },
-    }),
-  )
-  expect(missingUpstreamAuth.status).toBe(401)
-  const unapproved = request.clone()
-  unapproved.headers.delete('X-Gotenui-Connection-Id')
-  unapproved.headers.set('X-Gotenberg-Url', 'https://unapproved.example.test')
-  await expect(proxyMetricsRequest(unapproved)).rejects.toMatchObject({ status: 403 })
-}, 120_000)
+      headers: {
+        Origin: proxyOrigin,
+        'X-Gotenui-Connection-Id': 'legacy-basic',
+      },
+    })
+    const response = await proxyMetricsRequest(request)
+    if (!response.ok) throw new Error(`Metrics failed: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('text/plain')
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('x-gotenui-metrics')).toBe('1')
+    expect(response.headers.get('authorization')).toBeNull()
+    const text = await response.text()
+    expect(text).toContain('# HELP ')
+    expect(text).toContain('# TYPE ')
+    expect(text.length).toBeGreaterThan(100)
+
+    const missingUpstreamAuth = await proxyMetricsRequest(
+      new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
+        method: 'POST',
+        headers: { Origin: proxyOrigin, 'X-Gotenberg-Url': backendUrl },
+      }),
+    )
+    expect(missingUpstreamAuth.status).toBe(401)
+    const unapproved = request.clone()
+    unapproved.headers.delete('X-Gotenui-Connection-Id')
+    unapproved.headers.set('X-Gotenberg-Url', 'https://unapproved.example.test')
+    await expect(proxyMetricsRequest(unapproved)).rejects.toMatchObject({ status: 403 })
+  },
+  120_000,
+)
 
 /** Write a unique bookmark to the only page, so merge order can be checked in the result. */
 async function bookmarkedPdf(marker: string, filename: string): Promise<File> {
@@ -526,42 +539,46 @@ async function bookmarkedPdf(marker: string, filename: string): Promise<File> {
   return new File([await response.arrayBuffer()], filename, { type: 'application/pdf' })
 }
 
-test('local merge preserves displayed page order with numeric and duplicate filenames', async () => {
-  const merge = OPERATIONS.find(({ id }) => id === 'merge')
-  const read = OPERATIONS.find(({ id }) => id === 'bookmarks-read')
-  if (!merge || !read) throw new Error('Merge/bookmark routes missing')
-  // Gotenberg sorts raw filenames 2.pdf before z.pdf, but selected order must win.
-  const files = [
-    await bookmarkedPdf('z-first', 'z.pdf'),
-    await bookmarkedPdf('numeric-second', '2.pdf'),
-    await bookmarkedPdf('duplicate-third', 'duplicate.pdf'),
-    await bookmarkedPdf('duplicate-fourth', 'duplicate.pdf'),
-  ]
-  const response = await proxyConversionRequest(
-    request(merge, { fields: { autoIndexBookmarks: true } }, files),
-  )
-  if (!response.ok) throw new Error(`Merge order: ${response.status} ${await response.text()}`)
-  expect(response.headers.get('content-type')).toContain('application/pdf')
-  const output = new File([await response.arrayBuffer()], 'merged.pdf', {
-    type: 'application/pdf',
-  })
-  const readResponse = await proxyConversionRequest(request(read, {}, [output]))
-  if (!readResponse.ok) {
-    throw new Error(`Read merged bookmarks: ${readResponse.status} ${await readResponse.text()}`)
-  }
-  const result = (await readResponse.json()) as Record<
-    string,
-    { title: string; page: number; children?: { title: string; page: number }[] }[]
-  >
-  const bookmarks = Object.values(result).flat()
-  expect(bookmarks.map(({ title }) => title)).toEqual([
-    'z-first',
-    'numeric-second',
-    'duplicate-third',
-    'duplicate-fourth',
-  ])
-  expect(bookmarks.map(({ page }) => page)).toEqual([1, 2, 3, 4])
-}, 120_000)
+test.skipIf(isV9)(
+  'local merge preserves displayed page order with numeric and duplicate filenames',
+  async () => {
+    const merge = OPERATIONS.find(({ id }) => id === 'merge')
+    const read = OPERATIONS.find(({ id }) => id === 'bookmarks-read')
+    if (!merge || !read) throw new Error('Merge/bookmark routes missing')
+    // Gotenberg sorts raw filenames 2.pdf before z.pdf, but selected order must win.
+    const files = [
+      await bookmarkedPdf('z-first', 'z.pdf'),
+      await bookmarkedPdf('numeric-second', '2.pdf'),
+      await bookmarkedPdf('duplicate-third', 'duplicate.pdf'),
+      await bookmarkedPdf('duplicate-fourth', 'duplicate.pdf'),
+    ]
+    const response = await proxyConversionRequest(
+      request(merge, { fields: { autoIndexBookmarks: true } }, files),
+    )
+    if (!response.ok) throw new Error(`Merge order: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    const output = new File([await response.arrayBuffer()], 'merged.pdf', {
+      type: 'application/pdf',
+    })
+    const readResponse = await proxyConversionRequest(request(read, {}, [output]))
+    if (!readResponse.ok) {
+      throw new Error(`Read merged bookmarks: ${readResponse.status} ${await readResponse.text()}`)
+    }
+    const result = (await readResponse.json()) as Record<
+      string,
+      { title: string; page: number; children?: { title: string; page: number }[] }[]
+    >
+    const bookmarks = Object.values(result).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual([
+      'z-first',
+      'numeric-second',
+      'duplicate-third',
+      'duplicate-fourth',
+    ])
+    expect(bookmarks.map(({ page }) => page)).toEqual([1, 2, 3, 4])
+  },
+  120_000,
+)
 
 test('real Gotenberg accepts the configured output filename, correlation ID and W3C traceparent', async () => {
   const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
@@ -658,7 +675,7 @@ test.each(['markdown-pdf', 'markdown-shot'])(
   120_000,
 )
 
-test.each(['html-pdf', 'markdown-pdf', 'office-pdf'])(
+test.skipIf(isV9).each(['html-pdf', 'markdown-pdf', 'office-pdf'])(
   '%s applies watermark/stamp plus an attachment in one conversion request',
   async (id) => {
     const operation = OPERATIONS.find((item) => item.id === id)
@@ -693,46 +710,54 @@ test.each(['html-pdf', 'markdown-pdf', 'office-pdf'])(
   120_000,
 )
 
-test('LibreOffice conversion accepts a Factur-X CII XML attachment in the same request', async () => {
-  const operation = OPERATIONS.find((item) => item.id === 'office-pdf')
-  if (!operation) throw new Error('Missing office-pdf')
-  const xml = readFileSync(new URL('./fixtures/factur-x-minimum.xml', import.meta.url))
-  const response = await proxyConversionRequest(
-    request(
-      operation,
-      { postProcess: { facturxConformanceLevel: 'MINIMUM' } },
-      [new File(['Invoice contents'], 'invoice.txt', { type: 'text/plain' })],
-      [],
-      { facturxXml: new File([xml], 'invoice.xml', { type: 'application/xml' }) },
-    ),
-  )
-  if (!response.ok)
-    throw new Error(`Factur-X conversion: ${response.status} ${await response.text()}`)
-  expect(response.headers.get('content-type')).toContain('application/pdf')
-  expect(
-    new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
-  ).toBe('%PDF-')
-}, 120_000)
+test.skipIf(isV9)(
+  'LibreOffice conversion accepts a Factur-X CII XML attachment in the same request',
+  async () => {
+    const operation = OPERATIONS.find((item) => item.id === 'office-pdf')
+    if (!operation) throw new Error('Missing office-pdf')
+    const xml = readFileSync(new URL('./fixtures/factur-x-minimum.xml', import.meta.url))
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        { postProcess: { facturxConformanceLevel: 'MINIMUM' } },
+        [new File(['Invoice contents'], 'invoice.txt', { type: 'text/plain' })],
+        [],
+        { facturxXml: new File([xml], 'invoice.xml', { type: 'application/xml' }) },
+      ),
+    )
+    if (!response.ok)
+      throw new Error(`Factur-X conversion: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(
+      new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+    ).toBe('%PDF-')
+  },
+  120_000,
+)
 
-test('Gotenberg downloads a remote attachment into a new Chromium PDF', async () => {
-  const operation = OPERATIONS.find((item) => item.id === 'url-pdf')
-  if (!operation) throw new Error('Missing URL-to-PDF operation')
-  const url = new URL('/attachment', fixtureUrl).href
-  const response = await proxyConversionRequest(
-    request(operation, {
-      fields: { url: fixtureUrl },
-      downloadFrom: [{ url, field: 'embedded' }],
-    }),
-  )
-  if (!response.ok)
-    throw new Error(`Remote attachment: ${response.status} ${await response.text()}`)
-  expect(response.headers.get('content-type')).toContain('application/pdf')
-  expect(
-    new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
-  ).toBe('%PDF-')
-}, 120_000)
+test.skipIf(isV9)(
+  'Gotenberg downloads a remote attachment into a new Chromium PDF',
+  async () => {
+    const operation = OPERATIONS.find((item) => item.id === 'url-pdf')
+    if (!operation) throw new Error('Missing URL-to-PDF operation')
+    const url = new URL('/attachment', fixtureUrl).href
+    const response = await proxyConversionRequest(
+      request(operation, {
+        fields: { url: fixtureUrl },
+        downloadFrom: [{ url, field: 'embedded' }],
+      }),
+    )
+    if (!response.ok)
+      throw new Error(`Remote attachment: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(
+      new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+    ).toBe('%PDF-')
+  },
+  120_000,
+)
 
-test.each(['watermark', 'stamp'] as const)(
+test.skipIf(isV9).each(['watermark', 'stamp'] as const)(
   'real %s route applies ordered text, remote image and local PDF overlays',
   async (kind) => {
     const operation = OPERATIONS.find((item) => item.id === kind)
@@ -772,7 +797,7 @@ test.each(['watermark', 'stamp'] as const)(
   120_000,
 )
 
-test.each(['url-pdf', 'office-pdf'])(
+test.skipIf(isV9).each(['url-pdf', 'office-pdf'])(
   'real %s conversion handles repeated watermark and stamp fields together',
   async (id) => {
     const operation = OPERATIONS.find((item) => item.id === id)
@@ -809,7 +834,7 @@ test.each(['url-pdf', 'office-pdf'])(
   120_000,
 )
 
-// Requires the pinned local Gotenberg 8.37 instance; intentionally excluded from Chat-mode runs.
+// Runs on both pinned Gotenberg images; version-specific options use the proxy adapter.
 test('Chromium accepts advanced print, wait and accessibility fields on a real conversion', async () => {
   const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
   if (!operation) throw new Error('Missing HTML conversion')
@@ -960,41 +985,45 @@ test('real async success and events callbacks are delivered after 204 acceptance
   })
 }, 60_000)
 
-test('real async failure delivers error JSON and a structured error event', async () => {
-  const rotate = OPERATIONS.find((operation) => operation.id === 'rotate')
-  if (!rotate) throw new Error('Missing rotate PDF route')
-  const token = randomUUID()
-  const response = await proxyConversionRequest(
-    request(
-      rotate,
-      {
-        fields: { rotateAngle: '90' },
-        webhook: {
-          url: callbackUrl(token, 'success'),
-          errorUrl: callbackUrl(token, 'error'),
-          eventsUrl: callbackUrl(token, 'events'),
+test.skipIf(isV9)(
+  'real async failure delivers error JSON and a structured error event',
+  async () => {
+    const rotate = OPERATIONS.find((operation) => operation.id === 'rotate')
+    if (!rotate) throw new Error('Missing rotate PDF route')
+    const token = randomUUID()
+    const response = await proxyConversionRequest(
+      request(
+        rotate,
+        {
+          fields: { rotateAngle: '90' },
+          webhook: {
+            url: callbackUrl(token, 'success'),
+            errorUrl: callbackUrl(token, 'error'),
+            eventsUrl: callbackUrl(token, 'events'),
+          },
         },
-      },
-      [new File(['not a PDF'], 'corrupt.pdf', { type: 'application/pdf' })],
-    ),
-  )
-  expect(response.status).toBe(204)
-  const records = await callbackReceipts(
-    token,
-    (items) =>
-      items.some((item) => item.kind === 'error') &&
-      items.some((item) => item.event === 'webhook.error'),
-  )
-  expect(records.some((item) => item.kind === 'success')).toBe(false)
-  expect(records.find((item) => item.kind === 'error')).toMatchObject({
-    method: 'POST',
-    contentType: expect.stringContaining('application/json'),
-  })
-  expect(records.find((item) => item.kind === 'events')).toMatchObject({
-    method: 'POST',
-    event: 'webhook.error',
-  })
-}, 60_000)
+        [new File(['not a PDF'], 'corrupt.pdf', { type: 'application/pdf' })],
+      ),
+    )
+    expect(response.status).toBe(204)
+    const records = await callbackReceipts(
+      token,
+      (items) =>
+        items.some((item) => item.kind === 'error') &&
+        items.some((item) => item.event === 'webhook.error'),
+    )
+    expect(records.some((item) => item.kind === 'success')).toBe(false)
+    expect(records.find((item) => item.kind === 'error')).toMatchObject({
+      method: 'POST',
+      contentType: expect.stringContaining('application/json'),
+    })
+    expect(records.find((item) => item.kind === 'events')).toMatchObject({
+      method: 'POST',
+      event: 'webhook.error',
+    })
+  },
+  60_000,
+)
 
 test('real async callbacks retry once after 503 and then issue a success event', async () => {
   const html = OPERATIONS.find((operation) => operation.id === 'html-pdf')
@@ -1016,3 +1045,68 @@ test('real async callbacks retry once after 503 and then issue a success event',
   expect(records.filter((item) => item.kind === 'retry')).toHaveLength(2)
   expect(records.filter((item) => item.kind === 'retry').every((item) => item.beginsPdf)).toBe(true)
 }, 60_000)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 converts multiple Office files using an ordered merge stage',
+  async () => {
+    const office = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!office) throw new Error('Missing Office conversion')
+    const response = await proxyConversionRequest(
+      request(office, { fields: { merge: true, exportBookmarks: true } }, [
+        new File(['Gotenui v9 first page'], 'first.txt', { type: 'text/plain' }),
+        new File(['Gotenui v9 second page'], 'second.txt', { type: 'text/plain' }),
+      ]),
+    )
+    if (!response.ok) throw new Error(`v9 merge: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).slice(0, 5))).toBe(
+      '%PDF-',
+    )
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 applies PDF/A remediation after Chromium conversion',
+  async () => {
+    const html = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!html) throw new Error('Missing HTML conversion')
+    const response = await proxyConversionRequest(
+      request(html, {
+        source: '<html><body><h1>PDF/A contract</h1></body></html>',
+        fields: { pdfa: 'PDF/A-2b' },
+      }),
+    )
+    if (!response.ok) throw new Error(`v9 remediation: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).slice(0, 5))).toBe(
+      '%PDF-',
+    )
+  },
+  120_000,
+)
+
+test.skipIf(!isV9).each(['html-pdf', 'office-pdf'] as const)(
+  'Gotenberg 9 accepts a named paper size on %s',
+  async (operationId) => {
+    const operation = OPERATIONS.find(({ id }) => id === operationId)
+    if (!operation) throw new Error(`Missing ${operationId}`)
+    const { overrides, files, auxiliary } = inputFor(operation)
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        { ...overrides, fields: { ...overrides.fields, paperSize: 'A4' } },
+        files,
+        auxiliary,
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(`v9 ${operationId} paperSize: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).slice(0, 5))).toBe(
+      '%PDF-',
+    )
+  },
+  120_000,
+)

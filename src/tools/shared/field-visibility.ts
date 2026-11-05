@@ -1,4 +1,5 @@
 /** Centralised conditional field visibility for rendering and multipart payload construction. */
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import type { FieldDefinition, Operation } from '#/tools/types'
 
 export function isFieldVisible(
@@ -23,13 +24,25 @@ export function isFieldVisible(
   return actual === condition.equals || (actual === undefined && condition.equals === false)
 }
 
+export function fieldSupportsBackend(field: FieldDefinition, version?: string): boolean {
+  if (!field.supportedGotenbergMajors) return true
+  const major = parseGotenbergVersion(version)?.major ?? 8
+  return field.supportedGotenbergMajors.some((supported) => supported === major)
+}
+
 export function activeOperationFields(
   operation: Operation,
   values: Readonly<Record<string, string | boolean>>,
+  backendVersion?: string,
 ): Record<string, string | boolean> {
   return Object.fromEntries(
     operation.fields
-      .filter((field) => isFieldVisible(field, values) && values[field.name] !== undefined)
+      .filter(
+        (field) =>
+          fieldSupportsBackend(field, backendVersion) &&
+          isFieldVisible(field, values) &&
+          values[field.name] !== undefined,
+      )
       .map((field) => [field.name, values[field.name] as string | boolean]),
   )
 }

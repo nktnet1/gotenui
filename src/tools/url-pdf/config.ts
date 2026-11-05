@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'url-pdf',
+  supportedGotenbergMajors: [8, 9],
   title: 'Website to PDF',
   group: 'Convert',
   summary: 'Turn any public web page into a paginated PDF.',

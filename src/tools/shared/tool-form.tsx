@@ -60,10 +60,11 @@ import {
 } from '#/lib/pdf-post-processing'
 import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
 import { cn } from '#/lib/utils'
-import { InputError, parseAdvanced } from '#/lib/validation'
+import { InputError, parseAdvanced, type WebhookConfig } from '#/lib/validation'
 import {
   activeOperationFields,
   type FieldDefinition,
+  fieldSupportsBackend,
   isFieldVisible,
   type Operation,
   operationDefaults,
@@ -212,6 +213,7 @@ export function Workbench({
     : operation.fields.filter(
         (field) =>
           !field.advanced &&
+          fieldSupportsBackend(field, backendVersion) &&
           !field.section &&
           isFieldVisible(field, fields) &&
           !(field.customEditor && field.kind === 'json') &&
@@ -222,6 +224,7 @@ export function Workbench({
     : operation.fields.filter(
         (field) =>
           field.advanced &&
+          fieldSupportsBackend(field, backendVersion) &&
           !field.customEditor &&
           !field.section &&
           isFieldVisible(field, fields) &&
@@ -259,7 +262,8 @@ export function Workbench({
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
   const operationHasFileAssets = isSourceEditor
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
-  const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id)
+  const isV9 = parseGotenbergVersion(backendVersion)?.major === 9
+  const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && !isV9
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
   const docsUrl = `https://gotenberg.dev/docs/${operation.docs}`
 
@@ -329,15 +333,14 @@ export function Workbench({
 
   const buildCandidate = () => {
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
-    const webhook = webhookPayload(webhookSettings, webhookInput)
-    // v9 requires the events callback and no longer supports the v8 error callback headers.
-    // Keep asynchronous v9 requests disabled until the webhook adapter validates both formats.
-    if (parseGotenbergVersion(backendVersion)?.major === 9 && webhook) {
-      throw new InputError(
-        'Webhooks on Gotenberg 9 are not yet supported. Disable webhooks to capture screenshots.',
-      )
+    const webhook = webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined
+    if (isV9 && webhook && !webhook.eventsUrl) {
+      throw new InputError('Gotenberg 9 webhooks require an events callback URL.')
     }
-    const selectedFields = activeOperationFields(operation, fields)
+    if (isV9 && webhook && (webhook.errorUrl || webhook.errorMethod)) {
+      throw new InputError('Gotenberg 9 removed separate webhook error callbacks.')
+    }
+    const selectedFields = activeOperationFields(operation, fields, backendVersion)
     if (selectedFields.pdfa === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false) {
       throw new Error('PDF/A-4 requires Gotenberg 8.39 or newer.')
     }
@@ -417,7 +420,7 @@ export function Workbench({
     setPending(true)
     setAcceptedWebhook(null)
     try {
-      const webhook = webhookPayload(webhookSettings, webhookInput)
+      const webhook = webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined
       const candidate = buildCandidate()
       const start = performance.now()
       const controller = new AbortController()
@@ -721,6 +724,12 @@ export function Workbench({
                 onFooterChange={setFooterHtml}
               />
             )}
+            {isV9 && PDF_POST_PROCESS_IDS.has(operation.id) && (
+              <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
+                Gotenberg 9 PDF post-processing will be available in a later patch. Native PDF/A,
+                PDF/UA, and Office merge/split options are already supported.
+              </p>
+            )}
             {hasPostProcessing && (
               <PdfConversionPostProcessing
                 mode={
@@ -737,7 +746,9 @@ export function Workbench({
               />
             )}
             {featureSections.map(({ key, title, description }) => {
-              const items = operation.fields.filter((field) => field.section === key)
+              const items = operation.fields.filter(
+                (field) => field.section === key && fieldSupportsBackend(field, backendVersion),
+              )
               if (!items.length) return null
               return (
                 <details
@@ -758,8 +769,9 @@ export function Workbench({
                   <div className="space-y-4 border-t border-slate-200 px-4 py-4 dark:border-slate-700">
                     {key === 'compression' && !supportsOptimization && (
                       <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
-                        PDF image optimization needs Gotenberg 8.36+. Native LibreOffice compression
-                        is still available.
+                        {isV9
+                          ? 'Gotenberg 9 only supports lossless PDF optimisation. Native LibreOffice image compression remains available.'
+                          : 'PDF image optimization needs Gotenberg 8.36+. Native LibreOffice compression is still available.'}
                       </p>
                     )}
                     <div className="grid gap-4 sm:grid-cols-2">
@@ -898,6 +910,7 @@ export function Workbench({
                   </p>
                 </div>
                 <RemoteInputsEditor
+                  isV9={isV9}
                   rows={remoteRows}
                   onChange={setRemoteRows}
                   legacy={remoteInput}
@@ -905,6 +918,7 @@ export function Workbench({
                   newId={() => nextOutboundId.current++}
                 />
                 <WebhookEditor
+                  isV9={isV9}
                   value={webhookSettings}
                   onChange={setWebhookSettings}
                   legacy={webhookInput}

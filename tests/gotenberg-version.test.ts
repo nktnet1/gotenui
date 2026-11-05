@@ -51,10 +51,20 @@ describe('per-operation API compatibility', () => {
     assert.match(unavailableOperationReason(status('8.35.0'), operation('optimize')) ?? '', /8\.36/)
   })
 
-  it('permits only the verified shared screenshot routes on Gotenberg 9', () => {
+  it('permits the migrated Chromium and LibreOffice conversion routes on Gotenberg 9', () => {
     for (const tool of OPERATIONS) {
       const reason = unavailableOperationReason(status('9.0.0'), tool)
-      if (['url-shot', 'html-shot', 'markdown-shot'].includes(tool.id)) {
+      if (
+        [
+          'url-shot',
+          'html-shot',
+          'markdown-shot',
+          'url-pdf',
+          'html-pdf',
+          'markdown-pdf',
+          'office-pdf',
+        ].includes(tool.id)
+      ) {
         assert.equal(reason, null, tool.id)
         assert.deepEqual(tool.supportedGotenbergMajors, [8, 9])
       } else {
@@ -100,7 +110,7 @@ describe('per-operation API compatibility', () => {
     assert.equal(backendCompatibilityNotice(status('8.39.0')), null)
     assert.match(
       backendCompatibilityNotice(status('9.0.0')) ?? '',
-      /Screenshot tools are available/,
+      /Chromium and LibreOffice conversions, plus screenshots, are available/,
     )
     assert.match(backendCompatibilityNotice(status('Unknown')) ?? '', /could not verify/)
     assert.match(backendCompatibilityNotice(status('10.0.0')) ?? '', /not supported/)

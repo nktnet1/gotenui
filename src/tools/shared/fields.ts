@@ -8,7 +8,18 @@ export const pdfa: FieldDefinition = {
   kind: 'select',
   options: ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b', 'PDF/A-4'],
   advanced: true,
-  description: 'PDF/A-4 requires Gotenberg 8.39+ and the LibreOffice PDF engine.',
+  description:
+    'On Gotenberg 8, PDF/A-4 requires v8.39+ and LibreOffice. Gotenberg 9 uses native LibreOffice export or PDF remediation.',
+}
+
+export const paperSize: FieldDefinition = {
+  name: 'paperSize',
+  label: 'Named paper size',
+  kind: 'select',
+  options: ['A3', 'A4', 'A5', 'B4', 'B5', 'Letter', 'Legal', 'Tabloid'],
+  advanced: true,
+  supportedGotenbergMajors: [9],
+  description: 'Gotenberg 9 only. Custom width and height override this preset.',
 }
 
 export const pdfMetadata: FieldDefinition = {
@@ -96,6 +107,7 @@ export const chromiumNetwork: FieldDefinition[] = [
 export const optimizeImages: FieldDefinition[] = [
   {
     name: 'optimizeImages',
+    supportedGotenbergMajors: [8],
     label: 'Optimize PDF images',
     kind: 'toggle',
     section: 'compression',
@@ -104,6 +116,7 @@ export const optimizeImages: FieldDefinition[] = [
   },
   {
     name: 'imageQuality',
+    supportedGotenbergMajors: [8],
     label: 'Optimized JPEG quality',
     kind: 'number',
     integer: true,
@@ -257,6 +270,7 @@ export const chromiumReliability: FieldDefinition[] = [
 ]
 
 export const chromePdf: FieldDefinition[] = [
+  paperSize,
   {
     name: 'paperWidth',
     label: 'Paper width',

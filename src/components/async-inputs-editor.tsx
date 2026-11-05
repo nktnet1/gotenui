@@ -88,12 +88,14 @@ function ExtraHeaders({
 }
 
 export function RemoteInputsEditor({
+  isV9 = false,
   rows,
   onChange,
   legacy,
   onLegacyChange,
   newId,
 }: {
+  isV9?: boolean
   rows: RemoteInputRow[]
   onChange: (rows: RemoteInputRow[]) => void
   legacy: string
@@ -193,11 +195,22 @@ export function RemoteInputsEditor({
               }
             >
               <option value="">Regular conversion input / HTML asset</option>
-              <option value="embedded">PDF attachment (embedded)</option>
-              <option value="watermark">PDF watermark asset</option>
-              <option value="stamp">PDF stamp asset</option>
+              <option value="embedded" disabled={isV9}>
+                PDF attachment (embedded, v8)
+              </option>
+              <option value="watermark" disabled={isV9}>
+                PDF watermark asset (v8)
+              </option>
+              <option value="stamp" disabled={isV9}>
+                PDF stamp asset (v8)
+              </option>
             </select>
           </div>
+          {isV9 && row.field && (
+            <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
+              This remote destination requires Gotenberg 8. Select Regular conversion input for v9.
+            </p>
+          )}
           <ExtraHeaders
             rows={row.headers}
             onChange={(headers) => update(index, { headers })}
@@ -244,12 +257,14 @@ export function RemoteInputsEditor({
 }
 
 export function WebhookEditor({
+  isV9 = false,
   value,
   onChange,
   legacy,
   onLegacyChange,
   newId,
 }: {
+  isV9?: boolean
   value: WebhookEditorState
   onChange: (value: WebhookEditorState) => void
   legacy: string
@@ -307,40 +322,57 @@ export function WebhookEditor({
               </select>
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px]">
-            <div className="space-y-1">
-              <Label htmlFor={`${id}-error-url`}>
-                Error callback URL (optional, deprecated upstream)
-              </Label>
-              <Input
-                id={`${id}-error-url`}
-                type="url"
-                value={value.errorUrl}
-                onChange={(event) => update({ errorUrl: event.target.value })}
-                placeholder="https://hooks.example.com/error"
-                autoComplete="off"
-                maxLength={2048}
-              />
+          {!isV9 && (
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px]">
+              <div className="space-y-1">
+                <Label htmlFor={`${id}-error-url`}>
+                  Error callback URL (optional, deprecated upstream)
+                </Label>
+                <Input
+                  id={`${id}-error-url`}
+                  type="url"
+                  value={value.errorUrl}
+                  onChange={(event) => update({ errorUrl: event.target.value })}
+                  placeholder="https://hooks.example.com/error"
+                  autoComplete="off"
+                  maxLength={2048}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={`${id}-error-method`}>Method</Label>
+                <select
+                  id={`${id}-error-method`}
+                  className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100 disabled:opacity-50"
+                  value={value.errorMethod}
+                  disabled={!value.errorUrl.trim()}
+                  onChange={(event) =>
+                    update({ errorMethod: event.target.value as WebhookEditorState['errorMethod'] })
+                  }
+                >
+                  <option>POST</option>
+                  <option>PUT</option>
+                  <option>PATCH</option>
+                </select>
+              </div>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor={`${id}-error-method`}>Method</Label>
-              <select
-                id={`${id}-error-method`}
-                className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100 disabled:opacity-50"
-                value={value.errorMethod}
-                disabled={!value.errorUrl.trim()}
-                onChange={(event) =>
-                  update({ errorMethod: event.target.value as WebhookEditorState['errorMethod'] })
-                }
+          )}
+          {isV9 && value.errorUrl.trim() && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+              <span>Gotenberg 9 does not support the configured v8 error callback.</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => update({ errorUrl: '', errorMethod: 'POST' })}
               >
-                <option>POST</option>
-                <option>PUT</option>
-                <option>PATCH</option>
-              </select>
+                Clear v8 error callback
+              </Button>
             </div>
-          </div>
+          )}
           <div className="space-y-1">
-            <Label htmlFor={`${id}-events-url`}>Structured events URL (recommended)</Label>
+            <Label htmlFor={`${id}-events-url`}>
+              Structured events URL ({isV9 ? 'required for v9' : 'recommended'})
+            </Label>
             <Input
               id={`${id}-events-url`}
               type="url"
@@ -351,7 +383,9 @@ export function WebhookEditor({
               maxLength={2048}
             />
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Events always use POST. Configure an error or events URL to receive failure details.
+              {isV9
+                ? 'Gotenberg 9 requires an events URL alongside the success callback; events always use POST.'
+                : 'Events always use POST. Configure an error or events URL to receive failure details.'}
             </p>
           </div>
           <ExtraHeaders
@@ -361,9 +395,9 @@ export function WebhookEditor({
             context="webhook"
           />
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            Preview: success {safeOutboundHost(value.url)} · error{' '}
-            {value.errorUrl ? safeOutboundHost(value.errorUrl) : 'not set'} · events{' '}
-            {value.eventsUrl ? safeOutboundHost(value.eventsUrl) : 'not set'} ·{' '}
+            Preview: success {safeOutboundHost(value.url)} ·{' '}
+            {!isV9 && <>error {value.errorUrl ? safeOutboundHost(value.errorUrl) : 'not set'} · </>}
+            events {value.eventsUrl ? safeOutboundHost(value.eventsUrl) : 'not set'} ·{' '}
             {value.headers.length} header(s) (values hidden)
           </p>
           <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">

@@ -33,6 +33,7 @@ export type FieldDefinition = {
   optionLabels?: Readonly<Record<string, string>>
   customEditor?: boolean
   minGotenbergMinor?: number
+  supportedGotenbergMajors?: readonly SupportedGotenbergMajor[]
   section?: 'processing' | 'compression' | 'reliability' | 'rendering' | 'watermark'
   when?: { name: string; equals: string | boolean }
 }

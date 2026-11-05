@@ -65,7 +65,11 @@ export function operationDefaults(operation: Operation): Record<string, string |
   return defaults
 }
 
-export { activeOperationFields, isFieldVisible } from '#/tools/shared/field-visibility'
+export {
+  activeOperationFields,
+  fieldSupportsBackend,
+  isFieldVisible,
+} from '#/tools/shared/field-visibility'
 export type {
   AuxiliaryUpload,
   FieldDefinition,

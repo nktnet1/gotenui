@@ -40,6 +40,7 @@ import {
   type UiFeatures,
 } from '#/lib/connection-profiles'
 import { getGotenbergStatus, type ServerStatus } from '#/lib/gotenberg-client'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import {
   backendCompatibilityNotice,
   unavailableOperationReason,
@@ -412,7 +413,10 @@ function Workspace({
   const unavailableReason = status
     ? unavailableOperationReason(status, operation)
     : 'Checking the selected Gotenberg version…'
-  const supportsOptimization = !status?.online || versionAtLeast(status.version, 36) !== false
+  const supportsOptimization =
+    !status?.online ||
+    (parseGotenbergVersion(status.version)?.major !== 9 &&
+      versionAtLeast(status.version, 36) !== false)
   const compatibilityNotice = backendCompatibilityNotice(status)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)

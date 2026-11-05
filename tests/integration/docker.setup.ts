@@ -8,7 +8,11 @@ import { asyncFixtureHandler } from './async-fixture-server'
 import { REMOTE_OVERLAY_PNG } from './overlay-fixture'
 
 const exec = promisify(execFile)
-const image = process.env.GOTENBERG_TEST_IMAGE || 'gotenberg/gotenberg:8.37.0'
+const testVersion = process.env.GOTENBERG_TEST_VERSION ?? '8.40.0'
+if (testVersion !== '8.40.0' && testVersion !== '9.0.0') {
+  throw new Error('Integration tests must use pinned Gotenberg 8.40.0 or 9.0.0 images.')
+}
+const image = `gotenberg/gotenberg:${testVersion}`
 const startupTimeoutMs = 120_000
 const testUsername = 'gotenui-integration'
 const testPassword = 'local-only-test-password'
@@ -17,6 +21,7 @@ const testPassword = 'local-only-test-password'
 declare module 'vitest' {
   export interface ProvidedContext {
     gotenbergTestUrl: string
+    gotenbergTestVersion: string
     gotenbergFixtureUrl: string
     gotenbergTestUsername: string
     gotenbergTestPassword: string
@@ -148,6 +153,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
     const url = `http://127.0.0.1:${port}`
     await waitForHealth(url)
     project.provide('gotenbergTestUrl', url)
+    project.provide('gotenbergTestVersion', testVersion)
     project.provide('gotenbergFixtureUrl', html.url)
     project.provide('gotenbergTestUsername', testUsername)
     project.provide('gotenbergTestPassword', testPassword)

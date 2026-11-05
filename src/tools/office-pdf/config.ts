@@ -1,9 +1,17 @@
 /** Definition for the office-pdf Gotenberg operation. */
-import { officeCompression, officeOutput, optimizeImages, pdfa, pdfua } from '#/tools/shared/fields'
+import {
+  officeCompression,
+  officeOutput,
+  optimizeImages,
+  paperSize,
+  pdfa,
+  pdfua,
+} from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'office-pdf',
+  supportedGotenbergMajors: [8, 9],
   title: 'Office to PDF',
   group: 'Convert',
   summary: 'Convert documents, spreadsheets and presentations.',
@@ -12,6 +20,7 @@ export const operation: Operation = {
   input: 'office',
   multiple: true,
   fields: [
+    paperSize,
     { name: 'landscape', label: 'Landscape orientation', kind: 'toggle' },
     { name: 'singlePageSheets', label: 'Single page per sheet', kind: 'toggle' },
     { name: 'skipEmptyPages', label: 'Skip blank pages', kind: 'toggle', advanced: true },
@@ -183,6 +192,7 @@ export const operation: Operation = {
     },
     {
       name: 'firstPageOnLeft',
+      supportedGotenbergMajors: [8],
       label: 'First page on left',
       kind: 'toggle',
       advanced: true,
@@ -290,7 +300,8 @@ export const operation: Operation = {
       max: 360,
       section: 'watermark',
       placeholder: '45',
-      description: 'Supports one decimal place; Gotenberg receives tenths of a degree.',
+      description:
+        'Supports one decimal place; Gotenberg 8 uses tenths of a degree and Gotenberg 9 uses degrees.',
     },
     pdfa,
     pdfua,

@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
-import {
-  proxyConversionRequest,
-  proxyErrorResponse,
-  proxyStatusRequest,
-} from '#/lib/gotenberg-proxy.server'
+import { proxyErrorResponse, proxyStatusRequest } from '#/lib/gotenberg-proxy.server'
 import { DEFAULT_MAX_RESPONSE_BYTES } from '#/lib/proxy-policy'
+import { proxyConversionRequest } from './helpers/proxy-v8-fixture'
 
 const origin = 'https://app.example.test'
 const backend = 'http://127.0.0.1:3000'

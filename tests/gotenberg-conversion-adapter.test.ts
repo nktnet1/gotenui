@@ -1,0 +1,256 @@
+import assert from 'node:assert/strict'
+import { test } from 'vitest'
+import { createGotenbergForm } from '#/lib/gotenberg-client'
+import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
+import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
+import type { ConversionPayload } from '#/lib/validation'
+
+function fixture(id: string, overrides: Partial<ConversionPayload> = {}) {
+  const operation = OPERATION_BY_ID.get(id)
+  assert.ok(operation)
+  const payload: ConversionPayload = {
+    operation: id,
+    fields: { ...operationDefaults(operation), ...overrides.fields },
+    advanced: overrides.advanced ?? {},
+    ...overrides,
+  }
+  if (overrides.fields) payload.fields = { ...operationDefaults(operation), ...overrides.fields }
+  const files =
+    id === 'office-pdf'
+      ? [new File(['Sample document'], 'document.txt', { type: 'text/plain' })]
+      : []
+  const form = createGotenbergForm(operation, payload, files, [])
+  return { operation, payload, form }
+}
+
+function adapt(id: string, overrides: Partial<ConversionPayload>, major: 8 | 9) {
+  const { operation, payload, form } = fixture(id, overrides)
+  return adaptConversionForm(operation, payload, form, major)
+}
+
+test('v8 Chromium retains legacy fields, array media features and PDF post-processing', () => {
+  const form = adapt(
+    'html-pdf',
+    {
+      fields: {
+        generateDocumentOutline: true,
+        generateTaggedPdf: true,
+        nativePageRanges: '1-3',
+        mediaColorScheme: 'dark',
+        pdfa: 'PDF/A-2b',
+      },
+      advanced: { waitWindowStatus: 'ready' },
+      source: '<html><body>Hello</body></html>',
+    },
+    8,
+  )
+  assert.equal(form.get('generateDocumentOutline'), 'true')
+  assert.equal(form.get('generateTaggedPdf'), 'true')
+  assert.equal(form.get('nativePageRanges'), '1-3')
+  assert.equal(form.get('waitWindowStatus'), 'ready')
+  assert.equal(form.get('pdfa'), 'PDF/A-2b')
+  assert.deepEqual(JSON.parse(String(form.get('emulatedMediaFeatures'))), [
+    { name: 'prefers-color-scheme', value: 'dark' },
+  ])
+  assert.equal(form.get('stages'), null)
+})
+
+test('v9 Chromium maps native controls and JSON media features, then remediates PDF/A', () => {
+  const form = adapt(
+    'html-pdf',
+    {
+      fields: {
+        generateDocumentOutline: true,
+        generateTaggedPdf: true,
+        nativePageRanges: '1-3',
+        mediaColorScheme: 'dark',
+        mediaReducedMotion: 'reduce',
+        paperSize: 'A4',
+        pdfa: 'PDF/A-2b',
+        pdfua: true,
+      },
+      advanced: { waitWindowStatus: 'ready' },
+      source: '<html><body>Hello</body></html>',
+    },
+    9,
+  )
+  assert.equal(form.get('nativeBookmarks'), 'true')
+  assert.equal(form.get('nativeTaggedPdf'), 'true')
+  assert.equal(form.get('nativePages'), '1-3')
+  assert.equal(form.get('waitForWindowStatus'), 'ready')
+  assert.equal(form.get('paperSize'), 'A4')
+  assert.equal(form.get('generateTaggedPdf'), null)
+  assert.equal(form.get('generateDocumentOutline'), null)
+  assert.equal(form.get('nativePageRanges'), null)
+  assert.equal(form.get('pdfa'), null)
+  assert.equal(form.get('pdfua'), null)
+  assert.deepEqual(JSON.parse(String(form.get('emulatedMediaFeatures'))), {
+    'prefers-color-scheme': 'dark',
+    'prefers-reduced-motion': 'reduce',
+  })
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+    { op: 'remediate', profile: ['PDF/A-2b', 'PDF/UA-1'] },
+  ])
+})
+
+test('v9 screenshots also convert emulated media features to the new JSON object', () => {
+  const form = adapt(
+    'url-shot',
+    { fields: { url: 'https://example.test', mediaColorScheme: 'dark' } },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(form.get('emulatedMediaFeatures'))), {
+    'prefers-color-scheme': 'dark',
+  })
+  assert.equal(form.get('stages'), null)
+})
+
+test('v8 LibreOffice retains viewer numbers, watermark encodings and v8 defaults', () => {
+  const form = adapt(
+    'office-pdf',
+    {
+      fields: {
+        initialView: '1',
+        magnification: '4',
+        pageLayout: '3',
+        nativeWatermarkText: 'DRAFT',
+        nativeWatermarkColor: '#112233',
+        nativeWatermarkRotateAngle: '45.5',
+        pdfa: 'PDF/A-2b',
+        pdfua: true,
+        quality: '80',
+      },
+    },
+    8,
+  )
+  assert.equal(form.get('exportBookmarks'), 'true')
+  assert.equal(form.get('initialView'), '1')
+  assert.equal(form.get('magnification'), '4')
+  assert.equal(form.get('pageLayout'), '3')
+  assert.equal(form.get('nativeWatermarkColor'), String(0x112233))
+  assert.equal(form.get('nativeWatermarkRotateAngle'), '455')
+  assert.equal(form.get('quality'), '80')
+  assert.equal(form.get('pdfa'), 'PDF/A-2b')
+  assert.equal(form.get('pdfua'), 'true')
+})
+
+test('v9 LibreOffice maps viewer enums, native compression, watermark units and output stages', () => {
+  const form = adapt(
+    'office-pdf',
+    {
+      fields: {
+        nativePageRanges: '1-3',
+        generateTaggedPdf: true,
+        initialView: '1',
+        magnification: '4',
+        pageLayout: '3',
+        nativeWatermarkText: 'DRAFT',
+        nativeWatermarkColor: '#112233',
+        nativeWatermarkFontHeight: '32',
+        nativeWatermarkFontName: 'Helvetica',
+        nativeWatermarkRotateAngle: '45.5',
+        quality: '80',
+        singlePageSheets: true,
+        losslessImageCompression: true,
+        reduceImageResolution: true,
+        maxImageResolution: '150',
+        merge: true,
+        splitMode: 'pages',
+        splitSpan: '1-2,4',
+        splitUnify: true,
+        pdfa: 'PDF/A-4',
+        pdfua: true,
+      },
+    },
+    9,
+  )
+  for (const oldName of [
+    'exportBookmarks',
+    'generateTaggedPdf',
+    'nativePageRanges',
+    'singlePageSheets',
+    'nativeWatermarkFontHeight',
+    'nativeWatermarkFontName',
+    'nativeWatermarkRotateAngle',
+    'quality',
+    'losslessImageCompression',
+    'reduceImageResolution',
+    'maxImageResolution',
+    'pdfa',
+    'pdfua',
+    'merge',
+    'splitMode',
+    'splitSpan',
+    'splitUnify',
+  ])
+    assert.equal(form.get(oldName), null, oldName)
+  assert.equal(form.get('nativeBookmarks'), 'true')
+  assert.equal(form.get('nativeTaggedPdf'), 'true')
+  assert.equal(form.get('nativePages'), '1-3')
+  assert.equal(form.get('singlePage'), 'true')
+  assert.equal(form.get('nativeQuality'), '80')
+  assert.equal(form.get('nativeLosslessImageCompression'), 'true')
+  assert.equal(form.get('nativeReduceImageResolution'), 'true')
+  assert.equal(form.get('nativeMaxImageResolution'), '150')
+  assert.equal(form.get('initialView'), 'outline')
+  assert.equal(form.get('magnification'), 'zoom')
+  assert.equal(form.get('pageLayout'), 'twoColumnRight')
+  assert.equal(form.get('nativeWatermarkColor'), '#112233')
+  assert.equal(form.get('nativeWatermarkFontSize'), '32')
+  assert.equal(form.get('nativeWatermarkFont'), 'Helvetica')
+  assert.equal(form.get('nativeWatermarkRotation'), '45.5')
+  assert.equal(form.get('nativePdfa'), null)
+  assert.equal(form.get('nativePdfua'), null)
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+    { op: 'merge' },
+    { op: 'select', pages: '1-2,4' },
+    { op: 'remediate', profile: ['PDF/A-4', 'PDF/UA-2'] },
+  ])
+})
+
+test('v9 Office native PDF/A and PDF/UA and interval splitting retain the original intent', () => {
+  const form = adapt(
+    'office-pdf',
+    {
+      fields: { pdfa: 'PDF/A-2b', pdfua: true, splitMode: 'intervals', splitSpan: '2' },
+    },
+    9,
+  )
+  assert.equal(form.get('nativePdfa'), 'PDF/A-2b')
+  assert.equal(form.get('nativePdfua'), 'PDF/UA-1')
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [{ op: 'split', every: 2 }])
+})
+
+test('v9 does not silently accept incompatible v8 options or unvalidated stages', () => {
+  assert.throws(
+    () => adapt('office-pdf', { fields: { firstPageOnLeft: true, pageLayout: '3' } }, 9),
+    /First page on left/,
+  )
+  assert.throws(
+    () => adapt('html-pdf', { fields: { optimizeImages: true } }, 9),
+    /lossless PDF optimisation/,
+  )
+  assert.throws(() => adapt('html-pdf', { advanced: { stages: '[]' } }, 9), /pipeline editor/)
+  assert.throws(() => adapt('html-pdf', { postProcess: { flatten: true } }, 9), /post-processing/)
+  assert.throws(() => adapt('office-pdf', { fields: { paperSize: 'A4' } }, 8), /Gotenberg 9/)
+})
+
+test('v9 rejects v8-only remote attachment destinations instead of changing their meaning', () => {
+  assert.throws(
+    () =>
+      adapt(
+        'html-pdf',
+        {
+          downloadFrom: [{ url: 'https://example.test/attachment.pdf', field: 'embedded' }],
+        },
+        9,
+      ),
+    /remote downloads as ordinary files/,
+  )
+  assert.equal(
+    adapt('office-pdf', { downloadFrom: [{ url: 'https://example.test/report.docx' }] }, 9).get(
+      'downloadFrom',
+    ),
+    '[{"url":"https://example.test/report.docx"}]',
+  )
+})
