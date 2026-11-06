@@ -512,6 +512,21 @@ export async function proxyConversionRequest(
       409,
     )
   }
+  // The initial validation accepts the union of both Office extension sets.
+  // Recheck after authenticating /version so neither version receives an unsupported format.
+  if (operation.input === 'office') {
+    validateFiles(
+      operation,
+      files,
+      auxiliary,
+      maxBytes,
+      payload,
+      postFiles,
+      stageFiles,
+      archives,
+      major,
+    )
+  }
   if (archives.length && major !== 9) {
     throw new InputError('Office ZIP archive inputs require Gotenberg 9.')
   }

@@ -97,6 +97,52 @@ test('rejects a Gotenberg 9-only option against v8 before forwarding conversion'
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
 })
 
+test('Office extensions follow the exact v8.40.0 and v9.0.0 API lists', async () => {
+  const v8Files: string[] = []
+  const v8 = upstreamFixture('8.40.0', (form) => {
+    v8Files.push((form.get('files') as File).name)
+  })
+  for (const name of ['book.epub', 'legacy.sdw', 'legacy.uot']) {
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor('office-pdf', {}, {}, [new File(['data'], name)]),
+          v8.fetcher,
+        )
+      ).status,
+      200,
+    )
+  }
+  assert.deepEqual(v8Files, ['book.epub', 'legacy.sdw', 'legacy.uot'])
+  assert.deepEqual(v8.counts(), { probes: 3, conversions: 3 })
+
+  const v9Files: string[] = []
+  const v9 = upstreamFixture('9.0.0', (form) => {
+    v9Files.push((form.get('files') as File).name)
+  })
+  for (const name of ['legacy.sdw', 'legacy.uot']) {
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor('office-pdf', {}, {}, [new File(['data'], name)]),
+          v9.fetcher,
+        )
+      ).status,
+      200,
+    )
+  }
+  assert.deepEqual(v9Files, ['legacy.sdw', 'legacy.uot'])
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 2 })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('office-pdf', {}, {}, [new File(['book'], 'book.epub')]),
+      v9.fetcher,
+    ),
+    /Unsupported Office conversion input/,
+  )
+  assert.deepEqual(v9.counts(), { probes: 3, conversions: 2 })
+})
+
 test('v9 forwards Office ZIP archives after validation, while v8 rejects the same upload', async () => {
   const zip = new File(['PK\u0003\u0004'], 'documents.zip', { type: 'application/zip' })
   const v9 = upstreamFixture('9.0.0', (form) => {

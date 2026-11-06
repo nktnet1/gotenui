@@ -50,7 +50,7 @@ import { chromiumNetworkFields } from '#/lib/chromium-network'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { convertWithGotenberg, REQUEST_TIMEOUT_MS } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
-import { OFFICE_ACCEPT } from '#/lib/office-formats'
+import { officeAcceptForVersion } from '#/lib/office-formats'
 import { versionAtLeast } from '#/lib/operation-availability'
 import { DEFAULT_PDF_PIPELINE, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import {
@@ -627,7 +627,11 @@ export function Workbench({
                   readAbort.current?.abort()
                   setFiles(nextFiles)
                 }}
-                accept={operation.input === 'pdf' ? '.pdf,application/pdf' : OFFICE_ACCEPT}
+                accept={
+                  operation.input === 'pdf'
+                    ? '.pdf,application/pdf'
+                    : officeAcceptForVersion(backendVersion)
+                }
                 multiple={true}
                 reorder={
                   operation.id === 'merge' ||

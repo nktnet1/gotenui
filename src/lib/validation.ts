@@ -6,7 +6,8 @@ import {
   markdownTemplateReferences,
 } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
-import { OFFICE_EXTENSION_SET } from '#/lib/office-formats'
+import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
   parseConsoleMessageTypes,
   parseIgnoredDomains,
@@ -533,6 +534,7 @@ export function validateFiles(
   postFiles: PostProcessFiles = {},
   stageFiles: readonly File[] = [],
   archives: readonly File[] = [],
+  major?: SupportedGotenbergMajor,
 ): void {
   const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
@@ -648,7 +650,7 @@ export function validateFiles(
     if (
       files.includes(file) &&
       operation.input === 'office' &&
-      !OFFICE_EXTENSION_SET.has(ext ?? '')
+      !officeExtensionSetForMajor(major).has(ext ?? '')
     ) {
       throw new InputError(`Unsupported Office conversion input: ${name}`)
     }
@@ -831,6 +833,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     'extraHttpHeaders',
     'waitForSelector',
     'waitForExpression',
+    'waitWindowStatus',
     'userAgent',
     'singlePage',
     'preferCssPageSize',
@@ -922,13 +925,18 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       const value = payload.fields[name]
       if (value !== undefined && value !== '') validateChromiumNetworkField(name, value)
     }
-    for (const name of ['waitForSelector', 'waitForExpression', 'userAgent'] as const) {
+    for (const name of [
+      'waitForSelector',
+      'waitForExpression',
+      'waitWindowStatus',
+      'userAgent',
+    ] as const) {
       const value = payload.fields[name]
       if (
         typeof value === 'string' &&
         (value.trim().length === 0 ||
           value.length > (name === 'waitForExpression' ? 5000 : 500) ||
-          (name === 'userAgent' && /[\r\n]/.test(value)))
+          (['userAgent', 'waitWindowStatus'].includes(name) && /[\r\n]/.test(value)))
       ) {
         throw new InputError(`Invalid Chromium ${name} value.`)
       }

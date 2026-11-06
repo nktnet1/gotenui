@@ -448,3 +448,41 @@ test('v9 rejects uploaded conversion stage files that no stage references', () =
     /Unused conversion stage file/,
   )
 })
+
+test('native window.status wait remains v8 and becomes waitForWindowStatus on v9', () => {
+  const v8 = adapt('url-shot', { fields: { waitWindowStatus: 'ready' } }, 8)
+  const v9 = adapt('url-shot', { fields: { waitWindowStatus: 'ready' } }, 9)
+  assert.equal(v8.get('waitWindowStatus'), 'ready')
+  assert.equal(v8.has('waitForWindowStatus'), false)
+  assert.equal(v9.get('waitForWindowStatus'), 'ready')
+  assert.equal(v9.has('waitWindowStatus'), false)
+})
+
+test('v9 Office export rejects invalid bookmark expansion and clashing native watermarks', () => {
+  for (const levels of ['0', '11', '100']) {
+    assert.throws(
+      () => adapt('office-pdf', { fields: { openBookmarkLevels: levels } }, 9),
+      /bookmark expansion must be -1.*1 to 10/,
+    )
+  }
+  for (const levels of ['-1', '1', '10']) {
+    assert.equal(
+      adapt('office-pdf', { fields: { openBookmarkLevels: levels } }, 9).get('openBookmarkLevels'),
+      levels,
+    )
+  }
+  const competing = { nativeWatermarkText: 'CONFIDENTIAL', nativeTiledWatermarkText: 'DRAFT' }
+  assert.throws(
+    () => adapt('office-pdf', { fields: competing }, 9),
+    /cannot combine native watermark text with a tiled watermark/,
+  )
+  // v8 requests keep their original encoding and validation contract.
+  assert.equal(
+    adapt('office-pdf', { fields: competing }, 8).get('nativeTiledWatermarkText'),
+    'DRAFT',
+  )
+  assert.equal(
+    adapt('office-pdf', { fields: { openBookmarkLevels: '100' } }, 8).get('openBookmarkLevels'),
+    '100',
+  )
+})

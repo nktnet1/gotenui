@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
-import { OFFICE_ACCEPT, OFFICE_EXTENSIONS } from '#/lib/office-formats'
+import {
+  OFFICE_ACCEPT,
+  OFFICE_EXTENSIONS,
+  OFFICE_V9_ACCEPT,
+  OFFICE_V9_EXTENSIONS,
+  officeAcceptForVersion,
+} from '#/lib/office-formats'
 import {
   CONSOLE_MESSAGE_TYPES,
   encodeOfficialField,
@@ -62,6 +68,43 @@ test('Office file picker and proxy validation use the same extended upstream fil
     assert.doesNotThrow(() => validateFiles(spec, [doc(`test${ext}`)], [], 1000))
   }
   assert.throws(() => validateFiles(spec, [doc('bad.exe')], [], 1000), /Unsupported Office/)
+})
+
+test('Office file pickers reflect the exact Gotenberg 8 and 9 extension differences', () => {
+  assert.equal(officeAcceptForVersion('8.40.0'), OFFICE_ACCEPT)
+  assert.equal(officeAcceptForVersion('9.0.0'), OFFICE_V9_ACCEPT)
+  assert.equal(officeAcceptForVersion('Unknown'), OFFICE_ACCEPT)
+  const v8 = new Set(OFFICE_EXTENSIONS)
+  const v9 = new Set(OFFICE_V9_EXTENSIONS)
+  assert.deepEqual(
+    [...v8].filter((ext) => !v9.has(ext)),
+    ['.epub'],
+  )
+  assert.deepEqual(
+    [...v9].filter((ext) => !v8.has(ext)),
+    [],
+  )
+  assert.equal(OFFICE_EXTENSIONS.length, 132)
+  assert.equal(new Set(OFFICE_EXTENSIONS).size, OFFICE_EXTENSIONS.length)
+  assert.equal(OFFICE_V9_EXTENSIONS.length, 131)
+  assert.equal(new Set(OFFICE_V9_EXTENSIONS).size, OFFICE_V9_EXTENSIONS.length)
+  const spec = operation('office-pdf')
+  for (const ext of ['.sdw', '.uot']) {
+    assert.ok(OFFICE_V9_ACCEPT.includes(ext))
+    assert.doesNotThrow(() =>
+      validateFiles(spec, [doc(`document${ext}`)], [], 1000, undefined, {}, [], [], 9),
+    )
+    assert.doesNotThrow(() =>
+      validateFiles(spec, [doc(`document${ext}`)], [], 1000, undefined, {}, [], [], 8),
+    )
+  }
+  assert.doesNotThrow(() =>
+    validateFiles(spec, [doc('book.epub')], [], 1000, undefined, {}, [], [], 8),
+  )
+  assert.throws(
+    () => validateFiles(spec, [doc('book.epub')], [], 1000, undefined, {}, [], [], 9),
+    /Unsupported Office conversion input/,
+  )
 })
 
 test('PDF image optimization is a typed native control across supported routes', () => {

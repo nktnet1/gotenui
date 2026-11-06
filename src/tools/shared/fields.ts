@@ -108,6 +108,15 @@ export const chromiumWait: FieldDefinition[] = [
       'Optional fallback delay. For dynamic pages prefer waiting for an element or JavaScript expression.',
   },
   {
+    name: 'waitWindowStatus',
+    label: 'Wait for window.status',
+    kind: 'text',
+    placeholder: 'ready',
+    advanced: true,
+    description:
+      'Wait until page JavaScript sets window.status to this exact string. Gotenberg 9 calls this waitForWindowStatus.',
+  },
+  {
     name: 'waitForSelector',
     label: 'Wait for CSS selector',
     kind: 'text',

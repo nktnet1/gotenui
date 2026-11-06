@@ -31,13 +31,15 @@
 - [x] **Patch 9 (v1.0.8):** Prefix output from the three simultaneous test suites with `[unit]`, `[v8]`, and `[v9]`, including carriage-return Docker pull progress, without adding a Turbo dependency. Keep each suite's own status and the sequential opt-out.
 - [x] **Patch 10 (v1.0.9):** Replace extensionless relative native-TypeScript CLI imports with Node package subpaths (`#scripts/*`, `#/lib/*`), verified on supported Node 24 and 26 runtimes.
 - [x] **Patch 11 (v1.0.10):** Expose the eleven v9 PDF/A profiles and both PDF/UA profiles on Chromium and LibreOffice conversion forms. Keep legacy v8 profile controls unchanged; choose native LibreOffice export only when compatible, or an ordered remediation stage otherwise. Validate conflicting or incompatible profiles explicitly.
-- [x] **Patch 11:** Add v9-only Office ZIP archive inputs, including UI upload controls, browser batch queue transport, proxy validation, and forwarding under Gotenberg's `archives` multipart field. Keep the v8 API untouched; enforce ten-archive and request-size limits in the UI/backend. Add a pinned-v9 live integration case; **live Docker verification of this new case is pending**.
+- [x] **Patch 11:** Add v9-only Office ZIP archive inputs, including UI upload controls, browser batch queue transport, proxy validation, and forwarding under Gotenberg's `archives` multipart field. Keep the v8 API untouched; enforce ten-archive and request-size limits in the UI/backend. Add a pinned-v9 live integration case; the user confirmed that both v8.40.0 and v9.0.0 suites pass after v1.0.10.
+- [x] **Patch 12 (v1.0.11):** Align both Office pickers with the **exact upstream tags** 8.40.0 and 9.0.0: `.sdw` and `.uot` are supported by both, while `.epub` is v8-only. Check direct uploads against the authenticated version before conversion. Both versions retain the same local upload and archive limits; ZIP entry validation remains upstream's responsibility.
+- [x] **Patch 12:** Expose Chromium's `waitWindowStatus` option in PDF and screenshot forms, mapping it to v9 `waitForWindowStatus`. Validate the requested status on both versions. Reject v9 LibreOffice `openBookmarkLevels` outside `-1` or `1`–`10`, and conflicting native/tiled watermark text; preserve v8 handling. Add regression and pinned-image integration tests (**new live tests pending user run**).
 
 ## Remaining priorities
 
-1. **Conversion parity:** Audit outstanding v9 Chromium advanced options, and verify PDF/A and PDF/UA conformance beyond successful stage execution. The main v9 profile selectors are now present.
+1. **Conversion parity:** Chromium window-status waiting and Office format differences are addressed in patch 12. Audit other advanced-field and version-specific semantics, and verify PDF/A and PDF/UA conformance beyond successful stage execution.
 2. **Input/output completeness:** Extend archive support beyond the v9 Office converter where appropriate, finish remote-source and format-specific file rules, and verify multi-stage image/ZIP filename and preview behaviour.
-3. **Version-specific observability and UX:** Separate v8 legacy Prometheus from v9 OpenTelemetry metrics, improve v9 webhook guidance and callback progress, and review Office-format and native compression controls.
+3. **Version-specific observability and UX:** Separate v8 legacy Prometheus from v9 OpenTelemetry metrics, improve v9 webhook guidance and callback progress, and verify native compression controls against both images.
 4. **Hardening:** Add connection-swap and batch-switch regression coverage, plus real-image tests for remediation edge cases and timestamp authority integration.
 
 These are tracked below; no remaining core v9 PDF stage or inspection route is absent from the tool catalogue.
@@ -110,8 +112,10 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 
 - [x] Refuse legacy `downloadFrom` attachment/watermark/stamp destinations and unmigrated multipart `embeds` uploads on v9 instead of silently treating them as conversion inputs; keep ordinary remote Office inputs on both versions.
 - [x] Support the v9 `archives` multipart field for ZIPs of Office inputs, from the UI and batch queue through authenticated server-side validation. Gotenberg performs ZIP extraction and enforces its own archive-entry and expansion limits. ZIPs are not unpacked in the browser (patch 11).
-- [ ] Review archives for other eligible routes, further remote-input fields and format-specific upload validation. Restrict v9 Office formats that no longer match the upstream extension list.
-- [ ] Revisit allowed Office extensions (including EPUB removal), named paper-size presets, native compression choices and Gotenberg 9 options for each tool.
+- [ ] Review archives for other eligible routes, remote-source formats, and content-aware input checks. Direct Office upload format validation is version-aware (patch 12); archive entry formats are checked by Gotenberg, not by Gotenui.
+- [x] Align direct Office upload extensions with the exact supplied v9.0.0 `Extensions()` list, including v9 EPUB removal and restoring `.sdw`/`.uot` to v8's picker (patch 12).
+- [x] Expose Chromium window-status waiting and enforce v9 Office bookmark-level and native-watermark constraints (patch 12).
+- [ ] Audit named paper-size presets, native compression behaviour, and remaining Gotenberg 9 route options.
 - [ ] Distinguish Gotenberg 8 legacy Prometheus `/prometheus/metrics` from Gotenberg 9 exporter-based metrics; do not rely on the deleted route.
 - [x] Route standalone v9 PDF tool documentation links to the new pipeline and read API pages; retain v8 links for v8 connections. Additional v9 documentation polish remains.
 - [ ] Test switching v8 ↔ v9 connections while a tool or batch queue is selected, status refreshes, and version/header mismatches.

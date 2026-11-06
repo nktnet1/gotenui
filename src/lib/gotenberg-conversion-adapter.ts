@@ -152,6 +152,18 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
 }
 
 function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
+  const bookmarks = form.get('openBookmarkLevels')
+  if (typeof bookmarks === 'string' && bookmarks !== '') {
+    const count = Number(bookmarks)
+    if (!Number.isInteger(count) || (count !== -1 && (count < 1 || count > 10))) {
+      throw new InputError('Gotenberg 9 bookmark expansion must be -1 (all) or 1 to 10 levels.')
+    }
+  }
+  if (form.has('nativeWatermarkText') && form.has('nativeTiledWatermarkText')) {
+    throw new InputError(
+      'Gotenberg 9 cannot combine native watermark text with a tiled watermark. Choose one.',
+    )
+  }
   if (form.has('firstPageOnLeft')) {
     throw new InputError('Gotenberg 9 removed First page on left. Disable it for this connection.')
   }

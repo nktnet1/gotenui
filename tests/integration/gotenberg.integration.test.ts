@@ -1575,6 +1575,24 @@ test('real async callbacks retry once after 503 and then issue a success event',
   expect(records.filter((item) => item.kind === 'retry').every((item) => item.beginsPdf)).toBe(true)
 }, 60_000)
 
+test('Chromium honours the window.status wait field on both pinned Gotenberg versions', async () => {
+  const html = OPERATIONS.find(({ id }) => id === 'html-pdf')
+  if (!html) throw new Error('Missing HTML conversion')
+  const response = await proxyConversionRequest(
+    request(html, {
+      source:
+        '<!doctype html><html><head></head><body><h1>Ready</h1><script>window.status = "ready";</script></body></html>',
+      fields: { waitWindowStatus: 'ready' },
+    }),
+  )
+  if (!response.ok)
+    throw new Error(`Window status wait: ${response.status} ${await response.text()}`)
+  expect(response.headers.get('content-type')).toContain('application/pdf')
+  expect(
+    new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+  ).toBe('%PDF-')
+}, 120_000)
+
 test.skipIf(!isV9)(
   'Gotenberg 9 converts multiple Office files using an ordered merge stage',
   async () => {

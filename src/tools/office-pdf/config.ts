@@ -255,6 +255,8 @@ export const operation: Operation = {
       integer: true,
       advanced: true,
       placeholder: '-1 (all levels)',
+      description:
+        'Gotenberg 9 accepts -1 (all) or levels 1–10. Gotenberg 8 supports its original range.',
     },
     {
       name: 'nativeWatermarkText',
