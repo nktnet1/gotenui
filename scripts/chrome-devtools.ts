@@ -1,15 +1,18 @@
 import type { Readable, Writable } from 'node:stream'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 type CdpReply = {
   id?: number
   result?: Record<string, unknown>
-  error?: { message: string }
+  error?: { code?: number; message: string }
 }
 
 type PendingCommand = {
   resolve: (value: Record<string, unknown>) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
+  method: string
+  callSite: Error
 }
 
 /** Chrome's --remote-debugging-pipe uses NUL-delimited CDP messages over fds 3 and 4. */
@@ -50,8 +53,11 @@ export class ChromeDevToolsPipe {
           if (waiter) {
             this.pending.delete(reply.id)
             clearTimeout(waiter.timeout)
-            if (reply.error) waiter.reject(new Error(reply.error.message))
-            else waiter.resolve(reply.result ?? {})
+            if (reply.error) {
+              const code = reply.error.code === undefined ? '' : ` (${reply.error.code})`
+              waiter.callSite.message = `Chrome DevTools ${waiter.method} failed${code}: ${reply.error.message}`
+              waiter.reject(waiter.callSite)
+            } else waiter.resolve(reply.result ?? {})
           }
         }
       }
@@ -82,7 +88,14 @@ export class ChromeDevToolsPipe {
         this.pending.delete(id)
         reject(new Error(`Chrome DevTools command timed out: ${method}`))
       }, timeoutMs)
-      this.pending.set(id, { resolve, reject, timeout })
+      // Preserve the caller's stack instead of attributing every CDP error to receive().
+      this.pending.set(id, {
+        resolve,
+        reject,
+        timeout,
+        method,
+        callSite: new Error(`Chrome DevTools ${method} failed`),
+      })
       try {
         this.input.write(`${JSON.stringify({ id, method, params, sessionId })}\0`, (error) => {
           if (error) this.fail(error)
@@ -140,4 +153,64 @@ export async function attachToChromePage(
     throw new Error('Chrome did not attach to the page target.')
   }
   return attached.sessionId
+}
+
+/**
+ * Document navigation can invalidate a Runtime.evaluate call while Chrome is
+ * responding. Only read-only polling can safely retry these transient errors.
+ * Never retry an action that may already have been performed on the page.
+ */
+export function isNavigationContextLost(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return /Inspected target navigated or closed|Execution context was destroyed|Cannot find context with specified id/i.test(
+    error.message,
+  )
+}
+
+/** Poll only read-only predicates across transient cross-document navigations. */
+export async function waitForBrowserCondition(
+  evaluate: () => Promise<unknown>,
+  description: string,
+  timeoutMs = 10_000,
+  intervalMs = 75,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  let navigationError: Error | undefined
+  while (Date.now() < deadline) {
+    try {
+      if (await evaluate()) return
+    } catch (error) {
+      if (!isNavigationContextLost(error)) {
+        throw new Error(`Browser check failed: ${description}`, { cause: error })
+      }
+      navigationError = error as Error
+    }
+    await sleep(intervalMs)
+  }
+  throw new Error(`Browser check timed out: ${description}`, { cause: navigationError })
+}
+
+/** Navigate through browser history without evaluating history.back()/forward().
+ * Evaluating those expressions can destroy their own execution context before
+ * the CDP reply arrives, especially across the smoke's full-page reload.
+ */
+export async function navigateChromeHistory(
+  devtools: ChromeDevToolsPipe,
+  sessionId: string,
+  direction: -1 | 1,
+): Promise<void> {
+  const { currentIndex, entries } = await devtools.command(
+    'Page.getNavigationHistory',
+    {},
+    sessionId,
+  )
+  const targetIndex = typeof currentIndex === 'number' ? currentIndex + direction : NaN
+  const history = Array.isArray(entries) ? entries : []
+  const entry = history[targetIndex] as { id?: unknown } | undefined
+  if (!entry || !Number.isSafeInteger(entry.id)) {
+    throw new Error(
+      `No Chrome history entry available to navigate ${direction < 0 ? 'back' : 'forward'}.`,
+    )
+  }
+  await devtools.command('Page.navigateToHistoryEntry', { entryId: entry.id }, sessionId)
 }

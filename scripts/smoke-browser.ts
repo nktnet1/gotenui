@@ -10,7 +10,12 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
 import { browserImageZip, samplePng } from '#scripts/browser-output-fixtures'
-import { attachToChromePage, ChromeDevToolsPipe } from '#scripts/chrome-devtools'
+import {
+  attachToChromePage,
+  ChromeDevToolsPipe,
+  navigateChromeHistory,
+  waitForBrowserCondition,
+} from '#scripts/chrome-devtools'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = resolve(root, '.output/server/index.mjs')
@@ -28,6 +33,7 @@ const chromium = [
 class BrowserPage {
   private sessionId?: string
   private readonly devtools: ChromeDevToolsPipe
+  lastCheck = 'Chrome bootstrap'
 
   private constructor(devtools: ChromeDevToolsPipe) {
     this.devtools = devtools
@@ -74,12 +80,13 @@ class BrowserPage {
   }
 
   async waitUntil(expression: string, description: string): Promise<void> {
-    const deadline = Date.now() + 10_000
-    while (Date.now() < deadline) {
-      if (await this.evaluate(expression)) return
-      await sleep(75)
-    }
-    throw new Error(`Browser check timed out: ${description}`)
+    this.lastCheck = description
+    await waitForBrowserCondition(() => this.evaluate(expression), description)
+  }
+
+  async history(direction: -1 | 1): Promise<void> {
+    assert.ok(this.sessionId, 'Chrome page session is not attached')
+    await navigateChromeHistory(this.devtools, this.sessionId, direction)
   }
 
   async press(key: string, modifiers = 0): Promise<void> {
@@ -406,13 +413,13 @@ async function run(): Promise<void> {
       'sidebar navigation updates URL',
     )
     checks++
-    await page.evaluate('history.back()')
+    await page.history(-1)
     await page.waitUntil(
       "location.pathname === '/tools/url-pdf' && document.querySelector('h1')?.textContent === 'Website to PDF'",
       'browser back restores the previous tool',
     )
     checks++
-    await page.evaluate('history.forward()')
+    await page.history(1)
     await page.waitUntil(
       "location.pathname === '/tools/metadata-read' && document.querySelector('h1')?.textContent === 'Read metadata'",
       'browser forward restores the next tool',
@@ -425,7 +432,7 @@ async function run(): Promise<void> {
       'deep link survives full page reload',
     )
     checks++
-    await page.evaluate('history.back()')
+    await page.history(-1)
     await page.waitUntil(
       "location.pathname === '/tools/url-pdf' && document.querySelector('h1')?.textContent === 'Website to PDF'",
       'return to PDF conversion after reload',
@@ -1555,6 +1562,13 @@ async function run(): Promise<void> {
       'restore focus to visible mobile search button',
     )
     checks++
+  } catch (error) {
+    // Errors thrown by the CDP pipe otherwise show only their receive() frame.
+    // Print the current browser checkpoint and check index without dumping app data.
+    console.error(
+      `Browser smoke: failed after ${checks} checks (last check: ${page?.lastCheck ?? 'Chrome bootstrap'}).`,
+    )
+    throw error
   } finally {
     page?.close()
     if (browser) await terminate(browser)
