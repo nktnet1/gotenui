@@ -528,7 +528,21 @@ export async function proxyConversionRequest(
     )
   }
   if (archives.length && major !== 9) {
-    throw new InputError('Office ZIP archive inputs require Gotenberg 9.')
+    throw new InputError('ZIP archive inputs require Gotenberg 9.')
+  }
+  // The extension and size are checked synchronously above. Confirm that a
+  // purported ZIP actually starts with a ZIP record before forwarding it; do
+  // not read or decompress archive entries in the proxy (Gotenberg bounds that).
+  for (const archive of archives) {
+    const prefix = new Uint8Array(await archive.slice(0, 4).arrayBuffer())
+    if (
+      prefix.length !== 4 ||
+      prefix[0] !== 0x50 ||
+      prefix[1] !== 0x4b ||
+      !((prefix[2] === 0x03 && prefix[3] === 0x04) || (prefix[2] === 0x05 && prefix[3] === 0x06))
+    ) {
+      throw new InputError(`Archive ${archive.name} is not a ZIP file.`)
+    }
   }
   if (major === 9 && postFiles.embeds?.length) {
     throw new InputError(

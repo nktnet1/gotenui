@@ -167,6 +167,39 @@ test('v9 forwards Office ZIP archives after validation, while v8 rejects the sam
   assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
 })
 
+test.each(['html-pdf', 'markdown-pdf'])(
+  'v9 %s accepts ZIP asset bundles without changing the generated index',
+  async (operation) => {
+    const zip = new File(['PK\u0003\u0004'], 'assets.zip', { type: 'application/zip' })
+    const v9 = upstreamFixture('9.0.0', (form) => {
+      assert.equal((form.get('archives') as File).name, 'assets.zip')
+      assert.deepEqual((form.getAll('files') as File[]).map((file) => file.name).slice(0, 1), [
+        'index.html',
+      ])
+    })
+    const extra = operation.startsWith('markdown')
+      ? { source: '# Hello' }
+      : { source: '<html><body>Local styles</body></html>' }
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor(operation, {}, extra, [], [], [], [zip]),
+          v9.fetcher,
+        )
+      ).status,
+      200,
+    )
+    assert.deepEqual(v9.counts(), { probes: 1, conversions: 1 })
+
+    const v8 = upstreamFixture('8.40.0', () => {})
+    await assert.rejects(
+      proxyConversionRequest(requestFor(operation, {}, extra, [], [], [], [zip]), v8.fetcher),
+      /ZIP archive inputs require Gotenberg 9/,
+    )
+    assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
+  },
+)
+
 test('v9 accepts a ZIP response when Office archives expand to several output documents', async () => {
   const zip = new File(['PK\u0003\u0004'], 'several.zip', { type: 'application/zip' })
   const fetcher: typeof fetch = async (input, options) => {
@@ -196,10 +229,25 @@ test('rejects non-ZIP archive uploads, duplicates and unsupported operations at 
   )
   await assert.rejects(
     proxyConversionRequest(
-      requestFor('html-pdf', {}, {}, [], [], [], [new File(['PK'], 'sources.zip')]),
+      requestFor(
+        'url-pdf',
+        { url: 'https://example.test' },
+        {},
+        [],
+        [],
+        [],
+        [new File(['PK'], 'sources.zip')],
+      ),
       v9.fetcher,
     ),
-    /supported only by Office to PDF/,
+    /supported only by Office and Chromium HTML\/Markdown/,
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('html-pdf', {}, {}, [], [], [], [new File(['not-a-zip'], 'fake.zip')]),
+      v9.fetcher,
+    ),
+    /is not a ZIP file/,
   )
   await assert.rejects(
     proxyConversionRequest(
@@ -221,9 +269,9 @@ test('rejects non-ZIP archive uploads, duplicates and unsupported operations at 
       ),
       v9.fetcher,
     ),
-    /At most 10 Office ZIP archives/,
+    /At most 10 ZIP archives/,
   )
-  assert.deepEqual(v9.counts(), { probes: 0, conversions: 0 })
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
 })
 
 test('routes migrated PDF tools on v9, and still rejects unsupported majors', async () => {

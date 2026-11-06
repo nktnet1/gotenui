@@ -18,6 +18,7 @@ import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
 import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import type { ConversionPayload } from '#/lib/validation'
+import { inspectZipResult } from '#/lib/zip-result-manifest'
 import type { CallbackReceipt } from './async-fixture-server'
 import { integrationContainerLogs } from './container-logs'
 import { integrationSmokeOperations } from './operation-selection'
@@ -102,13 +103,18 @@ function pdfFile(name = 'original.pdf') {
 }
 
 /** Build stored ZIP archives in memory, without a platform-dependent zip binary. */
-function officeZipFixture(names: readonly string[] = ['document.txt']): File {
+function officeZipFixture(
+  names: readonly string[] = ['document.txt'],
+  contents: Readonly<Record<string, string>> = {},
+): File {
   const locals: Uint8Array[] = []
   const directories: Uint8Array[] = []
   let offset = 0
   for (const name of names) {
     const filename = new TextEncoder().encode(name)
-    const content = new TextEncoder().encode(`Converted from ${name} in an Office ZIP archive.`)
+    const content = new TextEncoder().encode(
+      contents[name] ?? `Converted from ${name} in an Office ZIP archive.`,
+    )
     let checksum = 0xffffffff
     for (const byte of content) {
       checksum ^= byte
@@ -643,8 +649,12 @@ test.skipIf(!isV9)(
     // A render-only route returns the PNG directly. A pipeline that edits a PDF
     // before rendering returns both the edited PDF and image in a ZIP archive.
     expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
-    const entries = [...zipEntries(new Uint8Array(await result.arrayBuffer()))]
+    const archive = await result.arrayBuffer()
+    const entries = [...zipEntries(new Uint8Array(archive))]
     expect(entries).toHaveLength(2)
+    const preview = await inspectZipResult(new Blob([archive]))
+    expect(preview.totalFiles).toBe(2)
+    expect(preview.entries.map((entry) => entry.kind).sort()).toEqual(['Image', 'PDF'])
     const pdf = entries.find(([name]) => name.endsWith('.pdf'))?.[1]
     const png = entries.find(([name]) => name.endsWith('.png'))?.[1]
     if (!pdf || !png) throw new Error('Expected both PDF and PNG entries in the pipeline ZIP')
@@ -665,6 +675,9 @@ test.skipIf(!isV9)(
     expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
     const bytes = new Uint8Array(await response.arrayBuffer())
     expect(zipEntryCount(bytes)).toBe(2)
+    const preview = await inspectZipResult(new Blob([new Uint8Array(bytes)]))
+    expect(preview.totalFiles).toBe(2)
+    expect(preview.entries.every((entry) => entry.kind === 'PDF')).toBe(true)
   },
   120_000,
 )
@@ -811,6 +824,41 @@ test.skipIf(!isV9)(
     )
     if (!response.ok) {
       throw new Error(`Office archive: HTTP ${response.status}: ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    const bytes = await response.arrayBuffer()
+    expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-')
+    expect(await inspectV9Pdf('info', bytes)).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 renders HTML with a CSS asset uploaded through the shared archives field',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!operation) throw new Error('Missing HTML converter')
+    const archive = officeZipFixture(['theme.css'], {
+      'theme.css': 'body { color: #123456; font-size: 18px; }',
+    })
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        {
+          source:
+            '<!DOCTYPE html><html><head><link rel="stylesheet" href="theme.css"></head><body><h1>Archived CSS asset</h1></body></html>',
+        },
+        [],
+        [],
+        {},
+        [],
+        [archive],
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(`HTML archive: HTTP ${response.status}: ${await response.text()}`)
     }
     expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
     const bytes = await response.arrayBuffer()

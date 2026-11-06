@@ -23,6 +23,8 @@ export type Download = {
   name: string
   size: number
   type: string
+  /** Browser-local reference for inspecting a ZIP index; never uploaded or persisted. */
+  blob?: Blob
   preview?: string
   trace?: string
   remediation?: RemediationReport

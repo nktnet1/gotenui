@@ -74,6 +74,16 @@ export const payloadSchema = v.object({
 
 export type ConversionPayload = v.InferOutput<typeof payloadSchema>
 
+/** Gotenberg 9 extracts `archives` into its shared input-file workspace.
+ * Office uses them as documents; Chromium HTML/Markdown uses them as assets.
+ * URL and PDF routes deliberately do not accept arbitrary archive uploads.
+ */
+export function supportsArchiveInputs(operation: Operation): boolean {
+  return (
+    operation.id === 'office-pdf' || operation.input === 'html' || operation.input === 'markdown'
+  )
+}
+
 export class InputError extends Error {
   constructor(
     message: string,
@@ -538,10 +548,12 @@ export function validateFiles(
 ): void {
   const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
-  if (archives.length && operation.id !== 'office-pdf') {
-    throw new InputError('ZIP archive inputs are supported only by Office to PDF on Gotenberg 9.')
+  if (archives.length && !supportsArchiveInputs(operation)) {
+    throw new InputError(
+      'ZIP archive inputs are supported only by Office and Chromium HTML/Markdown tools on Gotenberg 9.',
+    )
   }
-  if (archives.length > 10) throw new InputError('At most 10 Office ZIP archives are supported.')
+  if (archives.length > 10) throw new InputError('At most 10 ZIP archives are supported.')
   if (operation.id === 'embed' && payload?.fields.embedsMetadata) {
     const names = validatedAttachmentMetadata(String(payload.fields.embedsMetadata))
     if (!auxiliary.length && !remote.embedded) {
@@ -642,7 +654,7 @@ export function validateFiles(
       throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
     const ext = name.match(extension)?.[0]?.toLowerCase()
     if (archives.includes(file) && ext !== '.zip') {
-      throw new InputError('Office archives must use the .zip extension.')
+      throw new InputError('Archive inputs must use the .zip extension.')
     }
     if (files.includes(file) && operation.input === 'pdf' && ext !== '.pdf') {
       throw new InputError('PDF tools only accept .pdf input documents.')

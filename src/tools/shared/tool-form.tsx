@@ -63,7 +63,12 @@ import {
 import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
 import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import { cn } from '#/lib/utils'
-import { InputError, parseAdvanced, type WebhookConfig } from '#/lib/validation'
+import {
+  InputError,
+  parseAdvanced,
+  supportsArchiveInputs,
+  type WebhookConfig,
+} from '#/lib/validation'
 import {
   activeOperationFields,
   type FieldDefinition,
@@ -224,6 +229,7 @@ export function Workbench({
   )
   const hasPdfStructureEditor = hasMetadataEditor || hasBookmarksEditor || operation.id === 'embed'
   const isV9 = parseGotenbergVersion(backendVersion)?.major === 9
+  const canUploadArchives = isV9 && supportsArchiveInputs(operation)
   const v8StandaloneOverlay = Boolean(standaloneKind) && !isV9
   const basicFields = v8StandaloneOverlay
     ? []
@@ -459,7 +465,7 @@ export function Workbench({
         connection,
         candidate: buildCandidate(),
         files,
-        archives: isV9 && operation.id === 'office-pdf' ? archives : [],
+        archives: canUploadArchives ? archives : [],
         auxiliary: auxFiles,
         stageFiles: supportsConversionPipeline ? conversionStageFiles : [],
         postFiles: v8StandaloneOverlay || !standaloneKind ? postFiles : {},
@@ -495,7 +501,7 @@ export function Workbench({
         signal,
         v8StandaloneOverlay || !standaloneKind ? postFiles : {},
         supportsConversionPipeline ? conversionStageFiles : [],
-        isV9 && operation.id === 'office-pdf' ? archives : [],
+        canUploadArchives ? archives : [],
       )
       if (signal.aborted) {
         if (deadline.aborted) toast.error('Gotenberg did not respond within three minutes.')
@@ -526,7 +532,17 @@ export function Workbench({
         operation.id === 'pdf-validate' && jsonText
           ? (parsePdfValidationReport(jsonText) ?? undefined)
           : undefined
-      setLastDownload({ name, size: blob.size, type, url, preview, trace, remediation, validation })
+      setLastDownload({
+        name,
+        size: blob.size,
+        type,
+        url,
+        blob: type === 'application/zip' ? blob : undefined,
+        preview,
+        trace,
+        remediation,
+        validation,
+      })
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = name
@@ -644,10 +660,14 @@ export function Workbench({
                 }
               />
             )}
-            {isV9 && operation.id === 'office-pdf' && (
+            {canUploadArchives && (
               <UploadZone
-                label="Office ZIP archives (Gotenberg 9)"
-                description="Optional ZIP archives of Office documents. Gotenberg extracts their contents as conversion inputs; its archive safety and expansion limits apply. Multiple output PDFs may be returned as a ZIP."
+                label={operation.input === 'office' ? 'Office ZIP archives' : 'Asset ZIP archives'}
+                description={
+                  operation.input === 'office'
+                    ? 'ZIP archives of Office documents. Gotenberg extracts each document as an input; multiple outputs may be returned as a ZIP.'
+                    : 'Optional ZIP archives of CSS, images, fonts or other HTML/Markdown assets. Refer to extracted files by name in your source; do not include index.html, header.html or footer.html. Gotenberg enforces archive expansion limits.'
+                }
                 files={archives}
                 onChange={setArchives}
                 accept=".zip,application/zip"

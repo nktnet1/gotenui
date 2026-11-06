@@ -1,6 +1,6 @@
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { parsePdfPipeline } from '#/lib/pdf-pipeline'
-import { type ConversionPayload, InputError } from '#/lib/validation'
+import { type ConversionPayload, InputError, supportsArchiveInputs } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
 
 /** Gotenberg 8 and 9 have different multipart contracts even on unchanged route paths. */
@@ -226,7 +226,7 @@ export function adaptConversionForm(
     if (payload.conversionStages || stageFiles.length) {
       throw new InputError('Conversion-time PDF pipeline stages require Gotenberg 9.')
     }
-    if (archives.length) throw new InputError('Office ZIP archive inputs require Gotenberg 9.')
+    if (archives.length) throw new InputError('ZIP archive inputs require Gotenberg 9.')
     if (form.has('pdfaProfile') || form.has('pdfuaProfile') || form.has('pdfaMethod')) {
       throw new InputError('Advanced PDF conformance profiles require Gotenberg 9.')
     }
@@ -244,8 +244,8 @@ export function adaptConversionForm(
   if (!v9ConversionOperationIds.has(operation.id)) {
     throw new InputError(`The ${operation.title} tool has not been migrated to Gotenberg 9.`, 409)
   }
-  if (archives.length && operation.id !== 'office-pdf') {
-    throw new InputError('ZIP archive inputs are supported only by Office to PDF.')
+  if (archives.length && !supportsArchiveInputs(operation)) {
+    throw new InputError('ZIP archive inputs require an Office or Chromium HTML/Markdown tool.')
   }
   if (payload.downloadFrom?.some((item) => item.embedded || item.field)) {
     throw new InputError(

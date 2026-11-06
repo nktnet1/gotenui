@@ -15,6 +15,7 @@ import { operationIcon } from '#/components/operation-icons'
 import { PdfResultPreview } from '#/components/pdf-result-preview'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
+import { ZipResultPreview } from '#/components/zip-result-preview'
 import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
@@ -310,6 +311,9 @@ export function JobPanel({
                       url={lastDownload.url}
                       name={lastDownload.name}
                     />
+                  )}
+                  {lastDownload.type === 'application/zip' && lastDownload.blob && (
+                    <ZipResultPreview key={lastDownload.url} blob={lastDownload.blob} />
                   )}
                   {lastDownload.type.startsWith('image/') && (
                     <img
