@@ -12,7 +12,7 @@ import {
   type PostProcessFiles,
   postProcessFormFields,
 } from '#/lib/pdf-post-processing'
-import { downloadFilename, responseExtension } from '#/lib/security'
+import { downloadFilename, responseExtension, safeAttachmentDisposition } from '#/lib/security'
 import {
   type ConversionPayload,
   InputError,
@@ -339,10 +339,19 @@ export async function convertWithGotenberg(
     blob.type ||
     'application/octet-stream'
   const extension = responseExtension(type)
-  const fallback = `${payload.outputName || operation.id}.${extension}`
-  const filename = payload.outputName
-    ? fallback
-    : downloadFilename(response.headers.get('content-disposition'), fallback)
+  // The proxy has already chosen a safe filename for the actual output type.
+  // Use that filename even with an explicit outputName: a conversion that asks
+  // for report.pdf can legitimately return a ZIP of PDFs or rendered images.
+  const fallback = `${operation.id}.${extension}`
+  const filename = downloadFilename(
+    safeAttachmentDisposition(
+      response.headers.get('content-disposition'),
+      operation.id,
+      type,
+      payload.outputName,
+    ),
+    fallback,
+  )
   return {
     mode: 'download',
     blob,

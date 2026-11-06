@@ -261,3 +261,15 @@ test('metrics route rechecks /version when the same connection switches majors',
   assert.equal((await proxyMetricsRequest(metricsRequest(), fetcher)).status, 200)
   assert.equal(legacyCalls, 2)
 })
+
+test('unauthenticated legacy metrics stop at the version probe with HTTP 401', async () => {
+  const calls: string[] = []
+  const result = await proxyMetricsRequest(metricsRequest(), async (input, options) => {
+    calls.push(String(input))
+    assert.equal(new Headers(options?.headers).has('authorization'), false)
+    return new Response('Basic authentication required', { status: 401 })
+  }).catch(proxyErrorResponse)
+  assert.equal(result.status, 401)
+  assert.match(await result.text(), /Could not verify the Gotenberg version \(HTTP 401\)/)
+  assert.deepEqual(calls, [`${backend}/version`])
+})

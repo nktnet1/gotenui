@@ -1039,13 +1039,16 @@ test.skipIf(isV9)(
     expect(text).toContain('# TYPE ')
     expect(text.length).toBeGreaterThan(100)
 
-    const missingUpstreamAuth = await proxyMetricsRequest(
-      new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
-        method: 'POST',
-        headers: { Origin: proxyOrigin, 'X-Gotenberg-Url': backendUrl },
-      }),
-    )
-    expect(missingUpstreamAuth.status).toBe(401)
+    // Metrics now verify /version first, so a missing Authorization header is
+    // rejected before /prometheus/metrics and the direct proxy function throws.
+    await expect(
+      proxyMetricsRequest(
+        new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
+          method: 'POST',
+          headers: { Origin: proxyOrigin, 'X-Gotenberg-Url': backendUrl },
+        }),
+      ),
+    ).rejects.toMatchObject({ status: 401 })
     const unapproved = request.clone()
     unapproved.headers.delete('X-Gotenui-Connection-Id')
     unapproved.headers.set('X-Gotenberg-Url', 'https://unapproved.example.test')
@@ -1640,9 +1643,48 @@ test.skipIf(!isV9)(
     )
     if (!response.ok) throw new Error(`v9 remediation: ${response.status} ${await response.text()}`)
     expect(response.headers.get('content-type')).toContain('application/pdf')
+    // Remediation runs on Gotenberg 9 even when the PDF is returned with HTTP 200.
+    // Successful HTTP status alone does not guarantee PDF/A conformance.
+    expect(response.headers.get('Gotenberg-Remediation-Residual')).toMatch(/^\d+$/)
+    expect(response.headers.get('Gotenberg-Remediation-Rolled-Back')).toMatch(/^\d+$/)
     expect(new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).slice(0, 5))).toBe(
       '%PDF-',
     )
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 conversion pipeline returns a ZIP with PDF and PNG and a matching filename',
+  async () => {
+    const html = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!html) throw new Error('Missing HTML conversion')
+    const response = await proxyConversionRequest(
+      request(html, {
+        source: '<html><body><h1>Rendered conversion</h1></body></html>',
+        conversionStages:
+          '[{"op":"set-metadata","title":"Archive test"},{"op":"render","pages":"1","format":"png"}]',
+        outputName: 'rendered',
+      }),
+    )
+    if (!response.ok) throw new Error(`v9 render: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
+    expect(response.headers.get('content-disposition')).toContain('rendered.zip')
+    const files = zipEntries(new Uint8Array(await response.arrayBuffer()))
+    const entries = [...files.entries()]
+    expect(
+      entries.some(
+        ([name, bytes]) =>
+          name.endsWith('.pdf') && new TextDecoder().decode(bytes.subarray(0, 5)) === '%PDF-',
+      ),
+    ).toBe(true)
+    expect(
+      entries.some(
+        ([name, bytes]) =>
+          name.endsWith('.png') &&
+          [...bytes.subarray(0, 8)].join(',') === '137,80,78,71,13,10,26,10',
+      ),
+    ).toBe(true)
   },
   120_000,
 )

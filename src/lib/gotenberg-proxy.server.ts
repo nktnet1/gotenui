@@ -566,6 +566,29 @@ export async function proxyConversionRequest(
     headers: upstreamConversionHeaders(authHeaders, payload, operation.output !== 'json', major),
     credentials: 'omit',
   })
+  // A deployment can be upgraded or its load balancer can switch backends after
+  // /version was probed. Gotenberg advertises its actual version on responses;
+  // never return a successful file or webhook acceptance from the wrong adapter.
+  // Absent headers are tolerated for proxies that strip diagnostic headers.
+  if (upstream.ok) {
+    const returnedVersion = upstream.headers.get('Gotenberg-Version')
+    if (returnedVersion !== null) {
+      const parsed = parseGotenbergVersion(returnedVersion)
+      if (!parsed || parsed.major !== major) {
+        await upstream.body?.cancel().catch(() => {})
+        const detail = parsed
+          ? `Gotenberg changed from v${major} to v${parsed.major} during conversion.`
+          : 'Gotenberg returned an invalid version header.'
+        const accepted = upstream.status === 202 || upstream.status === 204
+        throw new ProxyInputError(
+          accepted
+            ? `${detail} The asynchronous job may already have been accepted; check its callbacks before retrying.`
+            : `${detail} Refresh the connection and retry.`,
+          accepted ? 502 : parsed ? 409 : 502,
+        )
+      }
+    }
+  }
   if (!upstream.ok) {
     invalidateUnauthorized(upstream.status, target)
     const headers = new Headers({

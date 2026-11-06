@@ -404,3 +404,40 @@ test('the browser preserves repeated local overlay files while sending only vali
   }
   assert.equal(calls, 1)
 })
+
+test('download names follow the returned ZIP or PNG media type, despite stale filename headers', async () => {
+  const original = globalThis.fetch
+  try {
+    for (const [type, extension] of [
+      ['application/zip', 'zip'],
+      ['image/png', 'png'],
+    ] as const) {
+      globalThis.fetch = async () =>
+        new Response(new Blob(['content'], { type }), {
+          headers: {
+            'Content-Type': type,
+            'Content-Disposition': 'attachment; filename="untrusted.pdf"',
+          },
+        })
+      const result = await convertWithGotenberg(
+        'http://127.0.0.1:3000',
+        {
+          operation: 'html-pdf',
+          fields: {},
+          advanced: {},
+          source: '<html><body>Export</body></html>',
+          ...(type === 'image/png' ? { outputName: 'report' } : {}),
+        },
+        [],
+        [],
+        new AbortController().signal,
+      )
+      assert.equal(result.mode, 'download')
+      if (result.mode !== 'download') throw new Error('Expected a download')
+      assert.equal(result.name, `${type === 'image/png' ? 'report' : 'untrusted'}.${extension}`)
+      assert.equal(result.type, type)
+    }
+  } finally {
+    globalThis.fetch = original
+  }
+})

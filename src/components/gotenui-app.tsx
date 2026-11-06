@@ -39,6 +39,7 @@ import {
   saveConnections,
   type UiFeatures,
 } from '#/lib/connection-profiles'
+import { type ObservedConnectionStatus, statusForConnection } from '#/lib/connection-status'
 import { getGotenbergStatus, type ServerStatus } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import {
@@ -369,8 +370,11 @@ function Workspace({
   onUpsert: (profile: BrowserConnection, username: string, secret: string) => void
   onRemove: (id: string) => void
 }) {
-  const [status, setStatus] = useState<ServerStatus | null>(null)
-  const [statusLoading, setStatusLoading] = useState(true)
+  const statusKey = `${selectedConnection}:${connectionEpoch}`
+  const [observedStatus, setObservedStatus] = useState<ObservedConnectionStatus | null>(null)
+  const status = statusForConnection(observedStatus, statusKey)
+  const [statusPending, setStatusPending] = useState(true)
+  const statusLoading = statusPending || status === null
   const [recent, setRecent] = useState<Job[]>([])
   const [batchQueue] = useState(
     () =>
@@ -452,12 +456,12 @@ function Workspace({
       statusAbort.current?.abort()
       const controller = new AbortController()
       statusAbort.current = controller
-      setStatusLoading(true)
+      setStatusPending(true)
       const timeout = window.setTimeout(() => controller.abort(), 7_000)
       try {
         const result = await getGotenbergStatus(connection, controller.signal)
-        if (!controller.signal.aborted) {
-          setStatus(result)
+        if (!controller.signal.aborted && statusAbort.current === controller) {
+          setObservedStatus({ key: statusKey, value: result })
           if (notify) {
             if (result.online) toast.success('Gotenberg status refreshed - service online.')
             else toast.error('Gotenberg status refreshed - service unavailable.')
@@ -465,11 +469,14 @@ function Workspace({
         }
       } catch {
         if (statusAbort.current === controller) {
-          setStatus({
-            online: false,
-            version: 'Unavailable',
-            modules: [],
-            error: 'Connection test timed out.',
+          setObservedStatus({
+            key: statusKey,
+            value: {
+              online: false,
+              version: 'Unavailable',
+              modules: [],
+              error: 'Connection test timed out.',
+            },
           })
           if (notify) toast.error('Gotenberg status refresh timed out.')
         }
@@ -477,14 +484,14 @@ function Workspace({
         window.clearTimeout(timeout)
         if (statusAbort.current === controller) {
           statusAbort.current = null
-          setStatusLoading(false)
+          setStatusPending(false)
         }
       }
     },
-    [connection],
+    [connection, statusKey],
   )
   useEffect(() => {
-    setStatus(null)
+    setObservedStatus(null)
     void refreshStatus()
     const timer = window.setInterval(() => {
       // An automatic poll must not cancel a manually requested refresh and its toast.

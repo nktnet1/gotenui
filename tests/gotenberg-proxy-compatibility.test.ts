@@ -477,3 +477,86 @@ test('conversion stage pipelines cannot be submitted for screenshots', async () 
   )
   assert.deepEqual(v9.counts(), { probes: 0, conversions: 0 })
 })
+
+test.each([
+  ['8.40.0', '9.0.0'],
+  ['9.0.0', '8.40.0'],
+] as const)(
+  'refuses a successful conversion when /version is %s but response reports %s',
+  async (probed, actual) => {
+    let cancelled = false
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('%PDF-1.7\n'))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const calls: string[] = []
+    const fetcher: typeof fetch = async (input) => {
+      calls.push(String(input))
+      return String(input) === `${upstream}/version`
+        ? new Response(probed)
+        : new Response(source, {
+            headers: { 'Content-Type': 'application/pdf', 'Gotenberg-Version': actual },
+          })
+    }
+    await assert.rejects(proxyConversionRequest(requestFor(), fetcher), (error: unknown) => {
+      assert.ok(error instanceof Error && 'status' in error)
+      assert.equal(error.status, 409)
+      assert.match(error.message, /changed from v[89] to v[89]/)
+      return true
+    })
+    assert.equal(cancelled, true)
+    assert.equal(calls.length, 2)
+  },
+)
+
+test('rejects an invalid success version header and accepts missing or matching headers', async () => {
+  for (const header of ['not-a-version', '9.0.0', null, 'v8.40.0']) {
+    const fetcher: typeof fetch = async (input) =>
+      String(input) === `${upstream}/version`
+        ? new Response('8.40.0')
+        : new Response('%PDF-1.7\n', {
+            headers: {
+              'Content-Type': 'application/pdf',
+              ...(header !== null ? { 'Gotenberg-Version': header } : {}),
+            },
+          })
+    if (header === 'not-a-version' || header === '9.0.0') {
+      await assert.rejects(proxyConversionRequest(requestFor(), fetcher), {
+        status: header === '9.0.0' ? 409 : 502,
+      })
+    } else {
+      const response = await proxyConversionRequest(requestFor(), fetcher)
+      assert.equal(response.status, 200)
+      await response.body?.cancel()
+    }
+  }
+})
+
+test('does not acknowledge a webhook if Gotenberg upgrades after its version probe', async () => {
+  const fetcher: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('8.40.0')
+      : new Response(null, { status: 204, headers: { 'Gotenberg-Version': '9.0.0' } })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'html-pdf',
+        {},
+        {
+          webhook: { url: 'https://hooks.example.test/complete', method: 'POST' },
+        },
+      ),
+      fetcher,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error && 'status' in error)
+      assert.equal(error.status, 502)
+      assert.match(error.message, /may already have been accepted/)
+      return true
+    },
+  )
+})
