@@ -281,7 +281,8 @@ export function WebhookEditor({
             Asynchronous webhook delivery
           </h3>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Gotenberg sends output to your external receiver.
+            Gotenberg sends completed output to your success receiver and processing events to an
+            optional (v8) or required (v9) events receiver.
           </p>
         </div>
         <Switch
@@ -384,8 +385,8 @@ export function WebhookEditor({
             />
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
               {isV9
-                ? 'Gotenberg 9 requires an events URL alongside the success callback; events always use POST.'
-                : 'Events always use POST. Configure an error or events URL to receive failure details.'}
+                ? 'Required: Gotenberg 9 posts processing/failure events here, separately from the completed output sent to the success URL.'
+                : 'Optional: events always use POST. Configure an error or events URL to receive failure details.'}
             </p>
           </div>
           <ExtraHeaders
@@ -401,10 +402,10 @@ export function WebhookEditor({
             {value.headers.length} header(s) (values hidden)
           </p>
           <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
-            HTTP 204 means accepted for asynchronous processing, <strong>not</strong> converted or
-            delivered. Gotenui has no callback inbox or status history. Check your external receiver
-            and use the Gotenberg-Trace ID for diagnosis. Gotenberg retries connection errors, 429
-            and most 5xx replies under its own retry settings.
+            HTTP 202/204 means accepted for asynchronous processing, <strong>not</strong> converted
+            or delivered. Gotenui has no callback inbox or status history: check both receivers and
+            correlate with the Gotenberg-Trace ID. Callback retries are controlled by Gotenberg, not
+            by this UI.
           </p>
         </div>
       )}

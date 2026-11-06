@@ -505,9 +505,10 @@ export function Workbench({
         setAcceptedWebhook({
           status: result.status,
           trace: result.trace,
-          receiverHost: safeOutboundHost(
-            webhook && typeof webhook === 'object' && 'url' in webhook ? String(webhook.url) : '',
-          ),
+          receiverHost: safeOutboundHost(webhook?.url ?? ''),
+          ...(webhook?.eventsUrl
+            ? { eventsReceiverHost: safeOutboundHost(webhook.eventsUrl) }
+            : {}),
         })
         setLastDownload(null)
         if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)

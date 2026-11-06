@@ -1054,6 +1054,20 @@ test.skipIf(isV9)(
   120_000,
 )
 
+test.skipIf(!isV9)(
+  'Gotenberg 9 metrics require a configured exporter and never call /prometheus/metrics',
+  async () => {
+    const result = await proxyMetricsRequest(
+      new Request(`${proxyOrigin}/api/gotenberg/metrics`, {
+        method: 'POST',
+        headers: { Origin: proxyOrigin, 'X-Gotenui-Connection-Id': 'legacy-basic' },
+      }),
+    ).catch((error: unknown) => error)
+    expect(result).toMatchObject({ status: 409 })
+  },
+  120_000,
+)
+
 /** Write a unique bookmark to the only page, so merge order can be checked in the result. */
 async function bookmarkedPdf(marker: string, filename: string): Promise<File> {
   const operation = OPERATIONS.find(({ id }) => id === 'bookmarks-write')

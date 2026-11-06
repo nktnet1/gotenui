@@ -171,9 +171,20 @@ export function JobPanel({
                   <strong> not</strong> been confirmed. Gotenui does not track callback history.
                 </p>
                 <p>
-                  Check your external receiver ({acceptedWebhook.receiverHost}) for completion or
-                  failure.
+                  Check your output receiver ({acceptedWebhook.receiverHost}) for the converted
+                  document. Gotenui cannot confirm delivery.
                 </p>
+                {acceptedWebhook.eventsReceiverHost ? (
+                  <p>
+                    Check the events receiver ({acceptedWebhook.eventsReceiverHost}) for processing
+                    and failure events. Its callback status is not available inside Gotenui.
+                  </p>
+                ) : (
+                  <p>
+                    No events callback was configured; check the external receiver and Gotenberg
+                    logs for failures.
+                  </p>
+                )}
                 {acceptedWebhook.trace && (
                   <div className="space-y-1">
                     <p className="font-semibold text-slate-700 dark:text-slate-200">

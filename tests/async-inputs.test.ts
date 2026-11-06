@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { test } from 'vitest'
+import { WebhookEditor } from '#/components/async-inputs-editor'
 import {
   emptyWebhook,
   type RemoteInputRow,
@@ -10,6 +13,7 @@ import {
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { OPERATION_BY_ID } from '#/lib/operations'
 import { validatePayload } from '#/lib/validation'
+import { JobPanel } from '#/tools/shared/job-panel'
 
 function remoteRow(overrides: Partial<RemoteInputRow> = {}): RemoteInputRow {
   return {
@@ -148,4 +152,59 @@ test('safe outbound preview hides credentials, pre-signed URLs, queries and frag
   for (const secret of secrets) assert.equal(preview.includes(secret), false)
   assert.equal(safeOutboundHost('javascript:alert(1)'), '(invalid URL)')
   assert.equal(safeOutboundHost('bad url'), '(invalid URL)')
+})
+
+test('v9 webhook editor explains separate receivers without displaying v8-only controls', () => {
+  const html = renderToStaticMarkup(
+    createElement(WebhookEditor, {
+      isV9: true,
+      value: {
+        ...emptyWebhook,
+        enabled: true,
+        url: 'https://user:password@hooks.example.test/secret-result?token=hidden',
+        eventsUrl: 'https://hooks.example.test/private-events?token=hidden',
+        headers: [],
+      },
+      onChange: () => {},
+      legacy: '',
+      onLegacyChange: () => {},
+      newId: () => 1,
+    }),
+  )
+  assert.match(html, /Gotenberg 9 posts processing\/failure events/)
+  assert.doesNotMatch(html, /Error callback URL/)
+  assert.match(html, /events receiver/)
+  const preview = html.slice(html.indexOf('Preview:'))
+  assert.doesNotMatch(preview, /secret-result|private-events|token=hidden/)
+})
+
+test('accepted async results label output and events separately without claiming delivery', () => {
+  const operation = OPERATION_BY_ID.get('url-pdf')
+  assert.ok(operation)
+  const html = renderToStaticMarkup(
+    createElement(JobPanel, {
+      operation,
+      backendVersion: '9.0.0',
+      files: [],
+      auxFiles: [],
+      postFiles: {},
+      source: '',
+      pending: false,
+      lastDownload: null,
+      recent: [],
+      onClearResult: () => {},
+      acceptedWebhook: {
+        status: 204,
+        trace: 'test-trace',
+        receiverHost: safeOutboundHost('https://hooks.example.test/private-output?access=secret'),
+        eventsReceiverHost: safeOutboundHost(
+          'https://events.example.test/private-events?access=secret',
+        ),
+      },
+    }),
+  )
+  assert.match(html, /Check your output receiver/)
+  assert.match(html, /Check the events receiver/)
+  assert.match(html, /cannot confirm delivery/)
+  assert.doesNotMatch(html, /private-output|private-events|access=secret/)
 })

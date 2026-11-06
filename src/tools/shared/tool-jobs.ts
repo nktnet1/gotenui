@@ -15,6 +15,7 @@ export type AcceptedWebhook = {
   status: 202 | 204
   trace?: string
   receiverHost: string
+  eventsReceiverHost?: string
 }
 
 export type Download = {

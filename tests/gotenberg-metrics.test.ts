@@ -39,6 +39,13 @@ const metricsResponse = () =>
     },
   })
 
+function versioned(fetcher: typeof fetch, version = '8.40.0'): typeof fetch {
+  return (input, options) =>
+    String(input) === `${backend}/version`
+      ? Promise.resolve(new Response(version))
+      : fetcher(input, options)
+}
+
 beforeEach(() => vi.stubEnv('GOTENBERG_ALLOWED_URLS', backend))
 afterEach(() => vi.unstubAllEnvs())
 
@@ -58,7 +65,7 @@ test('metrics rely on upstream auth but still require same-origin POST', async (
     calls++
     return metricsResponse()
   }
-  const response = await proxyMetricsRequest(metricsRequest(), fetcher)
+  const response = await proxyMetricsRequest(metricsRequest(), versioned(fetcher))
   assert.equal(response.status, 200)
   await assert.rejects(
     proxyMetricsRequest(metricsRequest({ Origin: 'https://untrusted.test' }), fetcher),
@@ -73,17 +80,20 @@ test('metrics rely on upstream auth but still require same-origin POST', async (
 
 test('metrics proxy uses approved target with no redirects and strips upstream headers', async () => {
   const request = metricsRequest({ Authorization: 'Bearer forged' })
-  const response = await proxyMetricsRequest(request, async (input, options) => {
-    assert.equal(String(input), `${backend}/prometheus/metrics`)
-    assert.equal(options?.method, 'GET')
-    assert.equal(options?.redirect, 'error')
-    assert.equal(options?.cache, 'no-store')
-    assert.equal(options?.credentials, 'omit')
-    const forwarded = new Headers(options?.headers)
-    assert.equal(forwarded.has('authorization'), false)
-    assert.equal(forwarded.has('x-gotenui-debug-access-key'), false)
-    return metricsResponse()
-  })
+  const response = await proxyMetricsRequest(
+    request,
+    versioned(async (input, options) => {
+      assert.equal(String(input), `${backend}/prometheus/metrics`)
+      assert.equal(options?.method, 'GET')
+      assert.equal(options?.redirect, 'error')
+      assert.equal(options?.cache, 'no-store')
+      assert.equal(options?.credentials, 'omit')
+      const forwarded = new Headers(options?.headers)
+      assert.equal(forwarded.has('authorization'), false)
+      assert.equal(forwarded.has('x-gotenui-debug-access-key'), false)
+      return metricsResponse()
+    }),
+  )
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('x-gotenui-metrics'), '1')
   assert.equal(response.headers.get('cache-control'), 'no-store')
@@ -117,14 +127,17 @@ test('server-managed upstream credentials are scoped to the selected profile', a
   }
   const request = metricsRequest(headers)
   request.headers.delete('X-Gotenberg-Url')
-  const response = await proxyMetricsRequest(request, async (input, options) => {
-    assert.equal(String(input), `${backend}/prometheus/metrics`)
-    assert.equal(
-      new Headers(options?.headers).get('Authorization'),
-      `Basic ${Buffer.from('metrics-user:metrics-password').toString('base64')}`,
-    )
-    return metricsResponse()
-  })
+  const response = await proxyMetricsRequest(
+    request,
+    versioned(async (input, options) => {
+      assert.equal(String(input), `${backend}/prometheus/metrics`)
+      assert.equal(
+        new Headers(options?.headers).get('Authorization'),
+        `Basic ${Buffer.from('metrics-user:metrics-password').toString('base64')}`,
+      )
+      return metricsResponse()
+    }),
+  )
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('authorization'), null)
   const forged = request.clone()
@@ -136,11 +149,13 @@ test('upstream errors never expose the upstream response body or authentication 
   for (const status of [401, 403, 404, 429, 503]) {
     const response = await proxyMetricsRequest(
       metricsRequest(),
-      async () =>
-        new Response('sensitive upstream details', {
-          status,
-          headers: { 'WWW-Authenticate': 'Basic realm="Private"' },
-        }),
+      versioned(
+        async () =>
+          new Response('sensitive upstream details', {
+            status,
+            headers: { 'WWW-Authenticate': 'Basic realm="Private"' },
+          }),
+      ),
     )
     assert.equal(response.status, status)
     assert.equal(response.headers.get('www-authenticate'), null)
@@ -161,9 +176,10 @@ test('oversized, malformed and unrelated metrics responses are rejected as gatew
       headers: { 'Content-Type': 'text/plain' },
     }),
   ]) {
-    const result = await proxyMetricsRequest(metricsRequest(), async () => response).catch(
-      proxyErrorResponse,
-    )
+    const result = await proxyMetricsRequest(
+      metricsRequest(),
+      versioned(async () => response),
+    ).catch(proxyErrorResponse)
     assert.equal(result.status, 502)
     assert.equal(result.headers.get('cache-control'), 'no-store')
     assert.equal(result.headers.get('content-type'), 'text/plain; charset=utf-8')
@@ -194,4 +210,54 @@ test('browser fetches metrics only through the same-origin API, with no query-st
   } finally {
     globalThis.fetch = original
   }
+})
+
+test('Gotenberg 9 never invokes its deleted legacy metrics route', async () => {
+  const seen: string[] = []
+  const result = await proxyMetricsRequest(metricsRequest(), async (input, options) => {
+    seen.push(String(input))
+    assert.equal(options?.method, 'GET')
+    assert.equal(new Headers(options?.headers).has('authorization'), false)
+    return new Response('9.0.0')
+  }).catch(proxyErrorResponse)
+  assert.equal(result.status, 409)
+  assert.match(await result.text(), /OpenTelemetry Prometheus metricsUrl/)
+  assert.deepEqual(seen, [`${backend}/version`])
+})
+
+test('metrics reject unsupported and unverified versions instead of guessing the legacy endpoint', async () => {
+  for (const version of ['10.0.0', 'not-a-version']) {
+    const result = await proxyMetricsRequest(
+      metricsRequest(),
+      versioned(async () => {
+        throw new Error('Must not call legacy metrics')
+      }, version),
+    ).catch(proxyErrorResponse)
+    assert.equal(result.status, 409)
+  }
+  const result = await proxyMetricsRequest(
+    metricsRequest(),
+    versioned(async () => {
+      throw new Error('Must not call legacy metrics')
+    }, '8.40.0'),
+  ).catch(proxyErrorResponse)
+  assert.equal(result.status, 502)
+})
+
+test('metrics route rechecks /version when the same connection switches majors', async () => {
+  let version = '8.40.0'
+  let legacyCalls = 0
+  const fetcher: typeof fetch = async (input) => {
+    if (String(input) === `${backend}/version`) return new Response(version)
+    assert.equal(String(input), `${backend}/prometheus/metrics`)
+    legacyCalls++
+    return metricsResponse()
+  }
+  assert.equal((await proxyMetricsRequest(metricsRequest(), fetcher)).status, 200)
+  version = '9.0.0'
+  const v9 = await proxyMetricsRequest(metricsRequest(), fetcher).catch(proxyErrorResponse)
+  assert.equal(v9.status, 409)
+  version = '8.40.0'
+  assert.equal((await proxyMetricsRequest(metricsRequest(), fetcher)).status, 200)
+  assert.equal(legacyCalls, 2)
 })

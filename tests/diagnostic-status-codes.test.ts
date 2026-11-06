@@ -57,9 +57,10 @@ for (const status of [201, 206]) {
   })
 
   test(`GET /prometheus/metrics rejects well-formed metrics with upstream HTTP ${status}`, async () => {
-    const response = await proxyMetricsRequest(
-      request('metrics'),
-      async () => new Response(metrics, { status, headers: { 'Content-Type': 'text/plain' } }),
+    const response = await proxyMetricsRequest(request('metrics'), async (url) =>
+      String(url).endsWith('/version')
+        ? new Response('8.40.0')
+        : new Response(metrics, { status, headers: { 'Content-Type': 'text/plain' } }),
     ).catch(proxyErrorResponse)
     assert.equal(response.status, 502)
   })
@@ -90,7 +91,9 @@ for (const route of ['health', 'version', 'debug', 'metrics'] as const) {
     } else {
       const response = await (route === 'debug'
         ? proxyDebugRequest(request(route), async () => upstream)
-        : proxyMetricsRequest(request(route), async () => upstream)
+        : proxyMetricsRequest(request(route), async (url) =>
+            String(url).endsWith('/version') ? new Response('8.40.0') : upstream,
+          )
       ).catch(proxyErrorResponse)
       assert.equal(response.status, 502)
     }

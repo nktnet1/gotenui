@@ -87,13 +87,13 @@ test('hidden diagnostic controls never act as authorisation for the proxy API', 
       method: 'POST',
       headers: { Origin: origin, 'X-Gotenberg-Url': backend },
     }),
-    async () =>
-      new Response(
-        '# HELP gotenberg_requests_total Requests\n# TYPE gotenberg_requests_total counter\ngotenberg_requests_total 1\n',
-        {
-          headers: { 'Content-Type': 'text/plain' },
-        },
-      ),
+    async (url) =>
+      String(url).endsWith('/version')
+        ? new Response('8.40.0')
+        : new Response(
+            '# HELP gotenberg_requests_total Requests\n# TYPE gotenberg_requests_total counter\ngotenberg_requests_total 1\n',
+            { headers: { 'Content-Type': 'text/plain' } },
+          ),
   )
   assert.equal(metrics.status, 200)
 })

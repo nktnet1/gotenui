@@ -26,7 +26,7 @@ Open <http://localhost:3100>. The public Gotenberg demo is selected by default u
 | `scripts/`                      | Production and browser smoke tests                                 |
 | `deploy/`                       | Example Docker Compose deployment                                  |
 
-The browser sends conversions through `/api/gotenberg/*`. The server validates requests, checks the configured upstream allowlist and forwards them to Gotenberg. Gotenui has no database, persistent job queue or document storage.
+The browser sends conversions through `/api/gotenberg/*`. The server validates requests, checks the configured upstream allowlist and forwards them to Gotenberg. Gotenui has no database, persistent job queue, callback inbox or document storage. A 202/204 webhook response confirms only acceptance: the UI shows the output/events receiver origins and optional trace ID but cannot verify callback delivery.
 
 For tag-driven GitHub releases and container publishing, see [Releasing](RELEASING.md).
 
@@ -63,13 +63,13 @@ Keep `pnpm-lock.yaml` in sync when updating dependencies. Do not edit generated 
 | `HEAD /api/gotenberg/health`     | Run a lightweight health probe                   |
 | `POST /api/gotenberg/convert`    | Submit a conversion or PDF operation             |
 | `POST /api/gotenberg/debug`      | Read upstream debug data                         |
-| `POST /api/gotenberg/metrics`    | Read upstream metrics                            |
+| `POST /api/gotenberg/metrics`    | Read v8 legacy metrics or configured exporter    |
 
 Conversion requests use multipart `payload`, `files` and `auxiliary` fields, plus optional `stageFile` (v9 pipeline assets) and `archives` (v9 Office ZIP inputs). Browser-managed requests select a backend URL, while managed requests use an approved connection ID. The server never returns managed credentials to browsers.
 
 To add a tool, create `src/tools/<tool-id>/config.ts` exporting an `Operation`, then import it in `src/tools/registry.ts` in the desired display order. The homepage, sidebar, search and `/tools/$operationId` route use that single registry. Reuse field groups and components in `src/tools/shared/`; `src/lib/operations.ts` is a compatibility re-export.
 
-For payload options, see `src/tools/` and `src/lib/validation.ts`. Upstream API documentation is at [gotenberg.dev](https://gotenberg.dev/docs/getting-started/routes).
+For payload options, see `src/tools/` and `src/lib/validation.ts`. Upstream API documentation is at [gotenberg.dev](https://gotenberg.dev/docs/getting-started/routes). On Gotenberg 8, the metrics proxy authenticates and checks `/version` before fetching legacy `/prometheus/metrics`. Gotenberg 9 removed that route; only a server-managed `metricsUrl` pointing at a separate OpenTelemetry Prometheus exporter can provide metrics. The exporter is not auto-discovered and Gotenberg authorization is not forwarded to it.
 
 ## Gotenberg 9 PDF pipeline builder
 

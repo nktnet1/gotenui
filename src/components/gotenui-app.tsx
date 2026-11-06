@@ -753,11 +753,13 @@ function Workspace({
       )}
       {diagnosticsOpen && (
         <DiagnosticsDialog
+          key={`${selectedConnection}:${connectionEpoch}`}
           connection={connection}
           connectionName={connectionName}
           onClose={() => setDiagnosticsOpen(false)}
           showDebug={features.showDebug}
           showMetrics={features.showMetrics}
+          backendVersion={status?.online ? status.version : undefined}
         />
       )}
       {settingsOpen && (

@@ -6,16 +6,21 @@ import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { getGotenbergMetricsReport } from '#/lib/gotenberg-client'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { filterPrometheusMetrics, summarizePrometheusMetrics } from '#/lib/prometheus-metrics'
 import { cn } from '#/lib/utils'
 
 type Props = {
   connection: ConnectionChoice
   active: boolean
+  backendVersion?: string
 }
 
 /** Embedded within Diagnostics so Debug and Prometheus share one focus-managed dialog. */
-export function MetricsPanel({ connection, active }: Props) {
+export function MetricsPanel({ connection, active, backendVersion }: Props) {
+  const major = parseGotenbergVersion(backendVersion)?.major
+  const isV9 = major === 9
+  const needsManagedExporter = isV9 && connection.kind === 'browser'
   const [metrics, setMetrics] = useState<string | null>(null)
   const [source, setSource] = useState<'otel' | 'legacy' | null>(null)
   const [filter, setFilter] = useState('')
@@ -96,12 +101,20 @@ export function MetricsPanel({ connection, active }: Props) {
             Prometheus metrics
           </h3>
           <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-            Server-managed connections can read a configured OpenTelemetry Prometheus exporter.
-            Other connections use the deprecated Gotenberg /prometheus/metrics endpoint.
+            {isV9
+              ? 'Gotenberg 9 removed /prometheus/metrics. Use a server-managed connection with a configured OpenTelemetry Prometheus metricsUrl; Gotenui does not discover exporter URLs.'
+              : major === 8
+                ? 'Gotenberg 8 supports the legacy /prometheus/metrics endpoint. Server-managed connections may instead use a configured OpenTelemetry Prometheus exporter.'
+                : 'A Gotenberg 8 connection can read legacy Prometheus metrics. Gotenberg 9 requires a separately configured server-managed OpenTelemetry Prometheus exporter.'}
           </p>
         </div>
         <form className="sm:shrink-0" onSubmit={(event) => void readMetrics(event)}>
-          <Button type="submit" className="w-full sm:w-48" disabled={busy} aria-busy={busy}>
+          <Button
+            type="submit"
+            className="w-full sm:w-48"
+            disabled={busy || needsManagedExporter}
+            aria-busy={busy}
+          >
             {busy ? (
               <RefreshCw className="size-4 animate-spin" />
             ) : (
@@ -111,6 +124,12 @@ export function MetricsPanel({ connection, active }: Props) {
           </Button>
         </form>
       </div>
+      {needsManagedExporter && (
+        <p className="mt-3 text-xs text-amber-700 dark:text-amber-300" role="status">
+          Browser-managed Gotenberg 9 connections cannot access an exporter through the legacy
+          metrics route. Ask the Gotenui administrator to configure a server-managed metricsUrl.
+        </p>
+      )}
       {error && (
         <p
           role="alert"

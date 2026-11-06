@@ -776,6 +776,12 @@ export async function proxyMetricsRequest(
     !isOtel,
   )
   const { url, headers: authHeaders } = target
+  if (!isOtel && (await conversionTargetVersion(request, fetcher, target)) === 9) {
+    throw new ProxyInputError(
+      'Gotenberg 9 no longer serves /prometheus/metrics. Configure a server-managed connection with a separate OpenTelemetry Prometheus metricsUrl.',
+      409,
+    )
+  }
   const metricsUrl = profile?.metricsUrl ?? urlJoin(url, '/prometheus/metrics')
   const metricsHeaders = isOtel
     ? profile?.metricsAuthorization
