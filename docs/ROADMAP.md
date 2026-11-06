@@ -41,12 +41,15 @@
 - [x] **Patch 14:** Bind displayed status and tool availability to the selected connection **and credential epoch**, discard superseded refresh results, and check `Gotenberg-Version` on every successful conversion/webhook response. Refuse mismatched or malformed advertised versions before returning a result; keep v8/v9 adapters unchanged.
 - [x] **Patch 14:** Normalise browser download filenames to the actual returned PDF, ZIP or image media type even with a custom output name. Add v9 integration assertions for PDF/A remediation headers and combined PDF + PNG ZIP output. These new Docker cases require confirmation on the pinned v9.0.0 image; they are not marked as verified yet.
 
+- [x] **Patch 15 (v1.0.14):** Preserve Gotenberg 9 PDF-validation and remediation diagnostics on browser-batch downloads. A completed job remains downloadable, but non-compliant results and unreadable/oversized reports now show an explicit review warning instead of an unqualified green state. Only aggregate counts are held in the queue snapshot; raw PDF validation findings and filenames remain in the downloaded report.
+- [x] **Patch 15:** Bound client-side validation-report parsing to 128 KB, leave cancellation authoritative even if a report is being read, and recheck the 200 MB retained-result budget after asynchronous inspection so parallel completions cannot overcommit memory. Add tests for a queued v8/v9 connection switch while other jobs run; the server-side v8/v9 request adapter is unchanged. Browser-level connection-switch and live remediate/validation edge-case testing remain outstanding.
+
 ## Remaining priorities
 
 1. **Conversion parity:** Chromium window-status waiting and Office format differences are addressed in patch 12. Audit other advanced-field and version-specific semantics, and verify PDF/A and PDF/UA conformance beyond successful stage execution.
 2. **Input/output completeness:** Extend archive support beyond the v9 Office converter where appropriate, finish remote-source and format-specific file rules, and verify multi-stage image/ZIP filename and preview behaviour.
 3. **Version-specific observability and UX:** Metrics now distinguish v8's legacy route from v9's separately configured exporter; webhook delivery guidance now distinguishes output and event receivers. A callback inbox or actual delivery-progress tracking would require a new stateful service and remains out of scope. Verify native compression controls against both images.
-4. **Hardening:** Add connection-swap and batch-switch regression coverage, plus real-image tests for remediation edge cases and timestamp authority integration.
+4. **Hardening:** Batch queues now preserve per-job target selection and show bounded, non-sensitive conformance warnings (patch 15). Browser-level connection swaps, extended real-image PDF/A/UA validation cases and timestamp-authority integration still need coverage.
 
 These are tracked below; no remaining core v9 PDF stage or inspection route is absent from the tool catalogue.
 
@@ -114,6 +117,7 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 - [x] Expose all eleven PDF/A and both PDF/UA profiles in v9 Chromium and Office conversion forms. Use native Office export only for supported combinations; explicit remediation is available for all profiles. Keep separate v8 fields with their original options (patch 11).
 - [ ] Verify real-image conformance for extended conversion profiles and Factur-X XML combinations. The stand-alone pipeline accepts these stages, but not every combination has a pinned integration case.
 - [x] Forward and display `Gotenberg-Remediation-Residual` and `Gotenberg-Remediation-Rolled-Back`. A successful HTTP response alone does **not** establish PDF/A/PDF/UA compliance.
+- [x] Surface nonzero remediation counts and noncompliant/unreadable `pdf-validate` JSON in the browser batch queue without losing downloadable results (patch 15). This is a warning summary, not a new compliance validator or a claim that zero residual violations imply conformance.
 
 ### 6. Remaining v9 compatibility and polish — medium
 

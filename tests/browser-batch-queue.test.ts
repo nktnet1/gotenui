@@ -153,6 +153,209 @@ describe('browser-managed batch queue', () => {
     queue.dispose()
   })
 
+  it('retains distinct v8 and v9 targets while pending jobs wait for a free slot', async () => {
+    const pending = [deferred<ConversionResult>(), deferred<ConversionResult>()]
+    const targets: string[] = []
+    const { queue } = queueWith(async (value) => {
+      const target = value.connection
+      expect(target.kind).toBe('server')
+      if (target.kind === 'server') targets.push(target.id)
+      return pending[targets.length - 1]?.promise ?? pdf()
+    })
+    const first = input()
+    first.connection = { kind: 'server', id: 'v8-production' }
+    queue.enqueue(first)
+    first.connection = { kind: 'server', id: 'v9-production' }
+    const second = input()
+    second.connection = first.connection
+    queue.enqueue(second)
+    const third = input()
+    third.connection = { kind: 'server', id: 'v8-production' }
+    queue.enqueue(third)
+    queue.start()
+    expect(targets).toEqual(['v8-production', 'v9-production'])
+    third.connection = { kind: 'server', id: 'v9-production' }
+    pending[0]?.resolve(pdf())
+    await tick()
+    expect(targets).toEqual(['v8-production', 'v9-production', 'v8-production'])
+    pending[1]?.resolve(pdf())
+    await tick()
+    expect(queue.getSnapshot().jobs.map(({ status }) => status)).toEqual([
+      'completed',
+      'completed',
+      'completed',
+    ])
+    queue.dispose()
+  })
+
+  it('warns about non-compliant v9 validation results but keeps the report downloadable', async () => {
+    const completed = vi.fn()
+    const result: ConversionResult = {
+      mode: 'download',
+      name: 'validation.json',
+      type: 'application/json',
+      blob: new Blob(
+        [
+          JSON.stringify({
+            'customer-a.pdf': {
+              compliant: false,
+              profile: ['PDF/A-2b'],
+              violations: [{ description: 'Missing output intent' }],
+            },
+            'customer-b.pdf': { compliant: true, profile: ['PDF/A-2b'], violations: [] },
+          }),
+        ],
+        { type: 'application/json' },
+      ),
+    }
+    const { queue } = queueWith(async () => result, completed)
+    const request = input()
+    request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    queue.enqueue(request)
+    queue.start()
+    await tick()
+    const job = queue.getSnapshot().jobs[0]
+    expect(job).toMatchObject({
+      status: 'completed',
+      review:
+        'PDF validation found 1 non-compliant document(s) out of 2. Review the downloaded JSON report.',
+      name: 'validation.json',
+    })
+    expect(job?.url).toMatch(/^blob:/)
+    expect(JSON.stringify(job)).not.toContain('customer-a.pdf')
+    expect(JSON.stringify(job)).not.toContain('Missing output intent')
+    expect(completed).toHaveBeenCalledOnce()
+    const html = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Review required')
+    expect(html).toContain('Download validation.json')
+    queue.dispose()
+  })
+
+  it('does not warn on compliant PDF validation results', async () => {
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      name: 'report.json',
+      type: 'application/json',
+      blob: new Blob([
+        JSON.stringify({
+          'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
+        }),
+      ]),
+    }))
+    const request = input()
+    request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    queue.enqueue(request)
+    queue.start()
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({ status: 'completed' })
+    expect(queue.getSnapshot().jobs[0]?.review).toBeUndefined()
+    expect(renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))).not.toContain(
+      'Review required',
+    )
+    queue.dispose()
+  })
+
+  it('flags unparseable, oversized and unreadable validation reports without failing the download', async () => {
+    for (const scenario of ['invalid', 'oversized', 'unreadable'] as const) {
+      const blob = new Blob([scenario === 'invalid' ? '{not-json' : '{"ok":true}'])
+      if (scenario === 'oversized') Object.defineProperty(blob, 'size', { value: 129_000 })
+      if (scenario === 'unreadable') {
+        Object.defineProperty(blob, 'text', {
+          value: () => Promise.reject(new Error('read failed')),
+        })
+      }
+      const { queue } = queueWith(async () => ({
+        mode: 'download',
+        name: 'report.json',
+        type: 'application/json',
+        blob,
+      }))
+      const request = input()
+      request.candidate = {
+        operation: 'pdf-validate',
+        fields: { profile: 'PDF/A-2b' },
+        advanced: {},
+      }
+      request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+      queue.enqueue(request)
+      queue.start()
+      await tick()
+      expect(queue.getSnapshot().jobs[0]).toMatchObject({
+        status: 'completed',
+        review: 'PDF validation could not be summarised. Review the downloaded JSON report.',
+      })
+      expect(queue.getSnapshot().jobs[0]?.url).toBeDefined()
+      queue.dispose()
+    }
+  })
+
+  it('does not publish a late validation result after the user cancels the batch job', async () => {
+    const validation = deferred<string>()
+    const blob = new Blob(['placeholder'], { type: 'application/json' })
+    Object.defineProperty(blob, 'text', { value: () => validation.promise })
+    const completed = vi.fn()
+    const { queue } = queueWith(
+      async () => ({ mode: 'download', name: 'validation.json', type: 'application/json', blob }),
+      completed,
+    )
+    const request = input()
+    request.candidate = {
+      operation: 'pdf-validate',
+      fields: { profile: 'PDF/A-2b' },
+      advanced: {},
+    }
+    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    const id = queue.enqueue(request)
+    queue.start()
+    await tick()
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
+    queue.cancel(id)
+    validation.resolve(
+      JSON.stringify({
+        'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
+      }),
+    )
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({ status: 'cancelled' })
+    expect(queue.getSnapshot().jobs[0]?.url).toBeUndefined()
+    expect(completed).not.toHaveBeenCalled()
+    queue.dispose()
+  })
+
+  it('preserves remediation warning counts on completed batch downloads', async () => {
+    const { queue } = queueWith(async () => ({
+      ...pdf(),
+      remediation: { residual: 2, rolledBack: 1 },
+    }))
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    const job = queue.getSnapshot().jobs[0]
+    expect(job).toMatchObject({
+      status: 'completed',
+      review:
+        'PDF remediation reported 2 unresolved violation(s) and 1 rolled-back fix(es). Validate the downloaded output.',
+    })
+    expect(job?.url).toBeDefined()
+    queue.dispose()
+  })
+
+  it('does not suggest that clean remediation headers themselves certify compliance', async () => {
+    const { queue } = queueWith(async () => ({
+      ...pdf(),
+      remediation: { residual: 0, rolledBack: 0 },
+    }))
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({ status: 'completed' })
+    expect(queue.getSnapshot().jobs[0]?.review).toBeUndefined()
+    queue.dispose()
+  })
+
   it('does not include credentials, source files or remote URLs in public snapshots', () => {
     const { queue } = queueWith(async () => pdf())
     const request = input()

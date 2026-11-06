@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowDownToLine,
   CheckCircle2,
   CirclePause,
@@ -95,6 +96,7 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
           <ul className="space-y-2" aria-label="Queued conversions" aria-live="polite">
             {jobs.map((job) => {
               const runningJob = job.status === 'running'
+              const needsReview = job.status === 'completed' && Boolean(job.review)
               const canCancel = runningJob || job.status === 'queued'
               const canRetry =
                 !job.aborting && (job.status === 'failed' || job.status === 'cancelled')
@@ -107,6 +109,8 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
                   <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-300">
                     {runningJob ? (
                       <RefreshCw className="size-4 animate-spin" />
+                    ) : needsReview ? (
+                      <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400" />
                     ) : job.status === 'completed' ? (
                       <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" />
                     ) : job.status === 'accepted' ? (
@@ -123,12 +127,20 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
                       {job.status === 'queued' && 'Queued'}
                       {runningJob && 'Processing (Gotenberg does not report percentage progress)'}
                       {job.status === 'completed' &&
-                        `${job.name} · ${formatBytes(job.size ?? 0)} · ${((job.elapsed ?? 0) / 1000).toFixed(1)}s`}
+                        `${job.name} · ${formatBytes(job.size ?? 0)} · ${((job.elapsed ?? 0) / 1000).toFixed(1)}s${needsReview ? ' · Review required' : ''}`}
                       {job.status === 'accepted' &&
                         `Webhook accepted (HTTP ${job.webhookStatus}); delivery unconfirmed`}
                       {job.status === 'cancelled' && (job.aborting ? 'Cancelling...' : 'Cancelled')}
                       {job.status === 'failed' && `Failed: ${job.error ?? 'Unknown error'}`}
                     </p>
+                    {needsReview && (
+                      <p
+                        role="alert"
+                        className="mt-2 text-[11px] font-medium text-amber-800 dark:text-amber-300"
+                      >
+                        {job.review}
+                      </p>
+                    )}
                     {job.trace && (
                       <p className="mt-1 break-all text-[10px] text-slate-400">
                         Trace: {job.trace}

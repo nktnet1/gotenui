@@ -6,6 +6,7 @@ import {
   REQUEST_TIMEOUT_MS,
 } from '#/lib/gotenberg-client'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
+import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import { type ConversionPayload, validateFiles, validatePayload } from '#/lib/validation'
 
 export const MAX_BATCH_JOBS = 12
@@ -27,6 +28,8 @@ export type BatchJob = {
   trace?: string
   webhookStatus?: 202 | 204
   error?: string
+  /** A completed download may still contain non-compliant PDF output. */
+  review?: string
   aborting?: boolean
 }
 
@@ -124,6 +127,44 @@ async function executeConversion(
     input.stageFiles,
     input.archives,
   )
+}
+
+const MAX_BATCH_VALIDATION_REPORT_BYTES = 128_000
+const unreadableValidationMessage =
+  'PDF validation could not be summarised. Review the downloaded JSON report.'
+
+/** A completed download is not proof of PDF conformance. Keep only a short
+ * summary in public job snapshots, not document names or individual findings.
+ */
+async function batchReviewNotice(
+  input: PreparedInput,
+  result: Extract<ConversionResult, { mode: 'download' }>,
+): Promise<string | undefined> {
+  if (input.candidate.operation === 'pdf-validate') {
+    if (
+      result.type !== 'application/json' ||
+      result.blob.size > MAX_BATCH_VALIDATION_REPORT_BYTES
+    ) {
+      return unreadableValidationMessage
+    }
+    try {
+      const reports = parsePdfValidationReport(await result.blob.text())
+      if (!reports) return unreadableValidationMessage
+      const noncompliant = reports.filter((report) => !report.compliant).length
+      if (noncompliant > 0) {
+        return `PDF validation found ${noncompliant} non-compliant document(s) out of ${reports.length}. Review the downloaded JSON report.`
+      }
+    } catch {
+      return unreadableValidationMessage
+    }
+  }
+  if (
+    result.remediation &&
+    (result.remediation.residual > 0 || result.remediation.rolledBack > 0)
+  ) {
+    return `PDF remediation reported ${result.remediation.residual} unresolved violation(s) and ${result.remediation.rolledBack} rolled-back fix(es). Validate the downloaded output.`
+  }
+  return undefined
 }
 
 /** All inputs, including selected credentials, live only in this tab and are never serialized. */
@@ -238,6 +279,12 @@ export class BrowserBatchQueue {
             webhookStatus: result.status,
           }
         } else {
+          const review = await batchReviewNotice(input, result)
+          if (this.disposed || controller.signal.aborted) return
+          if (signal.aborted) throw new Error('Gotenberg did not respond within three minutes.')
+          // Reserve the result budget immediately before setting the completed state.
+          // Validation can be asynchronous: checking before the await lets two
+          // concurrent jobs both claim the same remaining memory allowance.
           const retained = this.records.reduce(
             (total, entry) =>
               total + (entry.view.status === 'completed' ? (entry.view.size ?? 0) : 0),
@@ -258,6 +305,7 @@ export class BrowserBatchQueue {
             size: result.blob.size,
             type: result.type,
             trace: result.trace,
+            review,
             url,
           }
           try {
