@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import { proxyConversionRequest } from '#/lib/gotenberg-proxy.server'
+import { zipFixture } from './fixtures/zip'
 
 const origin = 'https://gotenui.example.test'
 const upstream = 'http://127.0.0.1:3000'
@@ -144,7 +145,7 @@ test('Office extensions follow the exact v8.40.0 and v9.0.0 API lists', async ()
 })
 
 test('v9 forwards Office ZIP archives after validation, while v8 rejects the same upload', async () => {
-  const zip = new File(['PK\u0003\u0004'], 'documents.zip', { type: 'application/zip' })
+  const zip = zipFixture({ 'report.docx': 'document' }, 'documents.zip')
   const v9 = upstreamFixture('9.0.0', (form) => {
     assert.deepEqual(
       form.getAll('archives').map((value) => (value instanceof File ? value.name : '')),
@@ -170,7 +171,7 @@ test('v9 forwards Office ZIP archives after validation, while v8 rejects the sam
 test.each(['html-pdf', 'markdown-pdf'])(
   'v9 %s accepts ZIP asset bundles without changing the generated index',
   async (operation) => {
-    const zip = new File(['PK\u0003\u0004'], 'assets.zip', { type: 'application/zip' })
+    const zip = zipFixture({ 'theme.css': 'body {}' }, 'assets.zip')
     const v9 = upstreamFixture('9.0.0', (form) => {
       assert.equal((form.get('archives') as File).name, 'assets.zip')
       assert.deepEqual((form.getAll('files') as File[]).map((file) => file.name).slice(0, 1), [
@@ -201,7 +202,7 @@ test.each(['html-pdf', 'markdown-pdf'])(
 )
 
 test('v9 accepts a ZIP response when Office archives expand to several output documents', async () => {
-  const zip = new File(['PK\u0003\u0004'], 'several.zip', { type: 'application/zip' })
+  const zip = zipFixture({ 'one.txt': 'first', 'two.txt': 'second' }, 'several.zip')
   const fetcher: typeof fetch = async (input, options) => {
     if (String(input) === `${upstream}/version`) return new Response('9.0.0')
     assert.ok(options?.body instanceof FormData)
@@ -219,7 +220,7 @@ test('v9 accepts a ZIP response when Office archives expand to several output do
 })
 
 test('v9 PDF pipeline forwards remote PDF URLs and uploaded source ZIPs, but v8 never forwards them', async () => {
-  const archive = new File(['PK\u0003\u0004'], 'source-pdfs.zip', { type: 'application/zip' })
+  const archive = zipFixture({ 'source.pdf': '%PDF-1.7\n' }, 'source-pdfs.zip')
   const remote = [
     {
       url: 'https://files.example.test/second.pdf',
@@ -326,6 +327,44 @@ test('v9 PDF pipeline rejects malformed source ZIPs before forwarding, and other
     /supported only by Office, the PDF pipeline, and Chromium HTML\/Markdown/,
   )
   assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+})
+
+test('v9 blocks incompatible ZIP entries and generated-file shadows before upstream conversion', async () => {
+  const cases: {
+    operation: string
+    fields: Record<string, string | boolean>
+    archive: File
+    error: RegExp
+  }[] = [
+    {
+      operation: 'pdf-pipeline',
+      fields: { stages: '[{"op":"merge"}]' },
+      archive: zipFixture({ 'source.pdf': '%PDF', 'readme.txt': 'not a PDF' }),
+      error: /PDF pipeline requires PDF entries/,
+    },
+    {
+      operation: 'office-pdf',
+      fields: {},
+      archive: zipFixture({ 'book.epub': 'unsupported on v9' }),
+      error: /unsupported Gotenberg 9 Office entry/,
+    },
+    {
+      operation: 'html-pdf',
+      fields: {},
+      archive: zipFixture({ 'index.html': 'injected page' }),
+      error: /duplicate or reserved filename: index\.html/,
+    },
+  ]
+  const v9 = upstreamFixture('9.0.0', () => {
+    throw new Error('Rejected archives must not reach Gotenberg.')
+  })
+  for (const { operation, fields, archive, error } of cases) {
+    await assert.rejects(
+      proxyConversionRequest(requestFor(operation, fields, {}, [], [], [], [archive]), v9.fetcher),
+      error,
+    )
+  }
+  assert.deepEqual(v9.counts(), { probes: cases.length, conversions: 0 })
 })
 
 test('rejects non-ZIP archive uploads, duplicates and unsupported operations at the proxy', async () => {
