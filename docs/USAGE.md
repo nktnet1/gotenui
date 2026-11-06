@@ -28,7 +28,7 @@ Before sending uploaded ZIP archives on Gotenberg 9, Gotenui reads only the boun
 
 ## Results and presets
 
-Completed operations download automatically. PDFs can also be previewed in the browser. **Clear** releases the current result from the tab.
+Completed operations download automatically. PDFs and raster images can also be previewed in the browser. Direct and completed batch ZIP downloads offer an optional **View archive contents** control; it lists a bounded number of filenames and declared sizes without unpacking the archive. **Clear** releases the current result from the tab.
 
 **Saved presets** store reusable operation settings in this browser. They do not store uploaded files, passwords, tokens or callback details. Presets are available only for the tool on which they were saved.
 
@@ -36,7 +36,7 @@ Completed operations download automatically. PDFs can also be previewed in the b
 
 Select **Add to batch** to collect configured operations, then start the queue from its panel. Up to two operations run at once. You can pause waiting jobs, cancel requests and retry failures.
 
-Batch results remain in the current tab until downloaded or cleared. They do not download automatically, and the queue is lost when the tab is closed or reloaded. Cancelling a request may not stop processing already underway in Gotenberg.
+Batch results remain in the current tab until downloaded or cleared. They do not download automatically, and the queue is lost when the tab is closed or reloaded. Cancelling a request may not stop processing already underway in Gotenberg. Completed PNG, JPEG and WebP jobs offer an opt-in **Preview image** control. It uses the existing download Blob URL without storing a second image; the image is only loaded after you open the preview. Closing the preview unmounts the image, and clearing the job revokes the download URL. SVG and other file types are not shown as batch image previews.
 
 ## Remote files and webhooks
 

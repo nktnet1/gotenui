@@ -43,7 +43,9 @@ test('browser smoke opens the v9 pipeline and settings with independent navigati
 
 test('browser smoke queues an available v8 tool with independent navigation and batch clicks', () => {
   const source = readFileSync(new URL('../scripts/smoke-browser.ts', import.meta.url), 'utf8')
-  const section = source.split('// The Diagnostics dialog and queued conversions must follow')[1]
+  const section = source
+    .split('// The Diagnostics dialog and queued conversions must follow')[1]
+    ?.split('// Exercise the actual React result and batch panels')[0]
   assert.ok(section, 'Connection-switch browser checks must be present')
   const scripts = [...section.matchAll(/await page\.evaluate\(`\(\(\) => \{([\s\S]*?)\}\)\(\)`\)/g)]
     .map((match) => match[0].slice('await page.evaluate(`'.length, -'`)'.length))

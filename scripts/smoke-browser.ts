@@ -9,6 +9,7 @@ import { Readable, Writable } from 'node:stream'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
+import { browserImageZip, samplePng } from '#scripts/browser-output-fixtures'
 import { attachToChromePage, ChromeDevToolsPipe } from '#scripts/chrome-devtools'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -1132,6 +1133,175 @@ async function run(): Promise<void> {
       clear.click()
     })()`)
     await page.waitUntil("!document.querySelector('#gotenui-batch-queue')", 'clear queued work')
+    checks++
+
+    // Exercise the actual React result and batch panels using valid, browser-local
+    // PNG/ZIP fixtures. The pinned Docker suite separately verifies upstream bytes.
+    await page.evaluate(`(() => {
+      const delegate = window.fetch.bind(window)
+      const png = Uint8Array.from(atob('${samplePng.toString('base64')}'), char => char.charCodeAt(0))
+      const zip = Uint8Array.from(atob('${Buffer.from(browserImageZip()).toString('base64')}'), char => char.charCodeAt(0))
+      window.__smokeResultKind = 'image'
+      window.__restoreSmokeConversionFetch = () => { window.fetch = delegate }
+      window.fetch = (input, options) => {
+        if (String(input) === '/api/gotenberg/convert') {
+          const archive = window.__smokeResultKind === 'zip'
+          return Promise.resolve(new Response(archive ? zip : png, {
+            headers: {
+              'content-type': archive ? 'application/zip' : 'image/png',
+              'content-disposition': archive
+                ? 'attachment; filename="renders.zip"'
+                : 'attachment; filename="render.png"',
+            },
+          }))
+        }
+        return delegate(input, options)
+      }
+    })()`)
+    await page.evaluate(
+      `document.querySelector('#gotenui-navigation nav button[data-operation-id="html-shot"]').click()`,
+    )
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent === 'HTML screenshot'",
+      'v9 screenshot form',
+    )
+    await page.evaluate(`(() => {
+      const submit = document.querySelector('form button[type=submit]')
+      if (!submit || submit.disabled) throw new Error('Screenshot submit button is unavailable')
+      submit.click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('[alt="Latest screenshot"]')?.naturalWidth === 2 &&
+        document.querySelector('a[download="render.png"]')?.textContent.includes('Download again')`,
+      'direct PNG result preview and download name',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const add = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Add to batch')
+      if (!add || add.disabled) throw new Error('Screenshot batch button is unavailable')
+      add.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')",
+      'queued PNG result',
+    )
+    await page.evaluate(`(() => {
+      const start = [...document.querySelectorAll('#gotenui-batch-queue button')]
+        .find(el => el.textContent.trim() === 'Start queue')
+      if (!start) throw new Error('Cannot start the screenshot batch')
+      start.click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#gotenui-batch-queue a[download="render.png"]') &&
+        document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]')?.textContent.includes('Preview image')`,
+      'completed PNG batch offers an opt-in preview',
+    )
+    assert.equal(
+      await page.evaluate("document.querySelector('#gotenui-batch-queue img') === null"),
+      true,
+      'The image must not be decoded in the batch until explicitly previewed.',
+    )
+    await page.evaluate(
+      `document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]').click()`,
+    )
+    await page.waitUntil(
+      `document.querySelector('#gotenui-batch-queue img[alt="Preview of render.png"]')?.naturalWidth === 2`,
+      'batch PNG preview loads its existing Blob URL',
+    )
+    await page.evaluate(
+      `document.querySelector('#gotenui-batch-queue button[aria-expanded="true"]').click()`,
+    )
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue img') === null",
+      'batch PNG preview closes',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const clear = [...document.querySelectorAll('#gotenui-batch-queue button')]
+        .find(el => el.textContent.trim() === 'Clear finished')
+      clear.click()
+      window.__smokeResultKind = 'zip'
+      const render = document.querySelector('#gotenui-navigation nav button[data-operation-id="render-pages"]')
+      if (!render || render.disabled) throw new Error('PDF renderer is unavailable on v9')
+      render.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent === 'Render PDF pages'",
+      'v9 PDF renderer',
+    )
+    await page.evaluate(`(() => {
+      const input = document.querySelector('fieldset[aria-label="Upload PDF documents drop area"] input[type=file]')
+      if (!input) throw new Error('Missing PDF upload for rendering')
+      const files = new DataTransfer()
+      files.items.add(new File(['%PDF-1.7\\nsynthetic browser fixture'], 'two-pages.pdf', { type: 'application/pdf' }))
+      input.files = files.files
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('[aria-label="Upload PDF documents selected files"]')?.textContent.includes('two-pages.pdf')`,
+      'PDF renderer receives a local file',
+    )
+    await page.evaluate(`document.querySelector('form button[type=submit]').click()`)
+    await page.waitUntil(
+      `document.querySelector('a[download="renders.zip"]')?.textContent.includes('Download again') &&
+        [...document.querySelectorAll('button')].some(el => el.textContent.includes('View archive contents'))`,
+      'direct ZIP result uses its actual output extension',
+    )
+    await page.evaluate(`(() => {
+      const preview = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'View archive contents')
+      preview.click()
+    })()`)
+    await page.waitUntil(
+      `(() => {
+        const entries = [...document.querySelectorAll('[aria-label="Archive files"] li')]
+        return entries.length === 2 && entries.every(el => el.textContent.includes('.png') && el.textContent.includes('Image'))
+      })()`,
+      'direct ZIP manifest lists the two rendered PNGs',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const add = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Add to batch')
+      if (!add || add.disabled) throw new Error('ZIP batch button is unavailable')
+      add.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')",
+      'queued ZIP result',
+    )
+    await page.evaluate(`(() => {
+      const start = [...document.querySelectorAll('#gotenui-batch-queue button')]
+        .find(el => el.textContent.trim() === 'Start queue')
+      if (!start) throw new Error('Cannot start the ZIP batch')
+      start.click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#gotenui-batch-queue a[download="renders.zip"]') &&
+        document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]')?.textContent.includes('View archive contents')`,
+      'completed ZIP batch result and filename',
+    )
+    await page.evaluate(
+      `document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]').click()`,
+    )
+    await page.waitUntil(
+      `document.querySelectorAll('#gotenui-batch-queue [aria-label="Archive files"] li').length === 2`,
+      'completed batch ZIP preview lists both images',
+    )
+    await page.evaluate(`(() => {
+      const clear = [...document.querySelectorAll('#gotenui-batch-queue button')]
+        .find(el => el.textContent.trim() === 'Clear finished')
+      clear.click()
+      window.__restoreSmokeConversionFetch()
+    })()`)
+    await page.waitUntil(
+      "!document.querySelector('#gotenui-batch-queue')",
+      'clear browser output fixtures',
+    )
     checks++
 
     // Restore the v8 connection for the remaining legacy diagnostics, theme,

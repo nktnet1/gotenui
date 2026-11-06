@@ -747,6 +747,56 @@ test.skipIf(!isV9)(
 )
 
 test.skipIf(!isV9)(
+  'Gotenberg 9 returns a single JPEG render with the requested image filename',
+  async () => {
+    const render = OPERATIONS.find(({ id }) => id === 'render-pages')
+    if (!render) throw new Error('Missing PDF renderer')
+    const response = await proxyConversionRequest(
+      request(render, { fields: { format: 'jpeg', pages: '1' }, outputName: 'single-render' }, [
+        pdfFile(),
+      ]),
+    )
+    if (!response.ok) {
+      throw new Error(`JPEG render: HTTP ${response.status}: ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('image/jpeg')
+    expect(response.headers.get('content-disposition')).toContain('single-render.jpeg')
+    const image = new Uint8Array(await response.arrayBuffer())
+    expect([...image.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff])
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 returns multiple JPEG renders as a previewable ZIP',
+  async () => {
+    const render = OPERATIONS.find(({ id }) => id === 'render-pages')
+    if (!render) throw new Error('Missing PDF renderer')
+    const response = await proxyConversionRequest(
+      request(render, { fields: { format: 'jpeg' }, outputName: 'two-renders' }, [
+        new File([splitPdfBytes], 'two-pages.pdf', { type: 'application/pdf' }),
+      ]),
+    )
+    if (!response.ok) {
+      throw new Error(`JPEG ZIP: HTTP ${response.status}: ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
+    expect(response.headers.get('content-disposition')).toContain('two-renders.zip')
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    const images = zipEntries(bytes)
+    expect(images.size).toBe(2)
+    for (const [name, image] of images) {
+      expect(name).toMatch(/\.jpe?g$/i)
+      expect([...image.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff])
+    }
+    const preview = await inspectZipResult(new Blob([bytes]))
+    expect(preview.totalFiles).toBe(2)
+    expect(preview.entries.map(({ kind }) => kind)).toEqual(['Image', 'Image'])
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
   'Gotenberg 9 fills and reads back an actual PDF form field',
   async () => {
     const source = formPdfFixture()

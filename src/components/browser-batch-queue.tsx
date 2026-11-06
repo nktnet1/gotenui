@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react'
 import { useSyncExternalStore } from 'react'
+import { ImageResultPreview, isPreviewableImage } from '#/components/image-result-preview'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { ZipResultPreview } from '#/components/zip-result-preview'
@@ -91,9 +92,9 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
           <p className="mb-4 text-xs leading-5 text-slate-500 dark:text-slate-400">
             Jobs stay in this tab only. Inputs and selected credentials are released after success
             or when a job is cleared. Changing connections will not redirect queued jobs. Downloads
-            are available individually after completion, with optional ZIP contents previews.
-            Webhook acceptance is not delivery confirmation. Maximum {MAX_BATCH_JOBS} jobs. Pausing
-            does not cancel active requests.
+            are available individually after completion, with optional image or ZIP contents
+            previews. Webhook acceptance is not delivery confirmation. Maximum {MAX_BATCH_JOBS}{' '}
+            jobs. Pausing does not cancel active requests.
           </p>
           <ul className="space-y-2" aria-label="Queued conversions" aria-live="polite">
             {jobs.map((job) => {
@@ -200,6 +201,14 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
                       <ZipResultPreview blob={archive} />
                     </div>
                   )}
+                  {job.status === 'completed' &&
+                    job.url &&
+                    job.name &&
+                    isPreviewableImage(job.type) && (
+                      <div className="w-full min-w-0 sm:pl-11">
+                        <ImageResultPreview url={job.url} name={job.name} />
+                      </div>
+                    )}
                 </li>
               )
             })}

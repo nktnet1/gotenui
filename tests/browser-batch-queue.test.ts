@@ -216,6 +216,68 @@ describe('browser-managed batch queue', () => {
     queue.dispose()
   })
 
+  it.each(['image/png', 'image/jpeg', 'image/webp'])(
+    'offers an opt-in %s preview using the completed image download URL',
+    async (type) => {
+      const { queue, revoked } = queueWith(async () => ({
+        mode: 'download',
+        type,
+        name: `rendered.${type.split('/')[1]}`,
+        blob: new Blob(['image bytes'], { type }),
+      }))
+      const id = queue.enqueue(input())
+      queue.start()
+      await tick()
+      const job = queue.getSnapshot().jobs[0]
+      expect(job).toMatchObject({ id, status: 'completed', type })
+      const markup = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+      expect(markup).toContain(`Download ${job?.name}`)
+      expect(markup).toContain('Preview image')
+      expect(markup).toContain('aria-expanded="false"')
+      expect(markup).not.toContain('<img')
+      expect(queue.getArchiveBlob(id)).toBeUndefined()
+      queue.clearFinished()
+      expect(revoked).toEqual([job?.url])
+      expect(renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))).not.toContain(
+        'Preview image',
+      )
+      queue.dispose()
+    },
+  )
+
+  it('does not preview non-raster, failed, or cancelled image downloads', async () => {
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      type: 'image/svg+xml',
+      name: 'unexpected.svg',
+      blob: new Blob(['<svg/>'], { type: 'image/svg+xml' }),
+    }))
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    expect(renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))).not.toContain(
+      'Preview image',
+    )
+    queue.dispose()
+
+    const pending = deferred<ConversionResult>()
+    const cancelled = queueWith(async () => pending.promise)
+    const id = cancelled.queue.enqueue(input())
+    cancelled.queue.start()
+    cancelled.queue.cancel(id)
+    pending.resolve({
+      mode: 'download',
+      type: 'image/png',
+      name: 'late.png',
+      blob: new Blob(['x']),
+    })
+    await tick()
+    expect(
+      renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue: cancelled.queue })),
+    ).not.toContain('Preview image')
+    cancelled.queue.dispose()
+  })
+
   it('does not offer ZIP previews for PDF outputs, cancelled jobs, or disposed queues', async () => {
     const pdfJob = queueWith(async () => pdf())
     const pdfId = pdfJob.queue.enqueue(input())
