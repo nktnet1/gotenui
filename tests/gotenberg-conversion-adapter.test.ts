@@ -304,7 +304,7 @@ test('v9 LibreOffice maps viewer enums, native compression, watermark units and 
   ])
 })
 
-test('v9 Office native PDF/A and PDF/UA and interval splitting retain the original intent', () => {
+test('v9 Office ends interval splitting with remediation for both requested profiles', () => {
   const form = adapt(
     'office-pdf',
     {
@@ -312,9 +312,64 @@ test('v9 Office native PDF/A and PDF/UA and interval splitting retain the origin
     },
     9,
   )
-  assert.equal(form.get('nativePdfa'), 'PDF/A-2b')
-  assert.equal(form.get('nativePdfua'), 'PDF/UA-1')
-  assert.deepEqual(JSON.parse(String(form.get('stages'))), [{ op: 'split', every: 2 }])
+  assert.equal(form.has('nativePdfa'), false)
+  assert.equal(form.has('nativePdfua'), false)
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+    { op: 'split', every: 2 },
+    { op: 'remediate', profile: ['PDF/A-2b', 'PDF/UA-1'] },
+  ])
+})
+
+const officeConformanceStages: {
+  fields: Record<string, string | boolean>
+  stages: { op: string; [name: string]: unknown }[]
+}[] = [
+  { fields: { merge: true }, stages: [{ op: 'merge' }] },
+  {
+    fields: { splitMode: 'pages', splitSpan: '1-3' },
+    stages: [{ op: 'split', ranges: ['1-3'] }],
+  },
+  {
+    fields: { splitMode: 'pages', splitSpan: '1-3', splitUnify: true },
+    stages: [{ op: 'select', pages: '1-3' }],
+  },
+  {
+    fields: { splitMode: 'intervals', splitSpan: '2' },
+    stages: [{ op: 'split', every: 2 }],
+  },
+]
+
+test.each(officeConformanceStages)(
+  'v9 Office remediates PDF/A after built-in stages $stages',
+  ({ fields, stages }) => {
+    const form = adapt('office-pdf', { fields: { ...fields, pdfaProfile: 'PDF/A-2b' } }, 9)
+    assert.equal(form.get('nativePdfa'), null)
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+      ...stages,
+      { op: 'remediate', profile: 'PDF/A-2b' },
+    ])
+    assert.throws(
+      () =>
+        adapt(
+          'office-pdf',
+          { fields: { ...fields, pdfaProfile: 'PDF/A-2b', pdfaMethod: 'native' } },
+          9,
+        ),
+      /requires PDF remediation/,
+    )
+  },
+)
+
+test('v9 Office keeps native conformance without PDF processing, and v8 keeps its own encoding', () => {
+  const native = adapt('office-pdf', { fields: { pdfa: 'PDF/A-2b', pdfua: true } }, 9)
+  assert.equal(native.get('nativePdfa'), 'PDF/A-2b')
+  assert.equal(native.get('nativePdfua'), 'PDF/UA-1')
+  assert.equal(native.has('stages'), false)
+
+  const legacy = adapt('office-pdf', { fields: { pdfa: 'PDF/A-2b', merge: true } }, 8)
+  assert.equal(legacy.get('pdfa'), 'PDF/A-2b')
+  assert.equal(legacy.get('merge'), 'true')
+  assert.equal(legacy.has('stages'), false)
 })
 
 test('v9 does not silently accept incompatible v8 options or unvalidated stages', () => {

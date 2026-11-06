@@ -118,7 +118,7 @@ export const v9OfficePdfaMethod: FieldDefinition = {
   advanced: true,
   supportedGotenbergMajors: [9],
   description:
-    'Native export supports PDF/A-1b, 2b, 3b, 4 and PDF/UA-1. Other profiles use remediation; PDF/A-4 with PDF/UA requires remediation.',
+    'Native export supports PDF/A-1b, 2b, 3b, 4 and PDF/UA-1 when no PDF processing follows. Merge, split and custom stages require final remediation; PDF/A-4 with PDF/UA also requires remediation.',
 }
 
 export const chromiumWait: FieldDefinition[] = [

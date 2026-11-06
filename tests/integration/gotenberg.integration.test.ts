@@ -22,6 +22,7 @@ import { inspectZipResult } from '#/lib/zip-result-manifest'
 import type { CallbackReceipt } from './async-fixture-server'
 import { integrationContainerLogs } from './container-logs'
 import { integrationSmokeOperations } from './operation-selection'
+import { REMOTE_OVERLAY_PNG } from './overlay-fixture'
 import { retryTransientConversion } from './transient-conversion'
 
 const backendUrl = inject('gotenbergTestUrl')
@@ -1574,6 +1575,83 @@ test('LibreOffice applies documented PDF viewer preferences to a real source fil
     new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
   ).toBe('%PDF-')
 }, 120_000)
+
+const officeCompressionCases: {
+  description: string
+  fields: Record<string, string | boolean>
+}[] = [
+  { description: 'JPEG quality and downsampling', fields: { quality: '65' } },
+  {
+    description: 'lossless compression and downsampling',
+    fields: { losslessImageCompression: true },
+  },
+]
+
+test.each(officeCompressionCases)(
+  'LibreOffice accepts $description for an image source on both pinned versions',
+  async ({ fields }) => {
+    const office = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!office) throw new Error('Missing Office conversion')
+    const convertImage = () =>
+      proxyConversionRequest(
+        request(
+          office,
+          { fields: { ...fields, reduceImageResolution: true, maxImageResolution: '150' } },
+          [new File([REMOTE_OVERLAY_PNG], 'raster.png', { type: 'image/png' })],
+        ),
+      )
+    const response = await retryTransientConversion(convertImage)
+    if (!response.ok) {
+      throw new Error(
+        `LibreOffice ${testVersion} native image compression: ${response.status} ${await response.text()}` +
+          `\n${await integrationContainerLogs(testContainerName)}`,
+      )
+    }
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    expect(new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).slice(0, 5))).toBe(
+      '%PDF-',
+    )
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 remediates Office PDF/A after merging rather than trusting native export',
+  async () => {
+    const office = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!office) throw new Error('Missing Office conversion')
+    const response = await retryTransientConversion(() =>
+      proxyConversionRequest(
+        request(office, { fields: { merge: true, pdfaProfile: 'PDF/A-2b' } }, [
+          new File(['Page one'], 'page-one.txt'),
+          new File(['Page two'], 'page-two.txt'),
+        ]),
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(
+        `v9 merged PDF/A: ${response.status} ${await response.text()}` +
+          `\n${await integrationContainerLogs(testContainerName)}`,
+      )
+    }
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    expect(response.headers.get('Gotenberg-Remediation-Residual')).toMatch(/^\d+$/)
+    expect(response.headers.get('Gotenberg-Remediation-Rolled-Back')).toMatch(/^\d+$/)
+    const bytes = await response.arrayBuffer()
+    expect(await inspectV9Pdf('info', bytes)).toMatchObject({ 'verified.pdf': { pages: 2 } })
+    const validation = await convertV9('pdf-validate', { profile: 'PDF/A-2b' }, [
+      new File([bytes], 'merged.pdf', { type: 'application/pdf' }),
+    ])
+    if (!validation.ok)
+      throw new Error(`v9 merged PDF/A validation: ${validation.status} ${await validation.text()}`)
+    const report = parsePdfValidationReport(await validation.text())
+    expect(report).toHaveLength(1)
+    expect(report?.[0]).toMatchObject({ filename: 'merged.pdf', profile: 'PDF/A-2b' })
+    expect(typeof report?.[0]?.compliant).toBe('boolean')
+    expect(Number.isInteger(report?.[0]?.totalViolations)).toBe(true)
+  },
+  120_000,
+)
 
 /** Read the disposable host-side callback log without resolving host.docker.internal on the host. */
 async function callbackReceipts(token: string, expected: (items: CallbackReceipt[]) => boolean) {

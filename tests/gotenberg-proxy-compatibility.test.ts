@@ -89,6 +89,60 @@ test('probes /version for each request and changes form encoding after an upstre
   assert.equal(calls.length, 2)
 })
 
+test('v9 proxy sends final Office conformance remediation after merging and keeps native compression', async () => {
+  const fixture = upstreamFixture('9.0.0', (form) => {
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+      { op: 'merge' },
+      { op: 'remediate', profile: 'PDF/A-2b' },
+    ])
+    assert.equal(form.has('nativePdfa'), false)
+    assert.equal(form.has('pdfaProfile'), false)
+    assert.equal(form.get('nativeQuality'), '65')
+    assert.equal(form.get('nativeReduceImageResolution'), 'true')
+    assert.equal(form.get('nativeMaxImageResolution'), '150')
+    assert.equal(form.has('quality'), false)
+    assert.equal(form.has('reduceImageResolution'), false)
+    assert.equal(form.has('maxImageResolution'), false)
+    assert.equal(form.getAll('files').length, 2)
+  })
+  const result = await proxyConversionRequest(
+    requestFor(
+      'office-pdf',
+      {
+        merge: true,
+        pdfaProfile: 'PDF/A-2b',
+        quality: '65',
+        reduceImageResolution: true,
+        maxImageResolution: '150',
+      },
+      {},
+      [new File(['First'], 'first.txt'), new File(['Second'], 'second.txt')],
+    ),
+    fixture.fetcher,
+  )
+  assert.equal(result.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
+test('v9 proxy rejects explicitly native conformance with Office post-processing before upload', async () => {
+  const fixture = upstreamFixture('9.0.0', () => {
+    assert.fail('The upstream must not receive incompatible native conformance settings.')
+  })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'office-pdf',
+        { splitMode: 'intervals', splitSpan: '2', pdfaProfile: 'PDF/A-2b', pdfaMethod: 'native' },
+        {},
+        [new File(['Document'], 'document.txt')],
+      ),
+      fixture.fetcher,
+    ),
+    /requires PDF remediation/,
+  )
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
+})
+
 test('rejects a Gotenberg 9-only option against v8 before forwarding conversion', async () => {
   const fixture = upstreamFixture('8.40.0', () => {})
   await assert.rejects(

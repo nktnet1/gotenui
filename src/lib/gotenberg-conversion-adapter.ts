@@ -123,9 +123,14 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
     throw new InputError('This PDF/A profile cannot be combined with the selected PDF/UA profile.')
   }
   const nativePdfaProfiles = new Set(['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b', 'PDF/A-4'])
+  // Gotenberg 9 exports each source PDF natively *before* applying stages.
+  // A subsequent merge, split or select can invalidate its conformance. Finish
+  // with remediation rather than claiming the native profile on edited PDFs.
+  const hasBuiltInStages = stages.length > 0
   const canExportNatively =
     operation.id === 'office-pdf' &&
     !postProcessing &&
+    !hasBuiltInStages &&
     (!pdfa || nativePdfaProfiles.has(pdfa)) &&
     (!pdfua || pdfua === 'PDF/UA-1') &&
     !(pdfa === 'PDF/A-4' && pdfua)
