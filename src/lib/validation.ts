@@ -61,6 +61,8 @@ export const payloadSchema = v.object({
   headerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   footerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   postProcess: v.optional(pdfPostProcessSchema),
+  conversionStages: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(60_000))),
+  acknowledgedConversionRedaction: v.optional(v.boolean()),
   outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
   requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
   traceparent: v.optional(v.pipe(v.string(), v.maxLength(55))),
@@ -525,9 +527,11 @@ export function validateFiles(
     | 'headerHtml'
     | 'footerHtml'
     | 'postProcess'
+    | 'conversionStages'
     | 'advanced'
   >,
   postFiles: PostProcessFiles = {},
+  stageFiles: readonly File[] = [],
 ): void {
   const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
@@ -549,6 +553,11 @@ export function validateFiles(
   } else if (files.length > 0) {
     throw new InputError('This operation takes source text or a URL, not input documents.')
   }
+  if (stageFiles.length && !payload?.conversionStages) {
+    throw new InputError('Conversion stage files require a PDF conversion pipeline.')
+  }
+  if (stageFiles.length > 20)
+    throw new InputError('At most 20 conversion stage files are supported.')
   if (!operation.auxiliary && auxiliary.length > 0) {
     // HTML/Markdown assets are auxiliary uploads, with a different field name.
     if (operation.input !== 'html' && operation.input !== 'markdown') {
@@ -605,7 +614,7 @@ export function validateFiles(
   if (total > maxBytes) {
     throw new InputError('Combined document content exceeds the configured size limit.', 413)
   }
-  for (const file of [...files, ...auxiliary]) {
+  for (const file of [...files, ...auxiliary, ...stageFiles]) {
     const name = safeFilename(file.name)
     if (operation.input === 'markdown' && auxiliary.includes(file) && /\.md$/i.test(name)) {
       throw new InputError(
@@ -962,6 +971,15 @@ export function validatePayload(input: unknown): {
   const payload = parsed.output
   const operation = OPERATION_BY_ID.get(payload.operation)
   if (!operation) throw new InputError('Unknown Gotenberg operation.')
+  if (
+    payload.conversionStages !== undefined &&
+    (operation.output !== 'pdf' || operation.input === 'pdf')
+  ) {
+    throw new InputError('Conversion-time stages require a PDF conversion tool.')
+  }
+  if (payload.acknowledgedConversionRedaction && !payload.conversionStages) {
+    throw new InputError('Redaction acknowledgement requires conversion-time stages.')
+  }
 
   const definitions = new Map(operation.fields.map((field) => [field.name, field]))
   if (Object.keys(payload.fields).length > 75 || Object.keys(payload.advanced).length > 40) {

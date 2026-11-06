@@ -11,6 +11,7 @@ function requestFor(
   extra: Record<string, unknown> = {},
   files: File[] = [],
   auxiliary: File[] = [],
+  stageFiles: File[] = [],
 ): Request {
   const body = new FormData()
   body.set(
@@ -27,6 +28,7 @@ function requestFor(
   )
   for (const file of files) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
+  for (const file of stageFiles) body.append('stageFile', file, file.name)
   return new Request(`${origin}/api/gotenberg/convert`, {
     method: 'POST',
     headers: { Origin: origin, 'X-Gotenberg-Url': upstream },
@@ -269,4 +271,78 @@ test('rejects invalid pipeline stages and incompatible v8 requests without forwa
     (error: unknown) => error instanceof Error && 'status' in error && error.status === 409,
   )
   assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
+})
+
+test('v9 proxy sends conversion stages and their files through the authenticated request', async () => {
+  const attachment = new File(['Attached receipt'], 'receipt.txt')
+  const v9 = upstreamFixture('9.0.0', (form) => {
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+      { op: 'attach', file: 'receipt.txt' },
+      { op: 'set-metadata', title: 'Archived conversion' },
+    ])
+    assert.deepEqual(
+      (form.getAll('files') as File[]).map(({ name }) => name),
+      ['index.html', 'receipt.txt'],
+    )
+  })
+  const result = await proxyConversionRequest(
+    requestFor(
+      'html-pdf',
+      {},
+      {
+        conversionStages:
+          '[{"op":"attach","file":"receipt.txt"},{"op":"set-metadata","title":"Archived conversion"}]',
+      },
+      [],
+      [],
+      [attachment],
+    ),
+    v9.fetcher,
+  )
+  assert.equal(result.status, 200)
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 1 })
+})
+
+test('v8 refuses conversion stages and their uploads before forwarding anything', async () => {
+  const v8 = upstreamFixture('8.40.0', () => {})
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('html-pdf', {}, { conversionStages: '[{"op":"optimize"}]' }),
+      v8.fetcher,
+    ),
+    /require Gotenberg 9/,
+  )
+  assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
+})
+
+test('conversion stage uploads reject duplicate and unsafe filenames before upstream submission', async () => {
+  const v9 = upstreamFixture('9.0.0', () => {})
+  const file = new File(['x'], 'index.html')
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'html-pdf',
+        {},
+        { conversionStages: '[{"op":"attach","file":"index.html"}]' },
+        [],
+        [],
+        [file],
+      ),
+      v9.fetcher,
+    ),
+    /Duplicate filename/,
+  )
+  assert.deepEqual(v9.counts(), { probes: 0, conversions: 0 })
+})
+
+test('conversion stage pipelines cannot be submitted for screenshots', async () => {
+  const v9 = upstreamFixture('9.0.0', () => {})
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('html-shot', {}, { conversionStages: '[{"op":"optimize"}]' }),
+      v9.fetcher,
+    ),
+    /require a PDF conversion tool/,
+  )
+  assert.deepEqual(v9.counts(), { probes: 0, conversions: 0 })
 })

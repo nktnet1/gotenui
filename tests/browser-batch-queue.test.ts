@@ -457,3 +457,46 @@ describe('browser-managed batch queue', () => {
     queue.dispose()
   })
 })
+
+describe('conversion stage assets in the batch queue', () => {
+  it('retains stage uploads when queued even if the form selection changes', async () => {
+    const receipt = new File(['proof'], 'proof.txt')
+    const conversion = input()
+    conversion.candidate = {
+      operation: 'html-pdf',
+      fields: {},
+      advanced: {},
+      source: '<html><body>batch pipeline</body></html>',
+      conversionStages: '[{"op":"attach","file":"proof.txt"}]',
+    }
+    conversion.stageFiles = [receipt]
+    let captured!: BatchInput
+    const { queue } = queueWith(async (prepared) => {
+      captured = prepared
+      return pdf()
+    })
+    queue.enqueue(conversion)
+    conversion.stageFiles.length = 0
+    queue.start()
+    await tick()
+    expect(captured.stageFiles).toEqual([receipt])
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('completed')
+    queue.dispose()
+  })
+
+  it('counts conversion stage uploads toward the queued memory budget', () => {
+    const conversion = input()
+    conversion.candidate = {
+      operation: 'html-pdf',
+      fields: {},
+      advanced: {},
+      source: '<html><body>batch pipeline</body></html>',
+      conversionStages: '[{"op":"attach","file":"proof.txt"}]',
+    }
+    conversion.stageFiles = [new File([new Uint8Array(3_400_000)], 'proof.txt')]
+    const { queue } = queueWith(async () => pdf())
+    for (let i = 0; i < 9; i++) queue.enqueue(conversion)
+    expect(() => queue.enqueue(conversion)).toThrow(/Batch inputs exceed/)
+    queue.dispose()
+  })
+})

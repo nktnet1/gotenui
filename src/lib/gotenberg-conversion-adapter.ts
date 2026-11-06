@@ -1,4 +1,5 @@
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
 
@@ -80,7 +81,7 @@ function take(form: FormData, name: string): string | null {
   return typeof value === 'string' ? value : null
 }
 
-function v9PdfStages(form: FormData, operation: Operation): Stage[] {
+function v9PdfStages(form: FormData, operation: Operation, postProcessing: boolean): Stage[] {
   const stages: Stage[] = []
   if (form.has('stages')) {
     throw new InputError('Advanced stages require the Gotenberg 9 PDF pipeline editor.')
@@ -106,7 +107,7 @@ function v9PdfStages(form: FormData, operation: Operation): Stage[] {
   }
   const pdfa = take(form, 'pdfa')
   const pdfua = take(form, 'pdfua') === 'true'
-  if (operation.id === 'office-pdf' && !(pdfa === 'PDF/A-4' && pdfua)) {
+  if (operation.id === 'office-pdf' && !postProcessing && !(pdfa === 'PDF/A-4' && pdfua)) {
     if (pdfa) form.set('nativePdfa', pdfa)
     if (pdfua) form.set('nativePdfua', 'PDF/UA-1')
   } else if (pdfa || pdfua) {
@@ -155,12 +156,19 @@ export function adaptConversionForm(
   payload: ConversionPayload,
   form: FormData,
   version: SupportedGotenbergMajor,
+  stageFiles: readonly File[] = [],
 ): FormData {
   if (version === 8) {
+    if (payload.conversionStages || stageFiles.length) {
+      throw new InputError('Conversion-time PDF pipeline stages require Gotenberg 9.')
+    }
     if (form.has('paperSize')) {
       throw new InputError('Named paper sizes require Gotenberg 9.')
     }
     return form
+  }
+  if (stageFiles.length && !payload.conversionStages) {
+    throw new InputError('Conversion stage file uploads require a configured pipeline.')
   }
   if (!v9ConversionOperationIds.has(operation.id)) {
     throw new InputError(`The ${operation.title} tool has not been migrated to Gotenberg 9.`, 409)
@@ -180,8 +188,45 @@ export function adaptConversionForm(
     v9MediaFeatures(form)
   }
   if (operation.output === 'pdf') {
-    const stages = v9PdfStages(form, operation)
-    if (stages.length) form.set('stages', JSON.stringify(stages))
+    const generated = v9PdfStages(form, operation, Boolean(payload.conversionStages))
+    const userStages = payload.conversionStages
+      ? parsePdfPipeline(payload.conversionStages, {
+          assetNames: stageFiles.map(({ name }) => name),
+          acknowledgedRedaction: payload.acknowledgedConversionRedaction,
+        })
+      : []
+    if (userStages.some((stage) => stage.op === 'decrypt')) {
+      throw new InputError(
+        'Decryption is only available for uploaded PDFs, not newly converted PDFs.',
+      )
+    }
+    const referenced = new Set(
+      userStages.flatMap((stage) =>
+        ['source', 'image', 'file', 'certificate', 'key', 'xml']
+          .map((key) => stage[key])
+          .filter((value): value is string => typeof value === 'string'),
+      ),
+    )
+    for (const file of stageFiles) {
+      if (!referenced.has(file.name)) {
+        throw new InputError(`Unused conversion stage file: ${file.name}.`)
+      }
+    }
+    // Merge/split controls run first; user stages follow; built-in PDF/A remediation
+    // stays last so subsequent edits cannot silently invalidate the requested profile.
+    const remediation = generated.filter((stage) => stage.op === 'remediate')
+    const setup = generated.filter((stage) => stage.op !== 'remediate')
+    const stages = [...setup, ...userStages, ...remediation]
+    if (stages.length) {
+      parsePdfPipeline(JSON.stringify(stages), {
+        assetNames: stageFiles.map(({ name }) => name),
+        acknowledgedRedaction: payload.acknowledgedConversionRedaction,
+      })
+      form.set('stages', JSON.stringify(stages))
+    }
+    for (const file of stageFiles) form.append('files', file, file.name)
+  } else if (payload.conversionStages || stageFiles.length) {
+    throw new InputError('Conversion-time PDF stages require PDF output.')
   }
   if (operation.id === 'office-pdf') v9OfficeOptions(form, payload)
   return form

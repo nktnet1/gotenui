@@ -56,7 +56,7 @@ export function backendCompatibilityNotice(status: ServerStatus | null): string 
     return 'Gotenui could not verify this Gotenberg version. Tools are paused until /version reports a supported version.'
   }
   if (version.major === 9) {
-    return 'Gotenberg 9 detected. PDF and conversion tools use the v9 API; some v8-only PDF settings and complex conversion post-processing remain unavailable. Foreground overlays and form-only flattening require acknowledgement.'
+    return 'Gotenberg 9 detected. PDF and conversion tools use the v9 API, including ordered conversion-time processing stages. Legacy v8-only post-processing settings remain unavailable. Foreground overlays and form-only flattening require acknowledgement.'
   }
   if (version.major !== 8) {
     return `Gotenberg ${version.major} is not supported. Select Gotenberg 8 or 9 to use the tools.`

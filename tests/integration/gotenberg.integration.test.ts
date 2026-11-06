@@ -45,6 +45,7 @@ function request(
   inputFiles: File[] = [],
   auxiliary: File[] = [],
   postFiles: PostProcessFiles = {},
+  stageFiles: File[] = [],
 ): Request {
   const payload: ConversionPayload = {
     operation: operation.id,
@@ -61,6 +62,8 @@ function request(
     ...(overrides.headerHtml ? { headerHtml: overrides.headerHtml } : {}),
     ...(overrides.footerHtml ? { footerHtml: overrides.footerHtml } : {}),
     ...(overrides.postProcess ? { postProcess: overrides.postProcess } : {}),
+    ...(overrides.conversionStages ? { conversionStages: overrides.conversionStages } : {}),
+    ...(overrides.acknowledgedConversionRedaction ? { acknowledgedConversionRedaction: true } : {}),
     ...(overrides.downloadFrom ? { downloadFrom: overrides.downloadFrom } : {}),
     ...(overrides.webhook ? { webhook: overrides.webhook } : {}),
     ...(overrides.outputName ? { outputName: overrides.outputName } : {}),
@@ -72,6 +75,7 @@ function request(
   body.set('payload', JSON.stringify(payload))
   for (const file of inputFiles) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
+  for (const file of stageFiles) body.append('stageFile', file, file.name)
   for (const kind of OVERLAY_KINDS) {
     for (const file of overlayUploads(postFiles, kind)) body.append(kind, file, file.name)
   }
@@ -1523,6 +1527,52 @@ test.skipIf(!isV9).each(['html-pdf', 'office-pdf'] as const)(
     expect(response.headers.get('content-type')).toContain('application/pdf')
     expect(new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).slice(0, 5))).toBe(
       '%PDF-',
+    )
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 applies PDF metadata stages immediately after HTML conversion',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    expect(operation).toBeDefined()
+    if (!operation) throw new Error('HTML conversion tool missing')
+    const result = await proxyConversionRequest(
+      request(operation, {
+        source: '<html><body><h1>Conversion pipeline</h1></body></html>',
+        conversionStages: '[{"op":"set-metadata","title":"HTML pipeline complete"}]',
+      }),
+    )
+    if (!result.ok) throw new Error(`HTML stages: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    expect(await inspectV9Pdf('metadata', await result.arrayBuffer())).toMatchObject({
+      'verified.pdf': { title: 'HTML pipeline complete' },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 attaches an auxiliary file during Office conversion',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    expect(operation).toBeDefined()
+    if (!operation) throw new Error('Office conversion tool missing')
+    const result = await proxyConversionRequest(
+      request(
+        operation,
+        { conversionStages: '[{"op":"attach","file":"receipt.txt"}]' },
+        [new File(['Gotenui with an attached receipt'], 'document.txt')],
+        [],
+        {},
+        [new File(['Payment receipt'], 'receipt.txt')],
+      ),
+    )
+    if (!result.ok) throw new Error(`Office stages: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    expect(JSON.stringify(await inspectV9Pdf('attachments', await result.arrayBuffer()))).toContain(
+      'receipt.txt',
     )
   },
   120_000,

@@ -48,17 +48,22 @@ export function PdfPipelineBuilder({
   acknowledgedRedaction,
   onRedactionChange,
   error,
+  conversionMode = false,
 }: {
   value: string
   onChange: (value: string) => void
   acknowledgedRedaction: boolean
   onRedactionChange: (value: boolean) => void
   error: string | null
+  conversionMode?: boolean
 }) {
   const [stages, setStages] = useState<EditorStage[]>(() => initialStages(value))
   const [selected, setSelected] = useState<PdfPipelineOp>('select')
   const nextId = useRef(Math.max(...initialStages(value).map(({ id }) => id)) + 1)
   const [editorError, setEditorError] = useState<string | null>(null)
+  const availableStages = conversionMode
+    ? PDF_PIPELINE_STAGES.filter(({ op }) => op !== 'decrypt')
+    : PDF_PIPELINE_STAGES
 
   const update = (next: EditorStage[]) => {
     setStages(next)
@@ -74,7 +79,7 @@ export function PdfPipelineBuilder({
   }
   const add = () => {
     if (stages.length >= 30) return
-    const definition = PDF_PIPELINE_STAGES.find(({ op }) => op === selected)
+    const definition = availableStages.find(({ op }) => op === selected)
     if (!definition) return
     update([
       ...stages,
@@ -120,7 +125,7 @@ export function PdfPipelineBuilder({
               value={selected}
               onChange={(event) => setSelected(event.target.value as PdfPipelineOp)}
             >
-              {PDF_PIPELINE_STAGES.map(({ op, label }) => (
+              {availableStages.map(({ op, label }) => (
                 <option key={op} value={op}>
                   {label}
                 </option>
@@ -239,7 +244,8 @@ export function PdfPipelineBuilder({
         </details>
       )}
       <p className="text-xs text-slate-500 dark:text-slate-400">
-        Referenced assets must be uploaded under “Additional stage files” with exactly matching
+        Referenced assets must be uploaded under “
+        {conversionMode ? 'Pipeline stage files' : 'Additional stage files'}” with exactly matching
         filenames. Passwords entered in the JSON editor are visible while editing, but hidden in the
         preview.
       </p>

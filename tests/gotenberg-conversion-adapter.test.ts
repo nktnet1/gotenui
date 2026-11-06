@@ -254,3 +254,101 @@ test('v9 rejects v8-only remote attachment destinations instead of changing thei
     '[{"url":"https://example.test/report.docx"}]',
   )
 })
+
+test('v9 combines conversion stages before final PDF/A remediation and preserves the selected options', () => {
+  const { operation, payload, form } = fixture('html-pdf', {
+    source: '<html><body>New content</body></html>',
+    fields: { pdfa: 'PDF/A-2b' },
+    conversionStages: JSON.stringify([
+      { op: 'stamp-text', text: 'APPROVED', x: 15, y: 20 },
+      { op: 'set-metadata', title: 'Converted and processed' },
+    ]),
+  })
+  const adapted = adaptConversionForm(operation, payload, form, 9)
+  assert.deepEqual(JSON.parse(String(adapted.get('stages'))), [
+    { op: 'stamp-text', text: 'APPROVED', x: 15, y: 20 },
+    { op: 'set-metadata', title: 'Converted and processed' },
+    { op: 'remediate', profile: 'PDF/A-2b' },
+  ])
+  assert.equal(adapted.get('pdfa'), null)
+})
+
+test('v9 Office conversion merges first, then runs custom stages and remediates conformance last', () => {
+  const { operation, payload, form } = fixture('office-pdf', {
+    fields: { merge: true, pdfa: 'PDF/A-2b', pdfua: true },
+    conversionStages: '[{"op":"set-metadata","title":"Document bundle"}]',
+  })
+  const adapted = adaptConversionForm(operation, payload, form, 9)
+  assert.equal(adapted.has('nativePdfa'), false)
+  assert.equal(adapted.has('nativePdfua'), false)
+  assert.deepEqual(JSON.parse(String(adapted.get('stages'))), [
+    { op: 'merge' },
+    { op: 'set-metadata', title: 'Document bundle' },
+    { op: 'remediate', profile: ['PDF/A-2b', 'PDF/UA-1'] },
+  ])
+})
+
+test('v9 attaches named stage uploads to PDF conversions, without changing the source document', () => {
+  const { operation, payload, form } = fixture('office-pdf', {
+    conversionStages: '[{"op":"attach","file":"receipt.txt"}]',
+  })
+  const attachment = new File(['receipt bytes'], 'receipt.txt')
+  const adapted = adaptConversionForm(operation, payload, form, 9, [attachment])
+  assert.deepEqual(
+    (adapted.getAll('files') as File[]).map(({ name }) => name),
+    ['document.txt', 'receipt.txt'],
+  )
+  assert.equal(adapted.get('stages'), '[{"op":"attach","file":"receipt.txt"}]')
+})
+
+test('v8 rejects conversion-time stages rather than silently ignoring them', () => {
+  const { operation, payload, form } = fixture('html-pdf', {
+    source: '<html><body>Test</body></html>',
+    conversionStages: '[{"op":"optimize"}]',
+  })
+  assert.throws(() => adaptConversionForm(operation, payload, form, 8), /require Gotenberg 9/)
+})
+
+test('v9 rejects invalid stage references and dangerous ordering before conversion', () => {
+  const missing = fixture('office-pdf', {
+    conversionStages: '[{"op":"attach","file":"missing.txt"}]',
+  })
+  assert.throws(
+    () => adaptConversionForm(missing.operation, missing.payload, missing.form, 9),
+    /upload an additional file named/,
+  )
+  const decrypt = fixture('office-pdf', {
+    conversionStages: '[{"op":"decrypt","password":"secret"}]',
+  })
+  assert.throws(
+    () => adaptConversionForm(decrypt.operation, decrypt.payload, decrypt.form, 9),
+    /Decryption is only available/,
+  )
+  const render = fixture('html-pdf', {
+    source: '<html><body>Test</body></html>',
+    fields: { pdfa: 'PDF/A-2b' },
+    conversionStages: '[{"op":"render","pages":"1","format":"png"}]',
+  })
+  assert.throws(
+    () => adaptConversionForm(render.operation, render.payload, render.form, 9),
+    /Rendering must be the last stage/,
+  )
+})
+
+test('conversion stage files cannot be sent without a configured v9 pipeline', () => {
+  const { operation, payload, form } = fixture('office-pdf')
+  assert.throws(
+    () => adaptConversionForm(operation, payload, form, 9, [new File(['x'], 'extra.txt')]),
+    /require a configured pipeline/,
+  )
+})
+
+test('v9 rejects uploaded conversion stage files that no stage references', () => {
+  const { operation, payload, form } = fixture('office-pdf', {
+    conversionStages: '[{"op":"optimize"}]',
+  })
+  assert.throws(
+    () => adaptConversionForm(operation, payload, form, 9, [new File(['x'], 'unused.txt')]),
+    /Unused conversion stage file/,
+  )
+})

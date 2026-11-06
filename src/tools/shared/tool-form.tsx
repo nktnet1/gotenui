@@ -52,7 +52,7 @@ import { convertWithGotenberg, REQUEST_TIMEOUT_MS } from '#/lib/gotenberg-client
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { OFFICE_ACCEPT } from '#/lib/office-formats'
 import { versionAtLeast } from '#/lib/operation-availability'
-import { parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { DEFAULT_PDF_PIPELINE, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import {
   type OverlayKind,
   overlayUploads,
@@ -134,6 +134,9 @@ export function Workbench({
   const [footerHtml, setFooterHtml] = useState('')
   const [postProcess, setPostProcess] = useState<PdfPostProcess>({})
   const [postFiles, setPostFiles] = useState<PostProcessFiles>({})
+  const [conversionStages, setConversionStages] = useState('')
+  const [conversionStageFiles, setConversionStageFiles] = useState<File[]>([])
+  const [acknowledgedConversionRedaction, setAcknowledgedConversionRedaction] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [auxFiles, setAuxFiles] = useState<File[]>([])
   const [advanced, setAdvanced] = useState('')
@@ -182,6 +185,9 @@ export function Workbench({
     setFooterHtml('')
     setPostProcess({})
     setPostFiles({})
+    setConversionStages('')
+    setConversionStageFiles([])
+    setAcknowledgedConversionRedaction(false)
     setFiles([])
     setAuxFiles([])
     setAdvanced('')
@@ -276,6 +282,7 @@ export function Workbench({
   const operationHasFileAssets = isSourceEditor
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
   const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && !isV9
+  const supportsConversionPipeline = isV9 && operation.output === 'pdf' && operation.input !== 'pdf'
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
   const pipelineError = (() => {
     if (operation.id !== 'pdf-pipeline') return null
@@ -287,6 +294,18 @@ export function Workbench({
       return null
     } catch (error) {
       return error instanceof Error ? error.message : 'Invalid PDF pipeline.'
+    }
+  })()
+  const conversionPipelineError = (() => {
+    if (!conversionStages) return null
+    try {
+      parsePdfPipeline(conversionStages, {
+        assetNames: conversionStageFiles.map(({ name }) => name),
+        acknowledgedRedaction: acknowledgedConversionRedaction,
+      })
+      return null
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Invalid conversion PDF stages.'
     }
   })()
   const docsUrl =
@@ -368,6 +387,10 @@ export function Workbench({
       throw new InputError('Gotenberg 9 removed separate webhook error callbacks.')
     }
     if (pipelineError) throw new InputError(pipelineError)
+    if (conversionPipelineError) throw new InputError(conversionPipelineError)
+    if (conversionStages && !supportsConversionPipeline) {
+      throw new InputError('The configured conversion PDF stages require Gotenberg 9.')
+    }
     const selectedFields = activeOperationFields(operation, fields, backendVersion)
     if (selectedFields.pdfa === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false) {
       throw new Error('PDF/A-4 requires Gotenberg 8.39 or newer.')
@@ -403,6 +426,11 @@ export function Workbench({
         operation.input === 'markdown' ? (markdownTemplate ?? undefined) : undefined,
       headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
       footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
+      conversionStages: supportsConversionPipeline ? conversionStages || undefined : undefined,
+      acknowledgedConversionRedaction:
+        supportsConversionPipeline && conversionStages
+          ? acknowledgedConversionRedaction
+          : undefined,
       postProcess: v8StandaloneOverlay
         ? activeStandaloneSettings
         : hasPostProcessing && Object.values(postProcess).some((value) => value !== undefined)
@@ -430,6 +458,7 @@ export function Workbench({
         candidate: buildCandidate(),
         files,
         auxiliary: auxFiles,
+        stageFiles: supportsConversionPipeline ? conversionStageFiles : [],
         postFiles: v8StandaloneOverlay || !standaloneKind ? postFiles : {},
       })
       toast.success(`Added job #${id} to the batch queue below.`)
@@ -462,6 +491,7 @@ export function Workbench({
         auxFiles,
         signal,
         v8StandaloneOverlay || !standaloneKind ? postFiles : {},
+        supportsConversionPipeline ? conversionStageFiles : [],
       )
       if (signal.aborted) {
         if (deadline.aborted) toast.error('Gotenberg did not respond within three minutes.')
@@ -788,10 +818,69 @@ export function Workbench({
                 onFooterChange={setFooterHtml}
               />
             )}
-            {isV9 && PDF_POST_PROCESS_IDS.has(operation.id) && (
-              <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
-                Gotenberg 9 PDF post-processing will be available in a later patch. Native PDF/A,
-                PDF/UA, and Office merge/split options are already supported.
+            {supportsConversionPipeline && (
+              <section className="space-y-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      PDF processing after conversion (Gotenberg 9)
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                      Apply ordered PDF stages in the same conversion request. Office merge and
+                      split controls run first; automatic PDF/A remediation runs last. Gotenberg 8
+                      retains its separate post-processing controls.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    aria-expanded={Boolean(conversionStages)}
+                    onClick={() => {
+                      setConversionStages(conversionStages ? '' : DEFAULT_PDF_PIPELINE)
+                      setConversionStageFiles([])
+                      setAcknowledgedConversionRedaction(false)
+                    }}
+                  >
+                    {conversionStages ? 'Remove pipeline' : 'Add pipeline'}
+                  </Button>
+                </div>
+                {conversionStages && (
+                  <div className="space-y-4">
+                    <PdfPipelineBuilder
+                      value={conversionStages}
+                      onChange={setConversionStages}
+                      acknowledgedRedaction={acknowledgedConversionRedaction}
+                      onRedactionChange={setAcknowledgedConversionRedaction}
+                      error={conversionPipelineError}
+                      conversionMode
+                    />
+                    <UploadZone
+                      label="Pipeline stage files"
+                      description="Upload named PDFs, PNG/JPEG stamps, invoices, attachments, or signing credentials. Reference each exact filename in its stage settings."
+                      files={conversionStageFiles}
+                      onChange={setConversionStageFiles}
+                      multiple
+                      maxFiles={20}
+                    />
+                  </div>
+                )}
+              </section>
+            )}
+            {!isV9 && conversionStages && (
+              <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
+                The configured PDF pipeline requires Gotenberg 9. Return to a v9 connection or{' '}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => {
+                    setConversionStages('')
+                    setConversionStageFiles([])
+                    setAcknowledgedConversionRedaction(false)
+                  }}
+                >
+                  discard the stages
+                </button>
+                .
               </p>
             )}
             {hasPostProcessing && (

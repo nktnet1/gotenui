@@ -241,6 +241,21 @@ describe('visual pipeline builder', () => {
     assert.match(markup, /aria-label="Remove Optimise"/)
     assert.match(markup, /Preview ordered stages/)
   })
+  it('hides decryption in conversion-time pipelines and labels their file uploader', () => {
+    const markup = renderToStaticMarkup(
+      createElement(PdfPipelineBuilder, {
+        value: DEFAULT_PDF_PIPELINE,
+        onChange: () => {},
+        acknowledgedRedaction: false,
+        onRedactionChange: () => {},
+        error: null,
+        conversionMode: true,
+      }),
+    )
+    assert.doesNotMatch(markup, /value="decrypt"/)
+    assert.match(markup, /value="sign"/)
+    assert.match(markup, /Pipeline stage files/)
+  })
   it('shows a mandatory redaction confirmation only for redaction stages', () => {
     const props = {
       onChange: () => {},

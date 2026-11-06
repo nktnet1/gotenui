@@ -278,15 +278,17 @@ export async function convertWithGotenberg(
   auxiliary: File[],
   signal: AbortSignal,
   postFiles: PostProcessFiles = {},
+  stageFiles: File[] = [],
 ): Promise<ConversionResult> {
   const headers = targetHeaders(connection)
   const { operation, payload } = validatePayload(candidate)
   // Keep fast client-side feedback; all fields and files are checked again by the server.
-  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES, payload, postFiles)
+  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES, payload, postFiles, stageFiles)
   const body = new FormData()
   body.set('payload', JSON.stringify(payload))
   for (const file of files) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
+  for (const file of stageFiles) body.append('stageFile', file, file.name)
   for (const kind of OVERLAY_KINDS) {
     for (const file of overlayUploads(postFiles, kind)) body.append(kind, file, file.name)
   }

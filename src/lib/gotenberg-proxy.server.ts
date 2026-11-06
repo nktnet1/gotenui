@@ -332,6 +332,12 @@ function allowedConversionContentTypes(
       }),
     )
   }
+  if (payload.conversionStages) {
+    const stages = parsePdfPipeline(payload.conversionStages, {
+      acknowledgedRedaction: payload.acknowledgedConversionRedaction,
+    })
+    return pipelineResponseTypes(stages)
+  }
   const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
   if (operation.id === 'render-pages') {
     const imageType = payload.fields.format === 'jpeg' ? 'image/jpeg' : 'image/png'
@@ -436,6 +442,7 @@ export async function proxyConversionRequest(
   let candidate: unknown
   const files: File[] = []
   const auxiliary: File[] = []
+  const stageFiles: File[] = []
   const postFiles: PostProcessFiles = {}
   let payloadCount = 0
   for (const [key, value] of fields) {
@@ -450,6 +457,8 @@ export async function proxyConversionRequest(
       files.push(value)
     } else if (key === 'auxiliary' && value instanceof File) {
       auxiliary.push(value)
+    } else if (key === 'stageFile' && value instanceof File) {
+      stageFiles.push(value)
     } else if (key === 'embeds' && value instanceof File) {
       if (!postFiles.embeds) postFiles.embeds = []
       postFiles.embeds.push(value)
@@ -473,7 +482,7 @@ export async function proxyConversionRequest(
   }
   if (payloadCount !== 1) throw new ProxyInputError('Exactly one conversion payload is required.')
   const { operation, payload } = validatePayload(candidate)
-  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles)
+  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, stageFiles)
   const target = await resolveAuthenticatedConnectionTarget(
     request,
     settings,
@@ -491,7 +500,7 @@ export async function proxyConversionRequest(
   }
   if (major === 9 && postFiles.embeds?.length) {
     throw new InputError(
-      'Embedded PDF attachments require a Gotenberg 9 attach stage, which is not yet available. Use a Gotenberg 8 connection for this workflow.',
+      'Gotenberg 9 does not accept the legacy embeds field. Use an attach stage with a named pipeline stage file, or use a Gotenberg 8 connection.',
     )
   }
   if (payload.webhook && major === 9) {
@@ -506,7 +515,10 @@ export async function proxyConversionRequest(
   const { path, form } =
     operation.input === 'pdf'
       ? adaptPdfForm(operation, payload, legacy, major, auxiliary)
-      : { path: operation.path, form: adaptConversionForm(operation, payload, legacy, major) }
+      : {
+          path: operation.path,
+          form: adaptConversionForm(operation, payload, legacy, major, stageFiles),
+        }
   const upstream = await fetcher(urlJoin(url, path), {
     method: 'POST',
     ...fetchOptions(request),

@@ -38,6 +38,7 @@ export type BatchInput = {
   files: File[]
   auxiliary: File[]
   postFiles: PostProcessFiles
+  stageFiles?: File[]
 }
 
 type PreparedInput = Omit<BatchInput, 'candidate'> & { candidate: ConversionPayload }
@@ -63,6 +64,7 @@ function inputBytes(input: PreparedInput): number {
   const local = [
     ...input.files,
     ...input.auxiliary,
+    ...(input.stageFiles ?? []),
     ...(Array.isArray(input.postFiles.watermark)
       ? input.postFiles.watermark
       : input.postFiles.watermark
@@ -84,13 +86,22 @@ function inputBytes(input: PreparedInput): number {
 
 function prepareInput(input: BatchInput): PreparedInput {
   const { operation, payload } = validatePayload(input.candidate)
-  validateFiles(operation, input.files, input.auxiliary, MAX_UPLOAD_BYTES, payload, input.postFiles)
+  validateFiles(
+    operation,
+    input.files,
+    input.auxiliary,
+    MAX_UPLOAD_BYTES,
+    payload,
+    input.postFiles,
+    input.stageFiles ?? [],
+  )
   return {
     // Copy the values and collections now, not when the job starts. File bytes remain in memory.
     candidate: structuredClone(payload),
     connection: { ...input.connection },
     files: [...input.files],
     auxiliary: [...input.auxiliary],
+    stageFiles: [...(input.stageFiles ?? [])],
     postFiles: copiedPostFiles(input.postFiles),
   }
 }
@@ -106,6 +117,7 @@ async function executeConversion(
     input.auxiliary,
     signal,
     input.postFiles,
+    input.stageFiles,
   )
 }
 
