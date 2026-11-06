@@ -53,6 +53,8 @@ type RecordEntry = {
   view: BatchJob
   input?: PreparedInput
   controller?: AbortController
+  /** Private download data for opt-in ZIP inspection; never included in job snapshots. */
+  archive?: Blob
 }
 
 function copiedPostFiles(files: PostProcessFiles): PostProcessFiles {
@@ -189,6 +191,16 @@ export class BrowserBatchQueue {
 
   readonly getSnapshot = (): BatchSnapshot => this.snapshot
 
+  /** Only completed ZIP results may be inspected; archive bytes stay out of snapshots. */
+  getArchiveBlob(id: number): Blob | undefined {
+    if (this.disposed) return undefined
+    const record = this.records.find(({ view }) => view.id === id)
+    if (record?.view.status !== 'completed' || record.view.type !== 'application/zip') {
+      return undefined
+    }
+    return record.archive
+  }
+
   private emit() {
     if (this.disposed) return
     this.snapshot = {
@@ -296,6 +308,7 @@ export class BrowserBatchQueue {
             )
           }
           const url = this.createUrl(result.blob)
+          record.archive = result.type === 'application/zip' ? result.blob : undefined
           record.view = {
             id: record.view.id,
             operation: record.view.operation,
@@ -377,6 +390,7 @@ export class BrowserBatchQueue {
     if (index === -1 || this.records[index]?.controller) return
     const [record] = this.records.splice(index, 1)
     if (record?.view.url) this.revokeUrl(record.view.url)
+    if (record) record.archive = undefined
     this.emit()
   }
 
@@ -392,6 +406,7 @@ export class BrowserBatchQueue {
     for (const record of this.records) {
       record.controller?.abort()
       if (record.view.url) this.revokeUrl(record.view.url)
+      record.archive = undefined
     }
     this.records = []
     this.listeners.clear()

@@ -188,6 +188,81 @@ describe('browser-managed batch queue', () => {
     queue.dispose()
   })
 
+  it('offers opt-in ZIP previews without exposing archive data in public job snapshots', async () => {
+    const archive = new Blob(['PK\u0003\u0004 example archive'], { type: 'application/zip' })
+    const pending = deferred<ConversionResult>()
+    const { queue, revoked } = queueWith(async () => pending.promise)
+    const id = queue.enqueue(input())
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    queue.start()
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    pending.resolve({ mode: 'download', type: 'application/zip', name: 'pages.zip', blob: archive })
+    await tick()
+
+    const job = queue.getSnapshot().jobs[0]
+    expect(job).toMatchObject({ id, status: 'completed', type: 'application/zip' })
+    expect(queue.getArchiveBlob(id)).toBe(archive)
+    expect(Object.keys(job ?? {})).not.toContain('archive')
+    const html = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+    expect(html).toContain('Download pages.zip')
+    expect(html).toContain('View archive contents')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('example archive')
+    expect(html).not.toContain('Archive files')
+
+    queue.remove(id)
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    expect(revoked).toEqual([job?.url])
+    queue.dispose()
+  })
+
+  it('does not offer ZIP previews for PDF outputs, cancelled jobs, or disposed queues', async () => {
+    const pdfJob = queueWith(async () => pdf())
+    const pdfId = pdfJob.queue.enqueue(input())
+    pdfJob.queue.start()
+    await tick()
+    expect(pdfJob.queue.getArchiveBlob(pdfId)).toBeUndefined()
+    expect(
+      renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue: pdfJob.queue })),
+    ).not.toContain('View archive contents')
+    pdfJob.queue.dispose()
+
+    const pending = deferred<ConversionResult>()
+    const { queue } = queueWith(async () => pending.promise)
+    const id = queue.enqueue(input())
+    queue.start()
+    queue.cancel(id)
+    pending.resolve({
+      mode: 'download',
+      type: 'application/zip',
+      name: 'late.zip',
+      blob: new Blob(['late']),
+    })
+    await tick()
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    expect(renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))).not.toContain(
+      'View archive contents',
+    )
+    queue.dispose()
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+  })
+
+  it('releases completed ZIP preview references when clearing finished jobs', async () => {
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      type: 'application/zip',
+      name: 'result.zip',
+      blob: new Blob(['PK\u0003\u0004 zip']),
+    }))
+    const id = queue.enqueue(input())
+    queue.start()
+    await tick()
+    expect(queue.getArchiveBlob(id)).toBeInstanceOf(Blob)
+    queue.clearFinished()
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    queue.dispose()
+  })
+
   it('warns about non-compliant v9 validation results but keeps the report downloadable', async () => {
     const completed = vi.fn()
     const result: ConversionResult = {

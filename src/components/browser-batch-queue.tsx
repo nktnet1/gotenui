@@ -14,6 +14,7 @@ import {
 import { useSyncExternalStore } from 'react'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
+import { ZipResultPreview } from '#/components/zip-result-preview'
 import {
   type BrowserBatchQueue,
   MAX_BATCH_CONCURRENT,
@@ -90,8 +91,9 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
           <p className="mb-4 text-xs leading-5 text-slate-500 dark:text-slate-400">
             Jobs stay in this tab only. Inputs and selected credentials are released after success
             or when a job is cleared. Changing connections will not redirect queued jobs. Downloads
-            are available individually after completion. Webhook acceptance is not delivery
-            confirmation. Maximum {MAX_BATCH_JOBS} jobs. Pausing does not cancel active requests.
+            are available individually after completion, with optional ZIP contents previews.
+            Webhook acceptance is not delivery confirmation. Maximum {MAX_BATCH_JOBS} jobs. Pausing
+            does not cancel active requests.
           </p>
           <ul className="space-y-2" aria-label="Queued conversions" aria-live="polite">
             {jobs.map((job) => {
@@ -101,6 +103,7 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
               const canRetry =
                 !job.aborting && (job.status === 'failed' || job.status === 'cancelled')
               const removable = !job.aborting && !runningJob && job.status !== 'queued'
+              const archive = queue.getArchiveBlob(job.id)
               return (
                 <li
                   key={job.id}
@@ -192,6 +195,11 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
                       </Button>
                     )}
                   </div>
+                  {archive && (
+                    <div className="w-full min-w-0 sm:pl-11">
+                      <ZipResultPreview blob={archive} />
+                    </div>
+                  )}
                 </li>
               )
             })}

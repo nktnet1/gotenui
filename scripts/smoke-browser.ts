@@ -930,6 +930,7 @@ async function run(): Promise<void> {
     await page.waitUntil("document.querySelector('#connection-heading') !== null", 'v9 settings')
     await page.evaluate(`(() => {
       const choice = document.querySelector('#connection-choice')
+      window.__v9SmokeProfile = choice.value
       const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
       setter.call(choice, 'browser-demo')
       choice.dispatchEvent(new Event('change', { bubbles: true }))
@@ -960,6 +961,153 @@ async function run(): Promise<void> {
       'selected v9-only tool remains unavailable after switching to v8',
     )
     checks++
+
+    // The Diagnostics dialog and queued conversions must follow their own
+    // connection lifecycles: diagnostics refresh for the active version, while
+    // an enqueued job keeps the server it was originally prepared for.
+    await page.evaluate(`document.querySelector(${JSON.stringify(diagnosticsButton)}).click()`)
+    await page.waitUntil(
+      "document.querySelector('#diagnostics-heading') !== null",
+      'v8 diagnostics after connection switch',
+    )
+    await page.evaluate(`(() => {
+      const tab = [...document.querySelectorAll('[role=tab]')]
+        .find(el => el.textContent.includes('Prometheus'))
+      if (!tab) throw new Error('Prometheus tab is missing')
+      tab.click()
+    })()`)
+    await page.waitUntil(
+      `(() => {
+        const panel = document.querySelector('[role=tabpanel]:not([hidden])')
+        return panel?.textContent.includes('Gotenberg 8 supports the legacy') &&
+          panel.querySelector('button[type=submit]')?.disabled === false
+      })()`,
+      'v8 diagnostics shows its legacy metrics route',
+    )
+    checks++
+    await page.evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()")
+    await page.waitUntil("!document.querySelector('#diagnostics-heading')", 'close v8 diagnostics')
+
+    await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('#gotenui-navigation nav button')]
+        .find(el => el.textContent.trim() === 'HTML to PDF')
+      if (!button || button.disabled) throw new Error('HTML conversion is unavailable on v8')
+      button.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent === 'HTML to PDF' && document.querySelector('#source-editor') !== null",
+      'v8 batch conversion form',
+    )
+    await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Add to batch')
+      if (!button || button.disabled) throw new Error('Add to batch is unavailable')
+      button.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')",
+      'v8 conversion is waiting in the browser batch queue',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const settings = [...document.querySelectorAll('#gotenui-navigation button')]
+        .find(el => el.textContent.trim() === 'Connection settings')
+      if (!settings) throw new Error('Connection settings button is missing')
+      settings.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#connection-choice') !== null",
+      'switch back to v9',
+    )
+    await page.evaluate(`(() => {
+      const choice = document.querySelector('#connection-choice')
+      if (!window.__v9SmokeProfile) throw new Error('The v9 connection was not recorded')
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+      setter.call(choice, window.__v9SmokeProfile)
+      choice.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#connection-choice')?.value === window.__v9SmokeProfile",
+      'select saved v9 connection',
+    )
+    await page.evaluate("document.querySelector('[role=dialog] button[type=submit]').click()")
+    await page.waitUntil(
+      `document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 9.0.0') &&
+        document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')`,
+      'queued v8 work survives selecting v9',
+    )
+    checks++
+
+    await page.evaluate(`document.querySelector(${JSON.stringify(diagnosticsButton)}).click()`)
+    await page.waitUntil(
+      "document.querySelector('#diagnostics-heading') !== null",
+      'v9 diagnostics',
+    )
+    await page.evaluate(`(() => {
+      const tab = [...document.querySelectorAll('[role=tab]')]
+        .find(el => el.textContent.includes('Prometheus'))
+      if (!tab) throw new Error('Prometheus tab is missing')
+      tab.click()
+    })()`)
+    await page.waitUntil(
+      `(() => {
+        const panel = document.querySelector('[role=tabpanel]:not([hidden])')
+        return panel?.textContent.includes('Gotenberg 9 removed /prometheus/metrics') &&
+          panel.querySelector('button[type=submit]')?.disabled === true
+      })()`,
+      'v9 diagnostics does not offer the removed metrics route',
+    )
+    checks++
+    await page.evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()")
+    await page.waitUntil("!document.querySelector('#diagnostics-heading')", 'close v9 diagnostics')
+    await page.evaluate(`(() => {
+      const section = document.querySelector('#gotenui-batch-queue')
+      const cancel = [...section.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Cancel waiting/running')
+      if (!cancel) throw new Error('Batch cancel button is missing')
+      cancel.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue')?.textContent.includes('Cancelled')",
+      'cancel queued conversion after connection switch',
+    )
+    await page.evaluate(`(() => {
+      const section = document.querySelector('#gotenui-batch-queue')
+      const clear = [...section.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Clear finished')
+      if (!clear) throw new Error('Batch clear button is missing')
+      clear.click()
+    })()`)
+    await page.waitUntil("!document.querySelector('#gotenui-batch-queue')", 'clear queued work')
+    checks++
+
+    // Restore the v8 connection for the remaining legacy diagnostics, theme,
+    // and conversion checks in this smoke suite.
+    await page.evaluate(`(() => {
+      const settings = [...document.querySelectorAll('#gotenui-navigation button')]
+        .find(el => el.textContent.trim() === 'Connection settings')
+      if (!settings) throw new Error('Connection settings button is missing')
+      settings.click()
+    })()`)
+    await page.waitUntil("document.querySelector('#connection-choice') !== null", 'restore v8')
+    await page.evaluate(`(() => {
+      const choice = document.querySelector('#connection-choice')
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+      setter.call(choice, 'browser-demo')
+      choice.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#connection-choice')?.value === 'browser-demo'",
+      'restore saved v8 profile',
+    )
+    await page.evaluate("document.querySelector('[role=dialog] button[type=submit]').click()")
+    await page.waitUntil(
+      "document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 8.40.0')",
+      'v8 restored after diagnostics and batch checks',
+    )
+    checks++
+
     await page.evaluate(
       `document.querySelector('#gotenui-navigation nav button:not([disabled])')?.focus()`,
     )
