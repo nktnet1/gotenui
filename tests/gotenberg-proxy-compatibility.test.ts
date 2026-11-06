@@ -218,6 +218,116 @@ test('v9 accepts a ZIP response when Office archives expand to several output do
   assert.equal(response.headers.get('content-type'), 'application/zip')
 })
 
+test('v9 PDF pipeline forwards remote PDF URLs and uploaded source ZIPs, but v8 never forwards them', async () => {
+  const archive = new File(['PK\u0003\u0004'], 'source-pdfs.zip', { type: 'application/zip' })
+  const remote = [
+    {
+      url: 'https://files.example.test/second.pdf',
+      extraHttpHeaders: { Authorization: 'Bearer private' },
+    },
+  ]
+  const v9 = upstreamFixture('9.0.0', (form) => {
+    assert.equal(form.get('files'), null)
+    assert.equal((form.get('archives') as File).name, 'source-pdfs.zip')
+    assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), remote)
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [{ op: 'merge' }])
+  })
+  const payload = { downloadFrom: remote }
+  assert.equal(
+    (
+      await proxyConversionRequest(
+        requestFor('pdf-pipeline', { stages: '[{"op":"merge"}]' }, payload, [], [], [], [archive]),
+        v9.fetcher,
+      )
+    ).status,
+    200,
+  )
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 1 })
+
+  const v8 = upstreamFixture('8.40.0', () => {})
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('pdf-pipeline', { stages: '[{"op":"merge"}]' }, payload, [], [], [], [archive]),
+      v8.fetcher,
+    ),
+    /not available on Gotenberg 8/,
+  )
+  assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
+})
+
+test('v9 PDF pipeline can use only remote PDF inputs, rejecting legacy destinations', async () => {
+  const v9 = upstreamFixture('9.0.0', (form) => {
+    assert.equal(form.getAll('files').length, 0)
+    assert.equal(form.get('archives'), null)
+    assert.equal(form.get('downloadFrom'), '[{"url":"https://files.example.test/source.pdf"}]')
+  })
+  assert.equal(
+    (
+      await proxyConversionRequest(
+        requestFor(
+          'pdf-pipeline',
+          { stages: '[{"op":"optimize"}]' },
+          {
+            downloadFrom: [{ url: 'https://files.example.test/source.pdf' }],
+          },
+        ),
+        v9.fetcher,
+      )
+    ).status,
+    200,
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'pdf-pipeline',
+        { stages: '[{"op":"optimize"}]' },
+        {
+          downloadFrom: [{ url: 'https://files.example.test/source.pdf', field: 'embedded' }],
+        },
+        [new File(['%PDF-1.7'], 'input.pdf')],
+      ),
+      v9.fetcher,
+    ),
+    /not legacy remote attachments or overlays/,
+  )
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 1 })
+})
+
+test('v9 PDF pipeline rejects malformed source ZIPs before forwarding, and other PDF tools stay gated', async () => {
+  const v9 = upstreamFixture('9.0.0', () => {})
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'pdf-pipeline',
+        { stages: '[{"op":"optimize"}]' },
+        {},
+        [],
+        [],
+        [],
+        [new File(['not zip'], 'source.zip')],
+      ),
+      v9.fetcher,
+    ),
+    /not a ZIP file/,
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'rotate',
+        { rotateAngle: '90' },
+        {},
+        [new File(['%PDF-1.7'], 'source.pdf')],
+        [],
+        [],
+        [new File(['PK\u0003\u0004'], 'source.zip')],
+      ),
+      v9.fetcher,
+    ),
+    /supported only by Office, the PDF pipeline, and Chromium HTML\/Markdown/,
+  )
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+})
+
 test('rejects non-ZIP archive uploads, duplicates and unsupported operations at the proxy', async () => {
   const v9 = upstreamFixture('9.0.0', () => {})
   await assert.rejects(
@@ -240,7 +350,7 @@ test('rejects non-ZIP archive uploads, duplicates and unsupported operations at 
       ),
       v9.fetcher,
     ),
-    /supported only by Office and Chromium HTML\/Markdown/,
+    /supported only by Office, the PDF pipeline, and Chromium HTML\/Markdown/,
   )
   await assert.rejects(
     proxyConversionRequest(

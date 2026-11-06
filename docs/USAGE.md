@@ -20,6 +20,8 @@ Choose a tool in the sidebar or open search with **Ctrl+K** or **Cmd+K**. Gotenu
 
 Gotenberg can return a PDF or a ZIP archive depending on the operation and number of outputs. Gotenui downloads the format actually returned.
 
+With **Gotenberg 9**, the PDF pipeline builder accepts individual PDFs, uploaded ZIP archives of PDF sources, and remote PDF URLs. You can mix these inputs, or use a ZIP/remote URL without uploading individual PDFs. ZIPs must be uploaded through **PDF ZIP archives** to be unpacked; ZIPs fetched through `downloadFrom` remain ordinary files. Gotenberg validates ZIP entries and enforces archive limits. Files referenced by pipeline stages (attachments, images, signing credentials, etc.) still require separate named uploads; the filename from a remote response cannot be used as a stage asset. Gotenberg 8's PDF tools and upload rules are unchanged.
+
 ## Results and presets
 
 Completed operations download automatically. PDFs can also be previewed in the browser. **Clear** releases the current result from the tab.

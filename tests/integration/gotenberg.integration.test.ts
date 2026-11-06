@@ -105,16 +105,15 @@ function pdfFile(name = 'original.pdf') {
 /** Build stored ZIP archives in memory, without a platform-dependent zip binary. */
 function officeZipFixture(
   names: readonly string[] = ['document.txt'],
-  contents: Readonly<Record<string, string>> = {},
+  contents: Readonly<Record<string, string | Uint8Array>> = {},
 ): File {
   const locals: Uint8Array[] = []
   const directories: Uint8Array[] = []
   let offset = 0
   for (const name of names) {
     const filename = new TextEncoder().encode(name)
-    const content = new TextEncoder().encode(
-      contents[name] ?? `Converted from ${name} in an Office ZIP archive.`,
-    )
+    const raw = contents[name] ?? `Converted from ${name} in an Office ZIP archive.`
+    const content = typeof raw === 'string' ? new TextEncoder().encode(raw) : raw
     let checksum = 0xffffffff
     for (const byte of content) {
       checksum ^= byte
@@ -612,6 +611,62 @@ test.skipIf(!isV9)(
     })
     expect(await inspectV9Pdf('metadata', bytes)).toMatchObject({
       'verified.pdf': { title: 'Pipeline verified' },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 PDF pipeline extracts uploaded ZIP sources and merges their PDFs',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
+    if (!operation) throw new Error('Missing PDF pipeline')
+    const pdf = new Uint8Array(pdfBytes)
+    const archive = officeZipFixture(['first.pdf', 'second.pdf'], {
+      'first.pdf': pdf,
+      'second.pdf': pdf,
+    })
+    const result = await proxyConversionRequest(
+      request(operation, { fields: { stages: '[{"op":"merge"}]' } }, [], [], {}, [], [archive]),
+    )
+    if (!result.ok) throw new Error(`Pipeline archive: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    expect(await inspectV9Pdf('info', await result.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 2 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 PDF pipeline fetches a remote PDF with authenticated downloadFrom',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
+    if (!operation) throw new Error('Missing PDF pipeline')
+    const remoteUrl = new URL('/gotenui-remote/pipeline.pdf', fixtureUrl).toString()
+    const setupUrl = new URL(remoteUrl)
+    setupUrl.hostname = '127.0.0.1'
+    const prepared = await fetch(setupUrl, {
+      method: 'PUT',
+      headers: { 'x-gotenui-remote-token': 'fixture-remote-key' },
+      body: pdfBytes,
+    })
+    expect(prepared.status).toBe(204)
+    const result = await proxyConversionRequest(
+      request(operation, {
+        fields: { stages: '[{"op":"set-metadata","title":"Remote PDF verified"}]' },
+        downloadFrom: [
+          {
+            url: remoteUrl,
+            extraHttpHeaders: { 'x-gotenui-remote-token': 'fixture-remote-key' },
+          },
+        ],
+      }),
+    )
+    if (!result.ok) throw new Error(`Pipeline remote: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    expect(await inspectV9Pdf('metadata', await result.arrayBuffer())).toMatchObject({
+      'verified.pdf': { title: 'Remote PDF verified' },
     })
   },
   120_000,

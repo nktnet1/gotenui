@@ -17,8 +17,48 @@ export type CallbackReceipt = {
 /** Disposable local test receiver; neither Gotenui nor the product stores callbacks. */
 export function asyncFixtureHandler(): (req: IncomingMessage, res: ServerResponse) => boolean {
   const callbacks = new Map<string, CallbackReceipt[]>()
+  let pipelinePdf: Buffer | undefined
   return (req, res) => {
     const path = (req.url ?? '').split('?')[0] ?? ''
+    if (path === '/gotenui-remote/pipeline.pdf') {
+      if (req.headers['x-gotenui-remote-token'] !== 'fixture-remote-key') {
+        res.writeHead(403).end()
+        return true
+      }
+      if (req.method === 'GET') {
+        if (!pipelinePdf) {
+          res.writeHead(404).end()
+          return true
+        }
+        res.writeHead(200, {
+          'content-type': 'application/pdf',
+          'content-disposition': 'attachment; filename="remote-pipeline.pdf"',
+        })
+        res.end(pipelinePdf)
+        return true
+      }
+      if (req.method === 'PUT') {
+        const chunks: Buffer[] = []
+        let size = 0
+        req.on('data', (chunk: Buffer) => {
+          size += chunk.length
+          if (size <= 2_000_000) chunks.push(chunk)
+          else req.destroy()
+        })
+        req.on('end', () => {
+          const bytes = Buffer.concat(chunks)
+          if (!bytes.subarray(0, 5).equals(Buffer.from('%PDF-'))) {
+            res.writeHead(400).end()
+            return
+          }
+          pipelinePdf = bytes
+          res.writeHead(204).end()
+        })
+        return true
+      }
+      res.writeHead(405).end()
+      return true
+    }
     if (path === '/gotenui-remote/document.txt') {
       if (req.headers['x-gotenui-remote-token'] !== 'fixture-remote-key') {
         res.writeHead(403).end()

@@ -90,14 +90,36 @@ describe('PDF pipeline catalogue and stage contract', () => {
     )
     assert.equal(form.has('auxiliary'), false)
   })
-  it('requires exact uploaded stage asset names and refuses remote/legacy fields', () => {
+  it('accepts remote input PDFs and PDF ZIPs without treating remote files as stage assets', () => {
+    const { payload, legacy } = input([{ op: 'optimize' }])
+    payload.downloadFrom = [
+      {
+        url: 'https://files.example.test/private.pdf',
+        extraHttpHeaders: { Authorization: 'Bearer secret' },
+      },
+    ]
+    legacy.set('downloadFrom', JSON.stringify(payload.downloadFrom))
+    const archives = [new File(['PK\u0003\u0004'], 'documents.zip')]
+    const { path, form } = adaptPdfPipeline(payload, legacy, [], archives)
+    assert.equal(path, '/forms/pdf/pipe')
+    assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), payload.downloadFrom)
+    assert.equal((form.get('archives') as File).name, 'documents.zip')
+    assert.deepEqual(
+      form.getAll('files').map((file) => (file as File).name),
+      ['input.pdf'],
+    )
+    assert.equal(form.has('auxiliary'), false)
+  })
+  it('requires named stage uploads and rejects legacy remote destinations and settings', () => {
     assert.throws(
       () => adapted([{ op: 'attach', file: 'missing.txt' }]),
       /upload an additional file/,
     )
     const bad = input([{ op: 'optimize' }])
-    bad.payload.downloadFrom = [{ url: 'https://example.com/input.pdf' }]
-    assert.throws(() => adaptPdfPipeline(bad.payload, bad.legacy, []), /local files/)
+    for (const destination of [{ field: 'embedded' as const }, { embedded: true }]) {
+      bad.payload.downloadFrom = [{ url: 'https://example.com/input.pdf', ...destination }]
+      assert.throws(() => adaptPdfPipeline(bad.payload, bad.legacy, []), /not legacy remote/)
+    }
     bad.payload.downloadFrom = undefined
     bad.payload.advanced = { optimizeImages: true }
     assert.throws(() => adaptPdfPipeline(bad.payload, bad.legacy, []), /legacy advanced/)

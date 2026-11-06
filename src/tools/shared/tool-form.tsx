@@ -662,11 +662,19 @@ export function Workbench({
             )}
             {canUploadArchives && (
               <UploadZone
-                label={operation.input === 'office' ? 'Office ZIP archives' : 'Asset ZIP archives'}
+                label={
+                  operation.input === 'office'
+                    ? 'Office ZIP archives'
+                    : operation.id === 'pdf-pipeline'
+                      ? 'PDF ZIP archives'
+                      : 'Asset ZIP archives'
+                }
                 description={
                   operation.input === 'office'
                     ? 'ZIP archives of Office documents. Gotenberg extracts each document as an input; multiple outputs may be returned as a ZIP.'
-                    : 'Optional ZIP archives of CSS, images, fonts or other HTML/Markdown assets. Refer to extracted files by name in your source; do not include index.html, header.html or footer.html. Gotenberg enforces archive expansion limits.'
+                    : operation.id === 'pdf-pipeline'
+                      ? 'ZIP archives of input PDFs. Gotenberg extracts the entries under its archive limits; stage assets must still be uploaded separately and named in the editor.'
+                      : 'Optional ZIP archives of CSS, images, fonts or other HTML/Markdown assets. Refer to extracted files by name in your source; do not include index.html, header.html or footer.html. Gotenberg enforces archive expansion limits.'
                 }
                 files={archives}
                 onChange={setArchives}
@@ -1110,16 +1118,15 @@ export function Workbench({
                     </p>
                   </div>
                 )}
-                {operation.id !== 'pdf-pipeline' && (
-                  <RemoteInputsEditor
-                    isV9={isV9}
-                    rows={remoteRows}
-                    onChange={setRemoteRows}
-                    legacy={remoteInput}
-                    onLegacyChange={setRemoteInput}
-                    newId={() => nextOutboundId.current++}
-                  />
-                )}
+                <RemoteInputsEditor
+                  isV9={isV9}
+                  pdfInputOnly={operation.id === 'pdf-pipeline'}
+                  rows={remoteRows}
+                  onChange={setRemoteRows}
+                  legacy={remoteInput}
+                  onLegacyChange={setRemoteInput}
+                  newId={() => nextOutboundId.current++}
+                />
                 <WebhookEditor
                   isV9={isV9}
                   value={webhookSettings}

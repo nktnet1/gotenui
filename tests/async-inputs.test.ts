@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { test } from 'vitest'
-import { WebhookEditor } from '#/components/async-inputs-editor'
+import { RemoteInputsEditor, WebhookEditor } from '#/components/async-inputs-editor'
 import {
   emptyWebhook,
   type RemoteInputRow,
@@ -98,6 +98,33 @@ test('outbound header editing rejects incomplete and case-insensitive duplicate 
       ),
     }),
   )
+})
+
+test('v9 pipeline remote editor only offers PDF input URLs, with no legacy destinations', () => {
+  const props = {
+    isV9: true,
+    rows: [
+      remoteRow({
+        url: 'https://files.example.test/secret/remote.pdf?token=hidden',
+        headers: [{ id: 2, name: 'Authorization', value: 'Bearer supersecret' }],
+      }),
+    ],
+    onChange: () => {},
+    legacy: '',
+    onLegacyChange: () => {},
+    newId: () => 3,
+  }
+  const pipeline = renderToStaticMarkup(
+    createElement(RemoteInputsEditor, { ...props, pdfInputOnly: true }),
+  )
+  assert.match(pipeline, /Remote PDF inputs/)
+  assert.match(pipeline, /Remote ZIP files are not extracted/)
+  assert.match(pipeline, /https:\/\/example\.com\/file\.pdf/)
+  assert.doesNotMatch(pipeline, /Destination field|Regular conversion input \/ HTML asset/)
+  assert.doesNotMatch(pipeline.slice(pipeline.indexOf('Preview:')), /supersecret|token=hidden/)
+  const original = renderToStaticMarkup(createElement(RemoteInputsEditor, props))
+  assert.match(original, /Destination field/)
+  assert.match(original, /Remote file inputs/)
 })
 
 test('webhook editor maps optional URL/method/header fields to validated Gotenberg metadata', () => {

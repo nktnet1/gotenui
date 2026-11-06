@@ -75,12 +75,15 @@ export const payloadSchema = v.object({
 export type ConversionPayload = v.InferOutput<typeof payloadSchema>
 
 /** Gotenberg 9 extracts `archives` into its shared input-file workspace.
- * Office uses them as documents; Chromium HTML/Markdown uses them as assets.
- * URL and PDF routes deliberately do not accept arbitrary archive uploads.
+ * Office and the PDF pipeline use them as documents; Chromium HTML/Markdown
+ * uses them as assets. Other PDF and URL tools do not expose archive uploads.
  */
 export function supportsArchiveInputs(operation: Operation): boolean {
   return (
-    operation.id === 'office-pdf' || operation.input === 'html' || operation.input === 'markdown'
+    operation.id === 'office-pdf' ||
+    operation.id === 'pdf-pipeline' ||
+    operation.input === 'html' ||
+    operation.input === 'markdown'
   )
 }
 
@@ -550,7 +553,7 @@ export function validateFiles(
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
   if (archives.length && !supportsArchiveInputs(operation)) {
     throw new InputError(
-      'ZIP archive inputs are supported only by Office and Chromium HTML/Markdown tools on Gotenberg 9.',
+      'ZIP archive inputs are supported only by Office, the PDF pipeline, and Chromium HTML/Markdown tools on Gotenberg 9.',
     )
   }
   if (archives.length > 10) throw new InputError('At most 10 ZIP archives are supported.')

@@ -89,6 +89,7 @@ function ExtraHeaders({
 
 export function RemoteInputsEditor({
   isV9 = false,
+  pdfInputOnly = false,
   rows,
   onChange,
   legacy,
@@ -96,6 +97,7 @@ export function RemoteInputsEditor({
   newId,
 }: {
   isV9?: boolean
+  pdfInputOnly?: boolean
   rows: RemoteInputRow[]
   onChange: (rows: RemoteInputRow[]) => void
   legacy: string
@@ -116,10 +118,12 @@ export function RemoteInputsEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-            Remote file inputs
+            {pdfInputOnly ? 'Remote PDF inputs' : 'Remote file inputs'}
           </h3>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Gotenberg fetches files from these URLs directly.
+            {pdfInputOnly
+              ? 'Gotenberg downloads input PDFs from these URLs.'
+              : 'Gotenberg fetches files from these URLs directly.'}
           </p>
         </div>
         <Button
@@ -184,28 +188,30 @@ export function RemoteInputsEditor({
               maxLength={2048}
             />
           </div>
-          <div className="space-y-1">
-            <Label htmlFor={`${id}-remote-field-${row.id}`}>Destination field</Label>
-            <select
-              id={`${id}-remote-field-${row.id}`}
-              className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100"
-              value={row.field}
-              onChange={(event) =>
-                update(index, { field: event.target.value as RemoteInputRow['field'] })
-              }
-            >
-              <option value="">Regular conversion input / HTML asset</option>
-              <option value="embedded" disabled={isV9}>
-                PDF attachment (embedded, v8)
-              </option>
-              <option value="watermark" disabled={isV9}>
-                PDF watermark asset (v8)
-              </option>
-              <option value="stamp" disabled={isV9}>
-                PDF stamp asset (v8)
-              </option>
-            </select>
-          </div>
+          {!pdfInputOnly && (
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-remote-field-${row.id}`}>Destination field</Label>
+              <select
+                id={`${id}-remote-field-${row.id}`}
+                className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100"
+                value={row.field}
+                onChange={(event) =>
+                  update(index, { field: event.target.value as RemoteInputRow['field'] })
+                }
+              >
+                <option value="">Regular conversion input / HTML asset</option>
+                <option value="embedded" disabled={isV9}>
+                  PDF attachment (embedded, v8)
+                </option>
+                <option value="watermark" disabled={isV9}>
+                  PDF watermark asset (v8)
+                </option>
+                <option value="stamp" disabled={isV9}>
+                  PDF stamp asset (v8)
+                </option>
+              </select>
+            </div>
+          )}
           {isV9 && row.field && (
             <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
               This remote destination requires Gotenberg 8. Select Regular conversion input for v9.
@@ -219,8 +225,9 @@ export function RemoteInputsEditor({
           />
           {row.url && (
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Preview: {safeOutboundHost(row.url)} · {row.field || 'regular input'} ·{' '}
-              {row.headers.length} header(s) (values hidden)
+              Preview: {safeOutboundHost(row.url)} ·{' '}
+              {pdfInputOnly ? 'PDF input' : row.field || 'regular input'} · {row.headers.length}{' '}
+              header(s) (values hidden)
             </p>
           )}
         </div>
@@ -228,9 +235,10 @@ export function RemoteInputsEditor({
       <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
         Each download response <strong>must</strong> include Content-Disposition with a filename and
         a valid Content-Type. Gotenberg must be able to reach the URL and allow it through its
-        outbound filtering. Watermark/stamp filenames must match their editor expressions; remote
-        overlays precede local overlays of that type. Remote merge files are sorted by filename by
-        Gotenberg.
+        outbound filtering.{' '}
+        {pdfInputOnly
+          ? 'Remote ZIP files are not extracted; upload ZIPs through PDF ZIP archives instead. Stage assets require separate named uploads.'
+          : 'Watermark/stamp filenames must match their editor expressions; remote overlays precede local overlays of that type. Remote merge files are sorted by filename by Gotenberg.'}
       </p>
       <details className="text-xs text-slate-600 dark:text-slate-300">
         <summary className="cursor-pointer font-semibold">
@@ -243,7 +251,11 @@ export function RemoteInputsEditor({
             rows={3}
             spellCheck={false}
             className="font-mono text-xs"
-            placeholder={'[{"url":"https://example.com/file.docx"}]'}
+            placeholder={
+              pdfInputOnly
+                ? '[{"url":"https://example.com/file.pdf"}]'
+                : '[{"url":"https://example.com/file.docx"}]'
+            }
             value={legacy}
             onChange={(event) => onLegacyChange(event.target.value)}
           />

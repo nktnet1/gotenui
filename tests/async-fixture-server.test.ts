@@ -25,6 +25,23 @@ test('disposable receiver enforces download header and records retries/events wi
     assert.equal(remote.status, 200)
     assert.match(remote.headers.get('content-disposition') ?? '', /filename="remote-input.txt"/)
     assert.match(await remote.text(), /Gotenberg downloadFrom/)
+    const pipelineUrl = `${base}/gotenui-remote/pipeline.pdf`
+    const auth = { 'X-Gotenui-Remote-Token': 'fixture-remote-key' }
+    assert.equal((await fetch(pipelineUrl)).status, 403)
+    assert.equal((await fetch(pipelineUrl, { headers: auth })).status, 404)
+    assert.equal(
+      (await fetch(pipelineUrl, { method: 'PUT', headers: auth, body: 'invalid' })).status,
+      400,
+    )
+    assert.equal(
+      (await fetch(pipelineUrl, { method: 'PUT', headers: auth, body: '%PDF-1.7\nfixture' }))
+        .status,
+      204,
+    )
+    const fetchedPdf = await fetch(pipelineUrl, { headers: auth })
+    assert.equal(fetchedPdf.status, 200)
+    assert.match(fetchedPdf.headers.get('content-disposition') ?? '', /remote-pipeline.pdf/)
+    assert.equal(await fetchedPdf.text(), '%PDF-1.7\nfixture')
     const token = randomUUID()
     const url = `${base}/gotenui-callbacks/${token}/retry`
     const body = '%PDF-1.7 test document'

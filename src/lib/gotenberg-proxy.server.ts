@@ -568,7 +568,7 @@ export async function proxyConversionRequest(
   )
   const { path, form } =
     operation.input === 'pdf'
-      ? adaptPdfForm(operation, payload, legacy, major, auxiliary)
+      ? adaptPdfForm(operation, payload, legacy, major, auxiliary, archives)
       : {
           path: operation.path,
           form: adaptConversionForm(operation, payload, legacy, major, stageFiles, archives),
