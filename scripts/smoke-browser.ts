@@ -903,8 +903,7 @@ async function run(): Promise<void> {
     await page.waitUntil(
       `!document.querySelector('#connection-heading') &&
         document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 9.0.0') &&
-        ![...document.querySelectorAll('#gotenui-navigation nav button')]
-          .find(el => el.textContent.trim() === 'PDF pipeline builder')?.disabled`,
+        document.querySelector('#gotenui-navigation nav button[data-operation-id="pdf-pipeline"]')?.disabled === false`,
       'v9 tools available after selecting a new connection',
     )
     checks++
@@ -912,8 +911,7 @@ async function run(): Promise<void> {
     // Keep a v9-only tool selected while changing to v8. It must be blocked
     // during the pending /version request, then remain blocked by v8 compatibility.
     await page.evaluate(`(() => {
-      const button = [...document.querySelectorAll('#gotenui-navigation nav button')]
-        .find(el => el.textContent.trim() === 'PDF pipeline builder')
+      const button = document.querySelector('#gotenui-navigation nav button[data-operation-id="pdf-pipeline"]')
       if (!button || button.disabled) throw new Error('PDF pipeline builder is unavailable on v9')
       button.click()
     })()`)
@@ -936,8 +934,9 @@ async function run(): Promise<void> {
       choice.dispatchEvent(new Event('change', { bubbles: true }))
     })()`)
     await page.waitUntil(
-      `document.querySelector('#connection-choice')?.value === 'browser-demo'`,
-      'select stored v8 connection',
+      `document.querySelector('#connection-choice')?.value === 'browser-demo' &&
+        document.querySelector('#connection-url')?.value === window.__originalSmokeUrl`,
+      'v8 connection draft and URL have updated',
     )
     await page.evaluate(`(() => {
       window.__holdV8Status = true
@@ -953,13 +952,33 @@ async function run(): Promise<void> {
       window.__pendingV8Status.splice(0).forEach(resolve =>
         resolve(Response.json({ online: true, version: '8.40.0', modules: [] })))
     })()`)
-    await page.waitUntil(
-      `document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 8.40.0') &&
-        [...document.querySelectorAll('#gotenui-navigation nav button')]
-          .find(el => el.textContent.trim() === 'PDF pipeline builder')?.disabled &&
-        document.querySelector('h1')?.textContent.includes('PDF pipeline builder')`,
-      'selected v9-only tool remains unavailable after switching to v8',
-    )
+    try {
+      await page.waitUntil(
+        `document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 8.40.0') &&
+          document.querySelector('#gotenui-navigation nav button[data-operation-id="pdf-pipeline"]')?.disabled === true &&
+          document.querySelector('h1')?.textContent.includes('PDF pipeline builder') &&
+          location.pathname === '/tools/pdf-pipeline'`,
+        'selected v9-only tool remains unavailable after switching to v8',
+      )
+    } catch (error) {
+      const snapshot = await page.evaluate(`(() => {
+        const button = document.querySelector('#gotenui-navigation nav button[data-operation-id="pdf-pipeline"]')
+        return {
+          selectedPath: location.pathname,
+          pageTitle: document.querySelector('h1')?.textContent,
+          serviceStatus: [...document.querySelectorAll('#gotenui-navigation p')]
+            .find(el => el.textContent.includes('Online ·') ||
+              el.textContent.includes('Checking connection') ||
+              el.textContent.includes('Not responding'))?.textContent.trim(),
+          pipelineDisabled: button?.disabled,
+          pipelineMarkedUnavailable: button?.textContent.includes('N/A'),
+          pendingMockedV8Requests: window.__pendingV8Status.length,
+        }
+      })()`)
+      throw new Error(`v8 compatibility browser state: ${JSON.stringify(snapshot)}`, {
+        cause: error,
+      })
+    }
     checks++
 
     // The Diagnostics dialog and queued conversions must follow their own
@@ -1028,8 +1047,9 @@ async function run(): Promise<void> {
       choice.dispatchEvent(new Event('change', { bubbles: true }))
     })()`)
     await page.waitUntil(
-      "document.querySelector('#connection-choice')?.value === window.__v9SmokeProfile",
-      'select saved v9 connection',
+      `document.querySelector('#connection-choice')?.value === window.__v9SmokeProfile &&
+        document.querySelector('#connection-url')?.value === 'https://v9.example.test'`,
+      'saved v9 connection draft and URL have updated',
     )
     await page.evaluate("document.querySelector('[role=dialog] button[type=submit]').click()")
     await page.waitUntil(
@@ -1098,8 +1118,9 @@ async function run(): Promise<void> {
       choice.dispatchEvent(new Event('change', { bubbles: true }))
     })()`)
     await page.waitUntil(
-      "document.querySelector('#connection-choice')?.value === 'browser-demo'",
-      'restore saved v8 profile',
+      `document.querySelector('#connection-choice')?.value === 'browser-demo' &&
+        document.querySelector('#connection-url')?.value === window.__originalSmokeUrl`,
+      'restore saved v8 profile draft and URL',
     )
     await page.evaluate("document.querySelector('[role=dialog] button[type=submit]').click()")
     await page.waitUntil(

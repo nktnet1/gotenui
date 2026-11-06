@@ -263,6 +263,7 @@ function Sidebar({
                       >
                         <button
                           type="button"
+                          data-operation-id={operation.id}
                           aria-current={active ? 'page' : undefined}
                           disabled={Boolean(unavailable)}
                           onClick={() => {

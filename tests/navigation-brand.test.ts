@@ -63,6 +63,28 @@ describe('sidebar branding and bookmark navigation', () => {
     expect(html.match(/aria-current="page"/g)).toHaveLength(1)
   })
 
+  it('keeps a stable operation identifier when a v9-only tool gains an N/A label on v8', () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(Sidebar, {
+          selectedId: 'pdf-pipeline',
+          onSelect: vi.fn(),
+          status: { online: true, version: '8.40.0', modules: [] },
+          onSettings: vi.fn(),
+          onSearch: vi.fn(),
+          mobileOpen: false,
+          setMobileOpen: vi.fn(),
+        }),
+      ),
+    )
+    const button = html.match(/<button[^>]*data-operation-id="pdf-pipeline"[^>]*>/)?.[0]
+    expect(button).toContain('disabled=""')
+    expect(html).toContain('N/A')
+    expect(html).toContain('This tool requires Gotenberg 9.')
+  })
+
   it('uses distinct semantic icons for reading and writing PDF metadata', () => {
     const html = renderToStaticMarkup(
       createElement(
