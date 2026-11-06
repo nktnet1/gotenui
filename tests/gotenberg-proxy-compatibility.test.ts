@@ -12,6 +12,7 @@ function requestFor(
   files: File[] = [],
   auxiliary: File[] = [],
   stageFiles: File[] = [],
+  archives: File[] = [],
 ): Request {
   const body = new FormData()
   body.set(
@@ -29,6 +30,7 @@ function requestFor(
   for (const file of files) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
   for (const file of stageFiles) body.append('stageFile', file, file.name)
+  for (const file of archives) body.append('archives', file, file.name)
   return new Request(`${origin}/api/gotenberg/convert`, {
     method: 'POST',
     headers: { Origin: origin, 'X-Gotenberg-Url': upstream },
@@ -93,6 +95,89 @@ test('rejects a Gotenberg 9-only option against v8 before forwarding conversion'
     /Named paper sizes require Gotenberg 9/,
   )
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
+})
+
+test('v9 forwards Office ZIP archives after validation, while v8 rejects the same upload', async () => {
+  const zip = new File(['PK\u0003\u0004'], 'documents.zip', { type: 'application/zip' })
+  const v9 = upstreamFixture('9.0.0', (form) => {
+    assert.deepEqual(
+      form.getAll('archives').map((value) => (value instanceof File ? value.name : '')),
+      ['documents.zip'],
+    )
+    assert.equal(form.getAll('files').length, 0)
+  })
+  assert.equal(
+    (await proxyConversionRequest(requestFor('office-pdf', {}, {}, [], [], [], [zip]), v9.fetcher))
+      .status,
+    200,
+  )
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 1 })
+
+  const v8 = upstreamFixture('8.40.0', () => {})
+  await assert.rejects(
+    proxyConversionRequest(requestFor('office-pdf', {}, {}, [], [], [], [zip]), v8.fetcher),
+    /require Gotenberg 9/,
+  )
+  assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
+})
+
+test('v9 accepts a ZIP response when Office archives expand to several output documents', async () => {
+  const zip = new File(['PK\u0003\u0004'], 'several.zip', { type: 'application/zip' })
+  const fetcher: typeof fetch = async (input, options) => {
+    if (String(input) === `${upstream}/version`) return new Response('9.0.0')
+    assert.ok(options?.body instanceof FormData)
+    assert.equal(options.body.getAll('archives').length, 1)
+    return new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0]), {
+      headers: { 'Content-Type': 'application/zip' },
+    })
+  }
+  const response = await proxyConversionRequest(
+    requestFor('office-pdf', {}, {}, [], [], [], [zip]),
+    fetcher,
+  )
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('content-type'), 'application/zip')
+})
+
+test('rejects non-ZIP archive uploads, duplicates and unsupported operations at the proxy', async () => {
+  const v9 = upstreamFixture('9.0.0', () => {})
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('office-pdf', {}, {}, [], [], [], [new File(['text'], 'wrong.txt')]),
+      v9.fetcher,
+    ),
+    /must use the .zip extension/,
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('html-pdf', {}, {}, [], [], [], [new File(['PK'], 'sources.zip')]),
+      v9.fetcher,
+    ),
+    /supported only by Office to PDF/,
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('office-pdf', {}, {}, [], [], [], [new File([], 'empty.zip')]),
+      v9.fetcher,
+    ),
+    /is empty/,
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'office-pdf',
+        {},
+        {},
+        [],
+        [],
+        [],
+        Array.from({ length: 11 }, (_, i) => new File(['PK'], `archive-${i}.zip`)),
+      ),
+      v9.fetcher,
+    ),
+    /At most 10 Office ZIP archives/,
+  )
+  assert.deepEqual(v9.counts(), { probes: 0, conversions: 0 })
 })
 
 test('routes migrated PDF tools on v9, and still rejects unsupported majors', async () => {

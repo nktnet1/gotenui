@@ -172,8 +172,9 @@ export function createGotenbergForm(
   auxiliary: File[],
   maxBytes = MAX_UPLOAD_BYTES,
   postFiles: PostProcessFiles = {},
+  archives: readonly File[] = [],
 ): FormData {
-  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles)
+  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, [], archives)
   const form = new FormData()
   const isChromium = operation.path.startsWith('/forms/chromium/')
   const mediaFieldNames = new Set<string>(CHROMIUM_MEDIA_OPTIONS.map((feature) => feature.name))
@@ -279,16 +280,27 @@ export async function convertWithGotenberg(
   signal: AbortSignal,
   postFiles: PostProcessFiles = {},
   stageFiles: File[] = [],
+  archives: File[] = [],
 ): Promise<ConversionResult> {
   const headers = targetHeaders(connection)
   const { operation, payload } = validatePayload(candidate)
   // Keep fast client-side feedback; all fields and files are checked again by the server.
-  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES, payload, postFiles, stageFiles)
+  validateFiles(
+    operation,
+    files,
+    auxiliary,
+    MAX_UPLOAD_BYTES,
+    payload,
+    postFiles,
+    stageFiles,
+    archives,
+  )
   const body = new FormData()
   body.set('payload', JSON.stringify(payload))
   for (const file of files) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
   for (const file of stageFiles) body.append('stageFile', file, file.name)
+  for (const file of archives) body.append('archives', file, file.name)
   for (const kind of OVERLAY_KINDS) {
     for (const file of overlayUploads(postFiles, kind)) body.append(kind, file, file.name)
   }

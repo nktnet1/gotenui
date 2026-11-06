@@ -6,6 +6,9 @@ import {
   paperSize,
   pdfa,
   pdfua,
+  v9OfficePdfaMethod,
+  v9PdfaProfile,
+  v9PdfuaProfile,
 } from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
@@ -303,8 +306,11 @@ export const operation: Operation = {
       description:
         'Supports one decimal place; Gotenberg 8 uses tenths of a degree and Gotenberg 9 uses degrees.',
     },
-    pdfa,
-    pdfua,
+    { ...pdfa, supportedGotenbergMajors: [8] },
+    { ...pdfua, supportedGotenbergMajors: [8] },
+    v9PdfaProfile,
+    v9PdfuaProfile,
+    v9OfficePdfaMethod,
     {
       name: 'generateTaggedPdf',
       label: 'Generate accessible structure tags',

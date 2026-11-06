@@ -39,6 +39,7 @@ export type BatchInput = {
   auxiliary: File[]
   postFiles: PostProcessFiles
   stageFiles?: File[]
+  archives?: File[]
 }
 
 type PreparedInput = Omit<BatchInput, 'candidate'> & { candidate: ConversionPayload }
@@ -65,6 +66,7 @@ function inputBytes(input: PreparedInput): number {
     ...input.files,
     ...input.auxiliary,
     ...(input.stageFiles ?? []),
+    ...(input.archives ?? []),
     ...(Array.isArray(input.postFiles.watermark)
       ? input.postFiles.watermark
       : input.postFiles.watermark
@@ -94,6 +96,7 @@ function prepareInput(input: BatchInput): PreparedInput {
     payload,
     input.postFiles,
     input.stageFiles ?? [],
+    input.archives ?? [],
   )
   return {
     // Copy the values and collections now, not when the job starts. File bytes remain in memory.
@@ -102,6 +105,7 @@ function prepareInput(input: BatchInput): PreparedInput {
     files: [...input.files],
     auxiliary: [...input.auxiliary],
     stageFiles: [...(input.stageFiles ?? [])],
+    archives: [...(input.archives ?? [])],
     postFiles: copiedPostFiles(input.postFiles),
   }
 }
@@ -118,6 +122,7 @@ async function executeConversion(
     signal,
     input.postFiles,
     input.stageFiles,
+    input.archives,
   )
 }
 

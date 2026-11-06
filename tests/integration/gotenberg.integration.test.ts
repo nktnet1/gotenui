@@ -46,6 +46,7 @@ function request(
   auxiliary: File[] = [],
   postFiles: PostProcessFiles = {},
   stageFiles: File[] = [],
+  archives: File[] = [],
 ): Request {
   const payload: ConversionPayload = {
     operation: operation.id,
@@ -76,6 +77,7 @@ function request(
   for (const file of inputFiles) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
   for (const file of stageFiles) body.append('stageFile', file, file.name)
+  for (const file of archives) body.append('archives', file, file.name)
   for (const kind of OVERLAY_KINDS) {
     for (const file of overlayUploads(postFiles, kind)) body.append(kind, file, file.name)
   }
@@ -94,6 +96,71 @@ function request(
 
 function pdfFile(name = 'original.pdf') {
   return new File([pdfBytes], name, { type: 'application/pdf' })
+}
+
+/** Build stored ZIP archives in memory, without a platform-dependent zip binary. */
+function officeZipFixture(names: readonly string[] = ['document.txt']): File {
+  const locals: Uint8Array[] = []
+  const directories: Uint8Array[] = []
+  let offset = 0
+  for (const name of names) {
+    const filename = new TextEncoder().encode(name)
+    const content = new TextEncoder().encode(`Converted from ${name} in an Office ZIP archive.`)
+    let checksum = 0xffffffff
+    for (const byte of content) {
+      checksum ^= byte
+      for (let index = 0; index < 8; index++) {
+        checksum = checksum & 1 ? (checksum >>> 1) ^ 0xedb88320 : checksum >>> 1
+      }
+    }
+    const crc = (checksum ^ 0xffffffff) >>> 0
+    const local = new Uint8Array(30 + filename.length + content.length)
+    const first = new DataView(local.buffer)
+    first.setUint32(0, 0x04034b50, true)
+    first.setUint16(4, 20, true)
+    first.setUint32(14, crc, true)
+    first.setUint32(18, content.length, true)
+    first.setUint32(22, content.length, true)
+    first.setUint16(26, filename.length, true)
+    local.set(filename, 30)
+    local.set(content, 30 + filename.length)
+    locals.push(local)
+
+    const directory = new Uint8Array(46 + filename.length)
+    const central = new DataView(directory.buffer)
+    central.setUint32(0, 0x02014b50, true)
+    central.setUint16(4, 20, true)
+    central.setUint16(6, 20, true)
+    central.setUint32(16, crc, true)
+    central.setUint32(20, content.length, true)
+    central.setUint32(24, content.length, true)
+    central.setUint16(28, filename.length, true)
+    central.setUint32(42, offset, true)
+    directory.set(filename, 46)
+    directories.push(directory)
+    offset += local.length
+  }
+  const end = new Uint8Array(22)
+  const footer = new DataView(end.buffer)
+  footer.setUint32(0, 0x06054b50, true)
+  footer.setUint16(8, names.length, true)
+  footer.setUint16(10, names.length, true)
+  footer.setUint32(
+    12,
+    directories.reduce((sum, entry) => sum + entry.length, 0),
+    true,
+  )
+  footer.setUint32(16, offset, true)
+  const chunks = [...locals, ...directories, end]
+  const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0))
+  let position = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, position)
+    position += chunk.length
+  }
+  return new File([bytes], 'office-documents.zip', {
+    type: 'application/zip',
+  })
 }
 
 function inputFor(operation: Operation): {
@@ -731,6 +798,47 @@ test('a single-page split returns a PDF without an unnecessary ZIP', async () =>
 
 // Multi-document routes produce ZIP rather than PDF, even though a single
 // document uses the same endpoint with a PDF result.
+test.skipIf(!isV9)(
+  'Gotenberg 9 expands a ZIP archive uploaded to the Office archives field',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!operation) throw new Error('Missing Office converter')
+    const response = await proxyConversionRequest(
+      request(operation, {}, [], [], {}, [], [officeZipFixture()]),
+    )
+    if (!response.ok) {
+      throw new Error(`Office archive: HTTP ${response.status}: ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    const bytes = await response.arrayBuffer()
+    expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-')
+    expect(await inspectV9Pdf('info', bytes)).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 returns a ZIP of PDFs when an Office input archive contains several documents',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!operation) throw new Error('Missing Office converter')
+    const response = await proxyConversionRequest(
+      request(operation, {}, [], [], {}, [], [officeZipFixture(['first.txt', 'second.txt'])]),
+    )
+    if (!response.ok) {
+      throw new Error(
+        `Multiple Office ZIP sources: HTTP ${response.status}: ${await response.text()}`,
+      )
+    }
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    expect(zipEntryCount(bytes)).toBe(2)
+  },
+  120_000,
+)
+
 test.each([
   { id: 'office-pdf', filenames: ['first.txt', 'second.txt'] },
   { id: 'pdfa', filenames: ['first.pdf', 'second.pdf'] },

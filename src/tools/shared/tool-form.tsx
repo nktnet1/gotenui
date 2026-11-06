@@ -138,6 +138,7 @@ export function Workbench({
   const [conversionStageFiles, setConversionStageFiles] = useState<File[]>([])
   const [acknowledgedConversionRedaction, setAcknowledgedConversionRedaction] = useState(false)
   const [files, setFiles] = useState<File[]>([])
+  const [archives, setArchives] = useState<File[]>([])
   const [auxFiles, setAuxFiles] = useState<File[]>([])
   const [advanced, setAdvanced] = useState('')
   const [cookies, setCookies] = useState<CookieRow[]>([])
@@ -189,6 +190,7 @@ export function Workbench({
     setConversionStageFiles([])
     setAcknowledgedConversionRedaction(false)
     setFiles([])
+    setArchives([])
     setAuxFiles([])
     setAdvanced('')
     setCookies([])
@@ -457,6 +459,7 @@ export function Workbench({
         connection,
         candidate: buildCandidate(),
         files,
+        archives: isV9 && operation.id === 'office-pdf' ? archives : [],
         auxiliary: auxFiles,
         stageFiles: supportsConversionPipeline ? conversionStageFiles : [],
         postFiles: v8StandaloneOverlay || !standaloneKind ? postFiles : {},
@@ -492,6 +495,7 @@ export function Workbench({
         signal,
         v8StandaloneOverlay || !standaloneKind ? postFiles : {},
         supportsConversionPipeline ? conversionStageFiles : [],
+        isV9 && operation.id === 'office-pdf' ? archives : [],
       )
       if (signal.aborted) {
         if (deadline.aborted) toast.error('Gotenberg did not respond within three minutes.')
@@ -633,6 +637,17 @@ export function Workbench({
                   operation.id === 'merge' ||
                   (operation.id === 'office-pdf' && fields.merge === true)
                 }
+              />
+            )}
+            {isV9 && operation.id === 'office-pdf' && (
+              <UploadZone
+                label="Office ZIP archives (Gotenberg 9)"
+                description="Optional ZIP archives of Office documents. Gotenberg extracts their contents as conversion inputs; its archive safety and expansion limits apply. Multiple output PDFs may be returned as a ZIP."
+                files={archives}
+                onChange={setArchives}
+                accept=".zip,application/zip"
+                multiple
+                maxFiles={10}
               />
             )}
             {operation.input === 'url' && (

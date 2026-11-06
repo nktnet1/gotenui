@@ -324,6 +324,7 @@ function allowedConversionContentTypes(
   operation: Operation,
   payload: ConversionPayload,
   files: readonly File[],
+  archives: readonly File[] = [],
 ): readonly string[] {
   if (operation.id === 'pdf-pipeline') {
     return pipelineResponseTypes(
@@ -336,7 +337,13 @@ function allowedConversionContentTypes(
     const stages = parsePdfPipeline(payload.conversionStages, {
       acknowledgedRedaction: payload.acknowledgedConversionRedaction,
     })
-    return pipelineResponseTypes(stages)
+    const types = pipelineResponseTypes(stages)
+    // Each ZIP can contain several Office documents, whose count is only
+    // known after Gotenberg extracts it. Even one uploaded ZIP can yield
+    // several independent output PDFs in another ZIP.
+    return archives.length && operation.id === 'office-pdf'
+      ? [...new Set([...types, 'application/zip'])]
+      : types
   }
   const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
   if (operation.id === 'render-pages') {
@@ -347,6 +354,10 @@ function allowedConversionContentTypes(
   // The proxy cannot know its page count without reading the input document.
   if (operation.id === 'split') return ['application/pdf', 'application/zip']
   if (operation.output !== 'pdf') return [primaryType]
+
+  if (operation.id === 'office-pdf' && archives.length) {
+    return ['application/pdf', 'application/zip']
+  }
 
   const remoteDocuments = (payload.downloadFrom ?? []).filter(
     (file) => !file.embedded && !file.field,
@@ -443,6 +454,7 @@ export async function proxyConversionRequest(
   const files: File[] = []
   const auxiliary: File[] = []
   const stageFiles: File[] = []
+  const archives: File[] = []
   const postFiles: PostProcessFiles = {}
   let payloadCount = 0
   for (const [key, value] of fields) {
@@ -459,6 +471,8 @@ export async function proxyConversionRequest(
       auxiliary.push(value)
     } else if (key === 'stageFile' && value instanceof File) {
       stageFiles.push(value)
+    } else if (key === 'archives' && value instanceof File) {
+      archives.push(value)
     } else if (key === 'embeds' && value instanceof File) {
       if (!postFiles.embeds) postFiles.embeds = []
       postFiles.embeds.push(value)
@@ -482,7 +496,7 @@ export async function proxyConversionRequest(
   }
   if (payloadCount !== 1) throw new ProxyInputError('Exactly one conversion payload is required.')
   const { operation, payload } = validatePayload(candidate)
-  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, stageFiles)
+  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, stageFiles, archives)
   const target = await resolveAuthenticatedConnectionTarget(
     request,
     settings,
@@ -498,6 +512,9 @@ export async function proxyConversionRequest(
       409,
     )
   }
+  if (archives.length && major !== 9) {
+    throw new InputError('Office ZIP archive inputs require Gotenberg 9.')
+  }
   if (major === 9 && postFiles.embeds?.length) {
     throw new InputError(
       'Gotenberg 9 does not accept the legacy embeds field. Use an attach stage with a named pipeline stage file, or use a Gotenberg 8 connection.',
@@ -511,13 +528,21 @@ export async function proxyConversionRequest(
       throw new InputError('Gotenberg 9 removed the separate webhook error callback.')
     }
   }
-  const legacy = createGotenbergForm(operation, payload, files, auxiliary, maxBytes, postFiles)
+  const legacy = createGotenbergForm(
+    operation,
+    payload,
+    files,
+    auxiliary,
+    maxBytes,
+    postFiles,
+    archives,
+  )
   const { path, form } =
     operation.input === 'pdf'
       ? adaptPdfForm(operation, payload, legacy, major, auxiliary)
       : {
           path: operation.path,
-          form: adaptConversionForm(operation, payload, legacy, major, stageFiles),
+          form: adaptConversionForm(operation, payload, legacy, major, stageFiles, archives),
         }
   const upstream = await fetcher(urlJoin(url, path), {
     method: 'POST',
@@ -550,7 +575,7 @@ export async function proxyConversionRequest(
     }
     return new Response(null, { status: upstream.status, headers })
   }
-  const allowedTypes = allowedConversionContentTypes(operation, payload, files)
+  const allowedTypes = allowedConversionContentTypes(operation, payload, files, archives)
   const upstreamContentType = upstream.headers.get('content-type')
   const returnedType = upstreamContentType?.split(';')[0]?.trim().toLowerCase()
   if (

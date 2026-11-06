@@ -4,6 +4,7 @@ import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
 import type { ConversionPayload } from '#/lib/validation'
+import { fieldSupportsBackend } from '#/tools/registry'
 
 function fixture(id: string, overrides: Partial<ConversionPayload> = {}) {
   const operation = OPERATION_BY_ID.get(id)
@@ -91,6 +92,101 @@ test('v9 Chromium maps native controls and JSON media features, then remediates 
   assert.deepEqual(JSON.parse(String(form.get('stages'))), [
     { op: 'remediate', profile: ['PDF/A-2b', 'PDF/UA-1'] },
   ])
+})
+
+test('v9 Chromium exposes extended PDF/A and PDF/UA remediation profiles', () => {
+  const form = adapt(
+    'html-pdf',
+    { fields: { pdfaProfile: 'PDF/A-4f', pdfuaProfile: 'PDF/UA-2' } },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+    { op: 'remediate', profile: ['PDF/A-4f', 'PDF/UA-2'] },
+  ])
+  assert.equal(form.has('pdfaProfile'), false)
+  assert.equal(form.has('pdfuaProfile'), false)
+})
+
+test('v9 rejects incompatible PDF/A and PDF/UA profiles rather than silently changing the target', () => {
+  assert.throws(
+    () => adapt('html-pdf', { fields: { pdfaProfile: 'PDF/A-2u', pdfuaProfile: 'PDF/UA-2' } }, 9),
+    /cannot be combined/,
+  )
+  assert.throws(
+    () => adapt('html-pdf', { fields: { pdfa: 'PDF/A-2b', pdfaProfile: 'PDF/A-3a' } }, 9),
+    /either a v9 PDF\/A profile or a legacy/,
+  )
+})
+
+test('v8 rejects v9 conversion profile controls while keeping legacy PDF/A and PDF/UA', () => {
+  assert.throws(
+    () => adapt('office-pdf', { fields: { pdfaProfile: 'PDF/A-2u' } }, 8),
+    /profiles require Gotenberg 9/,
+  )
+  const form = adapt('office-pdf', { fields: { pdfa: 'PDF/A-2b', pdfua: true } }, 8)
+  assert.equal(form.get('pdfa'), 'PDF/A-2b')
+  assert.equal(form.get('pdfua'), 'true')
+})
+
+test('v9 Office uses native export for supported profiles and remediation otherwise', () => {
+  const native = adapt('office-pdf', { fields: { pdfaProfile: 'PDF/A-2b' } }, 9)
+  assert.equal(native.get('nativePdfa'), 'PDF/A-2b')
+  assert.equal(native.has('stages'), false)
+
+  const remediation = adapt('office-pdf', { fields: { pdfaProfile: 'PDF/A-3u' } }, 9)
+  assert.equal(remediation.has('nativePdfa'), false)
+  assert.deepEqual(JSON.parse(String(remediation.get('stages'))), [
+    { op: 'remediate', profile: 'PDF/A-3u' },
+  ])
+
+  const forced = adapt(
+    'office-pdf',
+    { fields: { pdfaProfile: 'PDF/A-2b', pdfaMethod: 'remediate' } },
+    9,
+  )
+  assert.equal(forced.has('nativePdfa'), false)
+  assert.deepEqual(JSON.parse(String(forced.get('stages'))), [
+    { op: 'remediate', profile: 'PDF/A-2b' },
+  ])
+  assert.throws(
+    () => adapt('office-pdf', { fields: { pdfaProfile: 'PDF/A-4e', pdfaMethod: 'native' } }, 9),
+    /requires PDF remediation/,
+  )
+})
+
+test('v9 Office uploads ZIP archives using the archives field, never the files field', () => {
+  const archive = new File(['PK\u0003\u0004'], 'sources.zip', { type: 'application/zip' })
+  const { operation, payload, form } = fixture('office-pdf')
+  const adapted = adaptConversionForm(operation, payload, form, 9, [], [archive])
+  assert.equal((adapted.get('archives') as File).name, 'sources.zip')
+  assert.deepEqual(
+    adapted.getAll('files').map((file) => (file instanceof File ? file.name : '')),
+    ['document.txt'],
+  )
+  assert.throws(
+    () => adaptConversionForm(operation, payload, form, 8, [], [archive]),
+    /require Gotenberg 9/,
+  )
+})
+
+test('version-specific PDF profiles are visible only for the intended version and tool', () => {
+  const office = OPERATION_BY_ID.get('office-pdf')
+  const chromium = OPERATION_BY_ID.get('html-pdf')
+  const standalone = OPERATION_BY_ID.get('pdfa')
+  assert.ok(office && chromium && standalone)
+  for (const operation of [office, chromium]) {
+    const legacy = operation.fields.find(({ name }) => name === 'pdfa')
+    const modern = operation.fields.find(({ name }) => name === 'pdfaProfile')
+    assert.ok(legacy && modern)
+    assert.equal(fieldSupportsBackend(legacy, '8.40.0'), true)
+    assert.equal(fieldSupportsBackend(legacy, '9.0.0'), false)
+    assert.equal(fieldSupportsBackend(modern, '8.40.0'), false)
+    assert.equal(fieldSupportsBackend(modern, '9.0.0'), true)
+  }
+  const existing = standalone.fields.find(({ name }) => name === 'pdfa')
+  assert.ok(existing)
+  assert.equal(fieldSupportsBackend(existing, '8.40.0'), true)
+  assert.equal(fieldSupportsBackend(existing, '9.0.0'), true)
 })
 
 test('v9 screenshots also convert emulated media features to the new JSON object', () => {

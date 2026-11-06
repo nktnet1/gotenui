@@ -105,15 +105,40 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
       stages.push({ op: 'split', ranges })
     }
   }
-  const pdfa = take(form, 'pdfa')
-  const pdfua = take(form, 'pdfua') === 'true'
-  if (operation.id === 'office-pdf' && !postProcessing && !(pdfa === 'PDF/A-4' && pdfua)) {
-    if (pdfa) form.set('nativePdfa', pdfa)
-    if (pdfua) form.set('nativePdfua', 'PDF/UA-1')
-  } else if (pdfa || pdfua) {
-    const profiles = [pdfa, pdfua ? (pdfa === 'PDF/A-4' ? 'PDF/UA-2' : 'PDF/UA-1') : null].filter(
-      (profile): profile is string => Boolean(profile),
+  const legacyPdfa = take(form, 'pdfa')
+  const legacyPdfua = take(form, 'pdfua') === 'true'
+  const selectedPdfa = take(form, 'pdfaProfile')
+  const selectedPdfua = take(form, 'pdfuaProfile')
+  const method = take(form, 'pdfaMethod') || 'auto'
+  if (selectedPdfa && legacyPdfa) {
+    throw new InputError('Choose either a v9 PDF/A profile or a legacy PDF/A setting.')
+  }
+  if (selectedPdfua && legacyPdfua) {
+    throw new InputError('Choose either a v9 PDF/UA profile or a legacy PDF/UA setting.')
+  }
+  const pdfa = selectedPdfa || legacyPdfa
+  const pdfua =
+    selectedPdfua || (legacyPdfua ? (pdfa?.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1') : null)
+  if (pdfa && pdfua && pdfua !== (pdfa.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1')) {
+    throw new InputError('This PDF/A profile cannot be combined with the selected PDF/UA profile.')
+  }
+  const nativePdfaProfiles = new Set(['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b', 'PDF/A-4'])
+  const canExportNatively =
+    operation.id === 'office-pdf' &&
+    !postProcessing &&
+    (!pdfa || nativePdfaProfiles.has(pdfa)) &&
+    (!pdfua || pdfua === 'PDF/UA-1') &&
+    !(pdfa === 'PDF/A-4' && pdfua)
+  if (method === 'native' && !canExportNatively) {
+    throw new InputError(
+      'This combination requires PDF remediation, not native LibreOffice export.',
     )
+  }
+  if (canExportNatively && method !== 'remediate') {
+    if (pdfa) form.set('nativePdfa', pdfa)
+    if (pdfua) form.set('nativePdfua', pdfua)
+  } else if (pdfa || pdfua) {
+    const profiles = [pdfa, pdfua].filter((profile): profile is string => Boolean(profile))
     stages.push({ op: 'remediate', profile: profiles.length === 1 ? profiles[0] : profiles })
   }
   const optimize = take(form, 'optimizeImages')
@@ -157,10 +182,15 @@ export function adaptConversionForm(
   form: FormData,
   version: SupportedGotenbergMajor,
   stageFiles: readonly File[] = [],
+  archives: readonly File[] = [],
 ): FormData {
   if (version === 8) {
     if (payload.conversionStages || stageFiles.length) {
       throw new InputError('Conversion-time PDF pipeline stages require Gotenberg 9.')
+    }
+    if (archives.length) throw new InputError('Office ZIP archive inputs require Gotenberg 9.')
+    if (form.has('pdfaProfile') || form.has('pdfuaProfile') || form.has('pdfaMethod')) {
+      throw new InputError('Advanced PDF conformance profiles require Gotenberg 9.')
     }
     if (form.has('paperSize')) {
       throw new InputError('Named paper sizes require Gotenberg 9.')
@@ -172,6 +202,9 @@ export function adaptConversionForm(
   }
   if (!v9ConversionOperationIds.has(operation.id)) {
     throw new InputError(`The ${operation.title} tool has not been migrated to Gotenberg 9.`, 409)
+  }
+  if (archives.length && operation.id !== 'office-pdf') {
+    throw new InputError('ZIP archive inputs are supported only by Office to PDF.')
   }
   if (payload.downloadFrom?.some((item) => item.embedded || item.field)) {
     throw new InputError(
@@ -229,5 +262,6 @@ export function adaptConversionForm(
     throw new InputError('Conversion-time PDF stages require PDF output.')
   }
   if (operation.id === 'office-pdf') v9OfficeOptions(form, payload)
+  for (const archive of archives) form.append('archives', archive, archive.name)
   return form
 }

@@ -29,11 +29,14 @@
 - [x] **Patch 8:** Allow PDF conversions on v9 to use the visual ordered-stage editor and named stage-file uploads, while preserving the original Chromium/LibreOffice routes and Gotenberg 8 conversion forms. The client, batch queue, and server validate uploaded filenames, sizes, stage operations and ordering, redaction acknowledgement, and version compatibility. Built-in merge/split precede user stages; automatic PDF/A/UA remediation follows them.
 - [x] **Patch 8 integration verification (user-run):** The user confirmed that all unit, v8.40.0 and v9.0.0 tests passed after applying v1.0.7, including the new conversion-time pipeline cases.
 - [x] **Patch 9 (v1.0.8):** Prefix output from the three simultaneous test suites with `[unit]`, `[v8]`, and `[v9]`, including carriage-return Docker pull progress, without adding a Turbo dependency. Keep each suite's own status and the sequential opt-out.
+- [x] **Patch 10 (v1.0.9):** Replace extensionless relative native-TypeScript CLI imports with Node package subpaths (`#scripts/*`, `#/lib/*`), verified on supported Node 24 and 26 runtimes.
+- [x] **Patch 11 (v1.0.10):** Expose the eleven v9 PDF/A profiles and both PDF/UA profiles on Chromium and LibreOffice conversion forms. Keep legacy v8 profile controls unchanged; choose native LibreOffice export only when compatible, or an ordered remediation stage otherwise. Validate conflicting or incompatible profiles explicitly.
+- [x] **Patch 11:** Add v9-only Office ZIP archive inputs, including UI upload controls, browser batch queue transport, proxy validation, and forwarding under Gotenberg's `archives` multipart field. Keep the v8 API untouched; enforce ten-archive and request-size limits in the UI/backend. Add a pinned-v9 live integration case; **live Docker verification of this new case is pending**.
 
 ## Remaining priorities
 
-1. **Conversion parity:** Verify outstanding v9 Chromium advanced options, and expose remaining native-vs-remediation PDF/A and PDF/UA profiles in conversion forms.
-2. **Input/output completeness:** Add archive inputs (`archives`), finish remote-source and format-specific file rules, and verify multi-stage image/ZIP filename and preview behaviour.
+1. **Conversion parity:** Audit outstanding v9 Chromium advanced options, and verify PDF/A and PDF/UA conformance beyond successful stage execution. The main v9 profile selectors are now present.
+2. **Input/output completeness:** Extend archive support beyond the v9 Office converter where appropriate, finish remote-source and format-specific file rules, and verify multi-stage image/ZIP filename and preview behaviour.
 3. **Version-specific observability and UX:** Separate v8 legacy Prometheus from v9 OpenTelemetry metrics, improve v9 webhook guidance and callback progress, and review Office-format and native compression controls.
 4. **Hardening:** Add connection-swap and batch-switch regression coverage, plus real-image tests for remediation edge cases and timestamp authority integration.
 
@@ -99,13 +102,15 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 - [x] `attachments`: list PDF-embedded files (patch 5).
 - [x] `form`: list interactive PDF form fields and values (patch 5).
 - [x] Expose all 14 source-defined validation profiles and supported PDF/A + PDF/UA pairs through the v9 validation form (patch 5).
-- [ ] Extend the original conversion-time remediation forms to every supported v9 profile, distinguishing native export from post-processing remediation.
+- [x] Expose all eleven PDF/A and both PDF/UA profiles in v9 Chromium and Office conversion forms. Use native Office export only for supported combinations; explicit remediation is available for all profiles. Keep separate v8 fields with their original options (patch 11).
+- [ ] Verify real-image conformance for extended conversion profiles and Factur-X XML combinations. The stand-alone pipeline accepts these stages, but not every combination has a pinned integration case.
 - [x] Forward and display `Gotenberg-Remediation-Residual` and `Gotenberg-Remediation-Rolled-Back`. A successful HTTP response alone does **not** establish PDF/A/PDF/UA compliance.
 
 ### 6. Remaining v9 compatibility and polish — medium
 
 - [x] Refuse legacy `downloadFrom` attachment/watermark/stamp destinations and unmigrated multipart `embeds` uploads on v9 instead of silently treating them as conversion inputs; keep ordinary remote Office inputs on both versions.
-- [ ] Archive inputs (`archives`), further remote-input fields and format-specific upload validation.
+- [x] Support the v9 `archives` multipart field for ZIPs of Office inputs, from the UI and batch queue through authenticated server-side validation. Gotenberg performs ZIP extraction and enforces its own archive-entry and expansion limits. ZIPs are not unpacked in the browser (patch 11).
+- [ ] Review archives for other eligible routes, further remote-input fields and format-specific upload validation. Restrict v9 Office formats that no longer match the upstream extension list.
 - [ ] Revisit allowed Office extensions (including EPUB removal), named paper-size presets, native compression choices and Gotenberg 9 options for each tool.
 - [ ] Distinguish Gotenberg 8 legacy Prometheus `/prometheus/metrics` from Gotenberg 9 exporter-based metrics; do not rely on the deleted route.
 - [x] Route standalone v9 PDF tool documentation links to the new pipeline and read API pages; retain v8 links for v8 connections. Additional v9 documentation polish remains.

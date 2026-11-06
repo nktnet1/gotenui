@@ -46,6 +46,57 @@ export const pdfua: FieldDefinition = {
   advanced: true,
 }
 
+/** v9's remediation stage accepts more PDF/A profiles than native Office export. */
+export const v9PdfaProfile: FieldDefinition = {
+  name: 'pdfaProfile',
+  label: 'PDF/A conformance profile',
+  kind: 'select',
+  options: [
+    'PDF/A-1a',
+    'PDF/A-1b',
+    'PDF/A-2a',
+    'PDF/A-2b',
+    'PDF/A-2u',
+    'PDF/A-3a',
+    'PDF/A-3b',
+    'PDF/A-3u',
+    'PDF/A-4',
+    'PDF/A-4e',
+    'PDF/A-4f',
+  ],
+  advanced: true,
+  supportedGotenbergMajors: [9],
+  description:
+    'Gotenberg 9. The requested profile is produced with PDF remediation unless native Office export supports it.',
+}
+
+export const v9PdfuaProfile: FieldDefinition = {
+  name: 'pdfuaProfile',
+  label: 'PDF/UA conformance profile',
+  kind: 'select',
+  options: ['PDF/UA-1', 'PDF/UA-2'],
+  advanced: true,
+  supportedGotenbergMajors: [9],
+  description:
+    'Gotenberg 9. PDF/A-4 profiles require PDF/UA-2; older PDF/A profiles require PDF/UA-1.',
+}
+
+export const v9OfficePdfaMethod: FieldDefinition = {
+  name: 'pdfaMethod',
+  label: 'PDF conformance method',
+  kind: 'select',
+  options: ['auto', 'native', 'remediate'],
+  optionLabels: {
+    auto: 'Automatic (native when compatible)',
+    native: 'Native LibreOffice export',
+    remediate: 'PDF remediation stage',
+  },
+  advanced: true,
+  supportedGotenbergMajors: [9],
+  description:
+    'Native export supports PDF/A-1b, 2b, 3b, 4 and PDF/UA-1. Other profiles use remediation; PDF/A-4 with PDF/UA requires remediation.',
+}
+
 export const chromiumWait: FieldDefinition[] = [
   {
     name: 'waitDelay',
@@ -357,8 +408,10 @@ export const chromePdf: FieldDefinition[] = [
   ...chromiumMedia,
   ...chromiumReliability,
   ...optimizeImages,
-  { ...pdfa },
-  { ...pdfua },
+  { ...pdfa, supportedGotenbergMajors: [8] },
+  { ...pdfua, supportedGotenbergMajors: [8] },
+  { ...v9PdfaProfile },
+  { ...v9PdfuaProfile },
 ]
 
 export const screenshot: FieldDefinition[] = [

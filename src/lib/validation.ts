@@ -532,9 +532,14 @@ export function validateFiles(
   >,
   postFiles: PostProcessFiles = {},
   stageFiles: readonly File[] = [],
+  archives: readonly File[] = [],
 ): void {
   const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
+  if (archives.length && operation.id !== 'office-pdf') {
+    throw new InputError('ZIP archive inputs are supported only by Office to PDF on Gotenberg 9.')
+  }
+  if (archives.length > 10) throw new InputError('At most 10 Office ZIP archives are supported.')
   if (operation.id === 'embed' && payload?.fields.embedsMetadata) {
     const names = validatedAttachmentMetadata(String(payload.fields.embedsMetadata))
     if (!auxiliary.length && !remote.embedded) {
@@ -547,7 +552,8 @@ export function validateFiles(
     }
   }
   if (operation.input === 'pdf' || operation.input === 'office') {
-    if (files.length + remote.input < minFiles || files.length + remote.input > 20) {
+    const documentCount = files.length + remote.input + archives.length
+    if (documentCount < minFiles || documentCount > 20) {
       throw new InputError(`Upload ${minFiles} to 20 input files.`)
     }
   } else if (files.length > 0) {
@@ -614,7 +620,7 @@ export function validateFiles(
   if (total > maxBytes) {
     throw new InputError('Combined document content exceeds the configured size limit.', 413)
   }
-  for (const file of [...files, ...auxiliary, ...stageFiles]) {
+  for (const file of [...files, ...auxiliary, ...stageFiles, ...archives]) {
     const name = safeFilename(file.name)
     if (operation.input === 'markdown' && auxiliary.includes(file) && /\.md$/i.test(name)) {
       throw new InputError(
@@ -633,6 +639,9 @@ export function validateFiles(
     if (total > maxBytes)
       throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
     const ext = name.match(extension)?.[0]?.toLowerCase()
+    if (archives.includes(file) && ext !== '.zip') {
+      throw new InputError('Office archives must use the .zip extension.')
+    }
     if (files.includes(file) && operation.input === 'pdf' && ext !== '.pdf') {
       throw new InputError('PDF tools only accept .pdf input documents.')
     }
