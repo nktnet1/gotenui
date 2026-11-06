@@ -122,6 +122,25 @@ describe('Gotenberg 9 PDF stages', () => {
     assert.deepEqual(result.stages, [stage])
   })
 
+  it('normalises the timestamp authority for standalone timestamping and PAdES signing', () => {
+    assert.deepEqual(
+      adapted('timestamp', { timestampUrl: 'HTTPS://TSA.EXAMPLE.test:443/issue?key=1' }).stages,
+      [{ op: 'timestamp', timestampUrl: 'https://tsa.example.test/issue?key=1' }],
+    )
+    assert.deepEqual(
+      adapted('sign', { timestampUrl: 'HTTPS://TSA.EXAMPLE.test:443/issue?key=1' }, [
+        new File(['certificate'], 'signer.p12'),
+      ]).stages,
+      [
+        {
+          op: 'sign',
+          certificate: 'signer.p12',
+          timestampUrl: 'https://tsa.example.test/issue?key=1',
+        },
+      ],
+    )
+  })
+
   it('inserts named PDF pages and uploads the source as a stage file', () => {
     const extra = new File(['%PDF-1.7\n'], 'insert.pdf')
     const result = adapted('insert-pages', { at: '1', sourcePages: '2-3' }, [extra])

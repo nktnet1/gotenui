@@ -1,6 +1,7 @@
 /** Gotenberg 9.0.0 PDF pipeline catalogue and shared client/server validation.
  * Keep this aligned with pkg/modules/pdf/stages.go and stage_types.go.
  */
+import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
 
 export const PDF_PIPELINE_STAGES = [
@@ -547,26 +548,10 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('render: JPEG quality must be between 1 and 100.')
       break
   }
-  if (name === 'sign' || name === 'timestamp') {
-    const url = stage.timestampUrl
-    if (url !== undefined) {
-      if (typeof url !== 'string') throw new InputError(`${name}: invalid timestamp authority URL.`)
-      let parsed: URL
-      try {
-        parsed = new URL(url)
-      } catch {
-        throw new InputError(`${name}: enter a valid timestamp authority URL.`)
-      }
-      if (
-        !['http:', 'https:'].includes(parsed.protocol) ||
-        parsed.username ||
-        parsed.password ||
-        parsed.hash
-      )
-        throw new InputError(
-          `${name}: use an HTTP(S) timestamp URL without credentials or fragments.`,
-        )
-    }
+  if ((name === 'sign' || name === 'timestamp') && stage.timestampUrl !== undefined) {
+    if (typeof stage.timestampUrl !== 'string')
+      throw new InputError(`${name}: invalid timestamp authority URL.`)
+    stage.timestampUrl = timestampAuthorityUrl(stage.timestampUrl)
   }
 }
 

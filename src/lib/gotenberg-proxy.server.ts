@@ -277,17 +277,31 @@ async function conversionTargetVersion(
 /** Preserve Gotenberg's diagnostic headers, not arbitrary upstream response headers. */
 function copyUpstreamDiagnostics(upstream: Response, headers: Headers): void {
   const trace = upstream.headers.get('gotenberg-trace')
-  if (trace) headers.set('Gotenberg-Trace', trace)
-  for (const name of ['Gotenberg-Remediation-Residual', 'Gotenberg-Remediation-Rolled-Back']) {
-    const value = upstream.headers.get(name)
-    if (value && /^\d{1,10}$/.test(value)) headers.set(name, value)
+  // Untrusted upstreams must not turn correlation IDs into unbounded or
+  // unexpected log/UI content. This matches the request trace grammar.
+  if (trace && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(trace))
+    headers.set('Gotenberg-Trace', trace)
+  const residual = upstream.headers.get('Gotenberg-Remediation-Residual')
+  const rolledBack = upstream.headers.get('Gotenberg-Remediation-Rolled-Back')
+  if (residual !== null || rolledBack !== null) {
+    if (
+      residual !== null &&
+      rolledBack !== null &&
+      /^\d{1,10}$/.test(residual) &&
+      /^\d{1,10}$/.test(rolledBack)
+    ) {
+      headers.set('Gotenberg-Remediation-Residual', residual)
+      headers.set('Gotenberg-Remediation-Rolled-Back', rolledBack)
+    } else {
+      // Partial/malformed diagnostics must never be mistaken for two zeros.
+      headers.set('Gotenui-Remediation-Incomplete', '1')
+    }
   }
   const version = upstream.headers.get('gotenberg-version')
   if (version && version.length <= 80 && /^v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version)) {
     headers.set('Gotenberg-Version', version)
   }
 }
-
 async function upstreamErrorText(response: Response): Promise<string> {
   const reader = response.body?.getReader()
   if (!reader) return `Gotenberg returned HTTP ${response.status}.`

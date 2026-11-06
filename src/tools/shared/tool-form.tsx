@@ -48,7 +48,11 @@ import type { BrowserBatchQueue } from '#/lib/browser-batch-queue'
 import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
 import { chromiumNetworkFields } from '#/lib/chromium-network'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
-import { convertWithGotenberg, REQUEST_TIMEOUT_MS } from '#/lib/gotenberg-client'
+import {
+  convertWithGotenberg,
+  REQUEST_TIMEOUT_MS,
+  remediationReviewNotice,
+} from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { officeAcceptForVersion } from '#/lib/office-formats'
 import { versionAtLeast } from '#/lib/operation-availability'
@@ -61,7 +65,7 @@ import {
   type PostProcessFiles,
 } from '#/lib/pdf-post-processing'
 import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
-import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
+import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
 import { cn } from '#/lib/utils'
 import {
   InputError,
@@ -526,11 +530,10 @@ export function Workbench({
       const url = URL.createObjectURL(blob)
       if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
       fileUrl.current = url
-      const jsonText = type === 'application/json' ? await blob.text() : undefined
-      const preview = jsonText?.slice(0, 16_000)
+      const preview = type === 'application/json' ? await blob.slice(0, 16_000).text() : undefined
       const validation =
-        operation.id === 'pdf-validate' && jsonText
-          ? (parsePdfValidationReport(jsonText) ?? undefined)
+        operation.id === 'pdf-validate'
+          ? ((await summarisePdfValidationBlob(blob)) ?? undefined)
           : undefined
       setLastDownload({
         name,
@@ -565,10 +568,8 @@ export function Workbench({
         toast.warning(
           'PDF validation response could not be summarised. Review the downloaded JSON.',
         )
-      } else if (remediation?.residual || remediation?.rolledBack) {
-        toast.warning(
-          `Gotenberg generated ${name}, but PDF remediation reported ${remediation.residual} unresolved violations and ${remediation.rolledBack} rolled-back fixes. Validate the result before using it.`,
-        )
+      } else if (remediationReviewNotice(remediation)) {
+        toast.warning(`Gotenberg generated ${name}, but ${remediationReviewNotice(remediation)}`)
       } else toast.success(`${name} is ready to download`)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {

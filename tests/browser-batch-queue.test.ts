@@ -26,7 +26,7 @@ function input(): BatchInput {
   }
 }
 
-const pdf = (name = 'output.pdf'): ConversionResult => ({
+const pdf = (name = 'output.pdf'): Extract<ConversionResult, { mode: 'download' }> => ({
   mode: 'download',
   name,
   type: 'application/pdf',
@@ -89,6 +89,33 @@ describe('browser-managed batch queue', () => {
       'completed',
       'completed',
     ])
+    queue.dispose()
+  })
+
+  it('continues dispatching after clearing finished jobs until explicitly paused', async () => {
+    const execute = vi.fn(async () => pdf())
+    const { queue } = queueWith(execute)
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    queue.clearFinished()
+    expect(queue.getSnapshot()).toMatchObject({ active: true, jobs: [] })
+
+    queue.enqueue(input())
+    // A started queue launches on enqueue, rather than remaining "1 waiting".
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
+    await tick()
+    queue.pause()
+    queue.clearFinished()
+    queue.enqueue(input())
+    expect(queue.getSnapshot()).toMatchObject({
+      active: false,
+      jobs: [{ status: 'queued' }],
+    })
+    queue.start()
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
+    await tick()
+    expect(execute).toHaveBeenCalledTimes(3)
     queue.dispose()
   })
 
@@ -477,6 +504,25 @@ describe('browser-managed batch queue', () => {
         'PDF remediation reported 2 unresolved violation(s) and 1 rolled-back fix(es). Validate the downloaded output.',
     })
     expect(job?.url).toBeDefined()
+    queue.dispose()
+  })
+
+  it('keeps incomplete remediation diagnostics visible on a completed batch download', async () => {
+    const { queue } = queueWith(async () => ({
+      ...pdf(),
+      mode: 'download' as const,
+      remediation: { residual: 0, rolledBack: 0, incomplete: true },
+    }))
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({
+      status: 'completed',
+      review: 'PDF remediation diagnostics were incomplete. Validate the downloaded output.',
+    })
+    const html = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Review required')
     queue.dispose()
   })
 

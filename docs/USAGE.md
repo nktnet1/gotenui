@@ -30,11 +30,13 @@ Before sending uploaded ZIP archives on Gotenberg 9, Gotenui reads only the boun
 
 Completed operations download automatically. PDFs and raster images can also be previewed in the browser. Direct and completed batch ZIP downloads offer an optional **View archive contents** control; it lists a bounded number of filenames and declared sizes without unpacking the archive. **Clear** releases the current result from the tab.
 
+Gotenberg 9 PDF validation reports are summarised only when their JSON is readable and at most 128 KB; the full downloaded report remains available otherwise. Non-compliant findings, invalid reports, and incomplete remediation diagnostic headers are shown as **Review required**, not as proof of successful conformance. Always validate the downloaded PDF when conformance matters. For timestamp stages, enter an absolute HTTP(S) timestamp authority URL without credentials, fragments, whitespace or backslashes. Gotenberg's network restrictions still govern where it can connect.
+
 **Saved presets** store reusable operation settings in this browser. They do not store uploaded files, passwords, tokens or callback details. Presets are available only for the tool on which they were saved.
 
 ## Batch queue
 
-Select **Add to batch** to collect configured operations, then start the queue from its panel. Up to two operations run at once. You can pause waiting jobs, cancel requests and retry failures.
+Select **Add to batch** to collect configured operations, then start the queue from its panel. Up to two operations run at once. Once started, the queue **stays active** and new jobs run automatically, even after you clear completed jobs. Choose **Pause new jobs** before adding work you want to hold for a later manual start. Pausing does not cancel jobs already running. You can also cancel requests and retry failures.
 
 Batch results remain in the current tab until downloaded or cleared. They do not download automatically, and the queue is lost when the tab is closed or reloaded. Cancelling a request may not stop processing already underway in Gotenberg. Completed PNG, JPEG and WebP jobs offer an opt-in **Preview image** control. It uses the existing download Blob URL without storing a second image; the image is only loaded after you open the preview. Closing the preview unmounts the image, and clearing the job revokes the download URL. SVG and other file types are not shown as batch image previews.
 

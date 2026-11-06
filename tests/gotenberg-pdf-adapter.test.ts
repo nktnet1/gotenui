@@ -311,6 +311,58 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
     assert.equal(remote.count(), 0)
   })
 
+  it.each([
+    ['missing rolled-back count', { 'Gotenberg-Remediation-Residual': '0' }],
+    ['missing residual count', { 'Gotenberg-Remediation-Rolled-Back': '0' }],
+    [
+      'invalid residual count',
+      { 'Gotenberg-Remediation-Residual': '-1', 'Gotenberg-Remediation-Rolled-Back': '0' },
+    ],
+    [
+      'oversized count',
+      { 'Gotenberg-Remediation-Residual': '99999999999', 'Gotenberg-Remediation-Rolled-Back': '0' },
+    ],
+  ])(
+    'marks %s as incomplete rather than silently interpreting it as zero',
+    async (_, diagnostics) => {
+      const remote = fixture(
+        '9.0.0',
+        () => {},
+        new Response('%PDF-1.7\n', {
+          headers: { 'Content-Type': 'application/pdf', ...diagnostics },
+        }),
+      )
+      const response = await proxyConversionRequest(
+        requestFor('pdfa', { pdfa: 'PDF/A-2b' }),
+        remote.fetcher,
+      )
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('Gotenui-Remediation-Incomplete'), '1')
+      assert.equal(response.headers.get('Gotenberg-Remediation-Residual'), null)
+      assert.equal(response.headers.get('Gotenberg-Remediation-Rolled-Back'), null)
+      assert.match(await response.text(), /%PDF-/)
+    },
+  )
+
+  it('forwards only bounded safe Gotenberg request correlation IDs', async () => {
+    for (const trace of ['x'.repeat(129), 'unsafe trace', 'value\twith\ttabs', ':invalid-prefix']) {
+      const remote = fixture(
+        '9.0.0',
+        () => {},
+        new Response('%PDF-1.7\n', {
+          headers: { 'content-type': 'application/pdf', 'gotenberg-trace': trace },
+        }),
+      )
+      const response = await proxyConversionRequest(
+        requestFor('pdfa', { pdfa: 'PDF/A-2b' }),
+        remote.fetcher,
+      )
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('Gotenberg-Trace'), null)
+      assert.match(await response.text(), /%PDF-/)
+    }
+  })
+
   it('surfaces bounded remediation diagnostics, without accepting arbitrary headers', async () => {
     const remote = fixture(
       '9.0.0',

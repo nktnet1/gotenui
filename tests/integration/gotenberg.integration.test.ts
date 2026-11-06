@@ -1899,6 +1899,32 @@ test.skipIf(!isV9)(
 )
 
 test.skipIf(!isV9)(
+  'Gotenberg 9 contacts the configured RFC 3161 authority and reports its failure',
+  async () => {
+    const token = randomUUID()
+    const authority = new URL(fixtureUrl)
+    authority.pathname = `/gotenui-tsa/${token}`
+    const response = await convertV9('timestamp', { timestampUrl: authority.href }, [
+      pdfFile('timestamp-input.pdf'),
+    ])
+    expect(response.ok).toBe(false)
+    expect(response.status).toBeGreaterThanOrEqual(400)
+    await response.text()
+    const snapshot = new URL(fixtureUrl)
+    snapshot.hostname = '127.0.0.1'
+    snapshot.pathname = `/_gotenui_tsa/${token}`
+    const delivered = await fetch(snapshot, { cache: 'no-store' })
+    expect(delivered.ok).toBe(true)
+    expect(await delivered.json()).toMatchObject({
+      hits: 1,
+      contentType: 'application/timestamp-query',
+    })
+    // A failing TSA must never turn into a successful, downloadable PDF.
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
   'Gotenberg 9 applies PDF/A remediation after Chromium conversion',
   async () => {
     const html = OPERATIONS.find(({ id }) => id === 'html-pdf')

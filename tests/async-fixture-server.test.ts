@@ -42,6 +42,23 @@ test('disposable receiver enforces download header and records retries/events wi
     assert.equal(fetchedPdf.status, 200)
     assert.match(fetchedPdf.headers.get('content-disposition') ?? '', /remote-pipeline.pdf/)
     assert.equal(await fetchedPdf.text(), '%PDF-1.7\nfixture')
+    const tsaToken = randomUUID()
+    const tsaUrl = `${base}/gotenui-tsa/${tsaToken}`
+    assert.equal((await fetch(tsaUrl)).status, 405)
+    assert.equal(
+      (
+        await fetch(tsaUrl, {
+          method: 'POST',
+          body: 'fake-rfc3161-query',
+          headers: { 'Content-Type': 'application/timestamp-query' },
+        })
+      ).status,
+      503,
+    )
+    assert.deepEqual(await (await fetch(`${base}/_gotenui_tsa/${tsaToken}`)).json(), {
+      hits: 1,
+      contentType: 'application/timestamp-query',
+    })
     const token = randomUUID()
     const url = `${base}/gotenui-callbacks/${token}/retry`
     const body = '%PDF-1.7 test document'

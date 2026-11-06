@@ -16,7 +16,7 @@ import { PdfResultPreview } from '#/components/pdf-result-preview'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { ZipResultPreview } from '#/components/zip-result-preview'
-import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
+import { MAX_UPLOAD_BYTES, remediationReviewNotice } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import { formatBytes } from '#/lib/security'
@@ -54,6 +54,8 @@ export function JobPanel({
   const validationNeedsReview =
     operation.id === 'pdf-validate' &&
     (!lastDownload?.validation || lastDownload.validation.some((report) => !report.compliant))
+  const remediationWarning = remediationReviewNotice(lastDownload?.remediation)
+  const downloadNeedsReview = validationNeedsReview || !!remediationWarning
   return (
     <div className="space-y-5 lg:sticky lg:top-7 lg:self-start">
       <Card>
@@ -220,12 +222,12 @@ export function JobPanel({
                     <div
                       className={cn(
                         'flex size-10 items-center justify-center rounded-full',
-                        validationNeedsReview
+                        downloadNeedsReview
                           ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400'
                           : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400',
                       )}
                     >
-                      {validationNeedsReview ? (
+                      {downloadNeedsReview ? (
                         <AlertTriangle className="size-5" />
                       ) : (
                         <Check className="size-5" />
@@ -237,7 +239,7 @@ export function JobPanel({
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                         {formatBytes(lastDownload.size)} ·{' '}
-                        {validationNeedsReview
+                        {downloadNeedsReview
                           ? 'Report requires review'
                           : operation.id === 'pdf-validate'
                             ? 'Validation complete: compliant'
@@ -245,19 +247,14 @@ export function JobPanel({
                       </p>
                     </div>
                   </div>
-                  {lastDownload.remediation &&
-                    (lastDownload.remediation.residual > 0 ||
-                      lastDownload.remediation.rolledBack > 0) && (
-                      <p
-                        role="alert"
-                        className="mb-4 rounded-lg border border-amber-500/50 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
-                      >
-                        PDF remediation is not confirmed compliant:{' '}
-                        {lastDownload.remediation.residual} unresolved violations and{' '}
-                        {lastDownload.remediation.rolledBack} rolled-back fixes. Validate the output
-                        PDF.
-                      </p>
-                    )}
+                  {remediationWarning && (
+                    <p
+                      role="alert"
+                      className="mb-4 rounded-lg border border-amber-500/50 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+                    >
+                      {remediationWarning}
+                    </p>
+                  )}
                   {operation.id === 'pdf-validate' && !lastDownload.validation && (
                     <p
                       role="alert"

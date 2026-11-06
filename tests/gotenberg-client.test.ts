@@ -6,6 +6,7 @@ import {
   getGotenbergDebug,
   getGotenbergStatus,
   probeGotenbergHealth,
+  remediationReviewNotice,
 } from '#/lib/gotenberg-client'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
 import { validatePayload } from '#/lib/validation'
@@ -436,6 +437,53 @@ test('download names follow the returned ZIP or PNG media type, despite stale fi
       if (result.mode !== 'download') throw new Error('Expected a download')
       assert.equal(result.name, `${type === 'image/png' ? 'report' : 'untrusted'}.${extension}`)
       assert.equal(result.type, type)
+    }
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('client treats incomplete remediation diagnostics as a review warning, not zero violations', async () => {
+  const original = globalThis.fetch
+  const cases: { headers: Record<string, string>; incomplete: boolean }[] = [
+    { headers: { 'Gotenberg-Remediation-Residual': '0' }, incomplete: true },
+    {
+      headers: {
+        'Gotenberg-Remediation-Residual': 'bad',
+        'Gotenberg-Remediation-Rolled-Back': '0',
+      },
+      incomplete: true,
+    },
+    { headers: { 'Gotenui-Remediation-Incomplete': '1' }, incomplete: true },
+    {
+      headers: { 'Gotenberg-Remediation-Residual': '0', 'Gotenberg-Remediation-Rolled-Back': '0' },
+      incomplete: false,
+    },
+    {
+      headers: { 'Gotenberg-Remediation-Residual': '2', 'Gotenberg-Remediation-Rolled-Back': '1' },
+      incomplete: false,
+    },
+  ]
+  try {
+    for (const entry of cases) {
+      globalThis.fetch = async () =>
+        new Response('%PDF-1.7\n', {
+          headers: { 'Content-Type': 'application/pdf', ...entry.headers },
+        })
+      const result = await convertWithGotenberg(
+        'http://127.0.0.1:3000',
+        { operation: 'url-pdf', fields: { url: 'https://example.test' }, advanced: {} },
+        [],
+        [],
+        new AbortController().signal,
+      )
+      assert.equal(result.mode, 'download')
+      if (result.mode !== 'download') throw new Error('Expected direct result')
+      assert.equal(result.remediation?.incomplete ?? false, entry.incomplete)
+      const warning = remediationReviewNotice(result.remediation)
+      if (entry.incomplete) assert.match(warning ?? '', /diagnostics were incomplete/)
+      else if (result.remediation?.residual === 2) assert.match(warning ?? '', /2 unresolved/)
+      else assert.equal(warning, undefined)
     }
   } finally {
     globalThis.fetch = original

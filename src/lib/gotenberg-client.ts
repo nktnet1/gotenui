@@ -258,7 +258,7 @@ export function createGotenbergForm(
   return form
 }
 
-export type RemediationReport = { residual: number; rolledBack: number }
+export type RemediationReport = { residual: number; rolledBack: number; incomplete?: boolean }
 
 export type ConversionResult =
   | {
@@ -366,10 +366,34 @@ export async function convertWithGotenberg(
 function readRemediationReport(headers: Headers): RemediationReport | undefined {
   const residual = headers.get('Gotenberg-Remediation-Residual')
   const rolledBack = headers.get('Gotenberg-Remediation-Rolled-Back')
-  if (residual === null && rolledBack === null) return undefined
-  const readCount = (value: string | null): number =>
-    value !== null && /^\d{1,10}$/.test(value) ? Number(value) : 0
-  return { residual: readCount(residual), rolledBack: readCount(rolledBack) }
+  if (
+    residual === null &&
+    rolledBack === null &&
+    headers.get('Gotenui-Remediation-Incomplete') !== '1'
+  )
+    return undefined
+  if (
+    headers.get('Gotenui-Remediation-Incomplete') === '1' ||
+    residual === null ||
+    rolledBack === null ||
+    !/^\d{1,10}$/.test(residual) ||
+    !/^\d{1,10}$/.test(rolledBack)
+  ) {
+    return { residual: 0, rolledBack: 0, incomplete: true }
+  }
+  return { residual: Number(residual), rolledBack: Number(rolledBack) }
+}
+
+/** Summaries are warnings, never proof of compliance from a successful HTTP response. */
+export function remediationReviewNotice(report: RemediationReport | undefined): string | undefined {
+  if (!report) return undefined
+  if (report.incomplete) {
+    return 'PDF remediation diagnostics were incomplete. Validate the downloaded output.'
+  }
+  if (report.residual > 0 || report.rolledBack > 0) {
+    return `PDF remediation reported ${report.residual} unresolved violation(s) and ${report.rolledBack} rolled-back fix(es). Validate the downloaded output.`
+  }
+  return undefined
 }
 
 /** Read selected-instance debug JSON using its upstream authentication; no Gotenui access key. */

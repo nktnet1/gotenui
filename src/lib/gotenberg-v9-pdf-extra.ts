@@ -1,27 +1,9 @@
 /** Strict request mapping for the Gotenberg 9-only PDF workflows. */
+import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
 
 const pageSelector = /^(?:\d+(?:-\d+)?|odd|even)(?:\s*,\s*(?:\d+(?:-\d+)?|odd|even))*$/i
-const remoteUrl = (value: string): string => {
-  let parsed: URL
-  try {
-    parsed = new URL(value)
-  } catch {
-    throw new InputError('Enter an absolute HTTP or HTTPS timestamp authority URL.')
-  }
-  if (
-    !['http:', 'https:'].includes(parsed.protocol) ||
-    parsed.username ||
-    parsed.password ||
-    parsed.hash
-  ) {
-    throw new InputError(
-      'Timestamp authority URLs must be HTTP(S) without credentials or fragments.',
-    )
-  }
-  return parsed.href
-}
 
 function jsonValue(raw: string, label: string): unknown {
   try {
@@ -303,14 +285,19 @@ export function adaptV9PdfExtra(
         ...(value('contactInfo') ? { contactInfo: fields.contactInfo } : {}),
         ...(value('signerName') ? { name: fields.signerName } : {}),
         ...(fields.pades === true ? { pades: true } : {}),
-        ...(value('timestampUrl') ? { timestampUrl: remoteUrl(value('timestampUrl')) } : {}),
+        ...(value('timestampUrl')
+          ? { timestampUrl: timestampAuthorityUrl(fields.timestampUrl as string) }
+          : {}),
       })
       break
     }
     case 'timestamp':
       allow('timestampUrl')
       onlyPdfInputs()
-      stages.push({ op: 'timestamp', timestampUrl: remoteUrl(value('timestampUrl')) })
+      stages.push({
+        op: 'timestamp',
+        timestampUrl: timestampAuthorityUrl(fields.timestampUrl as string),
+      })
       break
     case 'render-pages': {
       allow('pages', 'format', 'dpi', 'quality')

@@ -4,9 +4,10 @@ import {
   convertWithGotenberg,
   MAX_UPLOAD_BYTES,
   REQUEST_TIMEOUT_MS,
+  remediationReviewNotice,
 } from '#/lib/gotenberg-client'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
-import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
+import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
 import { type ConversionPayload, validateFiles, validatePayload } from '#/lib/validation'
 
 export const MAX_BATCH_JOBS = 12
@@ -131,7 +132,6 @@ async function executeConversion(
   )
 }
 
-const MAX_BATCH_VALIDATION_REPORT_BYTES = 128_000
 const unreadableValidationMessage =
   'PDF validation could not be summarised. Review the downloaded JSON report.'
 
@@ -143,30 +143,17 @@ async function batchReviewNotice(
   result: Extract<ConversionResult, { mode: 'download' }>,
 ): Promise<string | undefined> {
   if (input.candidate.operation === 'pdf-validate') {
-    if (
-      result.type !== 'application/json' ||
-      result.blob.size > MAX_BATCH_VALIDATION_REPORT_BYTES
-    ) {
+    if (result.type !== 'application/json') {
       return unreadableValidationMessage
     }
-    try {
-      const reports = parsePdfValidationReport(await result.blob.text())
-      if (!reports) return unreadableValidationMessage
-      const noncompliant = reports.filter((report) => !report.compliant).length
-      if (noncompliant > 0) {
-        return `PDF validation found ${noncompliant} non-compliant document(s) out of ${reports.length}. Review the downloaded JSON report.`
-      }
-    } catch {
-      return unreadableValidationMessage
+    const reports = await summarisePdfValidationBlob(result.blob)
+    if (!reports) return unreadableValidationMessage
+    const noncompliant = reports.filter((report) => !report.compliant).length
+    if (noncompliant > 0) {
+      return `PDF validation found ${noncompliant} non-compliant document(s) out of ${reports.length}. Review the downloaded JSON report.`
     }
   }
-  if (
-    result.remediation &&
-    (result.remediation.residual > 0 || result.remediation.rolledBack > 0)
-  ) {
-    return `PDF remediation reported ${result.remediation.residual} unresolved violation(s) and ${result.remediation.rolledBack} rolled-back fix(es). Validate the downloaded output.`
-  }
-  return undefined
+  return remediationReviewNotice(result.remediation)
 }
 
 /** All inputs, including selected credentials, live only in this tab and are never serialized. */

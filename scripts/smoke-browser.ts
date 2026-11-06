@@ -1219,9 +1219,16 @@ async function run(): Promise<void> {
     )
     checks++
 
+    // The queue stays active after finishing the PNG job. Pause it explicitly so
+    // the next ZIP job remains waiting long enough to test manual start. Otherwise
+    // enqueue() immediately launches it and the "1 waiting" assertion races CI.
     await page.evaluate(`(() => {
-      const clear = [...document.querySelectorAll('#gotenui-batch-queue button')]
-        .find(el => el.textContent.trim() === 'Clear finished')
+      const buttons = [...document.querySelectorAll('#gotenui-batch-queue button')]
+      const pause = buttons.find(el => el.textContent.trim() === 'Pause new jobs')
+      if (!pause) throw new Error('Expected active batch queue after PNG completion')
+      pause.click()
+      const clear = buttons.find(el => el.textContent.trim() === 'Clear finished')
+      if (!clear) throw new Error('Cannot clear completed PNG batch')
       clear.click()
       window.__smokeResultKind = 'zip'
       const render = document.querySelector('#gotenui-navigation nav button[data-operation-id="render-pages"]')
