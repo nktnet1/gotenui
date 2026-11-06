@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'html-pdf',
+  supportedGotenbergMajors: [8, 9],
   title: 'HTML to PDF',
   group: 'Convert',
   summary: 'Render your HTML and optional assets.',

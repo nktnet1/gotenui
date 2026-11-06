@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowDownToLine,
   CheckCircle2,
   CirclePause,
@@ -11,8 +12,10 @@ import {
   X,
 } from 'lucide-react'
 import { useSyncExternalStore } from 'react'
+import { ImageResultPreview, isPreviewableImage } from '#/components/image-result-preview'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
+import { ZipResultPreview } from '#/components/zip-result-preview'
 import {
   type BrowserBatchQueue,
   MAX_BATCH_CONCURRENT,
@@ -89,16 +92,19 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
           <p className="mb-4 text-xs leading-5 text-slate-500 dark:text-slate-400">
             Jobs stay in this tab only. Inputs and selected credentials are released after success
             or when a job is cleared. Changing connections will not redirect queued jobs. Downloads
-            are available individually after completion. Webhook acceptance is not delivery
-            confirmation. Maximum {MAX_BATCH_JOBS} jobs. Pausing does not cancel active requests.
+            are available individually after completion, with optional image or ZIP contents
+            previews. Webhook acceptance is not delivery confirmation. Maximum {MAX_BATCH_JOBS}{' '}
+            jobs. Pausing does not cancel active requests.
           </p>
           <ul className="space-y-2" aria-label="Queued conversions" aria-live="polite">
             {jobs.map((job) => {
               const runningJob = job.status === 'running'
+              const needsReview = job.status === 'completed' && Boolean(job.review)
               const canCancel = runningJob || job.status === 'queued'
               const canRetry =
                 !job.aborting && (job.status === 'failed' || job.status === 'cancelled')
               const removable = !job.aborting && !runningJob && job.status !== 'queued'
+              const archive = queue.getArchiveBlob(job.id)
               return (
                 <li
                   key={job.id}
@@ -107,6 +113,8 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
                   <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-300">
                     {runningJob ? (
                       <RefreshCw className="size-4 animate-spin" />
+                    ) : needsReview ? (
+                      <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400" />
                     ) : job.status === 'completed' ? (
                       <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" />
                     ) : job.status === 'accepted' ? (
@@ -123,12 +131,20 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
                       {job.status === 'queued' && 'Queued'}
                       {runningJob && 'Processing (Gotenberg does not report percentage progress)'}
                       {job.status === 'completed' &&
-                        `${job.name} · ${formatBytes(job.size ?? 0)} · ${((job.elapsed ?? 0) / 1000).toFixed(1)}s`}
+                        `${job.name} · ${formatBytes(job.size ?? 0)} · ${((job.elapsed ?? 0) / 1000).toFixed(1)}s${needsReview ? ' · Review required' : ''}`}
                       {job.status === 'accepted' &&
                         `Webhook accepted (HTTP ${job.webhookStatus}); delivery unconfirmed`}
                       {job.status === 'cancelled' && (job.aborting ? 'Cancelling...' : 'Cancelled')}
                       {job.status === 'failed' && `Failed: ${job.error ?? 'Unknown error'}`}
                     </p>
+                    {needsReview && (
+                      <p
+                        role="alert"
+                        className="mt-2 text-[11px] font-medium text-amber-800 dark:text-amber-300"
+                      >
+                        {job.review}
+                      </p>
+                    )}
                     {job.trace && (
                       <p className="mt-1 break-all text-[10px] text-slate-400">
                         Trace: {job.trace}
@@ -180,6 +196,19 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
                       </Button>
                     )}
                   </div>
+                  {archive && (
+                    <div className="w-full min-w-0 sm:pl-11">
+                      <ZipResultPreview blob={archive} />
+                    </div>
+                  )}
+                  {job.status === 'completed' &&
+                    job.url &&
+                    job.name &&
+                    isPreviewableImage(job.type) && (
+                      <div className="w-full min-w-0 sm:pl-11">
+                        <ImageResultPreview url={job.url} name={job.name} />
+                      </div>
+                    )}
                 </li>
               )
             })}

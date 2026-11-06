@@ -42,11 +42,13 @@ export function reusableFieldNames(operation: Operation): string[] {
   return operation.fields
     .filter(
       (field) =>
-        field.kind === 'toggle' ||
-        field.kind === 'select' ||
-        field.kind === 'number' ||
-        field.kind === 'console-message-types' ||
-        (field.kind === 'text' && Object.hasOwn(SAFE_TEXT_FIELDS, field.name)),
+        !field.name.startsWith('v9OverlayAcknowledged') &&
+        field.name !== 'v9FlattenFormsOnly' &&
+        (field.kind === 'toggle' ||
+          field.kind === 'select' ||
+          field.kind === 'number' ||
+          field.kind === 'console-message-types' ||
+          (field.kind === 'text' && Object.hasOwn(SAFE_TEXT_FIELDS, field.name))),
     )
     .map((field) => field.name)
 }

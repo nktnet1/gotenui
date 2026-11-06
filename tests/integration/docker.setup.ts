@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -8,7 +8,11 @@ import { asyncFixtureHandler } from './async-fixture-server'
 import { REMOTE_OVERLAY_PNG } from './overlay-fixture'
 
 const exec = promisify(execFile)
-const image = process.env.GOTENBERG_TEST_IMAGE || 'gotenberg/gotenberg:8.37.0'
+const testVersion = process.env.GOTENBERG_TEST_VERSION ?? '8.40.0'
+if (testVersion !== '8.40.0' && testVersion !== '9.0.0') {
+  throw new Error('Integration tests must use pinned Gotenberg 8.40.0 or 9.0.0 images.')
+}
+const image = `gotenberg/gotenberg:${testVersion}`
 const startupTimeoutMs = 120_000
 const testUsername = 'gotenui-integration'
 const testPassword = 'local-only-test-password'
@@ -17,6 +21,8 @@ const testPassword = 'local-only-test-password'
 declare module 'vitest' {
   export interface ProvidedContext {
     gotenbergTestUrl: string
+    gotenbergTestContainerName: string
+    gotenbergTestVersion: string
     gotenbergFixtureUrl: string
     gotenbergTestUsername: string
     gotenbergTestPassword: string
@@ -26,6 +32,22 @@ declare module 'vitest' {
 async function docker(...args: string[]): Promise<string> {
   const { stdout } = await exec('docker', args, { timeout: 600_000, maxBuffer: 1024 * 1024 })
   return stdout.trim()
+}
+
+// Docker's progress messages must stream while downloading a missing image.
+// execFile buffers them until completion and makes `pnpm test` appear stuck.
+export async function pullImage(imageName: string, startPull: typeof spawn = spawn): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = startPull('docker', ['pull', imageName], {
+      stdio: ['ignore', 'inherit', 'inherit'],
+      timeout: 600_000,
+    })
+    child.once('error', reject)
+    child.once('close', (code, signal) => {
+      if (code === 0) resolve()
+      else reject(new Error(`Docker pull failed for ${imageName} (${signal ?? `exit ${code}`}).`))
+    })
+  })
 }
 
 async function fixtureServer(): Promise<{ server: Server; url: string }> {
@@ -109,7 +131,17 @@ export default async function setup(project: TestProject): Promise<() => Promise
     await closeFixture()
   }
   try {
+    console.info(`Checking Docker for ${styleText('cyan', image)}...`)
     await docker('info', '--format', '{{.ServerVersion}}')
+    const cached = await docker('image', 'inspect', '--format', '{{.Id}}', image)
+      .then(() => true)
+      .catch(() => false)
+    if (cached) {
+      console.info(`Using cached image ${styleText('cyan', image)}.`)
+    } else {
+      console.info(`Pulling ${styleText('cyan', image)} (Docker download progress follows):`)
+      await pullImage(image)
+    }
     const html = await fixtureServer()
     fixture = html.server
     // Docker assigns a free localhost port. Never contact the public demo from tests.
@@ -146,8 +178,11 @@ export default async function setup(project: TestProject): Promise<() => Promise
     const port = mapping.match(/127\.0\.0\.1:(\d+)/)?.[1]
     if (!port) throw new Error(`Unexpected Docker port mapping: ${mapping}`)
     const url = `http://127.0.0.1:${port}`
+    console.info(`Waiting for ${styleText('cyan', image)} to become healthy...`)
     await waitForHealth(url)
     project.provide('gotenbergTestUrl', url)
+    project.provide('gotenbergTestContainerName', name)
+    project.provide('gotenbergTestVersion', testVersion)
     project.provide('gotenbergFixtureUrl', html.url)
     project.provide('gotenbergTestUsername', testUsername)
     project.provide('gotenbergTestPassword', testPassword)

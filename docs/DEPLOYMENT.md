@@ -1,6 +1,6 @@
 # Deployment
 
-Gotenui needs a running Gotenberg 8.x instance and a server runtime for its same-origin API proxy. The UI alone cannot make conversions.
+Gotenui needs a running **Gotenberg 8.x or 9.x** instance and a server runtime for its same-origin API proxy. The UI detects the upstream version and selects the appropriate conversion adapter. The UI alone cannot make conversions.
 
 Gotenberg **8.39.0+** is recommended for the latest conversion controls and security fixes. PDF/A-4 and Chromium console-message checks require 8.39, while LibreOffice tagged PDF export requires 8.38. The example Compose configuration pins 8.39.0 for reproducibility; update the image tag as security releases arrive.
 
@@ -104,7 +104,9 @@ OAuth2 service tokens are acquired and renewed server-side. This is not interact
 
 ## Diagnostics and reverse proxies
 
-To read metrics from a separate OpenTelemetry Prometheus exporter, add `metricsUrl` and optional `metricsAuth` to a server-managed profile. The exporter URL must end in `/metrics`. Gotenui does not send Gotenberg conversion credentials to that exporter. For a separate Gotenberg container, the exporter must bind to a network interface accessible to Gotenui. Refer to [Gotenberg telemetry](https://gotenberg.dev/docs/telemetry) for exporter setup.
+Gotenberg **8** exposes legacy `/prometheus/metrics`; Gotenui checks the authenticated upstream `/version` before reading it. Gotenberg **9** removes that route. To read v9 metrics, configure a **server-managed connection** with a separate OpenTelemetry Prometheus exporter. For example, Gotenberg 9 can use `OTEL_METRICS_EXPORTER=prometheus` and `OTEL_EXPORTER_PROMETHEUS_HOST=0.0.0.0` to serve `/metrics` on its exporter listener (default port 9464). Restrict exporter network access to trusted services; do not publish it publicly without access controls.
+
+Add `metricsUrl` and optional `metricsAuth` to the Gotenui server-managed profile, e.g. `"metricsUrl":"http://gotenberg:9464/metrics"`. The exporter URL must end in `/metrics` and be reachable from Gotenui. Neither the address nor its credentials are sent to the browser, and Gotenui never forwards Gotenberg conversion credentials to that exporter. OTLP-only exporters are not directly readable by Gotenui's Prometheus-text viewer. See [Gotenberg telemetry](https://gotenberg.dev/docs/telemetry) for exporter setup.
 
 `GOTENUI_SHOW_DEBUG` and `GOTENUI_SHOW_METRICS` only hide actions in the UI. They do not block the corresponding API routes. Gotenberg remains responsible for access to its diagnostics endpoints.
 

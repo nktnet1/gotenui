@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'markdown-pdf',
+  supportedGotenbergMajors: [8, 9],
   title: 'Markdown to PDF',
   group: 'Convert',
   summary: 'Convert Markdown using a matching HTML template.',

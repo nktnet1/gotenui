@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'factur-x',
+  supportedGotenbergMajors: [8, 9],
   title: 'Factur-X invoices',
   group: 'PDF tools',
   summary: 'Attach compliant CII invoice XML to a PDF.',
@@ -28,12 +29,18 @@ export const operation: Operation = {
     },
     {
       name: 'facturxVersion',
+      supportedGotenbergMajors: [8],
       label: 'Factur-X version',
       kind: 'text',
       placeholder: '1.0',
       advanced: true,
     },
-    { ...pdfa, options: ['PDF/A-3a', 'PDF/A-3b', 'PDF/A-3u'] },
+    {
+      ...pdfa,
+      options: ['PDF/A-3a', 'PDF/A-3b', 'PDF/A-3u'],
+      description:
+        'Gotenberg 8 supports three PDF/A-3 variants here. Gotenberg 9 Factur-X remediation produces PDF/A-3b only.',
+    },
     pdfua,
   ],
   auxiliary: {

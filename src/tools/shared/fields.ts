@@ -8,8 +8,43 @@ export const pdfa: FieldDefinition = {
   kind: 'select',
   options: ['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b', 'PDF/A-4'],
   advanced: true,
-  description: 'PDF/A-4 requires Gotenberg 8.39+ and the LibreOffice PDF engine.',
+  description:
+    'On Gotenberg 8, PDF/A-4 requires v8.39+ and LibreOffice. Gotenberg 9 uses native LibreOffice export or PDF remediation.',
 }
+
+export const paperSize: FieldDefinition = {
+  name: 'paperSize',
+  label: 'Named paper size',
+  kind: 'select',
+  options: ['A3', 'A4', 'A5', 'B4', 'B5', 'Letter', 'Legal', 'Tabloid'],
+  advanced: true,
+  supportedGotenbergMajors: [9],
+  description: 'Gotenberg 9 only. Custom width and height override this preset.',
+}
+
+/** Gotenberg 9 LibreOffice accepts dimensions in addition to named paper sizes. */
+export const officePaperDimensions: FieldDefinition[] = [
+  {
+    name: 'paperWidth',
+    label: 'Custom paper width',
+    kind: 'text',
+    placeholder: '210mm',
+    advanced: true,
+    supportedGotenbergMajors: [9],
+    description:
+      'Gotenberg 9. Specify both width and height, or override one dimension of a named paper size. Units: pt, px, in, mm, cm or pc.',
+  },
+  {
+    name: 'paperHeight',
+    label: 'Custom paper height',
+    kind: 'text',
+    placeholder: '297mm',
+    advanced: true,
+    supportedGotenbergMajors: [9],
+    description:
+      'Gotenberg 9. Specify both dimensions unless a named paper size supplies the other.',
+  },
+]
 
 export const pdfMetadata: FieldDefinition = {
   name: 'metadata',
@@ -35,6 +70,57 @@ export const pdfua: FieldDefinition = {
   advanced: true,
 }
 
+/** v9's remediation stage accepts more PDF/A profiles than native Office export. */
+export const v9PdfaProfile: FieldDefinition = {
+  name: 'pdfaProfile',
+  label: 'PDF/A conformance profile',
+  kind: 'select',
+  options: [
+    'PDF/A-1a',
+    'PDF/A-1b',
+    'PDF/A-2a',
+    'PDF/A-2b',
+    'PDF/A-2u',
+    'PDF/A-3a',
+    'PDF/A-3b',
+    'PDF/A-3u',
+    'PDF/A-4',
+    'PDF/A-4e',
+    'PDF/A-4f',
+  ],
+  advanced: true,
+  supportedGotenbergMajors: [9],
+  description:
+    'Gotenberg 9. The requested profile is produced with PDF remediation unless native Office export supports it.',
+}
+
+export const v9PdfuaProfile: FieldDefinition = {
+  name: 'pdfuaProfile',
+  label: 'PDF/UA conformance profile',
+  kind: 'select',
+  options: ['PDF/UA-1', 'PDF/UA-2'],
+  advanced: true,
+  supportedGotenbergMajors: [9],
+  description:
+    'Gotenberg 9. PDF/A-4 profiles require PDF/UA-2; older PDF/A profiles require PDF/UA-1.',
+}
+
+export const v9OfficePdfaMethod: FieldDefinition = {
+  name: 'pdfaMethod',
+  label: 'PDF conformance method',
+  kind: 'select',
+  options: ['auto', 'native', 'remediate'],
+  optionLabels: {
+    auto: 'Automatic (native when compatible)',
+    native: 'Native LibreOffice export',
+    remediate: 'PDF remediation stage',
+  },
+  advanced: true,
+  supportedGotenbergMajors: [9],
+  description:
+    'Native export supports PDF/A-1b, 2b, 3b, 4 and PDF/UA-1 when no PDF processing follows. Merge, split and custom stages require final remediation; PDF/A-4 with PDF/UA also requires remediation.',
+}
+
 export const chromiumWait: FieldDefinition[] = [
   {
     name: 'waitDelay',
@@ -44,6 +130,15 @@ export const chromiumWait: FieldDefinition[] = [
     advanced: true,
     description:
       'Optional fallback delay. For dynamic pages prefer waiting for an element or JavaScript expression.',
+  },
+  {
+    name: 'waitWindowStatus',
+    label: 'Wait for window.status',
+    kind: 'text',
+    placeholder: 'ready',
+    advanced: true,
+    description:
+      'Wait until page JavaScript sets window.status to this exact string. Gotenberg 9 calls this waitForWindowStatus.',
   },
   {
     name: 'waitForSelector',
@@ -96,6 +191,7 @@ export const chromiumNetwork: FieldDefinition[] = [
 export const optimizeImages: FieldDefinition[] = [
   {
     name: 'optimizeImages',
+    supportedGotenbergMajors: [8],
     label: 'Optimize PDF images',
     kind: 'toggle',
     section: 'compression',
@@ -104,6 +200,7 @@ export const optimizeImages: FieldDefinition[] = [
   },
   {
     name: 'imageQuality',
+    supportedGotenbergMajors: [8],
     label: 'Optimized JPEG quality',
     kind: 'number',
     integer: true,
@@ -257,6 +354,7 @@ export const chromiumReliability: FieldDefinition[] = [
 ]
 
 export const chromePdf: FieldDefinition[] = [
+  paperSize,
   {
     name: 'paperWidth',
     label: 'Paper width',
@@ -343,8 +441,10 @@ export const chromePdf: FieldDefinition[] = [
   ...chromiumMedia,
   ...chromiumReliability,
   ...optimizeImages,
-  { ...pdfa },
-  { ...pdfua },
+  { ...pdfa, supportedGotenbergMajors: [8] },
+  { ...pdfua, supportedGotenbergMajors: [8] },
+  { ...v9PdfaProfile },
+  { ...v9PdfuaProfile },
 ]
 
 export const screenshot: FieldDefinition[] = [

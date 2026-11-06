@@ -4,6 +4,7 @@ import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import {
   CONSOLE_MESSAGE_TYPES,
   parseConsoleMessageTypes,
@@ -137,7 +138,13 @@ function FieldControl({
                     ? 'url'
                     : 'text'
           }
-          min={field.min}
+          min={
+            field.name === 'quality' &&
+            field.min === 0 &&
+            parseGotenbergVersion(backendVersion)?.major === 9
+              ? 1
+              : field.min
+          }
           max={field.max}
           step={field.kind === 'number' ? (field.integer ? 1 : 'any') : undefined}
           autoComplete={field.kind === 'password' ? 'new-password' : undefined}

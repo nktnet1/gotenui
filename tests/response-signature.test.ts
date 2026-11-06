@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
-import { proxyConversionRequest, proxyErrorResponse } from '#/lib/gotenberg-proxy.server'
+import { proxyErrorResponse } from '#/lib/gotenberg-proxy.server'
 import { verifyConversionSignature } from '#/lib/response-signature'
+import { proxyConversionRequest } from './helpers/proxy-v8-fixture'
 
 const origin = 'https://app.example.test'
 const upstreamUrl = 'http://127.0.0.1:3000'

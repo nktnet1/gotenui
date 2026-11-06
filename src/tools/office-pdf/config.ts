@@ -1,9 +1,21 @@
 /** Definition for the office-pdf Gotenberg operation. */
-import { officeCompression, officeOutput, optimizeImages, pdfa, pdfua } from '#/tools/shared/fields'
+import {
+  officeCompression,
+  officeOutput,
+  officePaperDimensions,
+  optimizeImages,
+  paperSize,
+  pdfa,
+  pdfua,
+  v9OfficePdfaMethod,
+  v9PdfaProfile,
+  v9PdfuaProfile,
+} from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'office-pdf',
+  supportedGotenbergMajors: [8, 9],
   title: 'Office to PDF',
   group: 'Convert',
   summary: 'Convert documents, spreadsheets and presentations.',
@@ -12,6 +24,8 @@ export const operation: Operation = {
   input: 'office',
   multiple: true,
   fields: [
+    paperSize,
+    ...officePaperDimensions,
     { name: 'landscape', label: 'Landscape orientation', kind: 'toggle' },
     { name: 'singlePageSheets', label: 'Single page per sheet', kind: 'toggle' },
     { name: 'skipEmptyPages', label: 'Skip blank pages', kind: 'toggle', advanced: true },
@@ -183,6 +197,7 @@ export const operation: Operation = {
     },
     {
       name: 'firstPageOnLeft',
+      supportedGotenbergMajors: [8],
       label: 'First page on left',
       kind: 'toggle',
       advanced: true,
@@ -242,6 +257,8 @@ export const operation: Operation = {
       integer: true,
       advanced: true,
       placeholder: '-1 (all levels)',
+      description:
+        'Gotenberg 9 accepts -1 (all) or levels 1–10. Gotenberg 8 supports its original range.',
     },
     {
       name: 'nativeWatermarkText',
@@ -290,10 +307,14 @@ export const operation: Operation = {
       max: 360,
       section: 'watermark',
       placeholder: '45',
-      description: 'Supports one decimal place; Gotenberg receives tenths of a degree.',
+      description:
+        'Supports one decimal place; Gotenberg 8 uses tenths of a degree and Gotenberg 9 uses degrees.',
     },
-    pdfa,
-    pdfua,
+    { ...pdfa, supportedGotenbergMajors: [8] },
+    { ...pdfua, supportedGotenbergMajors: [8] },
+    v9PdfaProfile,
+    v9PdfuaProfile,
+    v9OfficePdfaMethod,
     {
       name: 'generateTaggedPdf',
       label: 'Generate accessible structure tags',

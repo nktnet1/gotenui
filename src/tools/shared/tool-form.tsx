@@ -28,6 +28,7 @@ import {
   OverlayGroupsEditor,
   PdfConversionPostProcessing,
 } from '#/components/pdf-conversion-post-processing'
+import { PdfPipelineBuilder } from '#/components/pdf-pipeline-builder'
 import { PdfBookmarksEditor, PdfMetadataEditor } from '#/components/pdf-structure-editors'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
@@ -47,9 +48,15 @@ import type { BrowserBatchQueue } from '#/lib/browser-batch-queue'
 import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
 import { chromiumNetworkFields } from '#/lib/chromium-network'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
-import { convertWithGotenberg, REQUEST_TIMEOUT_MS } from '#/lib/gotenberg-client'
-import { OFFICE_ACCEPT } from '#/lib/office-formats'
-import { versionAtLeast } from '#/lib/operation-availability'
+import {
+  convertWithGotenberg,
+  REQUEST_TIMEOUT_MS,
+  remediationReviewNotice,
+} from '#/lib/gotenberg-client'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
+import { officeAcceptForVersion } from '#/lib/office-formats'
+import { canWebhookForOperation, versionAtLeast } from '#/lib/operation-availability'
+import { DEFAULT_PDF_PIPELINE, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import {
   type OverlayKind,
   overlayUploads,
@@ -58,11 +65,18 @@ import {
   type PostProcessFiles,
 } from '#/lib/pdf-post-processing'
 import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
+import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
 import { cn } from '#/lib/utils'
-import { InputError, parseAdvanced } from '#/lib/validation'
+import {
+  InputError,
+  parseAdvanced,
+  supportsArchiveInputs,
+  type WebhookConfig,
+} from '#/lib/validation'
 import {
   activeOperationFields,
   type FieldDefinition,
+  fieldSupportsBackend,
   isFieldVisible,
   type Operation,
   operationDefaults,
@@ -129,7 +143,11 @@ export function Workbench({
   const [footerHtml, setFooterHtml] = useState('')
   const [postProcess, setPostProcess] = useState<PdfPostProcess>({})
   const [postFiles, setPostFiles] = useState<PostProcessFiles>({})
+  const [conversionStages, setConversionStages] = useState('')
+  const [conversionStageFiles, setConversionStageFiles] = useState<File[]>([])
+  const [acknowledgedConversionRedaction, setAcknowledgedConversionRedaction] = useState(false)
   const [files, setFiles] = useState<File[]>([])
+  const [archives, setArchives] = useState<File[]>([])
   const [auxFiles, setAuxFiles] = useState<File[]>([])
   const [advanced, setAdvanced] = useState('')
   const [cookies, setCookies] = useState<CookieRow[]>([])
@@ -177,7 +195,11 @@ export function Workbench({
     setFooterHtml('')
     setPostProcess({})
     setPostFiles({})
+    setConversionStages('')
+    setConversionStageFiles([])
+    setAcknowledgedConversionRedaction(false)
     setFiles([])
+    setArchives([])
     setAuxFiles([])
     setAdvanced('')
     setCookies([])
@@ -203,24 +225,38 @@ export function Workbench({
         [overlayProperty]: postProcess[overlayProperty] ?? [defaultOverlay(standaloneKind)],
       }
     : undefined
-  const hasMetadataEditor = operation.fields.some((field) => field.name === 'metadata')
-  const hasBookmarksEditor = operation.fields.some((field) => field.name === 'bookmarks')
+  const hasMetadataEditor = operation.fields.some(
+    (field) => field.name === 'metadata' && fieldSupportsBackend(field, backendVersion),
+  )
+  const hasBookmarksEditor = operation.fields.some(
+    (field) => field.name === 'bookmarks' && fieldSupportsBackend(field, backendVersion),
+  )
   const hasPdfStructureEditor = hasMetadataEditor || hasBookmarksEditor || operation.id === 'embed'
-  const basicFields = standaloneKind
+  const isV9 = parseGotenbergVersion(backendVersion)?.major === 9
+  const canWebhook = canWebhookForOperation(isV9 ? 9 : 8, operation)
+  const canUploadArchives = isV9 && supportsArchiveInputs(operation)
+  const v8StandaloneOverlay = Boolean(standaloneKind) && !isV9
+  const basicFields = v8StandaloneOverlay
     ? []
     : operation.fields.filter(
         (field) =>
           !field.advanced &&
+          fieldSupportsBackend(field, backendVersion) &&
           !field.section &&
           isFieldVisible(field, fields) &&
           !(field.customEditor && field.kind === 'json') &&
-          !(operation.id === 'embed' && field.name === 'embedsMetadata'),
+          !(operation.id === 'embed' && field.name === 'embedsMetadata') &&
+          !(
+            operation.id === 'pdf-pipeline' &&
+            ['stages', 'acknowledgedRedaction'].includes(field.name)
+          ),
       )
-  const advancedFields = standaloneKind
+  const advancedFields = v8StandaloneOverlay
     ? []
     : operation.fields.filter(
         (field) =>
           field.advanced &&
+          fieldSupportsBackend(field, backendVersion) &&
           !field.customEditor &&
           !field.section &&
           isFieldVisible(field, fields) &&
@@ -258,9 +294,39 @@ export function Workbench({
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
   const operationHasFileAssets = isSourceEditor
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
-  const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id)
+  const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && !isV9
+  const supportsConversionPipeline = isV9 && operation.output === 'pdf' && operation.input !== 'pdf'
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
-  const docsUrl = `https://gotenberg.dev/docs/${operation.docs}`
+  const pipelineError = (() => {
+    if (operation.id !== 'pdf-pipeline') return null
+    try {
+      parsePdfPipeline(String(fields.stages ?? ''), {
+        // Archive entries are indexed and checked against references by the proxy.
+        // Do not reject a stage asset solely because it is inside an uploaded ZIP.
+        assetNames: archives.length ? undefined : auxFiles.map(({ name }) => name),
+        acknowledgedRedaction: fields.acknowledgedRedaction === true,
+      })
+      return null
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Invalid PDF pipeline.'
+    }
+  })()
+  const conversionPipelineError = (() => {
+    if (!conversionStages) return null
+    try {
+      parsePdfPipeline(conversionStages, {
+        assetNames: archives.length ? undefined : conversionStageFiles.map(({ name }) => name),
+        acknowledgedRedaction: acknowledgedConversionRedaction,
+      })
+      return null
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Invalid conversion PDF stages.'
+    }
+  })()
+  const docsUrl =
+    isV9 && operation.input === 'pdf'
+      ? `https://gotenberg.dev/docs/pdf/${operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`
+      : `https://gotenberg.dev/docs/${operation.docs}`
 
   const updateField = (name: string, value: string | boolean) =>
     setFields((current) => ({ ...current, [name]: value }))
@@ -328,8 +394,23 @@ export function Workbench({
 
   const buildCandidate = () => {
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
-    const webhook = webhookPayload(webhookSettings, webhookInput)
-    const selectedFields = activeOperationFields(operation, fields)
+    // JSON inspection routes answer synchronously in v9. Preserve the v8
+    // webhook draft for a connection switch, but never send it on this route.
+    const webhook = !canWebhook
+      ? undefined
+      : (webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined)
+    if (isV9 && webhook && !webhook.eventsUrl) {
+      throw new InputError('Gotenberg 9 webhooks require an events callback URL.')
+    }
+    if (isV9 && webhook && (webhook.errorUrl || webhook.errorMethod)) {
+      throw new InputError('Gotenberg 9 removed separate webhook error callbacks.')
+    }
+    if (pipelineError) throw new InputError(pipelineError)
+    if (conversionPipelineError) throw new InputError(conversionPipelineError)
+    if (conversionStages && !supportsConversionPipeline) {
+      throw new InputError('The configured conversion PDF stages require Gotenberg 9.')
+    }
+    const selectedFields = activeOperationFields(operation, fields, backendVersion)
     if (selectedFields.pdfa === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false) {
       throw new Error('PDF/A-4 requires Gotenberg 8.39 or newer.')
     }
@@ -349,7 +430,7 @@ export function Workbench({
     }
     const candidate = {
       operation: operation.id,
-      fields: standaloneKind
+      fields: v8StandaloneOverlay
         ? {}
         : hasChromiumNetwork
           ? { ...selectedFields, ...chromiumNetworkFields(cookies, resourceHeaders) }
@@ -364,7 +445,12 @@ export function Workbench({
         operation.input === 'markdown' ? (markdownTemplate ?? undefined) : undefined,
       headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
       footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
-      postProcess: standaloneKind
+      conversionStages: supportsConversionPipeline ? conversionStages || undefined : undefined,
+      acknowledgedConversionRedaction:
+        supportsConversionPipeline && conversionStages
+          ? acknowledgedConversionRedaction
+          : undefined,
+      postProcess: v8StandaloneOverlay
         ? activeStandaloneSettings
         : hasPostProcessing && Object.values(postProcess).some((value) => value !== undefined)
           ? postProcess
@@ -390,8 +476,10 @@ export function Workbench({
         connection,
         candidate: buildCandidate(),
         files,
+        archives: canUploadArchives ? archives : [],
         auxiliary: auxFiles,
-        postFiles,
+        stageFiles: supportsConversionPipeline ? conversionStageFiles : [],
+        postFiles: v8StandaloneOverlay || !standaloneKind ? postFiles : {},
       })
       toast.success(`Added job #${id} to the batch queue below.`)
     } catch (error) {
@@ -409,8 +497,8 @@ export function Workbench({
     setPending(true)
     setAcceptedWebhook(null)
     try {
-      const webhook = webhookPayload(webhookSettings, webhookInput)
       const candidate = buildCandidate()
+      const webhook = candidate.webhook
       const start = performance.now()
       const controller = new AbortController()
       requestAbort.current = controller
@@ -422,7 +510,9 @@ export function Workbench({
         files,
         auxFiles,
         signal,
-        postFiles,
+        v8StandaloneOverlay || !standaloneKind ? postFiles : {},
+        supportsConversionPipeline ? conversionStageFiles : [],
+        canUploadArchives ? archives : [],
       )
       if (signal.aborted) {
         if (deadline.aborted) toast.error('Gotenberg did not respond within three minutes.')
@@ -432,9 +522,10 @@ export function Workbench({
         setAcceptedWebhook({
           status: result.status,
           trace: result.trace,
-          receiverHost: safeOutboundHost(
-            webhook && typeof webhook === 'object' && 'url' in webhook ? String(webhook.url) : '',
-          ),
+          receiverHost: safeOutboundHost(webhook?.url ?? ''),
+          ...(webhook?.eventsUrl
+            ? { eventsReceiverHost: safeOutboundHost(webhook.eventsUrl) }
+            : {}),
         })
         setLastDownload(null)
         if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
@@ -442,12 +533,26 @@ export function Workbench({
         toast.message('Gotenberg accepted the request; callback delivery is not yet confirmed.')
         return
       }
-      const { blob, type, name, trace } = result
+      const { blob, type, name, trace, remediation } = result
       const url = URL.createObjectURL(blob)
       if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
       fileUrl.current = url
-      const preview = type === 'application/json' ? (await blob.text()).slice(0, 16_000) : undefined
-      setLastDownload({ name, size: blob.size, type, url, preview, trace })
+      const preview = type === 'application/json' ? await blob.slice(0, 16_000).text() : undefined
+      const validation =
+        operation.id === 'pdf-validate'
+          ? ((await summarisePdfValidationBlob(blob)) ?? undefined)
+          : undefined
+      setLastDownload({
+        name,
+        size: blob.size,
+        type,
+        url,
+        blob: type === 'application/zip' ? blob : undefined,
+        preview,
+        trace,
+        remediation,
+        validation,
+      })
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = name
@@ -462,7 +567,17 @@ export function Workbench({
         elapsed: performance.now() - start,
         trace,
       })
-      toast.success(`${name} is ready to download`)
+      if (validation?.some((result) => !result.compliant)) {
+        toast.warning(
+          'PDF validation found non-compliant documents. Review the reported violations before relying on them.',
+        )
+      } else if (operation.id === 'pdf-validate' && !validation) {
+        toast.warning(
+          'PDF validation response could not be summarised. Review the downloaded JSON.',
+        )
+      } else if (remediationReviewNotice(remediation)) {
+        toast.warning(`Gotenberg generated ${name}, but ${remediationReviewNotice(remediation)}`)
+      } else toast.success(`${name} is ready to download`)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         toast.message('Conversion cancelled.')
@@ -537,7 +652,11 @@ export function Workbench({
                   readAbort.current?.abort()
                   setFiles(nextFiles)
                 }}
-                accept={operation.input === 'pdf' ? '.pdf,application/pdf' : OFFICE_ACCEPT}
+                accept={
+                  operation.input === 'pdf'
+                    ? '.pdf,application/pdf'
+                    : officeAcceptForVersion(backendVersion)
+                }
                 multiple={true}
                 reorder={
                   operation.id === 'merge' ||
@@ -547,6 +666,29 @@ export function Workbench({
                   operation.id === 'merge' ||
                   (operation.id === 'office-pdf' && fields.merge === true)
                 }
+              />
+            )}
+            {canUploadArchives && (
+              <UploadZone
+                label={
+                  operation.input === 'office'
+                    ? 'Office ZIP archives'
+                    : operation.id === 'pdf-pipeline'
+                      ? 'PDF ZIP archives'
+                      : 'Asset ZIP archives'
+                }
+                description={
+                  operation.input === 'office'
+                    ? 'ZIP archives of Office documents and any named PDF stage assets. Gotenberg extracts the inputs and enforces expansion limits; multiple outputs may return as a ZIP.'
+                    : operation.id === 'pdf-pipeline'
+                      ? 'ZIP archives of PDFs and named stage assets (images, certificates, or attachments). Reference the exact asset filename in the stage editor. Gotenui checks ZIP entries before forwarding; Gotenberg enforces extraction limits.'
+                      : 'Optional ZIP archives of CSS, images, fonts or other HTML/Markdown assets. Refer to extracted files by name in your source; do not include index.html, header.html or footer.html. Gotenberg enforces archive expansion limits.'
+                }
+                files={archives}
+                onChange={setArchives}
+                accept=".zip,application/zip"
+                multiple
+                maxFiles={10}
               />
             )}
             {operation.input === 'url' && (
@@ -601,7 +743,7 @@ export function Workbench({
                 multiple={true}
               />
             )}
-            {operation.auxiliary && !standaloneKind && (
+            {operation.auxiliary && !v8StandaloneOverlay && (
               <UploadZone
                 label={operation.auxiliary.label}
                 description={operation.auxiliary.description}
@@ -642,11 +784,23 @@ export function Workbench({
                     />
                   ))}
               </div>
-            ) : !standaloneKind && !hasPdfStructureEditor ? (
+            ) : !v8StandaloneOverlay &&
+              !hasPdfStructureEditor &&
+              operation.id !== 'pdf-pipeline' ? (
               <p className="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
                 This operation works with its default settings.
               </p>
             ) : null}
+            {operation.id === 'pdf-pipeline' && (
+              <PdfPipelineBuilder
+                key={operation.id}
+                value={String(fields.stages ?? '')}
+                onChange={(value) => updateField('stages', value)}
+                acknowledgedRedaction={fields.acknowledgedRedaction === true}
+                onRedactionChange={(value) => updateField('acknowledgedRedaction', value)}
+                error={pipelineError}
+              />
+            )}
             {(operation.id === 'metadata-write' || operation.id === 'bookmarks-write') && (
               <div className="space-y-2 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
                 <Button
@@ -672,6 +826,13 @@ export function Workbench({
                 </p>
               </div>
             )}
+            {hasMetadataEditor && isV9 && (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Gotenberg 9 writes standard PDF metadata (title, author, subject, keywords, creator,
+                producer, and dates). Custom XMP fields such as Copyright remain available only with
+                Gotenberg 8.
+              </p>
+            )}
             {hasMetadataEditor && (
               <PdfMetadataEditor
                 value={String(fields.metadata ?? '{}')}
@@ -689,11 +850,11 @@ export function Workbench({
               <PdfBookmarksEditor
                 value={String(fields.bookmarks ?? '[]')}
                 onChange={(value) => updateField('bookmarks', value)}
-                allowFilenameMap
+                allowFilenameMap={!isV9}
                 filenames={files.map((file) => file.name)}
               />
             )}
-            {standaloneKind && activeStandaloneSettings && (
+            {v8StandaloneOverlay && standaloneKind && activeStandaloneSettings && (
               <OverlayGroupsEditor
                 kind={standaloneKind}
                 rows={activeStandaloneSettings[overlayProperty] ?? []}
@@ -713,6 +874,71 @@ export function Workbench({
                 onFooterChange={setFooterHtml}
               />
             )}
+            {supportsConversionPipeline && (
+              <section className="space-y-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      PDF processing after conversion (Gotenberg 9)
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                      Apply ordered PDF stages in the same conversion request. Office merge and
+                      split controls run first; automatic PDF/A remediation runs last. Gotenberg 8
+                      retains its separate post-processing controls.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    aria-expanded={Boolean(conversionStages)}
+                    onClick={() => {
+                      setConversionStages(conversionStages ? '' : DEFAULT_PDF_PIPELINE)
+                      setConversionStageFiles([])
+                      setAcknowledgedConversionRedaction(false)
+                    }}
+                  >
+                    {conversionStages ? 'Remove pipeline' : 'Add pipeline'}
+                  </Button>
+                </div>
+                {conversionStages && (
+                  <div className="space-y-4">
+                    <PdfPipelineBuilder
+                      value={conversionStages}
+                      onChange={setConversionStages}
+                      acknowledgedRedaction={acknowledgedConversionRedaction}
+                      onRedactionChange={setAcknowledgedConversionRedaction}
+                      error={conversionPipelineError}
+                      conversionMode
+                    />
+                    <UploadZone
+                      label="Pipeline stage files"
+                      description="Upload named PDFs, PNG/JPEG stamps, invoices, attachments, or signing credentials. Reference each exact filename in its stage settings."
+                      files={conversionStageFiles}
+                      onChange={setConversionStageFiles}
+                      multiple
+                      maxFiles={20}
+                    />
+                  </div>
+                )}
+              </section>
+            )}
+            {!isV9 && conversionStages && (
+              <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
+                The configured PDF pipeline requires Gotenberg 9. Return to a v9 connection or{' '}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => {
+                    setConversionStages('')
+                    setConversionStageFiles([])
+                    setAcknowledgedConversionRedaction(false)
+                  }}
+                >
+                  discard the stages
+                </button>
+                .
+              </p>
+            )}
             {hasPostProcessing && (
               <PdfConversionPostProcessing
                 mode={
@@ -729,7 +955,9 @@ export function Workbench({
               />
             )}
             {featureSections.map(({ key, title, description }) => {
-              const items = operation.fields.filter((field) => field.section === key)
+              const items = operation.fields.filter(
+                (field) => field.section === key && fieldSupportsBackend(field, backendVersion),
+              )
               if (!items.length) return null
               return (
                 <details
@@ -750,8 +978,9 @@ export function Workbench({
                   <div className="space-y-4 border-t border-slate-200 px-4 py-4 dark:border-slate-700">
                     {key === 'compression' && !supportsOptimization && (
                       <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
-                        PDF image optimization needs Gotenberg 8.36+. Native LibreOffice compression
-                        is still available.
+                        {isV9
+                          ? 'Gotenberg 9 only supports lossless PDF optimisation. Native LibreOffice image compression remains available.'
+                          : 'PDF image optimization needs Gotenberg 8.36+. Native LibreOffice compression is still available.'}
                       </p>
                     )}
                     <div className="grid gap-4 sm:grid-cols-2">
@@ -810,7 +1039,11 @@ export function Workbench({
                     {advancedFields.map((field) => (
                       <FieldControl
                         key={field.name}
-                        field={field}
+                        field={
+                          isV9 && operation.id === 'factur-x' && field.name === 'pdfa'
+                            ? { ...field, options: ['PDF/A-3b'] }
+                            : field
+                        }
                         value={fields[field.name]}
                         onChange={(value) => updateField(field.name, value)}
                         backendVersion={backendVersion}
@@ -873,36 +1106,50 @@ export function Workbench({
                     </p>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="additional-fields">Additional Gotenberg form fields (JSON)</Label>
-                  <Textarea
-                    id="additional-fields"
-                    rows={4}
-                    spellCheck={false}
-                    className="font-mono text-xs"
-                    placeholder={'{ "waitForExpression": "window.ready === true" }'}
-                    value={advanced}
-                    onChange={(event) => setAdvanced(event.target.value)}
-                  />
-                  <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
-                    Use this for documented options not shown above. Enter flat JSON key/value
-                    pairs; enter remote inputs and webhooks separately below.
-                  </p>
-                </div>
+                {operation.id !== 'pdf-pipeline' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="additional-fields">
+                      Additional Gotenberg form fields (JSON)
+                    </Label>
+                    <Textarea
+                      id="additional-fields"
+                      rows={4}
+                      spellCheck={false}
+                      className="font-mono text-xs"
+                      placeholder={'{ "waitForExpression": "window.ready === true" }'}
+                      value={advanced}
+                      onChange={(event) => setAdvanced(event.target.value)}
+                    />
+                    <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+                      Use this for documented options not shown above. Enter flat JSON key/value
+                      pairs; enter remote inputs and webhooks separately below.
+                    </p>
+                  </div>
+                )}
                 <RemoteInputsEditor
+                  isV9={isV9}
+                  pdfInputOnly={operation.id === 'pdf-pipeline'}
                   rows={remoteRows}
                   onChange={setRemoteRows}
                   legacy={remoteInput}
                   onLegacyChange={setRemoteInput}
                   newId={() => nextOutboundId.current++}
                 />
-                <WebhookEditor
-                  value={webhookSettings}
-                  onChange={setWebhookSettings}
-                  legacy={webhookInput}
-                  onLegacyChange={setWebhookInput}
-                  newId={() => nextOutboundId.current++}
-                />
+                {!canWebhook ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    PDF inspection returns JSON directly on Gotenberg 9; webhook delivery is not
+                    available for this tool.
+                  </p>
+                ) : (
+                  <WebhookEditor
+                    isV9={isV9}
+                    value={webhookSettings}
+                    onChange={setWebhookSettings}
+                    legacy={webhookInput}
+                    onLegacyChange={setWebhookInput}
+                    newId={() => nextOutboundId.current++}
+                  />
+                )}
               </div>
             </details>
           </CardContent>
@@ -927,7 +1174,7 @@ export function Workbench({
               type="button"
               variant="outline"
               size="lg"
-              disabled={pending || Boolean(unavailableReason)}
+              disabled={pending || Boolean(unavailableReason) || Boolean(pipelineError)}
               onClick={queueCurrent}
             >
               <ListPlus className="size-4" /> Add to batch
@@ -935,7 +1182,7 @@ export function Workbench({
             <Button
               type="submit"
               size="lg"
-              disabled={pending || Boolean(unavailableReason)}
+              disabled={pending || Boolean(unavailableReason) || Boolean(pipelineError)}
               className="min-w-44"
             >
               {pending ? (
@@ -949,10 +1196,11 @@ export function Workbench({
         </div>
       </form>
       <JobPanel
+        backendVersion={backendVersion}
         operation={operation}
         files={files}
         auxFiles={auxFiles}
-        postFiles={postFiles}
+        postFiles={v8StandaloneOverlay || !standaloneKind ? postFiles : {}}
         source={isSourceEditor ? source : ''}
         pending={pending}
         lastDownload={lastDownload}

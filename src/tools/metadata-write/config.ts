@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'metadata-write',
+  supportedGotenbergMajors: [8, 9],
   title: 'Write metadata',
   group: 'PDF tools',
   summary: 'Set author, title, keywords and more.',

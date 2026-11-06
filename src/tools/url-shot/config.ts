@@ -7,6 +7,7 @@ export const operation: Operation = {
   title: 'Website screenshot',
   group: 'Capture',
   summary: 'Capture a website as PNG, JPEG or WebP.',
+  supportedGotenbergMajors: [8, 9],
   path: '/forms/chromium/screenshot/url',
   docs: 'convert-with-chromium/screenshot-url',
   input: 'url',

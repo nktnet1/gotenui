@@ -37,7 +37,9 @@ async function diagnosticResponse(
     headers: { 'Content-Type': type, ...extraHeaders },
   })
   if (route === 'metrics') {
-    return proxyMetricsRequest(request(route), async () => upstream).catch(proxyErrorResponse)
+    return proxyMetricsRequest(request(route), async (url) =>
+      String(url).endsWith('/version') ? new Response('8.40.0') : upstream,
+    ).catch(proxyErrorResponse)
   }
   if (route === 'debug') {
     return proxyDebugRequest(request(route), async () => upstream).catch(proxyErrorResponse)
@@ -114,9 +116,9 @@ for (const [route, body] of cases) {
       result = await proxyStatusRequest(request(route), async () => upstream)
       assert.equal((await result.json()).online, false)
     } else if (route === 'metrics') {
-      result = await proxyMetricsRequest(request(route), async () => upstream).catch(
-        proxyErrorResponse,
-      )
+      result = await proxyMetricsRequest(request(route), async (url) =>
+        String(url).endsWith('/version') ? new Response('8.40.0') : upstream,
+      ).catch(proxyErrorResponse)
       assert.equal(result.status, 502)
     } else {
       result = await proxyDebugRequest(request(route), async () => upstream).catch(

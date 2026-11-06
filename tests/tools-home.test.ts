@@ -30,6 +30,19 @@ describe('all tools home', () => {
     expect(html).toContain('dark:bg-slate-900')
   })
 
+  it('shows v9-compatible conversion, screenshot and PDF cards', () => {
+    const html = renderHome({ online: true, version: '9.0.0', modules: [] })
+    expect(html).not.toContain('data-slot="tool-card" disabled=""')
+    expect(html).toContain('Website screenshot')
+    expect(html).toContain('HTML screenshot')
+    expect(html).toContain('Markdown screenshot')
+  })
+
+  it('blocks every tool if the online backend version cannot be checked', () => {
+    const html = renderHome({ online: true, version: 'Unknown', modules: [] })
+    expect(html.match(/data-slot="tool-card"[^>]*disabled=""/g)).toHaveLength(OPERATIONS.length)
+  })
+
   it('uses the existing availability rules for disabled tools', () => {
     const html = renderHome({ online: true, version: '8.35.0', modules: [] })
     const tooltip = html.indexOf('Optimize PDFs requires Gotenberg 8.36 or newer.')

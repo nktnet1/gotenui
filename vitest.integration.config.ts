@@ -1,9 +1,11 @@
 import { defineConfig } from 'vitest/config'
+import { integrationTestCache } from '#scripts/test-cache'
 
 export default defineConfig({
   resolve: { tsconfigPaths: true },
   test: {
     fsModuleCache: true,
+    fsModuleCachePath: integrationTestCache(process.env.GOTENBERG_TEST_VERSION),
     isolate: true,
     environment: 'node',
     include: ['tests/integration/*.integration.test.ts'],

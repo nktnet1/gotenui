@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.server'
 import {
-  proxyConversionRequest,
   proxyDebugRequest,
   proxyHeadHealthRequest,
   proxyMetricsRequest,
@@ -17,6 +16,7 @@ import {
 } from '#/lib/oauth2-client-credentials.server'
 import { parseAllowedBackends } from '#/lib/proxy-policy'
 import { parseServerConnections, publicServerConnections } from '#/lib/server-connections.server'
+import { proxyConversionRequest } from './helpers/proxy-v8-fixture'
 
 const origin = 'https://gotenui.example.test'
 const backend = 'https://pdf.example.test'
@@ -264,7 +264,7 @@ test('managed token reaches conversions, status, health, debug, legacy metrics b
   assert.equal((await proxyDebugRequest(request('debug', 'POST'), fetcher)).status, 200)
   assert.equal((await proxyMetricsRequest(request('metrics', 'POST'), fetcher)).status, 200)
   assert.equal(tokenCalls, 1)
-  assert.equal(upstreamCalls, 6)
+  assert.equal(upstreamCalls, 7)
   const allowed = parseAllowedBackends(`${backend},${alternate}`)
   const config = {
     allowed,

@@ -26,7 +26,7 @@ function input(): BatchInput {
   }
 }
 
-const pdf = (name = 'output.pdf'): ConversionResult => ({
+const pdf = (name = 'output.pdf'): Extract<ConversionResult, { mode: 'download' }> => ({
   mode: 'download',
   name,
   type: 'application/pdf',
@@ -92,6 +92,33 @@ describe('browser-managed batch queue', () => {
     queue.dispose()
   })
 
+  it('continues dispatching after clearing finished jobs until explicitly paused', async () => {
+    const execute = vi.fn(async () => pdf())
+    const { queue } = queueWith(execute)
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    queue.clearFinished()
+    expect(queue.getSnapshot()).toMatchObject({ active: true, jobs: [] })
+
+    queue.enqueue(input())
+    // A started queue launches on enqueue, rather than remaining "1 waiting".
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
+    await tick()
+    queue.pause()
+    queue.clearFinished()
+    queue.enqueue(input())
+    expect(queue.getSnapshot()).toMatchObject({
+      active: false,
+      jobs: [{ status: 'queued' }],
+    })
+    queue.start()
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
+    await tick()
+    expect(execute).toHaveBeenCalledTimes(3)
+    queue.dispose()
+  })
+
   it('pauses dispatch of queued jobs without cancelling requests already in flight', async () => {
     const held = deferred<ConversionResult>()
     const execute = vi.fn(() => held.promise)
@@ -150,6 +177,365 @@ describe('browser-managed batch queue', () => {
     queue.start()
     await tick()
     expect(requests).toEqual(['primary', 'secondary'])
+    queue.dispose()
+  })
+
+  it('retains distinct v8 and v9 targets while pending jobs wait for a free slot', async () => {
+    const pending = [deferred<ConversionResult>(), deferred<ConversionResult>()]
+    const targets: string[] = []
+    const { queue } = queueWith(async (value) => {
+      const target = value.connection
+      expect(target.kind).toBe('server')
+      if (target.kind === 'server') targets.push(target.id)
+      return pending[targets.length - 1]?.promise ?? pdf()
+    })
+    const first = input()
+    first.connection = { kind: 'server', id: 'v8-production' }
+    queue.enqueue(first)
+    first.connection = { kind: 'server', id: 'v9-production' }
+    const second = input()
+    second.connection = first.connection
+    queue.enqueue(second)
+    const third = input()
+    third.connection = { kind: 'server', id: 'v8-production' }
+    queue.enqueue(third)
+    queue.start()
+    expect(targets).toEqual(['v8-production', 'v9-production'])
+    third.connection = { kind: 'server', id: 'v9-production' }
+    pending[0]?.resolve(pdf())
+    await tick()
+    expect(targets).toEqual(['v8-production', 'v9-production', 'v8-production'])
+    pending[1]?.resolve(pdf())
+    await tick()
+    expect(queue.getSnapshot().jobs.map(({ status }) => status)).toEqual([
+      'completed',
+      'completed',
+      'completed',
+    ])
+    queue.dispose()
+  })
+
+  it('offers opt-in ZIP previews without exposing archive data in public job snapshots', async () => {
+    const archive = new Blob(['PK\u0003\u0004 example archive'], { type: 'application/zip' })
+    const pending = deferred<ConversionResult>()
+    const { queue, revoked } = queueWith(async () => pending.promise)
+    const id = queue.enqueue(input())
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    queue.start()
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    pending.resolve({ mode: 'download', type: 'application/zip', name: 'pages.zip', blob: archive })
+    await tick()
+
+    const job = queue.getSnapshot().jobs[0]
+    expect(job).toMatchObject({ id, status: 'completed', type: 'application/zip' })
+    expect(queue.getArchiveBlob(id)).toBe(archive)
+    expect(Object.keys(job ?? {})).not.toContain('archive')
+    const html = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+    expect(html).toContain('Download pages.zip')
+    expect(html).toContain('View archive contents')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('example archive')
+    expect(html).not.toContain('Archive files')
+
+    queue.remove(id)
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    expect(revoked).toEqual([job?.url])
+    queue.dispose()
+  })
+
+  it.each(['image/png', 'image/jpeg', 'image/webp'])(
+    'offers an opt-in %s preview using the completed image download URL',
+    async (type) => {
+      const { queue, revoked } = queueWith(async () => ({
+        mode: 'download',
+        type,
+        name: `rendered.${type.split('/')[1]}`,
+        blob: new Blob(['image bytes'], { type }),
+      }))
+      const id = queue.enqueue(input())
+      queue.start()
+      await tick()
+      const job = queue.getSnapshot().jobs[0]
+      expect(job).toMatchObject({ id, status: 'completed', type })
+      const markup = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+      expect(markup).toContain(`Download ${job?.name}`)
+      expect(markup).toContain('Preview image')
+      expect(markup).toContain('aria-expanded="false"')
+      expect(markup).not.toContain('<img')
+      expect(queue.getArchiveBlob(id)).toBeUndefined()
+      queue.clearFinished()
+      expect(revoked).toEqual([job?.url])
+      expect(renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))).not.toContain(
+        'Preview image',
+      )
+      queue.dispose()
+    },
+  )
+
+  it('does not preview non-raster, failed, or cancelled image downloads', async () => {
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      type: 'image/svg+xml',
+      name: 'unexpected.svg',
+      blob: new Blob(['<svg/>'], { type: 'image/svg+xml' }),
+    }))
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    expect(renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))).not.toContain(
+      'Preview image',
+    )
+    queue.dispose()
+
+    const pending = deferred<ConversionResult>()
+    const cancelled = queueWith(async () => pending.promise)
+    const id = cancelled.queue.enqueue(input())
+    cancelled.queue.start()
+    cancelled.queue.cancel(id)
+    pending.resolve({
+      mode: 'download',
+      type: 'image/png',
+      name: 'late.png',
+      blob: new Blob(['x']),
+    })
+    await tick()
+    expect(
+      renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue: cancelled.queue })),
+    ).not.toContain('Preview image')
+    cancelled.queue.dispose()
+  })
+
+  it('does not offer ZIP previews for PDF outputs, cancelled jobs, or disposed queues', async () => {
+    const pdfJob = queueWith(async () => pdf())
+    const pdfId = pdfJob.queue.enqueue(input())
+    pdfJob.queue.start()
+    await tick()
+    expect(pdfJob.queue.getArchiveBlob(pdfId)).toBeUndefined()
+    expect(
+      renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue: pdfJob.queue })),
+    ).not.toContain('View archive contents')
+    pdfJob.queue.dispose()
+
+    const pending = deferred<ConversionResult>()
+    const { queue } = queueWith(async () => pending.promise)
+    const id = queue.enqueue(input())
+    queue.start()
+    queue.cancel(id)
+    pending.resolve({
+      mode: 'download',
+      type: 'application/zip',
+      name: 'late.zip',
+      blob: new Blob(['late']),
+    })
+    await tick()
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    expect(renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))).not.toContain(
+      'View archive contents',
+    )
+    queue.dispose()
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+  })
+
+  it('releases completed ZIP preview references when clearing finished jobs', async () => {
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      type: 'application/zip',
+      name: 'result.zip',
+      blob: new Blob(['PK\u0003\u0004 zip']),
+    }))
+    const id = queue.enqueue(input())
+    queue.start()
+    await tick()
+    expect(queue.getArchiveBlob(id)).toBeInstanceOf(Blob)
+    queue.clearFinished()
+    expect(queue.getArchiveBlob(id)).toBeUndefined()
+    queue.dispose()
+  })
+
+  it('warns about non-compliant v9 validation results but keeps the report downloadable', async () => {
+    const completed = vi.fn()
+    const result: ConversionResult = {
+      mode: 'download',
+      name: 'validation.json',
+      type: 'application/json',
+      blob: new Blob(
+        [
+          JSON.stringify({
+            'customer-a.pdf': {
+              compliant: false,
+              profile: ['PDF/A-2b'],
+              violations: [{ description: 'Missing output intent' }],
+            },
+            'customer-b.pdf': { compliant: true, profile: ['PDF/A-2b'], violations: [] },
+          }),
+        ],
+        { type: 'application/json' },
+      ),
+    }
+    const { queue } = queueWith(async () => result, completed)
+    const request = input()
+    request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    queue.enqueue(request)
+    queue.start()
+    await tick()
+    const job = queue.getSnapshot().jobs[0]
+    expect(job).toMatchObject({
+      status: 'completed',
+      review:
+        'PDF validation found 1 non-compliant document(s) out of 2. Review the downloaded JSON report.',
+      name: 'validation.json',
+    })
+    expect(job?.url).toMatch(/^blob:/)
+    expect(JSON.stringify(job)).not.toContain('customer-a.pdf')
+    expect(JSON.stringify(job)).not.toContain('Missing output intent')
+    expect(completed).toHaveBeenCalledOnce()
+    const html = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Review required')
+    expect(html).toContain('Download validation.json')
+    queue.dispose()
+  })
+
+  it('does not warn on compliant PDF validation results', async () => {
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      name: 'report.json',
+      type: 'application/json',
+      blob: new Blob([
+        JSON.stringify({
+          'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
+        }),
+      ]),
+    }))
+    const request = input()
+    request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    queue.enqueue(request)
+    queue.start()
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({ status: 'completed' })
+    expect(queue.getSnapshot().jobs[0]?.review).toBeUndefined()
+    expect(renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))).not.toContain(
+      'Review required',
+    )
+    queue.dispose()
+  })
+
+  it('flags unparseable, oversized and unreadable validation reports without failing the download', async () => {
+    for (const scenario of ['invalid', 'oversized', 'unreadable'] as const) {
+      const blob = new Blob([scenario === 'invalid' ? '{not-json' : '{"ok":true}'])
+      if (scenario === 'oversized') Object.defineProperty(blob, 'size', { value: 129_000 })
+      if (scenario === 'unreadable') {
+        Object.defineProperty(blob, 'text', {
+          value: () => Promise.reject(new Error('read failed')),
+        })
+      }
+      const { queue } = queueWith(async () => ({
+        mode: 'download',
+        name: 'report.json',
+        type: 'application/json',
+        blob,
+      }))
+      const request = input()
+      request.candidate = {
+        operation: 'pdf-validate',
+        fields: { profile: 'PDF/A-2b' },
+        advanced: {},
+      }
+      request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+      queue.enqueue(request)
+      queue.start()
+      await tick()
+      expect(queue.getSnapshot().jobs[0]).toMatchObject({
+        status: 'completed',
+        review: 'PDF validation could not be summarised. Review the downloaded JSON report.',
+      })
+      expect(queue.getSnapshot().jobs[0]?.url).toBeDefined()
+      queue.dispose()
+    }
+  })
+
+  it('does not publish a late validation result after the user cancels the batch job', async () => {
+    const validation = deferred<string>()
+    const blob = new Blob(['placeholder'], { type: 'application/json' })
+    Object.defineProperty(blob, 'text', { value: () => validation.promise })
+    const completed = vi.fn()
+    const { queue } = queueWith(
+      async () => ({ mode: 'download', name: 'validation.json', type: 'application/json', blob }),
+      completed,
+    )
+    const request = input()
+    request.candidate = {
+      operation: 'pdf-validate',
+      fields: { profile: 'PDF/A-2b' },
+      advanced: {},
+    }
+    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    const id = queue.enqueue(request)
+    queue.start()
+    await tick()
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
+    queue.cancel(id)
+    validation.resolve(
+      JSON.stringify({
+        'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
+      }),
+    )
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({ status: 'cancelled' })
+    expect(queue.getSnapshot().jobs[0]?.url).toBeUndefined()
+    expect(completed).not.toHaveBeenCalled()
+    queue.dispose()
+  })
+
+  it('preserves remediation warning counts on completed batch downloads', async () => {
+    const { queue } = queueWith(async () => ({
+      ...pdf(),
+      remediation: { residual: 2, rolledBack: 1 },
+    }))
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    const job = queue.getSnapshot().jobs[0]
+    expect(job).toMatchObject({
+      status: 'completed',
+      review:
+        'PDF remediation reported 2 unresolved violation(s) and 1 rolled-back fix(es). Validate the downloaded output.',
+    })
+    expect(job?.url).toBeDefined()
+    queue.dispose()
+  })
+
+  it('keeps incomplete remediation diagnostics visible on a completed batch download', async () => {
+    const { queue } = queueWith(async () => ({
+      ...pdf(),
+      mode: 'download' as const,
+      remediation: { residual: 0, rolledBack: 0, incomplete: true },
+    }))
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({
+      status: 'completed',
+      review: 'PDF remediation diagnostics were incomplete. Validate the downloaded output.',
+    })
+    const html = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Review required')
+    queue.dispose()
+  })
+
+  it('does not suggest that clean remediation headers themselves certify compliance', async () => {
+    const { queue } = queueWith(async () => ({
+      ...pdf(),
+      remediation: { residual: 0, rolledBack: 0 },
+    }))
+    queue.enqueue(input())
+    queue.start()
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({ status: 'completed' })
+    expect(queue.getSnapshot().jobs[0]?.review).toBeUndefined()
     queue.dispose()
   })
 
@@ -454,6 +840,49 @@ describe('browser-managed batch queue', () => {
     expect(markup).toContain('Webhook accepted')
     expect(markup).toContain('delivery unconfirmed')
     expect(markup).toContain('Clear finished')
+    queue.dispose()
+  })
+})
+
+describe('conversion stage assets in the batch queue', () => {
+  it('retains stage uploads when queued even if the form selection changes', async () => {
+    const receipt = new File(['proof'], 'proof.txt')
+    const conversion = input()
+    conversion.candidate = {
+      operation: 'html-pdf',
+      fields: {},
+      advanced: {},
+      source: '<html><body>batch pipeline</body></html>',
+      conversionStages: '[{"op":"attach","file":"proof.txt"}]',
+    }
+    conversion.stageFiles = [receipt]
+    let captured!: BatchInput
+    const { queue } = queueWith(async (prepared) => {
+      captured = prepared
+      return pdf()
+    })
+    queue.enqueue(conversion)
+    conversion.stageFiles.length = 0
+    queue.start()
+    await tick()
+    expect(captured.stageFiles).toEqual([receipt])
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('completed')
+    queue.dispose()
+  })
+
+  it('counts conversion stage uploads toward the queued memory budget', () => {
+    const conversion = input()
+    conversion.candidate = {
+      operation: 'html-pdf',
+      fields: {},
+      advanced: {},
+      source: '<html><body>batch pipeline</body></html>',
+      conversionStages: '[{"op":"attach","file":"proof.txt"}]',
+    }
+    conversion.stageFiles = [new File([new Uint8Array(3_400_000)], 'proof.txt')]
+    const { queue } = queueWith(async () => pdf())
+    for (let i = 0; i < 9; i++) queue.enqueue(conversion)
+    expect(() => queue.enqueue(conversion)).toThrow(/Batch inputs exceed/)
     queue.dispose()
   })
 })

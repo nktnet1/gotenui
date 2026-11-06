@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'rotate',
+  supportedGotenbergMajors: [8, 9],
   title: 'Rotate PDF pages',
   group: 'PDF tools',
   summary: 'Rotate all or selected pages.',

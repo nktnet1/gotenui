@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { validateReleaseTag } from './release-version.ts'
+import { validateReleaseTag } from '#scripts/release-version'
 
 /** Release notes are committed alongside the version they describe. */
 export function validateReleaseChangelog(tag: string, markdown: string): string {

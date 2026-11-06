@@ -88,12 +88,16 @@ function ExtraHeaders({
 }
 
 export function RemoteInputsEditor({
+  isV9 = false,
+  pdfInputOnly = false,
   rows,
   onChange,
   legacy,
   onLegacyChange,
   newId,
 }: {
+  isV9?: boolean
+  pdfInputOnly?: boolean
   rows: RemoteInputRow[]
   onChange: (rows: RemoteInputRow[]) => void
   legacy: string
@@ -114,10 +118,12 @@ export function RemoteInputsEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-            Remote file inputs
+            {pdfInputOnly ? 'Remote PDF inputs' : 'Remote file inputs'}
           </h3>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Gotenberg fetches files from these URLs directly.
+            {pdfInputOnly
+              ? 'Gotenberg downloads input PDFs from these URLs.'
+              : 'Gotenberg fetches files from these URLs directly.'}
           </p>
         </div>
         <Button
@@ -182,22 +188,35 @@ export function RemoteInputsEditor({
               maxLength={2048}
             />
           </div>
-          <div className="space-y-1">
-            <Label htmlFor={`${id}-remote-field-${row.id}`}>Destination field</Label>
-            <select
-              id={`${id}-remote-field-${row.id}`}
-              className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100"
-              value={row.field}
-              onChange={(event) =>
-                update(index, { field: event.target.value as RemoteInputRow['field'] })
-              }
-            >
-              <option value="">Regular conversion input / HTML asset</option>
-              <option value="embedded">PDF attachment (embedded)</option>
-              <option value="watermark">PDF watermark asset</option>
-              <option value="stamp">PDF stamp asset</option>
-            </select>
-          </div>
+          {!pdfInputOnly && (
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-remote-field-${row.id}`}>Destination field</Label>
+              <select
+                id={`${id}-remote-field-${row.id}`}
+                className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100"
+                value={row.field}
+                onChange={(event) =>
+                  update(index, { field: event.target.value as RemoteInputRow['field'] })
+                }
+              >
+                <option value="">Regular conversion input / HTML asset</option>
+                <option value="embedded" disabled={isV9}>
+                  PDF attachment (embedded, v8)
+                </option>
+                <option value="watermark" disabled={isV9}>
+                  PDF watermark asset (v8)
+                </option>
+                <option value="stamp" disabled={isV9}>
+                  PDF stamp asset (v8)
+                </option>
+              </select>
+            </div>
+          )}
+          {isV9 && row.field && (
+            <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
+              This remote destination requires Gotenberg 8. Select Regular conversion input for v9.
+            </p>
+          )}
           <ExtraHeaders
             rows={row.headers}
             onChange={(headers) => update(index, { headers })}
@@ -206,8 +225,9 @@ export function RemoteInputsEditor({
           />
           {row.url && (
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Preview: {safeOutboundHost(row.url)} · {row.field || 'regular input'} ·{' '}
-              {row.headers.length} header(s) (values hidden)
+              Preview: {safeOutboundHost(row.url)} ·{' '}
+              {pdfInputOnly ? 'PDF input' : row.field || 'regular input'} · {row.headers.length}{' '}
+              header(s) (values hidden)
             </p>
           )}
         </div>
@@ -215,9 +235,10 @@ export function RemoteInputsEditor({
       <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
         Each download response <strong>must</strong> include Content-Disposition with a filename and
         a valid Content-Type. Gotenberg must be able to reach the URL and allow it through its
-        outbound filtering. Watermark/stamp filenames must match their editor expressions; remote
-        overlays precede local overlays of that type. Remote merge files are sorted by filename by
-        Gotenberg.
+        outbound filtering.{' '}
+        {pdfInputOnly
+          ? 'Remote ZIP files are not extracted; upload ZIPs through PDF ZIP archives instead. Stage assets require separate named uploads.'
+          : 'Watermark/stamp filenames must match their editor expressions; remote overlays precede local overlays of that type. Remote merge files are sorted by filename by Gotenberg.'}
       </p>
       <details className="text-xs text-slate-600 dark:text-slate-300">
         <summary className="cursor-pointer font-semibold">
@@ -230,7 +251,11 @@ export function RemoteInputsEditor({
             rows={3}
             spellCheck={false}
             className="font-mono text-xs"
-            placeholder={'[{"url":"https://example.com/file.docx"}]'}
+            placeholder={
+              pdfInputOnly
+                ? '[{"url":"https://example.com/file.pdf"}]'
+                : '[{"url":"https://example.com/file.docx"}]'
+            }
             value={legacy}
             onChange={(event) => onLegacyChange(event.target.value)}
           />
@@ -244,12 +269,14 @@ export function RemoteInputsEditor({
 }
 
 export function WebhookEditor({
+  isV9 = false,
   value,
   onChange,
   legacy,
   onLegacyChange,
   newId,
 }: {
+  isV9?: boolean
   value: WebhookEditorState
   onChange: (value: WebhookEditorState) => void
   legacy: string
@@ -266,7 +293,8 @@ export function WebhookEditor({
             Asynchronous webhook delivery
           </h3>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Gotenberg sends output to your external receiver.
+            Gotenberg sends completed output to your success receiver and processing events to an
+            optional (v8) or required (v9) events receiver.
           </p>
         </div>
         <Switch
@@ -307,40 +335,57 @@ export function WebhookEditor({
               </select>
             </div>
           </div>
-          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px]">
-            <div className="space-y-1">
-              <Label htmlFor={`${id}-error-url`}>
-                Error callback URL (optional, deprecated upstream)
-              </Label>
-              <Input
-                id={`${id}-error-url`}
-                type="url"
-                value={value.errorUrl}
-                onChange={(event) => update({ errorUrl: event.target.value })}
-                placeholder="https://hooks.example.com/error"
-                autoComplete="off"
-                maxLength={2048}
-              />
+          {!isV9 && (
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px]">
+              <div className="space-y-1">
+                <Label htmlFor={`${id}-error-url`}>
+                  Error callback URL (optional, deprecated upstream)
+                </Label>
+                <Input
+                  id={`${id}-error-url`}
+                  type="url"
+                  value={value.errorUrl}
+                  onChange={(event) => update({ errorUrl: event.target.value })}
+                  placeholder="https://hooks.example.com/error"
+                  autoComplete="off"
+                  maxLength={2048}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={`${id}-error-method`}>Method</Label>
+                <select
+                  id={`${id}-error-method`}
+                  className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100 disabled:opacity-50"
+                  value={value.errorMethod}
+                  disabled={!value.errorUrl.trim()}
+                  onChange={(event) =>
+                    update({ errorMethod: event.target.value as WebhookEditorState['errorMethod'] })
+                  }
+                >
+                  <option>POST</option>
+                  <option>PUT</option>
+                  <option>PATCH</option>
+                </select>
+              </div>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor={`${id}-error-method`}>Method</Label>
-              <select
-                id={`${id}-error-method`}
-                className="h-11 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-800 dark:text-slate-100 disabled:opacity-50"
-                value={value.errorMethod}
-                disabled={!value.errorUrl.trim()}
-                onChange={(event) =>
-                  update({ errorMethod: event.target.value as WebhookEditorState['errorMethod'] })
-                }
+          )}
+          {isV9 && value.errorUrl.trim() && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+              <span>Gotenberg 9 does not support the configured v8 error callback.</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => update({ errorUrl: '', errorMethod: 'POST' })}
               >
-                <option>POST</option>
-                <option>PUT</option>
-                <option>PATCH</option>
-              </select>
+                Clear v8 error callback
+              </Button>
             </div>
-          </div>
+          )}
           <div className="space-y-1">
-            <Label htmlFor={`${id}-events-url`}>Structured events URL (recommended)</Label>
+            <Label htmlFor={`${id}-events-url`}>
+              Structured events URL ({isV9 ? 'required for v9' : 'recommended'})
+            </Label>
             <Input
               id={`${id}-events-url`}
               type="url"
@@ -351,7 +396,9 @@ export function WebhookEditor({
               maxLength={2048}
             />
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Events always use POST. Configure an error or events URL to receive failure details.
+              {isV9
+                ? 'Required: Gotenberg 9 posts processing/failure events here, separately from the completed output sent to the success URL.'
+                : 'Optional: events always use POST. Configure an error or events URL to receive failure details.'}
             </p>
           </div>
           <ExtraHeaders
@@ -361,16 +408,16 @@ export function WebhookEditor({
             context="webhook"
           />
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            Preview: success {safeOutboundHost(value.url)} · error{' '}
-            {value.errorUrl ? safeOutboundHost(value.errorUrl) : 'not set'} · events{' '}
-            {value.eventsUrl ? safeOutboundHost(value.eventsUrl) : 'not set'} ·{' '}
+            Preview: success {safeOutboundHost(value.url)} ·{' '}
+            {!isV9 && <>error {value.errorUrl ? safeOutboundHost(value.errorUrl) : 'not set'} · </>}
+            events {value.eventsUrl ? safeOutboundHost(value.eventsUrl) : 'not set'} ·{' '}
             {value.headers.length} header(s) (values hidden)
           </p>
           <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
-            HTTP 204 means accepted for asynchronous processing, <strong>not</strong> converted or
-            delivered. Gotenui has no callback inbox or status history. Check your external receiver
-            and use the Gotenberg-Trace ID for diagnosis. Gotenberg retries connection errors, 429
-            and most 5xx replies under its own retry settings.
+            HTTP 202/204 means accepted for asynchronous processing, <strong>not</strong> converted
+            or delivered. Gotenui has no callback inbox or status history: check both receivers and
+            correlate with the Gotenberg-Trace ID. Callback retries are controlled by Gotenberg, not
+            by this UI.
           </p>
         </div>
       )}

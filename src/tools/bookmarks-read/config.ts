@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'bookmarks-read',
+  supportedGotenbergMajors: [8, 9],
   title: 'Read bookmarks',
   group: 'PDF tools',
   summary: 'Export bookmark trees as JSON.',

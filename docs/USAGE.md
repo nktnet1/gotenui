@@ -20,17 +20,25 @@ Choose a tool in the sidebar or open search with **Ctrl+K** or **Cmd+K**. Gotenu
 
 Gotenberg can return a PDF or a ZIP archive depending on the operation and number of outputs. Gotenui downloads the format actually returned.
 
+With **Gotenberg 9**, the PDF pipeline builder accepts individual PDFs, uploaded ZIP archives of PDF sources, and remote PDF URLs. You can mix these inputs, or use a ZIP/remote URL without uploading individual PDFs. ZIPs must be uploaded through **PDF ZIP archives** to be unpacked; ZIPs fetched through `downloadFrom` remain ordinary files. Named pipeline assets (attachments, images, signing credentials, etc.) can be separate uploads **or entries in an uploaded ZIP**, referenced by their exact filename in the stage editor. Asset-only ZIPs still need a separate source PDF or a remote PDF input. A remote download's filename cannot be used as a stage asset. Gotenberg validates ZIP contents and enforces extraction limits; Gotenberg 8's tools and upload rules are unchanged.
+
+For Gotenberg 9 **Office to PDF**, a requested PDF/A or PDF/UA profile uses native LibreOffice export only when no PDF processing follows. **Merge**, **Split**, and custom pipeline stages automatically move conformance to a final PDF remediation stage; selecting **Native LibreOffice export** alongside those stages reports an error. Use PDF validation to check actual conformance rather than relying on HTTP 200 or a successful native export.
+
+Before sending uploaded ZIP archives on Gotenberg 9, Gotenui reads only the bounded ZIP directory: PDF pipeline ZIPs must contain source PDFs and any **exactly referenced** stage assets; Office ZIPs must contain supported Office inputs and any exactly referenced conversion-stage assets (unless source documents are provided separately). It ignores macOS `__MACOSX` and `._` metadata, directory entries and symlinks as the upstream extractor does, normalises names to prevent collisions, and rejects unrelated or duplicate filenames that would shadow local uploads or generated HTML/Markdown files. For now, archives with encrypted entries, a ZIP64 directory, more than 1,000 entries or an index over 512 KB must be repackaged or uploaded as individual files. Gotenui does not inspect the documents inside the ZIP; Gotenberg remains responsible for safe extraction and content validation.
+
 ## Results and presets
 
-Completed operations download automatically. PDFs can also be previewed in the browser. **Clear** releases the current result from the tab.
+Completed operations download automatically. PDFs and raster images can also be previewed in the browser. Direct and completed batch ZIP downloads offer an optional **View archive contents** control; it lists a bounded number of filenames and declared sizes without unpacking the archive. **Clear** releases the current result from the tab.
+
+Gotenberg 9 PDF validation reports are summarised only when their JSON is readable and at most 128 KB; the full downloaded report remains available otherwise. Non-compliant findings, invalid reports, and incomplete remediation diagnostic headers are shown as **Review required**, not as proof of successful conformance. Always validate the downloaded PDF when conformance matters. For timestamp stages, enter an absolute HTTP(S) timestamp authority URL without credentials, fragments, whitespace or backslashes. Gotenberg's network restrictions still govern where it can connect.
 
 **Saved presets** store reusable operation settings in this browser. They do not store uploaded files, passwords, tokens or callback details. Presets are available only for the tool on which they were saved.
 
 ## Batch queue
 
-Select **Add to batch** to collect configured operations, then start the queue from its panel. Up to two operations run at once. You can pause waiting jobs, cancel requests and retry failures.
+Select **Add to batch** to collect configured operations, then start the queue from its panel. Up to two operations run at once. Once started, the queue **stays active** and new jobs run automatically, even after you clear completed jobs. Choose **Pause new jobs** before adding work you want to hold for a later manual start. Pausing does not cancel jobs already running. You can also cancel requests and retry failures.
 
-Batch results remain in the current tab until downloaded or cleared. They do not download automatically, and the queue is lost when the tab is closed or reloaded. Cancelling a request may not stop processing already underway in Gotenberg.
+Batch results remain in the current tab until downloaded or cleared. They do not download automatically, and the queue is lost when the tab is closed or reloaded. Cancelling a request may not stop processing already underway in Gotenberg. Completed PNG, JPEG and WebP jobs offer an opt-in **Preview image** control. It uses the existing download Blob URL without storing a second image; the image is only loaded after you open the preview. Closing the preview unmounts the image, and clearing the job revokes the download URL. SVG and other file types are not shown as batch image previews.
 
 ## Remote files and webhooks
 
@@ -38,7 +46,7 @@ The advanced inputs support fetching remote files and delivering conversion resu
 
 Remote files are downloaded by **Gotenberg**, not by your browser. The remote response needs a valid `Content-Type` and a `Content-Disposition` filename. The Gotenberg instance must permit the remote destination.
 
-Webhook requests may return **Accepted** before the conversion finishes. Gotenui does not receive webhook callbacks or maintain a job history. Check the destination service for delivery results.
+Webhook requests may return **Accepted** before the conversion finishes. Gotenui does not receive webhook callbacks or maintain a job history. Check the destination service for delivery results. In Gotenberg 9, PDF inspection tools return JSON immediately and do **not** support webhooks; their advanced form hides that option and keeps any v8-specific webhook draft out of v9 requests. Other v9 webhook operations still require an events callback URL. On a healthy v8 or v9 connection, Gotenui selects the matching API automatically without a generic migration warning; unsupported settings and versions are explained only where relevant.
 
 ## Diagnostics
 

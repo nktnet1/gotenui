@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'bookmarks-write',
+  supportedGotenbergMajors: [8, 9],
   title: 'Write bookmarks',
   group: 'PDF tools',
   summary: 'Replace document bookmarks from JSON.',

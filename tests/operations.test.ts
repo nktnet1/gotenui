@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import { expect, test } from 'vitest'
 import { GROUPS, OPERATION_BY_ID, OPERATIONS, operationDefaults } from '#/lib/operations'
+import { integrationSmokeOperations } from './integration/operation-selection'
 
 test('all operation identifiers and Gotenberg endpoints are unique', () => {
-  assert.equal(OPERATIONS.length, 22)
+  assert.equal(OPERATIONS.length, 40)
   assert.equal(OPERATION_BY_ID.size, OPERATIONS.length)
-  assert.equal(new Set(OPERATIONS.map((operation) => operation.path)).size, OPERATIONS.length)
+  const v8 = OPERATIONS.filter((operation) => operation.supportedGotenbergMajors?.includes(8))
+  assert.equal(new Set(v8.map((operation) => operation.path)).size, v8.length)
   for (const operation of OPERATIONS) {
-    assert.match(operation.path, /^\/forms\/(chromium|libreoffice|pdfengines)\//)
+    assert.match(operation.path, /^\/forms\/(chromium|libreoffice|pdfengines|pdf)\//)
     assert.ok(GROUPS.includes(operation.group))
     assert.ok(operation.docs && !operation.docs.startsWith('/'))
     assert.equal(new Set(operation.fields.map((field) => field.name)).size, operation.fields.length)
@@ -89,5 +91,20 @@ const documentedRoutes = [
 ] as const
 
 test('implements every published Gotenberg multipart processing endpoint', () => {
-  expect(OPERATIONS.map(({ path }) => path).sort()).toEqual([...documentedRoutes].sort())
+  expect(
+    OPERATIONS.filter(({ supportedGotenbergMajors }) => supportedGotenbergMajors?.includes(8))
+      .map(({ path }) => path)
+      .sort(),
+  ).toEqual([...documentedRoutes].sort())
+})
+
+test('integration smoke matrix includes the pipeline only on Gotenberg 9', () => {
+  const v8 = integrationSmokeOperations(8).map(({ id }) => id)
+  const v9 = integrationSmokeOperations(9).map(({ id }) => id)
+  expect(v8).not.toContain('pdf-pipeline')
+  expect(v9).toContain('pdf-pipeline')
+  expect(v8).toContain('merge')
+  expect(v9).toContain('merge')
+  expect(v8).not.toContain('pdf-info')
+  expect(v9).not.toContain('pdf-info') // Has its own specialised v9 integration fixture.
 })

@@ -39,8 +39,14 @@ import {
   saveConnections,
   type UiFeatures,
 } from '#/lib/connection-profiles'
+import { type ObservedConnectionStatus, statusForConnection } from '#/lib/connection-status'
 import { getGotenbergStatus, type ServerStatus } from '#/lib/gotenberg-client'
-import { unavailableOperationReason, versionAtLeast } from '#/lib/operation-availability'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
+import {
+  backendCompatibilityNotice,
+  unavailableOperationReason,
+  versionAtLeast,
+} from '#/lib/operation-availability'
 import { isSearchShortcut } from '#/lib/operation-search'
 import { cn } from '#/lib/utils'
 import { GROUPS, OPERATION_BY_ID, OPERATIONS, type Operation } from '#/tools/registry'
@@ -257,6 +263,7 @@ function Sidebar({
                       >
                         <button
                           type="button"
+                          data-operation-id={operation.id}
                           aria-current={active ? 'page' : undefined}
                           disabled={Boolean(unavailable)}
                           onClick={() => {
@@ -364,8 +371,11 @@ function Workspace({
   onUpsert: (profile: BrowserConnection, username: string, secret: string) => void
   onRemove: (id: string) => void
 }) {
-  const [status, setStatus] = useState<ServerStatus | null>(null)
-  const [statusLoading, setStatusLoading] = useState(true)
+  const statusKey = `${selectedConnection}:${connectionEpoch}`
+  const [observedStatus, setObservedStatus] = useState<ObservedConnectionStatus | null>(null)
+  const status = statusForConnection(observedStatus, statusKey)
+  const [statusPending, setStatusPending] = useState(true)
+  const statusLoading = statusPending || status === null
   const [recent, setRecent] = useState<Job[]>([])
   const [batchQueue] = useState(
     () =>
@@ -405,8 +415,14 @@ function Workspace({
     document.title = `${selectedId === 'home' ? 'All tools' : operation.title} · Gotenui`
   }, [selectedId, operation.title])
   const Icon = operationIcon(operation.id)
-  const unavailableReason = unavailableOperationReason(status, operation)
-  const supportsOptimization = !status?.online || versionAtLeast(status.version, 36) !== false
+  const unavailableReason = status
+    ? unavailableOperationReason(status, operation)
+    : 'Checking the selected Gotenberg version…'
+  const supportsOptimization =
+    !status?.online ||
+    (parseGotenbergVersion(status.version)?.major !== 9 &&
+      versionAtLeast(status.version, 36) !== false)
+  const compatibilityNotice = backendCompatibilityNotice(status)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
@@ -441,12 +457,12 @@ function Workspace({
       statusAbort.current?.abort()
       const controller = new AbortController()
       statusAbort.current = controller
-      setStatusLoading(true)
+      setStatusPending(true)
       const timeout = window.setTimeout(() => controller.abort(), 7_000)
       try {
         const result = await getGotenbergStatus(connection, controller.signal)
-        if (!controller.signal.aborted) {
-          setStatus(result)
+        if (!controller.signal.aborted && statusAbort.current === controller) {
+          setObservedStatus({ key: statusKey, value: result })
           if (notify) {
             if (result.online) toast.success('Gotenberg status refreshed - service online.')
             else toast.error('Gotenberg status refreshed - service unavailable.')
@@ -454,11 +470,14 @@ function Workspace({
         }
       } catch {
         if (statusAbort.current === controller) {
-          setStatus({
-            online: false,
-            version: 'Unavailable',
-            modules: [],
-            error: 'Connection test timed out.',
+          setObservedStatus({
+            key: statusKey,
+            value: {
+              online: false,
+              version: 'Unavailable',
+              modules: [],
+              error: 'Connection test timed out.',
+            },
           })
           if (notify) toast.error('Gotenberg status refresh timed out.')
         }
@@ -466,14 +485,14 @@ function Workspace({
         window.clearTimeout(timeout)
         if (statusAbort.current === controller) {
           statusAbort.current = null
-          setStatusLoading(false)
+          setStatusPending(false)
         }
       }
     },
-    [connection],
+    [connection, statusKey],
   )
   useEffect(() => {
-    setStatus(null)
+    setObservedStatus(null)
     void refreshStatus()
     const timer = window.setInterval(() => {
       // An automatic poll must not cancel a manually requested refresh and its toast.
@@ -587,6 +606,14 @@ function Workspace({
           </div>
         </header>
         <main className="mx-auto max-w-[1390px] px-5 pt-8 pb-14 md:px-9 md:pt-10">
+          {compatibilityNotice && (
+            <p
+              role="status"
+              className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200"
+            >
+              {compatibilityNotice}
+            </p>
+          )}
           {selectedId === 'home' ? (
             <ToolsHome status={status} onSelect={onSelect} onSearch={openSearch} />
           ) : (
@@ -734,11 +761,13 @@ function Workspace({
       )}
       {diagnosticsOpen && (
         <DiagnosticsDialog
+          key={`${selectedConnection}:${connectionEpoch}`}
           connection={connection}
           connectionName={connectionName}
           onClose={() => setDiagnosticsOpen(false)}
           showDebug={features.showDebug}
           showMetrics={features.showMetrics}
+          backendVersion={status?.online ? status.version : undefined}
         />
       )}
       {settingsOpen && (

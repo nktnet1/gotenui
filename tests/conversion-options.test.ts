@@ -85,6 +85,35 @@ test('Chromium PDF controls are not accidentally exposed to screenshot or Office
   assert.ok(!office.fields.some((field) => field.name === 'cookies'))
 })
 
+test('window.status wait is available across Chromium PDF and screenshot editors', () => {
+  for (const id of [
+    'url-pdf',
+    'html-pdf',
+    'markdown-pdf',
+    'url-shot',
+    'html-shot',
+    'markdown-shot',
+  ]) {
+    const operation = OPERATION_BY_ID.get(id)
+    assert.ok(operation)
+    assert.ok(
+      operation.fields.some(({ name }) => name === 'waitWindowStatus'),
+      id,
+    )
+    const validated = validatePayload(request(id, { waitWindowStatus: 'ready' }))
+    const form = createGotenbergForm(validated.operation, validated.payload, [], [])
+    assert.equal(form.get('waitWindowStatus'), 'ready', id)
+  }
+  assert.throws(
+    () => validatePayload(request('url-pdf', { waitWindowStatus: 'invalid\nstatus' })),
+    /Invalid Chromium waitWindowStatus/,
+  )
+  assert.throws(
+    () => validatePayload(request('office-pdf', { waitWindowStatus: 'ready' })),
+    /Unsupported field/,
+  )
+})
+
 test('the request editor serializes Chromium cookies and scoped headers as JSON form fields only', () => {
   const settings = chromiumNetworkFields([cookie], [header])
   assert.deepEqual(JSON.parse(settings.cookies), [cookie])

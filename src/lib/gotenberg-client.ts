@@ -12,7 +12,7 @@ import {
   type PostProcessFiles,
   postProcessFormFields,
 } from '#/lib/pdf-post-processing'
-import { downloadFilename, responseExtension } from '#/lib/security'
+import { downloadFilename, responseExtension, safeAttachmentDisposition } from '#/lib/security'
 import {
   type ConversionPayload,
   InputError,
@@ -172,8 +172,9 @@ export function createGotenbergForm(
   auxiliary: File[],
   maxBytes = MAX_UPLOAD_BYTES,
   postFiles: PostProcessFiles = {},
+  archives: readonly File[] = [],
 ): FormData {
-  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles)
+  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, [], archives)
   const form = new FormData()
   const isChromium = operation.path.startsWith('/forms/chromium/')
   const mediaFieldNames = new Set<string>(CHROMIUM_MEDIA_OPTIONS.map((feature) => feature.name))
@@ -257,8 +258,17 @@ export function createGotenbergForm(
   return form
 }
 
+export type RemediationReport = { residual: number; rolledBack: number; incomplete?: boolean }
+
 export type ConversionResult =
-  | { mode: 'download'; blob: Blob; type: string; name: string; trace?: string }
+  | {
+      mode: 'download'
+      blob: Blob
+      type: string
+      name: string
+      trace?: string
+      remediation?: RemediationReport
+    }
   | { mode: 'webhook'; trace?: string; status: 202 | 204 }
 
 /** The proxy revalidates the JSON and files, and reconstructs a safe Gotenberg form. */
@@ -269,15 +279,28 @@ export async function convertWithGotenberg(
   auxiliary: File[],
   signal: AbortSignal,
   postFiles: PostProcessFiles = {},
+  stageFiles: File[] = [],
+  archives: File[] = [],
 ): Promise<ConversionResult> {
   const headers = targetHeaders(connection)
   const { operation, payload } = validatePayload(candidate)
   // Keep fast client-side feedback; all fields and files are checked again by the server.
-  validateFiles(operation, files, auxiliary, MAX_UPLOAD_BYTES, payload, postFiles)
+  validateFiles(
+    operation,
+    files,
+    auxiliary,
+    MAX_UPLOAD_BYTES,
+    payload,
+    postFiles,
+    stageFiles,
+    archives,
+  )
   const body = new FormData()
   body.set('payload', JSON.stringify(payload))
   for (const file of files) body.append('files', file, file.name)
   for (const file of auxiliary) body.append('auxiliary', file, file.name)
+  for (const file of stageFiles) body.append('stageFile', file, file.name)
+  for (const file of archives) body.append('archives', file, file.name)
   for (const kind of OVERLAY_KINDS) {
     for (const file of overlayUploads(postFiles, kind)) body.append(kind, file, file.name)
   }
@@ -316,17 +339,61 @@ export async function convertWithGotenberg(
     blob.type ||
     'application/octet-stream'
   const extension = responseExtension(type)
-  const fallback = `${payload.outputName || operation.id}.${extension}`
-  const filename = payload.outputName
-    ? fallback
-    : downloadFilename(response.headers.get('content-disposition'), fallback)
+  // The proxy has already chosen a safe filename for the actual output type.
+  // Use that filename even with an explicit outputName: a conversion that asks
+  // for report.pdf can legitimately return a ZIP of PDFs or rendered images.
+  const fallback = `${operation.id}.${extension}`
+  const filename = downloadFilename(
+    safeAttachmentDisposition(
+      response.headers.get('content-disposition'),
+      operation.id,
+      type,
+      payload.outputName,
+    ),
+    fallback,
+  )
   return {
     mode: 'download',
     blob,
     type,
     name: filename,
     trace: response.headers.get('Gotenberg-Trace') ?? undefined,
+    remediation: readRemediationReport(response.headers),
   }
+}
+
+/** Gotenberg 9 may return HTTP 200 with unresolved conformance violations. */
+function readRemediationReport(headers: Headers): RemediationReport | undefined {
+  const residual = headers.get('Gotenberg-Remediation-Residual')
+  const rolledBack = headers.get('Gotenberg-Remediation-Rolled-Back')
+  if (
+    residual === null &&
+    rolledBack === null &&
+    headers.get('Gotenui-Remediation-Incomplete') !== '1'
+  )
+    return undefined
+  if (
+    headers.get('Gotenui-Remediation-Incomplete') === '1' ||
+    residual === null ||
+    rolledBack === null ||
+    !/^\d{1,10}$/.test(residual) ||
+    !/^\d{1,10}$/.test(rolledBack)
+  ) {
+    return { residual: 0, rolledBack: 0, incomplete: true }
+  }
+  return { residual: Number(residual), rolledBack: Number(rolledBack) }
+}
+
+/** Summaries are warnings, never proof of compliance from a successful HTTP response. */
+export function remediationReviewNotice(report: RemediationReport | undefined): string | undefined {
+  if (!report) return undefined
+  if (report.incomplete) {
+    return 'PDF remediation diagnostics were incomplete. Validate the downloaded output.'
+  }
+  if (report.residual > 0 || report.rolledBack > 0) {
+    return `PDF remediation reported ${report.residual} unresolved violation(s) and ${report.rolledBack} rolled-back fix(es). Validate the downloaded output.`
+  }
+  return undefined
 }
 
 /** Read selected-instance debug JSON using its upstream authentication; no Gotenui access key. */

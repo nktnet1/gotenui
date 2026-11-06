@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import { convertWithGotenberg, createGotenbergForm } from '#/lib/gotenberg-client'
-import { proxyConversionRequest } from '#/lib/gotenberg-proxy.server'
 import { OPERATION_BY_ID } from '#/lib/operations'
 import { validateFiles, validatePayload } from '#/lib/validation'
+import { proxyConversionRequest } from './helpers/proxy-v8-fixture'
 
 const origin = 'https://app.example.test'
 const target = 'http://127.0.0.1:3000'

@@ -6,7 +6,8 @@ import {
   markdownTemplateReferences,
 } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
-import { OFFICE_EXTENSION_SET } from '#/lib/office-formats'
+import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
   parseConsoleMessageTypes,
   parseIgnoredDomains,
@@ -61,6 +62,8 @@ export const payloadSchema = v.object({
   headerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   footerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   postProcess: v.optional(pdfPostProcessSchema),
+  conversionStages: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(60_000))),
+  acknowledgedConversionRedaction: v.optional(v.boolean()),
   outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
   requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
   traceparent: v.optional(v.pipe(v.string(), v.maxLength(55))),
@@ -70,6 +73,19 @@ export const payloadSchema = v.object({
 })
 
 export type ConversionPayload = v.InferOutput<typeof payloadSchema>
+
+/** Gotenberg 9 extracts `archives` into its shared input-file workspace.
+ * Office and the PDF pipeline use them as documents; Chromium HTML/Markdown
+ * uses them as assets. Other PDF and URL tools do not expose archive uploads.
+ */
+export function supportsArchiveInputs(operation: Operation): boolean {
+  return (
+    operation.id === 'office-pdf' ||
+    operation.id === 'pdf-pipeline' ||
+    operation.input === 'html' ||
+    operation.input === 'markdown'
+  )
+}
 
 export class InputError extends Error {
   constructor(
@@ -525,12 +541,22 @@ export function validateFiles(
     | 'headerHtml'
     | 'footerHtml'
     | 'postProcess'
+    | 'conversionStages'
     | 'advanced'
   >,
   postFiles: PostProcessFiles = {},
+  stageFiles: readonly File[] = [],
+  archives: readonly File[] = [],
+  major?: SupportedGotenbergMajor,
 ): void {
   const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
+  if (archives.length && !supportsArchiveInputs(operation)) {
+    throw new InputError(
+      'ZIP archive inputs are supported only by Office, the PDF pipeline, and Chromium HTML/Markdown tools on Gotenberg 9.',
+    )
+  }
+  if (archives.length > 10) throw new InputError('At most 10 ZIP archives are supported.')
   if (operation.id === 'embed' && payload?.fields.embedsMetadata) {
     const names = validatedAttachmentMetadata(String(payload.fields.embedsMetadata))
     if (!auxiliary.length && !remote.embedded) {
@@ -543,12 +569,18 @@ export function validateFiles(
     }
   }
   if (operation.input === 'pdf' || operation.input === 'office') {
-    if (files.length + remote.input < minFiles || files.length + remote.input > 20) {
+    const documentCount = files.length + remote.input + archives.length
+    if (documentCount < minFiles || documentCount > 20) {
       throw new InputError(`Upload ${minFiles} to 20 input files.`)
     }
   } else if (files.length > 0) {
     throw new InputError('This operation takes source text or a URL, not input documents.')
   }
+  if (stageFiles.length && !payload?.conversionStages) {
+    throw new InputError('Conversion stage files require a PDF conversion pipeline.')
+  }
+  if (stageFiles.length > 20)
+    throw new InputError('At most 20 conversion stage files are supported.')
   if (!operation.auxiliary && auxiliary.length > 0) {
     // HTML/Markdown assets are auxiliary uploads, with a different field name.
     if (operation.input !== 'html' && operation.input !== 'markdown') {
@@ -605,7 +637,7 @@ export function validateFiles(
   if (total > maxBytes) {
     throw new InputError('Combined document content exceeds the configured size limit.', 413)
   }
-  for (const file of [...files, ...auxiliary]) {
+  for (const file of [...files, ...auxiliary, ...stageFiles, ...archives]) {
     const name = safeFilename(file.name)
     if (operation.input === 'markdown' && auxiliary.includes(file) && /\.md$/i.test(name)) {
       throw new InputError(
@@ -624,13 +656,16 @@ export function validateFiles(
     if (total > maxBytes)
       throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
     const ext = name.match(extension)?.[0]?.toLowerCase()
+    if (archives.includes(file) && ext !== '.zip') {
+      throw new InputError('Archive inputs must use the .zip extension.')
+    }
     if (files.includes(file) && operation.input === 'pdf' && ext !== '.pdf') {
       throw new InputError('PDF tools only accept .pdf input documents.')
     }
     if (
       files.includes(file) &&
       operation.input === 'office' &&
-      !OFFICE_EXTENSION_SET.has(ext ?? '')
+      !officeExtensionSetForMajor(major).has(ext ?? '')
     ) {
       throw new InputError(`Unsupported Office conversion input: ${name}`)
     }
@@ -813,6 +848,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     'extraHttpHeaders',
     'waitForSelector',
     'waitForExpression',
+    'waitWindowStatus',
     'userAgent',
     'singlePage',
     'preferCssPageSize',
@@ -904,13 +940,18 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       const value = payload.fields[name]
       if (value !== undefined && value !== '') validateChromiumNetworkField(name, value)
     }
-    for (const name of ['waitForSelector', 'waitForExpression', 'userAgent'] as const) {
+    for (const name of [
+      'waitForSelector',
+      'waitForExpression',
+      'waitWindowStatus',
+      'userAgent',
+    ] as const) {
       const value = payload.fields[name]
       if (
         typeof value === 'string' &&
         (value.trim().length === 0 ||
           value.length > (name === 'waitForExpression' ? 5000 : 500) ||
-          (name === 'userAgent' && /[\r\n]/.test(value)))
+          (['userAgent', 'waitWindowStatus'].includes(name) && /[\r\n]/.test(value)))
       ) {
         throw new InputError(`Invalid Chromium ${name} value.`)
       }
@@ -962,6 +1003,15 @@ export function validatePayload(input: unknown): {
   const payload = parsed.output
   const operation = OPERATION_BY_ID.get(payload.operation)
   if (!operation) throw new InputError('Unknown Gotenberg operation.')
+  if (
+    payload.conversionStages !== undefined &&
+    (operation.output !== 'pdf' || operation.input === 'pdf')
+  ) {
+    throw new InputError('Conversion-time stages require a PDF conversion tool.')
+  }
+  if (payload.acknowledgedConversionRedaction && !payload.conversionStages) {
+    throw new InputError('Redaction acknowledgement requires conversion-time stages.')
+  }
 
   const definitions = new Map(operation.fields.map((field) => [field.name, field]))
   if (Object.keys(payload.fields).length > 75 || Object.keys(payload.advanced).length > 40) {
@@ -974,7 +1024,8 @@ export function validatePayload(input: unknown): {
       if (typeof value !== 'boolean') throw new InputError(`${field.label} must be true or false.`)
     } else {
       if (typeof value !== 'string') throw new InputError(`${field.label} must be text.`)
-      if (value.length > 10000) throw new InputError(`${field.label} is too long.`)
+      if (value.length > (operation.id === 'pdf-pipeline' && key === 'stages' ? 60_000 : 10_000))
+        throw new InputError(`${field.label} is too long.`)
       if (field.kind === 'select' && value && !field.options?.includes(value)) {
         throw new InputError(`Invalid option for ${field.label}.`)
       }

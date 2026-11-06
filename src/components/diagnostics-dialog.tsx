@@ -24,6 +24,7 @@ type Props = {
   onClose: () => void
   showDebug: boolean
   showMetrics: boolean
+  backendVersion?: string
 }
 
 type DiagnosticTab = 'debug' | 'metrics'
@@ -49,6 +50,7 @@ export function DiagnosticsDialog({
   onClose,
   showDebug,
   showMetrics,
+  backendVersion,
 }: Props) {
   const [probeResult, setProbeResult] = useState<'healthy' | 'unhealthy' | 'error' | null>(null)
   const [probing, setProbing] = useState(false)
@@ -334,7 +336,12 @@ export function DiagnosticsDialog({
                 hidden={activeTab !== 'metrics'}
                 className="pt-5"
               >
-                <MetricsPanel connection={connection} active={activeTab === 'metrics'} />
+                <MetricsPanel
+                  key={backendVersion ?? 'unknown'}
+                  connection={connection}
+                  active={activeTab === 'metrics'}
+                  backendVersion={backendVersion}
+                />
               </section>
             )}
           </div>

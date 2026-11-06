@@ -62,6 +62,39 @@ describe('diagnostics visibility and accessible tabs', () => {
     expect(html).not.toContain('Need performance counters instead')
   })
 
+  it('explains v9 exporter requirements and blocks browser-managed legacy metrics attempts', () => {
+    const managed = renderToStaticMarkup(
+      createElement(DiagnosticsDialog, {
+        ...props,
+        showDebug: false,
+        showMetrics: true,
+        backendVersion: '9.0.0',
+      }),
+    )
+    expect(managed).toContain('Gotenberg 9 removed /prometheus/metrics')
+    expect(managed).toContain('Read metrics')
+    const browser = renderToStaticMarkup(
+      createElement(DiagnosticsDialog, {
+        ...props,
+        connection: { kind: 'browser', url: 'http://127.0.0.1:3000' },
+        showDebug: false,
+        showMetrics: true,
+        backendVersion: '9.0.0',
+      }),
+    )
+    expect(browser).toContain('Browser-managed Gotenberg 9 connections cannot access an exporter')
+    expect(browser).toMatch(/<button[^>]*disabled=""[^>]*>.*Read metrics<\/button>/)
+    const v8 = renderToStaticMarkup(
+      createElement(DiagnosticsDialog, {
+        ...props,
+        showDebug: false,
+        showMetrics: true,
+        backendVersion: '8.40.0',
+      }),
+    )
+    expect(v8).toContain('Gotenberg 8 supports the legacy /prometheus/metrics')
+  })
+
   it('keeps a metrics-only deployment accessible without exposing debug controls', () => {
     const html = renderDiagnostics(false, true)
     expect(html).toContain('HEAD /health')

@@ -4,8 +4,10 @@ import {
   convertWithGotenberg,
   MAX_UPLOAD_BYTES,
   REQUEST_TIMEOUT_MS,
+  remediationReviewNotice,
 } from '#/lib/gotenberg-client'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
+import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
 import { type ConversionPayload, validateFiles, validatePayload } from '#/lib/validation'
 
 export const MAX_BATCH_JOBS = 12
@@ -27,6 +29,8 @@ export type BatchJob = {
   trace?: string
   webhookStatus?: 202 | 204
   error?: string
+  /** A completed download may still contain non-compliant PDF output. */
+  review?: string
   aborting?: boolean
 }
 
@@ -38,6 +42,8 @@ export type BatchInput = {
   files: File[]
   auxiliary: File[]
   postFiles: PostProcessFiles
+  stageFiles?: File[]
+  archives?: File[]
 }
 
 type PreparedInput = Omit<BatchInput, 'candidate'> & { candidate: ConversionPayload }
@@ -48,6 +54,8 @@ type RecordEntry = {
   view: BatchJob
   input?: PreparedInput
   controller?: AbortController
+  /** Private download data for opt-in ZIP inspection; never included in job snapshots. */
+  archive?: Blob
 }
 
 function copiedPostFiles(files: PostProcessFiles): PostProcessFiles {
@@ -63,6 +71,8 @@ function inputBytes(input: PreparedInput): number {
   const local = [
     ...input.files,
     ...input.auxiliary,
+    ...(input.stageFiles ?? []),
+    ...(input.archives ?? []),
     ...(Array.isArray(input.postFiles.watermark)
       ? input.postFiles.watermark
       : input.postFiles.watermark
@@ -84,13 +94,24 @@ function inputBytes(input: PreparedInput): number {
 
 function prepareInput(input: BatchInput): PreparedInput {
   const { operation, payload } = validatePayload(input.candidate)
-  validateFiles(operation, input.files, input.auxiliary, MAX_UPLOAD_BYTES, payload, input.postFiles)
+  validateFiles(
+    operation,
+    input.files,
+    input.auxiliary,
+    MAX_UPLOAD_BYTES,
+    payload,
+    input.postFiles,
+    input.stageFiles ?? [],
+    input.archives ?? [],
+  )
   return {
     // Copy the values and collections now, not when the job starts. File bytes remain in memory.
     candidate: structuredClone(payload),
     connection: { ...input.connection },
     files: [...input.files],
     auxiliary: [...input.auxiliary],
+    stageFiles: [...(input.stageFiles ?? [])],
+    archives: [...(input.archives ?? [])],
     postFiles: copiedPostFiles(input.postFiles),
   }
 }
@@ -106,7 +127,33 @@ async function executeConversion(
     input.auxiliary,
     signal,
     input.postFiles,
+    input.stageFiles,
+    input.archives,
   )
+}
+
+const unreadableValidationMessage =
+  'PDF validation could not be summarised. Review the downloaded JSON report.'
+
+/** A completed download is not proof of PDF conformance. Keep only a short
+ * summary in public job snapshots, not document names or individual findings.
+ */
+async function batchReviewNotice(
+  input: PreparedInput,
+  result: Extract<ConversionResult, { mode: 'download' }>,
+): Promise<string | undefined> {
+  if (input.candidate.operation === 'pdf-validate') {
+    if (result.type !== 'application/json') {
+      return unreadableValidationMessage
+    }
+    const reports = await summarisePdfValidationBlob(result.blob)
+    if (!reports) return unreadableValidationMessage
+    const noncompliant = reports.filter((report) => !report.compliant).length
+    if (noncompliant > 0) {
+      return `PDF validation found ${noncompliant} non-compliant document(s) out of ${reports.length}. Review the downloaded JSON report.`
+    }
+  }
+  return remediationReviewNotice(result.remediation)
 }
 
 /** All inputs, including selected credentials, live only in this tab and are never serialized. */
@@ -130,6 +177,16 @@ export class BrowserBatchQueue {
   }
 
   readonly getSnapshot = (): BatchSnapshot => this.snapshot
+
+  /** Only completed ZIP results may be inspected; archive bytes stay out of snapshots. */
+  getArchiveBlob(id: number): Blob | undefined {
+    if (this.disposed) return undefined
+    const record = this.records.find(({ view }) => view.id === id)
+    if (record?.view.status !== 'completed' || record.view.type !== 'application/zip') {
+      return undefined
+    }
+    return record.archive
+  }
 
   private emit() {
     if (this.disposed) return
@@ -221,6 +278,12 @@ export class BrowserBatchQueue {
             webhookStatus: result.status,
           }
         } else {
+          const review = await batchReviewNotice(input, result)
+          if (this.disposed || controller.signal.aborted) return
+          if (signal.aborted) throw new Error('Gotenberg did not respond within three minutes.')
+          // Reserve the result budget immediately before setting the completed state.
+          // Validation can be asynchronous: checking before the await lets two
+          // concurrent jobs both claim the same remaining memory allowance.
           const retained = this.records.reduce(
             (total, entry) =>
               total + (entry.view.status === 'completed' ? (entry.view.size ?? 0) : 0),
@@ -232,6 +295,7 @@ export class BrowserBatchQueue {
             )
           }
           const url = this.createUrl(result.blob)
+          record.archive = result.type === 'application/zip' ? result.blob : undefined
           record.view = {
             id: record.view.id,
             operation: record.view.operation,
@@ -241,6 +305,7 @@ export class BrowserBatchQueue {
             size: result.blob.size,
             type: result.type,
             trace: result.trace,
+            review,
             url,
           }
           try {
@@ -312,6 +377,7 @@ export class BrowserBatchQueue {
     if (index === -1 || this.records[index]?.controller) return
     const [record] = this.records.splice(index, 1)
     if (record?.view.url) this.revokeUrl(record.view.url)
+    if (record) record.archive = undefined
     this.emit()
   }
 
@@ -327,6 +393,7 @@ export class BrowserBatchQueue {
     for (const record of this.records) {
       record.controller?.abort()
       if (record.view.url) this.revokeUrl(record.view.url)
+      record.archive = undefined
     }
     this.records = []
     this.listeners.clear()

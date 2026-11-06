@@ -9,7 +9,13 @@ import { Readable, Writable } from 'node:stream'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
-import { ChromeDevToolsPipe } from './chrome-devtools.ts'
+import { browserImageZip, samplePng } from '#scripts/browser-output-fixtures'
+import {
+  attachToChromePage,
+  ChromeDevToolsPipe,
+  navigateChromeHistory,
+  waitForBrowserCondition,
+} from '#scripts/chrome-devtools'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = resolve(root, '.output/server/index.mjs')
@@ -27,6 +33,7 @@ const chromium = [
 class BrowserPage {
   private sessionId?: string
   private readonly devtools: ChromeDevToolsPipe
+  lastCheck = 'Chrome bootstrap'
 
   private constructor(devtools: ChromeDevToolsPipe) {
     this.devtools = devtools
@@ -38,15 +45,7 @@ class BrowserPage {
     assert.ok(input instanceof Writable && output instanceof Readable)
     const page = new BrowserPage(new ChromeDevToolsPipe(input, output))
     try {
-      // Creating the target explicitly avoids racing Chrome's initial blank tab.
-      const { targetId } = await page.command('Target.createTarget', { url: 'about:blank' }, 20_000)
-      assert.ok(typeof targetId === 'string', 'Chrome did not create a debugging page target.')
-      const { sessionId } = await page.command('Target.attachToTarget', {
-        targetId,
-        flatten: true,
-      })
-      assert.ok(typeof sessionId === 'string', 'Chrome did not attach to the page target.')
-      page.sessionId = sessionId
+      page.sessionId = await attachToChromePage(page.devtools)
       return page
     } catch (error) {
       page.close()
@@ -68,17 +67,26 @@ class BrowserPage {
       returnByValue: true,
       awaitPromise: true,
     })
-    if (result.exceptionDetails) throw new Error(`Browser evaluation failed: ${expression}`)
+    if (result.exceptionDetails) {
+      const details = result.exceptionDetails as {
+        text?: string
+        exception?: { description?: string }
+      }
+      throw new Error(
+        `Browser evaluation failed: ${details.exception?.description ?? details.text ?? 'Unknown JavaScript exception'}\nExpression: ${expression}`,
+      )
+    }
     return (result.result as { value?: unknown } | undefined)?.value
   }
 
   async waitUntil(expression: string, description: string): Promise<void> {
-    const deadline = Date.now() + 10_000
-    while (Date.now() < deadline) {
-      if (await this.evaluate(expression)) return
-      await sleep(75)
-    }
-    throw new Error(`Browser check timed out: ${description}`)
+    this.lastCheck = description
+    await waitForBrowserCondition(() => this.evaluate(expression), description)
+  }
+
+  async history(direction: -1 | 1): Promise<void> {
+    assert.ok(this.sessionId, 'Chrome page session is not attached')
+    await navigateChromeHistory(this.devtools, this.sessionId, direction)
   }
 
   async press(key: string, modifiers = 0): Promise<void> {
@@ -175,6 +183,66 @@ async function terminate(child: ChildProcess): Promise<void> {
   }
 }
 
+/** Chrome startup occasionally stalls in CI before answering its first CDP command. */
+async function launchBrowser(
+  binary: string,
+): Promise<{ browser: ChildProcess; profile: string; page: BrowserPage }> {
+  const failures: string[] = []
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const profile = await mkdtemp(resolve(tmpdir(), 'gotenui-browser-'))
+    const browser = spawn(
+      binary,
+      [
+        '--headless=new',
+        '--no-sandbox',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-networking',
+        `--user-data-dir=${profile}`,
+        '--remote-debugging-pipe',
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] },
+    )
+    let chromeLogs = ''
+    browser.stderr?.on('data', (data: Buffer) => {
+      chromeLogs = `${chromeLogs}${data.toString()}`.slice(-4_000)
+    })
+    // Avoid an unhandled 'error' event if Chrome cannot be spawned.
+    let spawnError: Error | undefined
+    browser.on('error', (error: Error) => {
+      spawnError = error
+    })
+    try {
+      const page = await BrowserPage.connect(browser)
+      return { browser, profile, page }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      await terminate(browser)
+      const exit =
+        spawnError?.message ?? `exit=${browser.exitCode ?? '-'} signal=${browser.signalCode ?? '-'}`
+      failures.push(
+        `attempt ${attempt}: ${detail} (${exit}); stderr: ${chromeLogs.trim() || '(none)'}`,
+      )
+      await removeChromeProfile(profile)
+      if (spawnError) break
+      if (attempt < 2) {
+        console.warn('Browser smoke: Chrome startup stalled; retrying with a fresh profile.')
+        await sleep(250)
+      }
+    }
+  }
+  throw new Error(
+    `Chrome DevTools failed to start after ${failures.length} attempt(s):\n${failures.join('\n')}`,
+  )
+}
+
+async function removeChromeProfile(profile: string): Promise<void> {
+  // Chromium child helpers may briefly continue writing after the browser exits.
+  await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 })
+}
+
 /** Convert computed CSS colours to sRGB before comparing theme palettes in Chromium. */
 const toRgbScript = `((color) => {
   const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
@@ -239,7 +307,6 @@ async function waitForRgbColor(
 async function run(): Promise<void> {
   assert.ok(existsSync(entry), 'Build Gotenui before running the browser smoke suite.')
   assert.ok(chromium, 'Chrome/Chromium not found. Set GOTENUI_BROWSER_BIN to its executable path.')
-  const temp = await mkdtemp(resolve(tmpdir(), 'gotenui-browser-'))
   const appPort = await unusedPort()
   const app = spawn(process.execPath, [entry], {
     cwd: root,
@@ -259,38 +326,19 @@ async function run(): Promise<void> {
   }
   app.stdout.on('data', log)
   app.stderr.on('data', log)
-  const browser = spawn(
-    chromium,
-    [
-      '--headless=new',
-      '--no-sandbox',
-      '--disable-gpu',
-      '--disable-dev-shm-usage',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-networking',
-      `--user-data-dir=${temp}`,
-      '--remote-debugging-pipe',
-    ],
-    { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] },
-  )
-  let chromeLogs = ''
-  assert.ok(browser.stderr, 'Chrome did not expose its stderr pipe.')
-  browser.stderr.on('data', (data: Buffer) => {
-    chromeLogs = `${chromeLogs}${data.toString()}`.slice(-4_000)
-  })
+  let browser: ChildProcess | undefined
+  let browserProfile: string | undefined
   let page: BrowserPage | undefined
   let checks = 0
   try {
     const origin = `http://127.0.0.1:${appPort}`
     await waitForEndpoint(`${origin}/`, app, () => logs)
-    try {
-      page = await BrowserPage.connect(browser)
-    } catch (error) {
-      throw new Error(`Chrome DevTools failed to start: ${chromeLogs || '(no stderr)'}`, {
-        cause: error,
-      })
-    }
+    // Launch only after Nitro is ready, and retry only failed Chrome startup.
+    // A fresh profile and process avoid carrying a stuck renderer into attempt 2.
+    const launched = await launchBrowser(chromium)
+    browser = launched.browser
+    browserProfile = launched.profile
+    page = launched.page
     await page.command('Page.enable')
     await page.command('Runtime.enable')
     await page.resize(1440)
@@ -365,13 +413,13 @@ async function run(): Promise<void> {
       'sidebar navigation updates URL',
     )
     checks++
-    await page.evaluate('history.back()')
+    await page.history(-1)
     await page.waitUntil(
       "location.pathname === '/tools/url-pdf' && document.querySelector('h1')?.textContent === 'Website to PDF'",
       'browser back restores the previous tool',
     )
     checks++
-    await page.evaluate('history.forward()')
+    await page.history(1)
     await page.waitUntil(
       "location.pathname === '/tools/metadata-read' && document.querySelector('h1')?.textContent === 'Read metadata'",
       'browser forward restores the next tool',
@@ -384,7 +432,7 @@ async function run(): Promise<void> {
       'deep link survives full page reload',
     )
     checks++
-    await page.evaluate('history.back()')
+    await page.history(-1)
     await page.waitUntil(
       "location.pathname === '/tools/url-pdf' && document.querySelector('h1')?.textContent === 'Website to PDF'",
       'return to PDF conversion after reload',
@@ -830,8 +878,475 @@ async function run(): Promise<void> {
       'Connection settings actions should be right-aligned with Save and use last.',
     )
     checks++
+
+    // Exercise real React connection switching with deterministic status responses.
+    // The old fetch deliberately ignores aborts: a stale result must be ignored
+    // even if an upstream/browser polyfill resolves after its request was cancelled.
+    await page.evaluate(`(() => {
+      const originalFetch = window.fetch.bind(window)
+      window.__originalSmokeUrl = document.querySelector('#connection-url').value
+      window.__holdV8Status = true
+      window.__pendingV8Status = []
+      window.fetch = (input, options) => {
+        if (String(input).startsWith('/api/gotenberg/status?')) {
+          const url = new URL(String(input), location.origin).searchParams.get('url')
+          if (url === window.__originalSmokeUrl) {
+            if (window.__holdV8Status) {
+              return new Promise(resolve => window.__pendingV8Status.push(resolve))
+            }
+            return Promise.resolve(Response.json({ online: true, version: '8.40.0', modules: [] }))
+          }
+          if (url === 'https://v9.example.test') {
+            return Promise.resolve(Response.json({ online: true, version: '9.0.0', modules: [] }))
+          }
+        }
+        return originalFetch(input, options)
+      }
+    })()`)
+    await page.evaluate(`(() => {
+      [...document.querySelectorAll('[role=dialog] button')].find(el => el.textContent === 'Test connection').click()
+    })()`)
+    await page.waitUntil(
+      `window.__pendingV8Status.length >= 1 && [...document.querySelectorAll('[role=dialog] button')].some(el => el.textContent === 'Testing…')`,
+      'stalled v8 connection test',
+    )
+    await page.evaluate(`(() => {
+      [...document.querySelectorAll('[role=dialog] button')]
+        .find(el => el.textContent.trim() === 'Add').click()
+      window.__holdV8Status = false
+      window.__pendingV8Status.splice(0).forEach(resolve =>
+        resolve(Response.json({ online: true, version: '8.40.0', modules: [] })))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#connection-choice')?.value === 'new' &&
+        !document.querySelector('[role=dialog] [role=status]') &&
+        [...document.querySelectorAll('[role=dialog] button')].some(el => el.textContent === 'Test connection')`,
+      'stale connection-test result stays hidden after changing drafts',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const input = document.querySelector('#connection-url')
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'https://v9.example.test')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })()`)
+    await page.evaluate(`(() => {
+      [...document.querySelectorAll('[role=dialog] button')]
+        .find(el => el.textContent === 'Test connection').click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('[role=dialog] [role=status]')?.textContent.includes('Connected to Gotenberg 9.0.0.')`,
+      'v9 connection test result',
+    )
+    await page.evaluate(`document.querySelector('[role=dialog] button[type=submit]').click()`)
+    await page.waitUntil(
+      `!document.querySelector('#connection-heading') &&
+        document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 9.0.0') &&
+        document.querySelector('#gotenui-navigation nav button[data-operation-id="pdf-pipeline"]')?.disabled === false`,
+      'v9 tools available after selecting a new connection',
+    )
+    checks++
+
+    // Keep a v9-only tool selected while changing to v8. It must be blocked
+    // during the pending /version request, then remain blocked by v8 compatibility.
+    await page.evaluate(`(() => {
+      const button = document.querySelector('#gotenui-navigation nav button[data-operation-id="pdf-pipeline"]')
+      if (!button || button.disabled) throw new Error('PDF pipeline builder is unavailable on v9')
+      button.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent.includes('PDF pipeline builder')",
+      'v9 pipeline builder rendered',
+    )
+    await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('#gotenui-navigation button')]
+        .find(el => el.textContent.trim() === 'Connection settings')
+      if (!button) throw new Error('Connection settings button is missing')
+      button.click()
+    })()`)
+    await page.waitUntil("document.querySelector('#connection-heading') !== null", 'v9 settings')
+    await page.evaluate(`(() => {
+      const choice = document.querySelector('#connection-choice')
+      window.__v9SmokeProfile = choice.value
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+      setter.call(choice, 'browser-demo')
+      choice.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#connection-choice')?.value === 'browser-demo' &&
+        document.querySelector('#connection-url')?.value === window.__originalSmokeUrl`,
+      'v8 connection draft and URL have updated',
+    )
+    await page.evaluate(`(() => {
+      window.__holdV8Status = true
+      document.querySelector('[role=dialog] button[type=submit]').click()
+    })()`)
+    await page.waitUntil(
+      `window.__pendingV8Status.length >= 1 &&
+        document.querySelector('#gotenui-navigation')?.textContent.includes('Checking connection...')`,
+      'v9 tool locked while new v8 status is pending',
+    )
+    await page.evaluate(`(() => {
+      window.__holdV8Status = false
+      window.__pendingV8Status.splice(0).forEach(resolve =>
+        resolve(Response.json({ online: true, version: '8.40.0', modules: [] })))
+    })()`)
+    try {
+      await page.waitUntil(
+        `document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 8.40.0') &&
+          document.querySelector('#gotenui-navigation nav button[data-operation-id="pdf-pipeline"]')?.disabled === true &&
+          document.querySelector('h1')?.textContent.includes('PDF pipeline builder') &&
+          location.pathname === '/tools/pdf-pipeline'`,
+        'selected v9-only tool remains unavailable after switching to v8',
+      )
+    } catch (error) {
+      const snapshot = await page.evaluate(`(() => {
+        const button = document.querySelector('#gotenui-navigation nav button[data-operation-id="pdf-pipeline"]')
+        return {
+          selectedPath: location.pathname,
+          pageTitle: document.querySelector('h1')?.textContent,
+          serviceStatus: [...document.querySelectorAll('#gotenui-navigation p')]
+            .find(el => el.textContent.includes('Online ·') ||
+              el.textContent.includes('Checking connection') ||
+              el.textContent.includes('Not responding'))?.textContent.trim(),
+          pipelineDisabled: button?.disabled,
+          pipelineMarkedUnavailable: button?.textContent.includes('N/A'),
+          pendingMockedV8Requests: window.__pendingV8Status.length,
+        }
+      })()`)
+      throw new Error(`v8 compatibility browser state: ${JSON.stringify(snapshot)}`, {
+        cause: error,
+      })
+    }
+    checks++
+
+    // The Diagnostics dialog and queued conversions must follow their own
+    // connection lifecycles: diagnostics refresh for the active version, while
+    // an enqueued job keeps the server it was originally prepared for.
+    await page.evaluate(`document.querySelector(${JSON.stringify(diagnosticsButton)}).click()`)
+    await page.waitUntil(
+      "document.querySelector('#diagnostics-heading') !== null",
+      'v8 diagnostics after connection switch',
+    )
+    await page.evaluate(`(() => {
+      const tab = [...document.querySelectorAll('[role=tab]')]
+        .find(el => el.textContent.includes('Prometheus'))
+      if (!tab) throw new Error('Prometheus tab is missing')
+      tab.click()
+    })()`)
+    await page.waitUntil(
+      `(() => {
+        const panel = document.querySelector('[role=tabpanel]:not([hidden])')
+        return panel?.textContent.includes('Gotenberg 8 supports the legacy') &&
+          panel.querySelector('button[type=submit]')?.disabled === false
+      })()`,
+      'v8 diagnostics shows its legacy metrics route',
+    )
+    checks++
+    await page.evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()")
+    await page.waitUntil("!document.querySelector('#diagnostics-heading')", 'close v8 diagnostics')
+
+    await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('#gotenui-navigation nav button')]
+        .find(el => el.textContent.trim() === 'HTML to PDF')
+      if (!button || button.disabled) throw new Error('HTML conversion is unavailable on v8')
+      button.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent === 'HTML to PDF' && document.querySelector('#source-editor') !== null",
+      'v8 batch conversion form',
+    )
+    await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Add to batch')
+      if (!button || button.disabled) throw new Error('Add to batch is unavailable')
+      button.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')",
+      'v8 conversion is waiting in the browser batch queue',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const settings = [...document.querySelectorAll('#gotenui-navigation button')]
+        .find(el => el.textContent.trim() === 'Connection settings')
+      if (!settings) throw new Error('Connection settings button is missing')
+      settings.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#connection-choice') !== null",
+      'switch back to v9',
+    )
+    await page.evaluate(`(() => {
+      const choice = document.querySelector('#connection-choice')
+      if (!window.__v9SmokeProfile) throw new Error('The v9 connection was not recorded')
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+      setter.call(choice, window.__v9SmokeProfile)
+      choice.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#connection-choice')?.value === window.__v9SmokeProfile &&
+        document.querySelector('#connection-url')?.value === 'https://v9.example.test'`,
+      'saved v9 connection draft and URL have updated',
+    )
+    await page.evaluate("document.querySelector('[role=dialog] button[type=submit]').click()")
+    await page.waitUntil(
+      `document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 9.0.0') &&
+        document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')`,
+      'queued v8 work survives selecting v9',
+    )
+    checks++
+
+    await page.evaluate(`document.querySelector(${JSON.stringify(diagnosticsButton)}).click()`)
+    await page.waitUntil(
+      "document.querySelector('#diagnostics-heading') !== null",
+      'v9 diagnostics',
+    )
+    await page.evaluate(`(() => {
+      const tab = [...document.querySelectorAll('[role=tab]')]
+        .find(el => el.textContent.includes('Prometheus'))
+      if (!tab) throw new Error('Prometheus tab is missing')
+      tab.click()
+    })()`)
+    await page.waitUntil(
+      `(() => {
+        const panel = document.querySelector('[role=tabpanel]:not([hidden])')
+        return panel?.textContent.includes('Gotenberg 9 removed /prometheus/metrics') &&
+          panel.querySelector('button[type=submit]')?.disabled === true
+      })()`,
+      'v9 diagnostics does not offer the removed metrics route',
+    )
+    checks++
+    await page.evaluate("document.querySelector('[role=dialog] button[aria-label=Close]').click()")
+    await page.waitUntil("!document.querySelector('#diagnostics-heading')", 'close v9 diagnostics')
+    await page.evaluate(`(() => {
+      const section = document.querySelector('#gotenui-batch-queue')
+      const cancel = [...section.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Cancel waiting/running')
+      if (!cancel) throw new Error('Batch cancel button is missing')
+      cancel.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue')?.textContent.includes('Cancelled')",
+      'cancel queued conversion after connection switch',
+    )
+    await page.evaluate(`(() => {
+      const section = document.querySelector('#gotenui-batch-queue')
+      const clear = [...section.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Clear finished')
+      if (!clear) throw new Error('Batch clear button is missing')
+      clear.click()
+    })()`)
+    await page.waitUntil("!document.querySelector('#gotenui-batch-queue')", 'clear queued work')
+    checks++
+
+    // Exercise the actual React result and batch panels using valid, browser-local
+    // PNG/ZIP fixtures. The pinned Docker suite separately verifies upstream bytes.
+    await page.evaluate(`(() => {
+      const delegate = window.fetch.bind(window)
+      const png = Uint8Array.from(atob('${samplePng.toString('base64')}'), char => char.charCodeAt(0))
+      const zip = Uint8Array.from(atob('${Buffer.from(browserImageZip()).toString('base64')}'), char => char.charCodeAt(0))
+      window.__smokeResultKind = 'image'
+      window.__restoreSmokeConversionFetch = () => { window.fetch = delegate }
+      window.fetch = (input, options) => {
+        if (String(input) === '/api/gotenberg/convert') {
+          const archive = window.__smokeResultKind === 'zip'
+          return Promise.resolve(new Response(archive ? zip : png, {
+            headers: {
+              'content-type': archive ? 'application/zip' : 'image/png',
+              'content-disposition': archive
+                ? 'attachment; filename="renders.zip"'
+                : 'attachment; filename="render.png"',
+            },
+          }))
+        }
+        return delegate(input, options)
+      }
+    })()`)
     await page.evaluate(
-      'document.querySelector(\'[role=dialog] button[aria-label="Close settings"]\').click()',
+      `document.querySelector('#gotenui-navigation nav button[data-operation-id="html-shot"]').click()`,
+    )
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent === 'HTML screenshot'",
+      'v9 screenshot form',
+    )
+    await page.evaluate(`(() => {
+      const submit = document.querySelector('form button[type=submit]')
+      if (!submit || submit.disabled) throw new Error('Screenshot submit button is unavailable')
+      submit.click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('[alt="Latest screenshot"]')?.naturalWidth === 2 &&
+        document.querySelector('a[download="render.png"]')?.textContent.includes('Download again')`,
+      'direct PNG result preview and download name',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const add = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Add to batch')
+      if (!add || add.disabled) throw new Error('Screenshot batch button is unavailable')
+      add.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')",
+      'queued PNG result',
+    )
+    await page.evaluate(`(() => {
+      const start = [...document.querySelectorAll('#gotenui-batch-queue button')]
+        .find(el => el.textContent.trim() === 'Start queue')
+      if (!start) throw new Error('Cannot start the screenshot batch')
+      start.click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#gotenui-batch-queue a[download="render.png"]') &&
+        document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]')?.textContent.includes('Preview image')`,
+      'completed PNG batch offers an opt-in preview',
+    )
+    assert.equal(
+      await page.evaluate("document.querySelector('#gotenui-batch-queue img') === null"),
+      true,
+      'The image must not be decoded in the batch until explicitly previewed.',
+    )
+    await page.evaluate(
+      `document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]').click()`,
+    )
+    await page.waitUntil(
+      `document.querySelector('#gotenui-batch-queue img[alt="Preview of render.png"]')?.naturalWidth === 2`,
+      'batch PNG preview loads its existing Blob URL',
+    )
+    await page.evaluate(
+      `document.querySelector('#gotenui-batch-queue button[aria-expanded="true"]').click()`,
+    )
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue img') === null",
+      'batch PNG preview closes',
+    )
+    checks++
+
+    // The queue stays active after finishing the PNG job. Pause it explicitly so
+    // the next ZIP job remains waiting long enough to test manual start. Otherwise
+    // enqueue() immediately launches it and the "1 waiting" assertion races CI.
+    await page.evaluate(`(() => {
+      const buttons = [...document.querySelectorAll('#gotenui-batch-queue button')]
+      const pause = buttons.find(el => el.textContent.trim() === 'Pause new jobs')
+      if (!pause) throw new Error('Expected active batch queue after PNG completion')
+      pause.click()
+      const clear = buttons.find(el => el.textContent.trim() === 'Clear finished')
+      if (!clear) throw new Error('Cannot clear completed PNG batch')
+      clear.click()
+      window.__smokeResultKind = 'zip'
+      const render = document.querySelector('#gotenui-navigation nav button[data-operation-id="render-pages"]')
+      if (!render || render.disabled) throw new Error('PDF renderer is unavailable on v9')
+      render.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent === 'Render PDF pages'",
+      'v9 PDF renderer',
+    )
+    await page.evaluate(`(() => {
+      const input = document.querySelector('fieldset[aria-label="Upload PDF documents drop area"] input[type=file]')
+      if (!input) throw new Error('Missing PDF upload for rendering')
+      const files = new DataTransfer()
+      files.items.add(new File(['%PDF-1.7\\nsynthetic browser fixture'], 'two-pages.pdf', { type: 'application/pdf' }))
+      input.files = files.files
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('[aria-label="Upload PDF documents selected files"]')?.textContent.includes('two-pages.pdf')`,
+      'PDF renderer receives a local file',
+    )
+    await page.evaluate(`document.querySelector('form button[type=submit]').click()`)
+    await page.waitUntil(
+      `document.querySelector('a[download="renders.zip"]')?.textContent.includes('Download again') &&
+        [...document.querySelectorAll('button')].some(el => el.textContent.includes('View archive contents'))`,
+      'direct ZIP result uses its actual output extension',
+    )
+    await page.evaluate(`(() => {
+      const preview = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'View archive contents')
+      preview.click()
+    })()`)
+    await page.waitUntil(
+      `(() => {
+        const entries = [...document.querySelectorAll('[aria-label="Archive files"] li')]
+        return entries.length === 2 && entries.every(el => el.textContent.includes('.png') && el.textContent.includes('Image'))
+      })()`,
+      'direct ZIP manifest lists the two rendered PNGs',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const add = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Add to batch')
+      if (!add || add.disabled) throw new Error('ZIP batch button is unavailable')
+      add.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')",
+      'queued ZIP result',
+    )
+    await page.evaluate(`(() => {
+      const start = [...document.querySelectorAll('#gotenui-batch-queue button')]
+        .find(el => el.textContent.trim() === 'Start queue')
+      if (!start) throw new Error('Cannot start the ZIP batch')
+      start.click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#gotenui-batch-queue a[download="renders.zip"]') &&
+        document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]')?.textContent.includes('View archive contents')`,
+      'completed ZIP batch result and filename',
+    )
+    await page.evaluate(
+      `document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]').click()`,
+    )
+    await page.waitUntil(
+      `document.querySelectorAll('#gotenui-batch-queue [aria-label="Archive files"] li').length === 2`,
+      'completed batch ZIP preview lists both images',
+    )
+    await page.evaluate(`(() => {
+      const clear = [...document.querySelectorAll('#gotenui-batch-queue button')]
+        .find(el => el.textContent.trim() === 'Clear finished')
+      clear.click()
+      window.__restoreSmokeConversionFetch()
+    })()`)
+    await page.waitUntil(
+      "!document.querySelector('#gotenui-batch-queue')",
+      'clear browser output fixtures',
+    )
+    checks++
+
+    // Restore the v8 connection for the remaining legacy diagnostics, theme,
+    // and conversion checks in this smoke suite.
+    await page.evaluate(`(() => {
+      const settings = [...document.querySelectorAll('#gotenui-navigation button')]
+        .find(el => el.textContent.trim() === 'Connection settings')
+      if (!settings) throw new Error('Connection settings button is missing')
+      settings.click()
+    })()`)
+    await page.waitUntil("document.querySelector('#connection-choice') !== null", 'restore v8')
+    await page.evaluate(`(() => {
+      const choice = document.querySelector('#connection-choice')
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+      setter.call(choice, 'browser-demo')
+      choice.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#connection-choice')?.value === 'browser-demo' &&
+        document.querySelector('#connection-url')?.value === window.__originalSmokeUrl`,
+      'restore saved v8 profile draft and URL',
+    )
+    await page.evaluate("document.querySelector('[role=dialog] button[type=submit]').click()")
+    await page.waitUntil(
+      "document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 8.40.0')",
+      'v8 restored after diagnostics and batch checks',
+    )
+    checks++
+
+    await page.evaluate(
+      `document.querySelector('#gotenui-navigation nav button:not([disabled])')?.focus()`,
     )
     // Use the same inactive navigation item in both themes, even when the
     // selected operation changes between assertions.
@@ -1047,12 +1562,18 @@ async function run(): Promise<void> {
       'restore focus to visible mobile search button',
     )
     checks++
+  } catch (error) {
+    // Errors thrown by the CDP pipe otherwise show only their receive() frame.
+    // Print the current browser checkpoint and check index without dumping app data.
+    console.error(
+      `Browser smoke: failed after ${checks} checks (last check: ${page?.lastCheck ?? 'Chrome bootstrap'}).`,
+    )
+    throw error
   } finally {
     page?.close()
-    await terminate(browser)
+    if (browser) await terminate(browser)
     await terminate(app)
-    // Chromium helpers may still be writing to the profile after the parent exits.
-    await rm(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    if (browserProfile) await removeChromeProfile(browserProfile)
   }
   console.log(
     `Browser smoke: ${styleText('green', 'PASS')} (${checks} checks, desktop and mobile Chromium)`,

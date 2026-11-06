@@ -7,6 +7,7 @@ export const operation: Operation = {
   title: 'Markdown screenshot',
   group: 'Capture',
   summary: 'Capture a Markdown document as an image.',
+  supportedGotenbergMajors: [8, 9],
   path: '/forms/chromium/screenshot/markdown',
   docs: 'convert-with-chromium/screenshot-markdown',
   input: 'markdown',

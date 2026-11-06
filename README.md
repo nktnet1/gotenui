@@ -29,4 +29,4 @@ Gotenui doesn't keep uploaded documents or completed conversions on its server. 
 - [Deployment](docs/DEPLOYMENT.md) — self-hosting, environment variables and authentication
 - [Development](docs/DEVELOPMENT.md) — local setup, architecture and tests
 
-Gotenui is designed for Gotenberg 8.x.
+Gotenui supports Gotenberg 8.x and is adding Gotenberg 9 support incrementally. See the [compatibility roadmap](docs/ROADMAP.md) for the current v9 feature coverage.

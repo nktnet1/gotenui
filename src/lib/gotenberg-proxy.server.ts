@@ -2,10 +2,15 @@ import urlJoin from 'url-join'
 import * as v from 'valibot'
 import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
+import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
+import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
+import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
+import { canWebhookForOperation } from '#/lib/operation-availability'
+import { parsePdfPipeline, pipelineResponseTypes } from '#/lib/pdf-pipeline'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
@@ -31,6 +36,7 @@ import {
   validateFiles,
   validatePayload,
 } from '#/lib/validation'
+import { validateZipInputs } from '#/lib/zip-input-validation'
 import type { Operation } from '#/tools/registry'
 
 const serverEnvSchema = v.object({
@@ -206,6 +212,7 @@ function upstreamConversionHeaders(
   auth: HeadersInit | undefined,
   payload: ConversionPayload,
   acceptsOutputFilename: boolean,
+  version: SupportedGotenbergMajor,
 ): Headers {
   const headers = new Headers(auth)
   if (acceptsOutputFilename && payload.outputName) {
@@ -218,8 +225,10 @@ function upstreamConversionHeaders(
   if (webhook) {
     headers.set('Gotenberg-Webhook-Url', webhook.url)
     if (webhook.method) headers.set('Gotenberg-Webhook-Method', webhook.method)
-    if (webhook.errorUrl) headers.set('Gotenberg-Webhook-Error-Url', webhook.errorUrl)
-    if (webhook.errorMethod) headers.set('Gotenberg-Webhook-Error-Method', webhook.errorMethod)
+    if (version === 8 && webhook.errorUrl)
+      headers.set('Gotenberg-Webhook-Error-Url', webhook.errorUrl)
+    if (version === 8 && webhook.errorMethod)
+      headers.set('Gotenberg-Webhook-Error-Method', webhook.errorMethod)
     if (webhook.eventsUrl) headers.set('Gotenberg-Webhook-Events-Url', webhook.eventsUrl)
     if (webhook.extraHttpHeaders) {
       headers.set('Gotenberg-Webhook-Extra-Http-Headers', JSON.stringify(webhook.extraHttpHeaders))
@@ -228,16 +237,72 @@ function upstreamConversionHeaders(
   return headers
 }
 
+/** Resolve the actual upstream major for every request, including queued/direct API calls.
+ * Do not cache this across connection changes or upstream upgrades.
+ */
+async function conversionTargetVersion(
+  request: Request,
+  fetcher: typeof fetch,
+  target: { url: string; headers?: HeadersInit; oauth2?: OAuth2ClientCredentials },
+): Promise<SupportedGotenbergMajor> {
+  const response = await fetcher(urlJoin(target.url, '/version'), {
+    method: 'GET',
+    ...fetchOptions(request),
+    headers: target.headers,
+    credentials: 'omit',
+  })
+  if (!response.ok) {
+    invalidateUnauthorized(response.status, target)
+    await response.body?.cancel().catch(() => {})
+    throw new ProxyInputError(
+      `Could not verify the Gotenberg version (HTTP ${response.status}).`,
+      response.status === 401 || response.status === 403 ? response.status : 502,
+    )
+  }
+  let raw: string
+  try {
+    raw = (await boundedStatusText(response, 1_024)).trim()
+  } catch {
+    throw new ProxyInputError('Gotenberg returned an invalid /version response.', 502)
+  }
+  const parsed = parseGotenbergVersion(raw)
+  if (!parsed || (parsed.major !== 8 && parsed.major !== 9)) {
+    throw new ProxyInputError(
+      `Unsupported Gotenberg version: ${raw.slice(0, 80) || 'Unknown'}. Use v8 or v9.`,
+      409,
+    )
+  }
+  return parsed.major
+}
+
 /** Preserve Gotenberg's diagnostic headers, not arbitrary upstream response headers. */
 function copyUpstreamDiagnostics(upstream: Response, headers: Headers): void {
   const trace = upstream.headers.get('gotenberg-trace')
-  if (trace) headers.set('Gotenberg-Trace', trace)
+  // Untrusted upstreams must not turn correlation IDs into unbounded or
+  // unexpected log/UI content. This matches the request trace grammar.
+  if (trace && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(trace))
+    headers.set('Gotenberg-Trace', trace)
+  const residual = upstream.headers.get('Gotenberg-Remediation-Residual')
+  const rolledBack = upstream.headers.get('Gotenberg-Remediation-Rolled-Back')
+  if (residual !== null || rolledBack !== null) {
+    if (
+      residual !== null &&
+      rolledBack !== null &&
+      /^\d{1,10}$/.test(residual) &&
+      /^\d{1,10}$/.test(rolledBack)
+    ) {
+      headers.set('Gotenberg-Remediation-Residual', residual)
+      headers.set('Gotenberg-Remediation-Rolled-Back', rolledBack)
+    } else {
+      // Partial/malformed diagnostics must never be mistaken for two zeros.
+      headers.set('Gotenui-Remediation-Incomplete', '1')
+    }
+  }
   const version = upstream.headers.get('gotenberg-version')
   if (version && version.length <= 80 && /^v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version)) {
     headers.set('Gotenberg-Version', version)
   }
 }
-
 async function upstreamErrorText(response: Response): Promise<string> {
   const reader = response.body?.getReader()
   if (!reader) return `Gotenberg returned HTTP ${response.status}.`
@@ -275,12 +340,40 @@ function allowedConversionContentTypes(
   operation: Operation,
   payload: ConversionPayload,
   files: readonly File[],
+  archives: readonly File[] = [],
 ): readonly string[] {
+  if (operation.id === 'pdf-pipeline') {
+    return pipelineResponseTypes(
+      parsePdfPipeline(String(payload.fields.stages ?? ''), {
+        acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
+      }),
+    )
+  }
+  if (payload.conversionStages) {
+    const stages = parsePdfPipeline(payload.conversionStages, {
+      acknowledgedRedaction: payload.acknowledgedConversionRedaction,
+    })
+    const types = pipelineResponseTypes(stages)
+    // Each ZIP can contain several Office documents, whose count is only
+    // known after Gotenberg extracts it. Even one uploaded ZIP can yield
+    // several independent output PDFs in another ZIP.
+    return archives.length && operation.id === 'office-pdf'
+      ? [...new Set([...types, 'application/zip'])]
+      : types
+  }
   const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
+  if (operation.id === 'render-pages') {
+    const imageType = payload.fields.format === 'jpeg' ? 'image/jpeg' : 'image/png'
+    return [imageType, 'application/zip']
+  }
   // Even an intervals split can produce a PDF when there is just one output.
   // The proxy cannot know its page count without reading the input document.
   if (operation.id === 'split') return ['application/pdf', 'application/zip']
   if (operation.output !== 'pdf') return [primaryType]
+
+  if (operation.id === 'office-pdf' && archives.length) {
+    return ['application/pdf', 'application/zip']
+  }
 
   const remoteDocuments = (payload.downloadFrom ?? []).filter(
     (file) => !file.embedded && !file.field,
@@ -376,6 +469,8 @@ export async function proxyConversionRequest(
   let candidate: unknown
   const files: File[] = []
   const auxiliary: File[] = []
+  const stageFiles: File[] = []
+  const archives: File[] = []
   const postFiles: PostProcessFiles = {}
   let payloadCount = 0
   for (const [key, value] of fields) {
@@ -390,6 +485,10 @@ export async function proxyConversionRequest(
       files.push(value)
     } else if (key === 'auxiliary' && value instanceof File) {
       auxiliary.push(value)
+    } else if (key === 'stageFile' && value instanceof File) {
+      stageFiles.push(value)
+    } else if (key === 'archives' && value instanceof File) {
+      archives.push(value)
     } else if (key === 'embeds' && value instanceof File) {
       if (!postFiles.embeds) postFiles.embeds = []
       postFiles.embeds.push(value)
@@ -413,7 +512,7 @@ export async function proxyConversionRequest(
   }
   if (payloadCount !== 1) throw new ProxyInputError('Exactly one conversion payload is required.')
   const { operation, payload } = validatePayload(candidate)
-  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles)
+  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, stageFiles, archives)
   const target = await resolveAuthenticatedConnectionTarget(
     request,
     settings,
@@ -422,14 +521,109 @@ export async function proxyConversionRequest(
     fetcher,
   )
   const { url, headers: authHeaders } = target
-  const form = createGotenbergForm(operation, payload, files, auxiliary, maxBytes, postFiles)
-  const upstream = await fetcher(urlJoin(url, operation.path), {
+  const major = await conversionTargetVersion(request, fetcher, target)
+  if (!(operation.supportedGotenbergMajors ?? [8]).includes(major)) {
+    throw new ProxyInputError(
+      `The ${operation.title} tool is not available on Gotenberg ${major} yet.`,
+      409,
+    )
+  }
+  // The initial validation accepts the union of both Office extension sets.
+  // Recheck after authenticating /version so neither version receives an unsupported format.
+  if (operation.input === 'office') {
+    validateFiles(
+      operation,
+      files,
+      auxiliary,
+      maxBytes,
+      payload,
+      postFiles,
+      stageFiles,
+      archives,
+      major,
+    )
+  }
+  if (archives.length && major !== 9) {
+    throw new InputError('ZIP archive inputs require Gotenberg 9.')
+  }
+  // ZIPs are still extracted and checked by Gotenberg. Before forwarding,
+  // inspect only their bounded directory metadata to catch wrong source types,
+  // collisions with generated documents, and invalid ZIP structures.
+  const archiveEntryNames = archives.length
+    ? await validateZipInputs(operation, payload, files, auxiliary, stageFiles, archives)
+    : []
+  if (major === 9 && postFiles.embeds?.length) {
+    throw new InputError(
+      'Gotenberg 9 does not accept the legacy embeds field. Use an attach stage with a named pipeline stage file, or use a Gotenberg 8 connection.',
+    )
+  }
+  if (payload.webhook && major === 9) {
+    if (!canWebhookForOperation(major, operation)) {
+      throw new InputError(
+        'Gotenberg 9 PDF inspection tools return JSON directly and cannot deliver results through a webhook.',
+      )
+    }
+    if (!payload.webhook.eventsUrl) {
+      throw new InputError('Gotenberg 9 webhooks require an events callback URL.')
+    }
+    if (payload.webhook.errorUrl || payload.webhook.errorMethod) {
+      throw new InputError('Gotenberg 9 removed the separate webhook error callback.')
+    }
+  }
+  const legacy = createGotenbergForm(
+    operation,
+    payload,
+    files,
+    auxiliary,
+    maxBytes,
+    postFiles,
+    archives,
+  )
+  const { path, form } =
+    operation.input === 'pdf'
+      ? adaptPdfForm(operation, payload, legacy, major, auxiliary, archives, archiveEntryNames)
+      : {
+          path: operation.path,
+          form: adaptConversionForm(
+            operation,
+            payload,
+            legacy,
+            major,
+            stageFiles,
+            archives,
+            archiveEntryNames,
+          ),
+        }
+  const upstream = await fetcher(urlJoin(url, path), {
     method: 'POST',
     ...fetchOptions(request),
     body: form,
-    headers: upstreamConversionHeaders(authHeaders, payload, operation.output !== 'json'),
+    headers: upstreamConversionHeaders(authHeaders, payload, operation.output !== 'json', major),
     credentials: 'omit',
   })
+  // A deployment can be upgraded or its load balancer can switch backends after
+  // /version was probed. Gotenberg advertises its actual version on responses;
+  // never return a successful file or webhook acceptance from the wrong adapter.
+  // Absent headers are tolerated for proxies that strip diagnostic headers.
+  if (upstream.ok) {
+    const returnedVersion = upstream.headers.get('Gotenberg-Version')
+    if (returnedVersion !== null) {
+      const parsed = parseGotenbergVersion(returnedVersion)
+      if (!parsed || parsed.major !== major) {
+        await upstream.body?.cancel().catch(() => {})
+        const detail = parsed
+          ? `Gotenberg changed from v${major} to v${parsed.major} during conversion.`
+          : 'Gotenberg returned an invalid version header.'
+        const accepted = upstream.status === 202 || upstream.status === 204
+        throw new ProxyInputError(
+          accepted
+            ? `${detail} The asynchronous job may already have been accepted; check its callbacks before retrying.`
+            : `${detail} Refresh the connection and retry.`,
+          accepted ? 502 : parsed ? 409 : 502,
+        )
+      }
+    }
+  }
   if (!upstream.ok) {
     invalidateUnauthorized(upstream.status, target)
     const headers = new Headers({
@@ -454,7 +648,7 @@ export async function proxyConversionRequest(
     }
     return new Response(null, { status: upstream.status, headers })
   }
-  const allowedTypes = allowedConversionContentTypes(operation, payload, files)
+  const allowedTypes = allowedConversionContentTypes(operation, payload, files, archives)
   const upstreamContentType = upstream.headers.get('content-type')
   const returnedType = upstreamContentType?.split(';')[0]?.trim().toLowerCase()
   if (
@@ -640,6 +834,12 @@ export async function proxyMetricsRequest(
     !isOtel,
   )
   const { url, headers: authHeaders } = target
+  if (!isOtel && (await conversionTargetVersion(request, fetcher, target)) === 9) {
+    throw new ProxyInputError(
+      'Gotenberg 9 no longer serves /prometheus/metrics. Configure a server-managed connection with a separate OpenTelemetry Prometheus metricsUrl.',
+      409,
+    )
+  }
   const metricsUrl = profile?.metricsUrl ?? urlJoin(url, '/prometheus/metrics')
   const metricsHeaders = isOtel
     ? profile?.metricsAuthorization

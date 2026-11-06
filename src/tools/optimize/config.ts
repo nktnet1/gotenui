@@ -4,15 +4,18 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'optimize',
+  supportedGotenbergMajors: [8, 9],
   title: 'Optimize PDFs',
   group: 'PDF tools',
-  summary: 'Reduce PDF sizes with image optimization.',
+  summary:
+    'Optimize PDF files. Gotenberg 9 uses lossless optimization; Gotenberg 8 offers an image-quality slider.',
   path: '/forms/pdfengines/optimize',
   docs: 'manipulate-pdfs/optimize-pdfs',
   ...pdfFiles,
   fields: [
     {
       name: 'imageQuality',
+      supportedGotenbergMajors: [8],
       label: 'Image quality',
       kind: 'number',
       min: 1,
