@@ -3,7 +3,7 @@ import { expect, test } from 'vitest'
 import { GROUPS, OPERATION_BY_ID, OPERATIONS, operationDefaults } from '#/lib/operations'
 
 test('all operation identifiers and Gotenberg endpoints are unique', () => {
-  assert.equal(OPERATIONS.length, 39)
+  assert.equal(OPERATIONS.length, 40)
   assert.equal(OPERATION_BY_ID.size, OPERATIONS.length)
   const v8 = OPERATIONS.filter((operation) => operation.supportedGotenbergMajors?.includes(8))
   assert.equal(new Set(v8.map((operation) => operation.path)).size, v8.length)

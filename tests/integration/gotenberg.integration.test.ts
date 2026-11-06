@@ -451,7 +451,10 @@ test.skipIf(!isV9).each(v9PdfWorkflows)(
     if (!response.ok) throw new Error(`${id}: HTTP ${response.status}: ${await response.text()}`)
     expect(response.headers.get('content-type')?.split(';')[0]).toBe(type)
     const bytes = await response.arrayBuffer()
-    expect(bytes.byteLength).toBeGreaterThan(30)
+    // Valid inspection responses can be very small JSON documents (e.g.
+    // {"original.pdf":[]} for an empty form or attachments list).
+    // Check the parsed response instead of imposing an arbitrary byte minimum.
+    expect(bytes.byteLength).toBeGreaterThan(type === 'application/json' ? 0 : 30)
     if (type === 'application/pdf') {
       expect(await inspectV9Pdf('info', bytes)).toMatchObject({
         'verified.pdf': { pages: id === 'insert-pages' ? 2 : 1 },
@@ -467,6 +470,69 @@ test.skipIf(!isV9).each(v9PdfWorkflows)(
     } else if (type === 'image/png') {
       expect([...new Uint8Array(bytes).subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
     }
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 pipeline applies ordered merge, select, and metadata stages',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'merge' },
+          { op: 'select', pages: '2' },
+          { op: 'set-metadata', title: 'Pipeline verified' },
+        ]),
+      },
+      [pdfFile('first.pdf'), pdfFile('second.pdf')],
+    )
+    if (!result.ok) throw new Error(`Pipeline: ${result.status} ${await result.text()}`)
+    const bytes = await result.arrayBuffer()
+    expect(await inspectV9Pdf('info', bytes)).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+    expect(await inspectV9Pdf('metadata', bytes)).toMatchObject({
+      'verified.pdf': { title: 'Pipeline verified' },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 pipeline embeds named auxiliary attachments',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([{ op: 'attach', file: 'receipt.txt' }, { op: 'optimize' }]),
+      },
+      [pdfFile()],
+      [new File(['Receipt'], 'receipt.txt')],
+    )
+    if (!result.ok) throw new Error(`Pipeline attachment: ${result.status} ${await result.text()}`)
+    expect(JSON.stringify(await inspectV9Pdf('attachments', await result.arrayBuffer()))).toContain(
+      'receipt.txt',
+    )
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 pipeline renders its final PDF to a PNG',
+  async () => {
+    const result = await convertV9('pdf-pipeline', {
+      stages: JSON.stringify([
+        { op: 'rotate', angle: 90 },
+        { op: 'render', pages: '1', format: 'png' },
+      ]),
+    })
+    if (!result.ok) throw new Error(`Pipeline render: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('image/png')
+    expect([...new Uint8Array(await result.arrayBuffer()).subarray(0, 8)]).toEqual([
+      137, 80, 78, 71, 13, 10, 26, 10,
+    ])
   },
   120_000,
 )

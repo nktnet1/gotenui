@@ -19,9 +19,12 @@
 - [x] **Patch 5 (v1.0.4):** Register 17 Gotenberg 9-only workflows: all 13 previously missing PDF processing stages (`select`, `delete`, `insert`, `set-form`, `flatten-transparency`, `convert-colors`, `redact`, `autotag`, `detach`, `decrypt`, `sign`, `timestamp`, `render`) and the four inspection endpoints (`info`, `validate`, `attachments`, `form`). The v8 catalogue and PDF request adapter are unchanged; v9-only tools explain their version requirement on v8.
 - [x] **Patch 5:** Strictly validate stage inputs, PDF form JSON, page selections, certificate uploads, redaction confirmation/coordinates and timestamp URLs. Accept v9 rendering responses as PNG, JPEG or ZIP, while preserving the proxy's response size, MIME and signature checks. Show per-document validation conformance and a bounded list of violations, including when HTTP 200 reports a noncompliant document.
 - [x] **Patch 5:** Add per-operation unit tests and pinned-v9 integration cases for inspection, page modifications, conversion, compliance, form read/write, encryption/decryption, attachments, signing and rendered images. Signing credentials and the interactive form fixture are generated during the test rather than checked into the repository.
-- [ ] **Patch 5 integration verification:** Execute the newly expanded v9 PDF suite against the running `gotenberg/gotenberg:9.0.0` image. No Docker daemon is available in this authoring environment; adding the integration cases does not constitute passing them. The older patch 4 integration expansion also remains unverified here.
+- [ ] **Patch 5 integration verification:** The user ran the expanded v9 integration suite and reported **66 passed, 12 skipped and two failed**: `pdf-attachments` and `pdf-form` returned valid, small JSON bodies that failed a test-only `>30 bytes` assertion. Patch 6 corrects this assertion without weakening PDF/image signature checks. Rerun both pinned images to verify the corrected suite and new builder cases; Docker is unavailable in this authoring environment.
+- [x] **Patch 6 (v1.0.5):** Add a Gotenberg 9-only, accessible PDF pipeline builder with all 26 supported processing stages, move-up/down ordering, per-stage JSON settings, named auxiliary uploads, credential-masked preview and a redaction confirmation. The browser and server validate stage names, options, ordering, required uploads, and redaction acknowledgement. Support PDF, ZIP, PNG and JPEG results as appropriate, without changing any Gotenberg 8 request adapters.
+- [x] **Patch 6:** Correct the two v9 integration assertions for compact JSON inspection results; keep the stricter response checks for PDFs, ZIPs and images. Add unit and real-image integration cases for the standalone pipeline, including multi-stage page editing, attachments, and rendering.
+- [ ] **Patch 6 integration verification:** Execute the expanded integration suites against exactly `gotenberg/gotenberg:8.40.0` and `gotenberg/gotenberg:9.0.0`. The new v9 pipeline cases have not been Docker-verified in the authoring environment.
 
-### Compatibility baseline after patch 5 (v1.0.4)
+### Compatibility baseline after patch 6 (v1.0.5)
 
 | Capability                                  | Gotenberg 8                                                | Gotenberg 9                                                                                                                                        |
 | ------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -30,12 +33,12 @@
 | URL/HTML/Markdown to PDF                    | Existing support                                           | Form adapter, native controls, PDF/A remediation, and events webhooks; complex post-processing still unavailable                                   |
 | LibreOffice to PDF                          | Existing support                                           | Form adapter, native PDF/A/UA, merge/split stages, viewer and watermark mappings; complex post-processing still unavailable                        |
 | 15 original PDF tools                       | Existing support (subject to existing v8 minimum versions) | Version-aware v9 pipeline and read routes. Non-equivalent advanced settings are explicitly rejected; expanded Docker PDF tests await verification. |
-| 17 new PDF workflows                        | Not exposed; v9-only tools are unavailable on v8           | 13 independent processing tools, four read/inspection tools; real-image tests added, pending execution.                                            |
+| 18 new PDF workflows                        | Not exposed; v9-only tools are unavailable on v8           | 13 independent processing tools, four inspection tools, and the ordered pipeline builder; new real-image cases pending verification.               |
 | PDF validation and image output             | Existing v8 behaviour                                      | Per-file conformance and violations surfaced, including noncompliance on HTTP 200; PNG/JPEG/ZIP responses accepted with signature verification.    |
 | Webhooks and async jobs                     | Existing support                                           | URL + required events callback; removed error callback rejected before upstream                                                                    |
 | Metrics                                     | Existing legacy/OTel paths                                 | OTel exporter support needs verification; legacy `/prometheus/metrics` route was removed                                                           |
 
-Gotenui's v8 tools retain their v8 paths and field encodings. **All original standalone PDF tools are implemented for v9 in patch 4, and the 17 additional workflows are implemented in patch 5; newly expanded real-image coverage awaits Docker verification.** Complex v8 conversion post-processing remains unavailable on v9 until the ordered pipeline builder is implemented. Unsupported or non-equivalent fields must fail visibly rather than be ignored.
+Gotenui's v8 tools retain their v8 paths and field encodings. **All original standalone PDF tools are implemented for v9 in patch 4, and 17 additional tools in patch 5; patch 6 adds the standalone ordered PDF pipeline builder. Expanded real-image cases await Docker verification.** Complex v8 conversion-time post-processing remains unavailable on v9 until it is separately migrated to the ordered conversion stages. Unsupported or non-equivalent fields must fail visibly rather than be ignored.
 
 ## Migration workstreams (in dependency order)
 
@@ -57,7 +60,8 @@ Gotenui's v8 tools retain their v8 paths and field encodings. **All original sta
 Gotenberg 9 removes the 15 `POST /forms/pdfengines/*` routes used here, replacing them with individual `POST /forms/pdf/{operation}` routes and `POST /forms/pdf/pipe` for an ordered JSON array of `stages`. A path-only replacement is insufficient: flat form keys, file inputs, JSON responses and post-processing are different.
 
 - [x] Add a version-aware PDF adapter for the existing tools: merge, split, PDF/A (`remediate`), optimise, rotate, flatten form, encrypt, watermark/stamp, read/write metadata, read/write bookmarks, attachments (`attach`) and Factur-X (`remediate` plus its profile/invoice inputs).
-- [ ] Build an ordered, validated v9 pipeline UI with explicit stage ordering, inputs and outputs (including `select` for `splitUnify`), preview, and safe composition with conversion endpoints.
+- [x] Build an ordered, validated v9 **standalone PDF-input** pipeline UI with stage ordering, PDF/ZIP/image output handling, named auxiliary uploads, `select`, and secret-masked preview (patch 6).
+- [ ] Compose the same stages directly after Chromium/LibreOffice conversions, without a separate PDF upload; the conversion adapters still reject unsupported legacy post-processing options on v9.
 - [x] Update PDF metadata/bookmarks editors and read-back/import for the v9 response structures. Differentiate v8 watermarks behind content from v9 foreground stamp behaviour; do not quietly alter a user's intended visual result.
 - [x] Preserve all v8 PDF routes and v8 field behaviours behind the version-specific adapter.
 
@@ -69,7 +73,7 @@ The supplied v9 `pkg/modules/pdf/stages.go` registers **26 stage types**. Of the
 - [x] `set-form` (fill forms), `flatten-transparency`, `convert-colors`, `redact`, `autotag` (patch 5; live-image verification pending).
 - [x] `detach` (remove embedded attachments), `decrypt`, `sign`, `timestamp`, `render` (pages to images; patch 5; live-image verification pending).
 
-These stages are available as individual v9-only workflows. The ordered multi-stage pipeline composer remains future work. Redaction requires explicit acknowledgement and validated rectangles; signing requires uploaded credentials. Verify results before using redacted or signed documents in security-critical workflows.
+These stages are available as individual v9-only workflows and through the standalone, ordered pipeline composer added in patch 6. Pipeline composition directly after Chromium/LibreOffice conversion remains future work. Redaction requires explicit acknowledgement and validated rectangles; signing requires uploaded credentials. Verify results before using redacted or signed documents in security-critical workflows.
 
 ### 5. PDF inspection, compliance and metadata — high
 
@@ -93,8 +97,9 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 - [ ] Test switching v8 ↔ v9 connections while a tool or batch queue is selected, status refreshes, and version/header mismatches.
 - [x] Add a CI matrix for pinned **Gotenberg 8.40.0** and **9.0.0** real-image integration tests, with basic conversions, screenshots, auth, native field mappings, webhooks and limited stages.
 - [x] Add v9 integration fixtures for all four read endpoints and locally testable new stages (including signing), form read/write, PDF content checks and ZIP/image output; patch 5. Timestamp stage encoding and URL validation have unit coverage only; no external timestamp authority is called by tests.
-- [ ] Add complex pipeline ordering, multi-stage read/write, remediation-header and timestamp authority integration coverage.
-- [ ] Observe successful runs of the **expanded PDF integration cases** from patches 4 and 5 on both pinned Gotenberg images in a Docker-enabled environment. The user confirmed the earlier patch 3 suites passed; unit tests alone do not validate live PDF stage execution.
+- [x] Add standalone multi-stage integration cases for merge/select/metadata, attachments, and rendered images (patch 6; execution pending).
+- [ ] Extend real-image integration coverage to complex remediation headers, conversion-time pipeline composition and timestamp authorities.
+- [ ] Observe successful runs of the **expanded PDF integration cases** from patches 4–6 on both pinned Gotenberg images in a Docker-enabled environment. The two v9 failures reported after patch 5 were caused by the test rejecting valid short JSON inspection responses, corrected in patch 6. Unit tests alone do not validate live PDF stage execution.
 
 ## Acceptance criteria for complete dual-version support
 

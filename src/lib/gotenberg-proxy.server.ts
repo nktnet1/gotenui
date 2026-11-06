@@ -9,6 +9,7 @@ import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
+import { parsePdfPipeline, pipelineResponseTypes } from '#/lib/pdf-pipeline'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
@@ -324,6 +325,13 @@ function allowedConversionContentTypes(
   payload: ConversionPayload,
   files: readonly File[],
 ): readonly string[] {
+  if (operation.id === 'pdf-pipeline') {
+    return pipelineResponseTypes(
+      parsePdfPipeline(String(payload.fields.stages ?? ''), {
+        acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
+      }),
+    )
+  }
   const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
   if (operation.id === 'render-pages') {
     const imageType = payload.fields.format === 'jpeg' ? 'image/jpeg' : 'image/png'

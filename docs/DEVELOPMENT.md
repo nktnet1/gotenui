@@ -68,3 +68,16 @@ Conversion requests use multipart `payload`, `files` and `auxiliary` fields. Bro
 To add a tool, create `src/tools/<tool-id>/config.ts` exporting an `Operation`, then import it in `src/tools/registry.ts` in the desired display order. The homepage, sidebar, search and `/tools/$operationId` route use that single registry. Reuse field groups and components in `src/tools/shared/`; `src/lib/operations.ts` is a compatibility re-export.
 
 For payload options, see `src/tools/` and `src/lib/validation.ts`. Upstream API documentation is at [gotenberg.dev](https://gotenberg.dev/docs/getting-started/routes).
+
+## Gotenberg 9 PDF pipeline builder
+
+The **PDF pipeline builder** is available only when the selected connection reports Gotenberg 9.0.0 or later in major version 9. Gotenberg 8 keeps its existing standalone tools, endpoints and PDF controls unchanged.
+
+1. Select **PDF pipeline builder** and upload one or more input PDFs.
+2. Add processing stages and use **Move up** / **Move down** to change execution order. Set each stage's options as a JSON object (without an `op` key). The editor starts with a lossless `optimize` stage.
+3. Upload any stage-referenced PDFs, images, invoices, attachments or signing credentials under **Additional stage files**; the filenames in stage settings must match exactly. For example, attach a text file named `receipt.txt` with `{"file":"receipt.txt"}` in an **Attach file** stage.
+4. Check the **Preview ordered stages** output before submitting. It hides passwords and signing keys, but stage settings are visible while editing. Redaction also requires explicit acknowledgement. Treat the output as unverified until inspecting the resulting document.
+
+The adapter sends a single multipart request to `/forms/pdf/pipe` using the ordered `stages` JSON and uploads named inputs under `files`. The server independently validates stage settings, ordering and references; it rejects unsupported legacy options. The output is PDF or ZIP, or PNG/JPEG/ZIP when rendering is the last stage. The pipeline currently accepts **uploaded PDFs** as input; adding stages directly to Chromium/Office conversion requests remains on the [roadmap](ROADMAP.md).
+
+The integration command uses pinned images `gotenberg/gotenberg:8.40.0` and `gotenberg/gotenberg:9.0.0`. The v9 `pdf-attachments` and `pdf-form` endpoints can return valid short JSON documents; their tests validate parsed structures rather than imposing a minimum byte length intended for document/image outputs.

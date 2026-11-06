@@ -1,6 +1,7 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { metadataObject } from '#/lib/pdf-structure-editors'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
@@ -40,7 +41,7 @@ export function adaptPdfForm(
   auxiliary: readonly File[],
 ): { path: string; form: FormData } {
   if (major === 8) {
-    if (V9_PDF_IDS.has(operation.id)) {
+    if (V9_PDF_IDS.has(operation.id) || operation.id === 'pdf-pipeline') {
       throw new InputError(`${operation.title} requires Gotenberg 9.`, 409)
     }
     if (
@@ -53,6 +54,7 @@ export function adaptPdfForm(
     }
     return { path: operation.path, form: legacy }
   }
+  if (operation.id === 'pdf-pipeline') return adaptPdfPipeline(payload, legacy, auxiliary)
   const extra = adaptV9PdfExtra(operation.id, payload, legacy, auxiliary)
   if (extra) return extra
   if (!v9PdfOperations.has(operation.id) || operation.input !== 'pdf') {

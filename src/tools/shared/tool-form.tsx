@@ -28,6 +28,7 @@ import {
   OverlayGroupsEditor,
   PdfConversionPostProcessing,
 } from '#/components/pdf-conversion-post-processing'
+import { PdfPipelineBuilder } from '#/components/pdf-pipeline-builder'
 import { PdfBookmarksEditor, PdfMetadataEditor } from '#/components/pdf-structure-editors'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
@@ -51,6 +52,7 @@ import { convertWithGotenberg, REQUEST_TIMEOUT_MS } from '#/lib/gotenberg-client
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { OFFICE_ACCEPT } from '#/lib/office-formats'
 import { versionAtLeast } from '#/lib/operation-availability'
+import { parsePdfPipeline } from '#/lib/pdf-pipeline'
 import {
   type OverlayKind,
   overlayUploads,
@@ -224,7 +226,11 @@ export function Workbench({
           !field.section &&
           isFieldVisible(field, fields) &&
           !(field.customEditor && field.kind === 'json') &&
-          !(operation.id === 'embed' && field.name === 'embedsMetadata'),
+          !(operation.id === 'embed' && field.name === 'embedsMetadata') &&
+          !(
+            operation.id === 'pdf-pipeline' &&
+            ['stages', 'acknowledgedRedaction'].includes(field.name)
+          ),
       )
   const advancedFields = v8StandaloneOverlay
     ? []
@@ -271,6 +277,18 @@ export function Workbench({
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
   const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && !isV9
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
+  const pipelineError = (() => {
+    if (operation.id !== 'pdf-pipeline') return null
+    try {
+      parsePdfPipeline(String(fields.stages ?? ''), {
+        assetNames: auxFiles.map(({ name }) => name),
+        acknowledgedRedaction: fields.acknowledgedRedaction === true,
+      })
+      return null
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Invalid PDF pipeline.'
+    }
+  })()
   const docsUrl =
     isV9 && operation.input === 'pdf'
       ? `https://gotenberg.dev/docs/pdf/${operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`
@@ -349,6 +367,7 @@ export function Workbench({
     if (isV9 && webhook && (webhook.errorUrl || webhook.errorMethod)) {
       throw new InputError('Gotenberg 9 removed separate webhook error callbacks.')
     }
+    if (pipelineError) throw new InputError(pipelineError)
     const selectedFields = activeOperationFields(operation, fields, backendVersion)
     if (selectedFields.pdfa === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false) {
       throw new Error('PDF/A-4 requires Gotenberg 8.39 or newer.')
@@ -679,11 +698,23 @@ export function Workbench({
                     />
                   ))}
               </div>
-            ) : !v8StandaloneOverlay && !hasPdfStructureEditor ? (
+            ) : !v8StandaloneOverlay &&
+              !hasPdfStructureEditor &&
+              operation.id !== 'pdf-pipeline' ? (
               <p className="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
                 This operation works with its default settings.
               </p>
             ) : null}
+            {operation.id === 'pdf-pipeline' && (
+              <PdfPipelineBuilder
+                key={operation.id}
+                value={String(fields.stages ?? '')}
+                onChange={(value) => updateField('stages', value)}
+                acknowledgedRedaction={fields.acknowledgedRedaction === true}
+                onRedactionChange={(value) => updateField('acknowledgedRedaction', value)}
+                error={pipelineError}
+              />
+            )}
             {(operation.id === 'metadata-write' || operation.id === 'bookmarks-write') && (
               <div className="space-y-2 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
                 <Button
@@ -930,30 +961,36 @@ export function Workbench({
                     </p>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="additional-fields">Additional Gotenberg form fields (JSON)</Label>
-                  <Textarea
-                    id="additional-fields"
-                    rows={4}
-                    spellCheck={false}
-                    className="font-mono text-xs"
-                    placeholder={'{ "waitForExpression": "window.ready === true" }'}
-                    value={advanced}
-                    onChange={(event) => setAdvanced(event.target.value)}
+                {operation.id !== 'pdf-pipeline' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="additional-fields">
+                      Additional Gotenberg form fields (JSON)
+                    </Label>
+                    <Textarea
+                      id="additional-fields"
+                      rows={4}
+                      spellCheck={false}
+                      className="font-mono text-xs"
+                      placeholder={'{ "waitForExpression": "window.ready === true" }'}
+                      value={advanced}
+                      onChange={(event) => setAdvanced(event.target.value)}
+                    />
+                    <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+                      Use this for documented options not shown above. Enter flat JSON key/value
+                      pairs; enter remote inputs and webhooks separately below.
+                    </p>
+                  </div>
+                )}
+                {operation.id !== 'pdf-pipeline' && (
+                  <RemoteInputsEditor
+                    isV9={isV9}
+                    rows={remoteRows}
+                    onChange={setRemoteRows}
+                    legacy={remoteInput}
+                    onLegacyChange={setRemoteInput}
+                    newId={() => nextOutboundId.current++}
                   />
-                  <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
-                    Use this for documented options not shown above. Enter flat JSON key/value
-                    pairs; enter remote inputs and webhooks separately below.
-                  </p>
-                </div>
-                <RemoteInputsEditor
-                  isV9={isV9}
-                  rows={remoteRows}
-                  onChange={setRemoteRows}
-                  legacy={remoteInput}
-                  onLegacyChange={setRemoteInput}
-                  newId={() => nextOutboundId.current++}
-                />
+                )}
                 <WebhookEditor
                   isV9={isV9}
                   value={webhookSettings}
@@ -986,7 +1023,7 @@ export function Workbench({
               type="button"
               variant="outline"
               size="lg"
-              disabled={pending || Boolean(unavailableReason)}
+              disabled={pending || Boolean(unavailableReason) || Boolean(pipelineError)}
               onClick={queueCurrent}
             >
               <ListPlus className="size-4" /> Add to batch
@@ -994,7 +1031,7 @@ export function Workbench({
             <Button
               type="submit"
               size="lg"
-              disabled={pending || Boolean(unavailableReason)}
+              disabled={pending || Boolean(unavailableReason) || Boolean(pipelineError)}
               className="min-w-44"
             >
               {pending ? (

@@ -974,7 +974,8 @@ export function validatePayload(input: unknown): {
       if (typeof value !== 'boolean') throw new InputError(`${field.label} must be true or false.`)
     } else {
       if (typeof value !== 'string') throw new InputError(`${field.label} must be text.`)
-      if (value.length > 10000) throw new InputError(`${field.label} is too long.`)
+      if (value.length > (operation.id === 'pdf-pipeline' && key === 'stages' ? 60_000 : 10_000))
+        throw new InputError(`${field.label} is too long.`)
       if (field.kind === 'select' && value && !field.options?.includes(value)) {
         throw new InputError(`Invalid option for ${field.label}.`)
       }

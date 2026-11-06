@@ -49,6 +49,7 @@ const orderedIds = [
   'bookmarks-write',
   'embed',
   'factur-x',
+  'pdf-pipeline',
   'pdf-info',
   'pdf-validate',
   'pdf-attachments',

@@ -10,6 +10,7 @@ function requestFor(
   fields: Record<string, string | boolean> = {},
   extra: Record<string, unknown> = {},
   files: File[] = [],
+  auxiliary: File[] = [],
 ): Request {
   const body = new FormData()
   body.set(
@@ -25,6 +26,7 @@ function requestFor(
     }),
   )
   for (const file of files) body.append('files', file, file.name)
+  for (const file of auxiliary) body.append('auxiliary', file, file.name)
   return new Request(`${origin}/api/gotenberg/convert`, {
     method: 'POST',
     headers: { Origin: origin, 'X-Gotenberg-Url': upstream },
@@ -183,4 +185,88 @@ test('refuses v8 multipart PDF attachments on v9 before forwarding conversion', 
   const fixture = upstreamFixture('9.0.0', () => {})
   await assert.rejects(proxyConversionRequest(upload, fixture.fetcher), /attach stage/)
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
+})
+
+test('routes an ordered v9 PDF pipeline with named auxiliary uploads through the real proxy boundary', async () => {
+  const source = new File(['%PDF-1.7\n'], 'original.pdf', { type: 'application/pdf' })
+  const receipt = new File(['receipt content'], 'receipt.txt', { type: 'text/plain' })
+  const stages = [
+    { op: 'attach', file: 'receipt.txt' },
+    { op: 'optimize' },
+    { op: 'set-metadata', title: 'Done' },
+  ]
+  const fixture = upstreamFixture('9.0.0', (form) => {
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
+    assert.deepEqual(
+      form.getAll('files').map((file) => (file instanceof File ? file.name : '')),
+      ['original.pdf', 'receipt.txt'],
+    )
+    assert.equal(form.has('auxiliary'), false)
+  })
+  const reply = await proxyConversionRequest(
+    requestFor('pdf-pipeline', { stages: JSON.stringify(stages) }, {}, [source], [receipt]),
+    fixture.fetcher,
+  )
+  assert.equal(reply.status, 200)
+  assert.equal(reply.headers.get('content-type'), 'application/pdf')
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
+test('accepts signed PNG output from a final v9 render stage and rejects MIME spoofing', async () => {
+  const source = new File(['%PDF-1.7\n'], 'original.pdf', { type: 'application/pdf' })
+  const stages = JSON.stringify([
+    { op: 'rotate', angle: 90 },
+    { op: 'render', pages: '1', format: 'png' },
+  ])
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
+  let routes = 0
+  const fetcher: typeof fetch = async (input, options) => {
+    if (String(input) === `${upstream}/version`) return new Response('9.0.0')
+    routes++
+    assert.equal(String(input), `${upstream}/forms/pdf/pipe`)
+    assert.ok(options?.body instanceof FormData)
+    assert.deepEqual(JSON.parse(String(options.body.get('stages'))), JSON.parse(stages))
+    return new Response(png, { headers: { 'Content-Type': 'image/png' } })
+  }
+  const response = await proxyConversionRequest(
+    requestFor('pdf-pipeline', { stages }, {}, [source]),
+    fetcher,
+  )
+  assert.equal(response.headers.get('content-type'), 'image/png')
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), png)
+  assert.equal(routes, 1)
+
+  const spoofed: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.0.0')
+      : new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'image/png' } })
+  await assert.rejects(
+    proxyConversionRequest(requestFor('pdf-pipeline', { stages }, {}, [source]), spoofed),
+    /does not match its declared file type/,
+  )
+})
+
+test('rejects invalid pipeline stages and incompatible v8 requests without forwarding', async () => {
+  const source = new File(['%PDF-1.7\n'], 'original.pdf', { type: 'application/pdf' })
+  const malformed = requestFor(
+    'pdf-pipeline',
+    {
+      stages: JSON.stringify([{ op: 'render', format: 'png' }, { op: 'optimize' }]),
+    },
+    {},
+    [source],
+  )
+  const v9 = upstreamFixture('9.0.0', () => {})
+  await assert.rejects(proxyConversionRequest(malformed, v9.fetcher), /last stage/)
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+
+  const v8 = upstreamFixture('8.40.0', () => {})
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('pdf-pipeline', { stages: '[{"op":"optimize"}]' }, {}, [source]),
+      v8.fetcher,
+    ),
+    (error: unknown) => error instanceof Error && 'status' in error && error.status === 409,
+  )
+  assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
 })

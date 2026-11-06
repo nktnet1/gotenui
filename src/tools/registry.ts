@@ -30,6 +30,7 @@ import { operation as optimize } from '#/tools/optimize/config'
 import { operation as pdfAttachments } from '#/tools/pdf-attachments/config'
 import { operation as pdfForm } from '#/tools/pdf-form/config'
 import { operation as pdfInfo } from '#/tools/pdf-info/config'
+import { operation as pdfPipeline } from '#/tools/pdf-pipeline/config'
 import { operation as pdfValidate } from '#/tools/pdf-validate/config'
 import { operation as pdfa } from '#/tools/pdfa/config'
 import { operation as redact } from '#/tools/redact/config'
@@ -68,6 +69,7 @@ export const OPERATIONS: readonly Operation[] = [
   bookmarksWrite,
   embed,
   facturX,
+  pdfPipeline,
   pdfInfo,
   pdfValidate,
   pdfAttachments,
