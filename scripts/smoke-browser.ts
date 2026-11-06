@@ -830,8 +830,120 @@ async function run(): Promise<void> {
       'Connection settings actions should be right-aligned with Save and use last.',
     )
     checks++
+
+    // Exercise real React connection switching with deterministic status responses.
+    // The old fetch deliberately ignores aborts: a stale result must be ignored
+    // even if an upstream/browser polyfill resolves after its request was cancelled.
+    await page.evaluate(`(() => {
+      const originalFetch = window.fetch.bind(window)
+      window.__originalSmokeUrl = document.querySelector('#connection-url').value
+      window.__holdV8Status = true
+      window.__pendingV8Status = []
+      window.fetch = (input, options) => {
+        if (String(input).startsWith('/api/gotenberg/status?')) {
+          const url = new URL(String(input), location.origin).searchParams.get('url')
+          if (url === window.__originalSmokeUrl) {
+            if (window.__holdV8Status) {
+              return new Promise(resolve => window.__pendingV8Status.push(resolve))
+            }
+            return Promise.resolve(Response.json({ online: true, version: '8.40.0', modules: [] }))
+          }
+          if (url === 'https://v9.example.test') {
+            return Promise.resolve(Response.json({ online: true, version: '9.0.0', modules: [] }))
+          }
+        }
+        return originalFetch(input, options)
+      }
+    })()`)
+    await page.evaluate(`(() => {
+      [...document.querySelectorAll('[role=dialog] button')].find(el => el.textContent === 'Test connection').click()
+    })()`)
+    await page.waitUntil(
+      `window.__pendingV8Status.length >= 1 && [...document.querySelectorAll('[role=dialog] button')].some(el => el.textContent === 'Testing…')`,
+      'stalled v8 connection test',
+    )
+    await page.evaluate(`(() => {
+      [...document.querySelectorAll('[role=dialog] button')]
+        .find(el => el.textContent.trim() === 'Add').click()
+      window.__holdV8Status = false
+      window.__pendingV8Status.splice(0).forEach(resolve =>
+        resolve(Response.json({ online: true, version: '8.40.0', modules: [] })))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#connection-choice')?.value === 'new' &&
+        !document.querySelector('[role=dialog] [role=status]') &&
+        [...document.querySelectorAll('[role=dialog] button')].some(el => el.textContent === 'Test connection')`,
+      'stale connection-test result stays hidden after changing drafts',
+    )
+    checks++
+
+    await page.evaluate(`(() => {
+      const input = document.querySelector('#connection-url')
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'https://v9.example.test')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })()`)
+    await page.evaluate(`(() => {
+      [...document.querySelectorAll('[role=dialog] button')]
+        .find(el => el.textContent === 'Test connection').click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('[role=dialog] [role=status]')?.textContent.includes('Connected to Gotenberg 9.0.0.')`,
+      'v9 connection test result',
+    )
+    await page.evaluate(`document.querySelector('[role=dialog] button[type=submit]').click()`)
+    await page.waitUntil(
+      `!document.querySelector('#connection-heading') &&
+        document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 9.0.0') &&
+        ![...document.querySelectorAll('#gotenui-navigation nav button')]
+          .find(el => el.textContent.trim() === 'PDF pipeline builder')?.disabled`,
+      'v9 tools available after selecting a new connection',
+    )
+    checks++
+
+    // Keep a v9-only tool selected while changing to v8. It must be blocked
+    // during the pending /version request, then remain blocked by v8 compatibility.
+    await page.evaluate(`(() => {
+      [...document.querySelectorAll('#gotenui-navigation nav button')]
+        .find(el => el.textContent.trim() === 'PDF pipeline builder').click()
+      [...document.querySelectorAll('#gotenui-navigation button')]
+        .find(el => el.textContent.trim() === 'Connection settings').click()
+    })()`)
+    await page.waitUntil("document.querySelector('#connection-heading') !== null", 'v9 settings')
+    await page.evaluate(`(() => {
+      const choice = document.querySelector('#connection-choice')
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+      setter.call(choice, 'browser-demo')
+      choice.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#connection-choice')?.value === 'browser-demo'`,
+      'select stored v8 connection',
+    )
+    await page.evaluate(`(() => {
+      window.__holdV8Status = true
+      document.querySelector('[role=dialog] button[type=submit]').click()
+    })()`)
+    await page.waitUntil(
+      `window.__pendingV8Status.length >= 1 &&
+        document.querySelector('#gotenui-navigation')?.textContent.includes('Checking connection...')`,
+      'v9 tool locked while new v8 status is pending',
+    )
+    await page.evaluate(`(() => {
+      window.__holdV8Status = false
+      window.__pendingV8Status.splice(0).forEach(resolve =>
+        resolve(Response.json({ online: true, version: '8.40.0', modules: [] })))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 8.40.0') &&
+        [...document.querySelectorAll('#gotenui-navigation nav button')]
+          .find(el => el.textContent.trim() === 'PDF pipeline builder')?.disabled &&
+        document.querySelector('h1')?.textContent.includes('PDF pipeline builder')`,
+      'selected v9-only tool remains unavailable after switching to v8',
+    )
+    checks++
     await page.evaluate(
-      'document.querySelector(\'[role=dialog] button[aria-label="Close settings"]\').click()',
+      `document.querySelector('#gotenui-navigation nav button:not([disabled])')?.focus()`,
     )
     // Use the same inactive navigation item in both themes, even when the
     // selected operation changes between assertions.

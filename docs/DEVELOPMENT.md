@@ -96,9 +96,13 @@ On Gotenberg 9, Office conversion also accepts optional **Office ZIP archives** 
 
 The older Gotenberg 8 conversion post-processing editor and request formats are unchanged. Existing v8-only post-processing options cannot be automatically converted to equivalent v9 options, especially behind-content watermarks and lossy image optimisation. Those must be recreated with an explicit v9 stage where semantically appropriate. A Gotenberg 8 connection rejects conversion-time stages rather than silently ignoring them.
 
+The pinned v9.0.0 integration suite also runs a generated Chromium PDF through paired PDF/A-2b + PDF/UA-1 remediation, then submits its PDF bytes to `/forms/pdf/validate` and checks the per-file compliance report. The suite must pass on a real v9 image before treating that scenario as verified; it does not certify other profiles or Factur-X combinations.
+
 The integration command uses pinned images `gotenberg/gotenberg:8.40.0` and `gotenberg/gotenberg:9.0.0`. The v9 `pdf-attachments` and `pdf-form` endpoints can return valid short JSON documents; their tests validate parsed structures rather than imposing a minimum byte length intended for document/image outputs. On v9, a `render`-only stage yields images, while a pipeline that modifies the document before `render` returns a ZIP containing the edited PDF and image files; integration tests inspect both entries.
 
 ## Connection switching and version drift
+
+The settings dialog also cancels **Test connection** when the selected draft, URL or credentials change (or the dialog closes). A stale completion cannot show a successful version for the wrong draft. `pnpm test:browser` exercises this race with a deliberately delayed, abort-insensitive status request, plus a v8 → v9 → v8 tool switch.
 
 The workspace only uses a status response for the currently selected connection and credential epoch. A status reply from a previous connection cannot enable its tools after switching servers or changing credentials. Each conversion separately probes the selected upstream's authenticated `/version` before choosing its v8 or v9 request adapter. When the conversion response includes `Gotenberg-Version`, the proxy also checks that the **responding major** matches the probed major; if the upstream changes or a load balancer routes to a different major mid-request, a successful PDF is rejected with HTTP 409 rather than returned under the wrong contract. An invalid version header is a gateway error (HTTP 502). If the upstream has already accepted an asynchronous webhook job (HTTP 202/204), the proxy returns HTTP 502 and warns that the callback may still arrive; check the receiver before retrying to avoid duplicate jobs.
 

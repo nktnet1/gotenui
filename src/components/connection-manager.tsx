@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
@@ -12,6 +12,7 @@ import {
   newBrowserConnection,
 } from '#/lib/connection-profiles'
 import { getGotenbergStatus } from '#/lib/gotenberg-client'
+import { LatestProbe } from '#/lib/latest-probe'
 
 type Props = {
   browserProfiles: BrowserConnection[]
@@ -39,8 +40,22 @@ export function ConnectionManager({
   const [testing, setTesting] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
   const [newProfile, setNewProfile] = useState(false)
+  const probe = useRef(new LatestProbe())
+  const invalidateProbe = useCallback(() => {
+    probe.current.cancel()
+    setTesting(false)
+    setFeedback(null)
+  }, [])
+
+  useEffect(
+    () => () => {
+      probe.current.cancel()
+    },
+    [],
+  )
 
   useEffect(() => {
+    invalidateProbe()
     const profile = browserProfiles.find((item) => item.id === draftId)
     if (profile) {
       setName(profile.name)
@@ -49,8 +64,7 @@ export function ConnectionManager({
     }
     setSecret('')
     setUsername('')
-    setFeedback(null)
-  }, [draftId, browserProfiles])
+  }, [draftId, browserProfiles, invalidateProbe])
 
   const serverId = draftId.startsWith('server:') ? draftId.slice(7) : null
   const server = managedProfiles.find((profile) => profile.id === serverId)
@@ -59,10 +73,12 @@ export function ConnectionManager({
   const canDelete = existing && existing.id !== DEFAULT_CONNECTION_ID
 
   const choose = (key: string) => {
+    invalidateProbe()
     setNewProfile(false)
     setDraftId(key)
   }
   const add = () => {
+    invalidateProbe()
     setNewProfile(true)
     setDraftId('new')
     setName('New Gotenberg')
@@ -70,7 +86,6 @@ export function ConnectionManager({
     setMode('none')
     setUsername('')
     setSecret('')
-    setFeedback(null)
   }
   const target = (): ConnectionChoice => {
     if (isBrowser) {
@@ -83,24 +98,24 @@ export function ConnectionManager({
     if (!server) throw new Error('Select a connection.')
     return { kind: 'server', id: server.id }
   }
-  const test = async () => {
+  const test = () => {
+    invalidateProbe()
     setTesting(true)
-    setFeedback(null)
-    try {
-      const result = await getGotenbergStatus(target(), AbortSignal.timeout(8000))
-      setFeedback(
-        result.online
-          ? `Connected to Gotenberg ${result.version}.`
-          : (result.error ?? 'Unavailable'),
-      )
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Connection test failed.')
-    } finally {
-      setTesting(false)
-    }
+    void probe.current.run((signal) => getGotenbergStatus(target(), signal), {
+      success: (result) =>
+        setFeedback(
+          result.online
+            ? `Connected to Gotenberg ${result.version}.`
+            : (result.error ?? 'Unavailable'),
+        ),
+      error: (error) =>
+        setFeedback(error instanceof Error ? error.message : 'Connection test failed.'),
+      settled: () => setTesting(false),
+    })
   }
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    invalidateProbe()
     try {
       target()
       if (isBrowser) {
@@ -160,7 +175,10 @@ export function ConnectionManager({
               value={name}
               maxLength={64}
               required
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                invalidateProbe()
+                setName(e.target.value)
+              }}
             />
           </div>
           <div className="space-y-2">
@@ -172,7 +190,10 @@ export function ConnectionManager({
               value={url}
               required
               placeholder="https://pdf.example.com"
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                invalidateProbe()
+                setUrl(e.target.value)
+              }}
             />
             <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
               Only URLs approved by the server's <code>GOTENBERG_ALLOWED_URLS</code> can be used.
@@ -185,6 +206,7 @@ export function ConnectionManager({
               className="h-10 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm"
               value={mode}
               onChange={(e) => {
+                invalidateProbe()
                 setMode(e.target.value as BrowserConnection['auth'])
                 setSecret('')
               }}
@@ -201,7 +223,10 @@ export function ConnectionManager({
                 id="connection-username"
                 autoComplete="username"
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(e) => {
+                  invalidateProbe()
+                  setUsername(e.target.value)
+                }}
               />
             </div>
           )}
@@ -215,7 +240,10 @@ export function ConnectionManager({
                 type="password"
                 autoComplete="off"
                 value={secret}
-                onChange={(e) => setSecret(e.target.value)}
+                onChange={(e) => {
+                  invalidateProbe()
+                  setSecret(e.target.value)
+                }}
               />
               <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
                 Credentials stay in this tab's memory, never in localStorage. Re-enter them after
@@ -249,6 +277,7 @@ export function ConnectionManager({
             type="button"
             variant="destructive-outline"
             onClick={() => {
+              invalidateProbe()
               onRemove(existing.id)
               choose(DEFAULT_CONNECTION_ID)
             }}
@@ -256,7 +285,7 @@ export function ConnectionManager({
             Remove
           </Button>
         )}
-        <Button type="button" variant="accent" disabled={testing} onClick={() => void test()}>
+        <Button type="button" variant="accent" disabled={testing} onClick={test}>
           {testing ? 'Testing…' : 'Test connection'}
         </Button>
         <Button type="submit" disabled={!isBrowser && !server}>

@@ -16,6 +16,7 @@ import {
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
 import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
+import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import type { ConversionPayload } from '#/lib/validation'
 import type { CallbackReceipt } from './async-fixture-server'
 import { integrationSmokeOperations } from './operation-selection'
@@ -1650,6 +1651,51 @@ test.skipIf(!isV9)(
     expect(new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).slice(0, 5))).toBe(
       '%PDF-',
     )
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 validates a converted PDF against both PDF/A-2b and PDF/UA-1',
+  async () => {
+    const html = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!html) throw new Error('Missing HTML conversion')
+    const converted = await proxyConversionRequest(
+      request(html, {
+        source:
+          '<!doctype html><html lang="en"><head><title>Compliance</title></head><body><h1>Accessible PDF</h1><p>A short paragraph.</p></body></html>',
+        fields: { pdfaProfile: 'PDF/A-2b', pdfuaProfile: 'PDF/UA-1' },
+      }),
+    )
+    if (!converted.ok) {
+      throw new Error(`v9 paired remediation: ${converted.status} ${await converted.text()}`)
+    }
+    expect(converted.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    expect(converted.headers.get('Gotenberg-Remediation-Residual')).toMatch(/^\d+$/)
+    expect(converted.headers.get('Gotenberg-Remediation-Rolled-Back')).toMatch(/^\d+$/)
+    const bytes = await converted.arrayBuffer()
+    expect(new TextDecoder().decode(new Uint8Array(bytes).subarray(0, 5))).toBe('%PDF-')
+
+    // A 200 PDF response and zero remediation counts are not compliance proof:
+    // run the actual v9 validation endpoint against the resulting bytes.
+    const validation = await convertV9(
+      'pdf-validate',
+      { profile: 'PDF/A-2b', additionalProfile: 'PDF/UA-1' },
+      [new File([bytes], 'paired.pdf', { type: 'application/pdf' })],
+    )
+    if (!validation.ok) {
+      throw new Error(`v9 paired validation: ${validation.status} ${await validation.text()}`)
+    }
+    expect(validation.headers.get('content-type')?.split(';')[0]).toBe('application/json')
+    const report = parsePdfValidationReport(await validation.text())
+    expect(report).toHaveLength(1)
+    expect(report?.[0]).toMatchObject({
+      filename: 'paired.pdf',
+      profile: 'PDF/A-2b + PDF/UA-1',
+      compliant: true,
+      violations: [],
+      totalViolations: 0,
+    })
   },
   120_000,
 )
