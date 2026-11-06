@@ -674,10 +674,18 @@ test.skipIf(!isV9)(
       throw new Error(`Render ZIP: HTTP ${response.status}: ${await response.text()}`)
     expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
     const bytes = new Uint8Array(await response.arrayBuffer())
-    expect(zipEntryCount(bytes)).toBe(2)
+    const images = zipEntries(bytes)
+    expect(images.size).toBe(2)
+    // A render-only pipeline produces one image per selected page. An edited
+    // PDF + render pipeline instead returns the edited PDF alongside its images.
+    for (const [name, image] of images) {
+      expect(name).toMatch(/\.png$/i)
+      expect([...image.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+    }
     const preview = await inspectZipResult(new Blob([new Uint8Array(bytes)]))
     expect(preview.totalFiles).toBe(2)
-    expect(preview.entries.every((entry) => entry.kind === 'PDF')).toBe(true)
+    expect(preview.entries).toHaveLength(2)
+    expect(preview.entries.every((entry) => entry.kind === 'Image')).toBe(true)
   },
   120_000,
 )
@@ -1772,6 +1780,98 @@ test.skipIf(!isV9)(
       violations: [],
       totalViolations: 0,
     })
+  },
+  120_000,
+)
+
+// Unlike an HTTP 200, a validation report must expose genuinely non-compliant
+// documents. Gotenberg 9's reference suite makes the same check for plain PDFs.
+test.skipIf(!isV9)(
+  'Gotenberg 9 reports violations when an ordinary PDF is not PDF/A-2b',
+  async () => {
+    const result = await convertV9('pdf-validate', { profile: 'PDF/A-2b' }, [
+      pdfFile('ordinary.pdf'),
+    ])
+    if (!result.ok)
+      throw new Error(`v9 negative validation: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/json')
+    const report = parsePdfValidationReport(await result.text())
+    expect(report).toHaveLength(1)
+    expect(report?.[0]).toMatchObject({
+      filename: 'ordinary.pdf',
+      profile: 'PDF/A-2b',
+      compliant: false,
+    })
+    expect(report?.[0]?.totalViolations).toBeGreaterThan(0)
+  },
+  120_000,
+)
+
+test.skipIf(!isV9).each(['PDF/A-3b', 'PDF/A-4'] as const)(
+  'Gotenberg 9 remediates and validates Chromium output against %s',
+  async (profile) => {
+    const html = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!html) throw new Error('Missing HTML conversion')
+    const result = await proxyConversionRequest(
+      request(html, {
+        source:
+          '<!doctype html><html lang="en"><head><title>Archive validation</title></head><body><h1>Compliance test</h1></body></html>',
+        fields: { pdfaProfile: profile },
+      }),
+    )
+    if (!result.ok)
+      throw new Error(`${profile} conversion: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    const bytes = await result.arrayBuffer()
+    expect(new TextDecoder().decode(new Uint8Array(bytes).subarray(0, 5))).toBe('%PDF-')
+    const validation = await convertV9('pdf-validate', { profile }, [
+      new File([bytes], 'remediated.pdf', { type: 'application/pdf' }),
+    ])
+    if (!validation.ok) {
+      throw new Error(`${profile} validation: ${validation.status} ${await validation.text()}`)
+    }
+    const report = parsePdfValidationReport(await validation.text())
+    expect(report).toHaveLength(1)
+    expect(report?.[0]).toMatchObject({
+      filename: 'remediated.pdf',
+      profile,
+      compliant: true,
+      violations: [],
+      totalViolations: 0,
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 embeds a MINIMUM Factur-X invoice and validates its PDF/A-3b container',
+  async () => {
+    const invoice = new File(
+      [readFileSync(new URL('./fixtures/factur-x-minimum-v9.xml', import.meta.url))],
+      'invoice.xml',
+      { type: 'application/xml' },
+    )
+    const result = await convertV9(
+      'factur-x',
+      { facturxConformanceLevel: 'MINIMUM' },
+      [pdfFile('invoice-cover.pdf')],
+      [invoice],
+    )
+    if (!result.ok) throw new Error(`v9 Factur-X: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    const bytes = await result.arrayBuffer()
+    expect(new TextDecoder().decode(new Uint8Array(bytes).subarray(0, 5))).toBe('%PDF-')
+    const attachments = await inspectV9Pdf('attachments', bytes)
+    expect(JSON.stringify(attachments)).toContain('factur-x.xml')
+    const validation = await convertV9('pdf-validate', { profile: 'PDF/A-3b' }, [
+      new File([bytes], 'invoice.pdf', { type: 'application/pdf' }),
+    ])
+    if (!validation.ok) {
+      throw new Error(`v9 Factur-X validation: ${validation.status} ${await validation.text()}`)
+    }
+    expect(parsePdfValidationReport(await validation.text())).toMatchObject([
+      { filename: 'invoice.pdf', profile: 'PDF/A-3b', compliant: true, totalViolations: 0 },
+    ])
   },
   120_000,
 )

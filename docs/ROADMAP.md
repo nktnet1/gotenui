@@ -52,6 +52,8 @@
 
 - [x] **Patch 19 (v1.0.18):** Extend the Gotenberg 9 `archives` multipart upload to Chromium HTML and Markdown PDF/screenshot tools as optional bundled assets; preserve the generated HTML/Markdown inputs and keep URL tools and all Gotenberg 8 routes unsupported. Check ZIP signatures at the authenticated proxy boundary before forwarding; leave unpacking, entry checks and expansion limits to Gotenberg. Add proxy regression cases and a pinned-v9.0.0 real-image conversion using an archived stylesheet (awaiting Docker execution).
 - [x] **Patch 19:** Add an opt-in, browser-local preview for **direct ZIP results**. Read only a bounded ZIP central directory to list up to 30 files, their types and declared sizes; never extract file contents, and leave downloads available when ZIP64/large/malformed indexes cannot be previewed. Unit-test mixed PDF/image ZIP results, directory entries, comments and malformed indexes. Batch ZIP downloads remain download-only; live preview interaction requires browser verification.
+- [x] **Patch 20 (v1.0.19):** Fix the pinned-v9 multi-page rendering integration check: render-only produces **PNG images** in a ZIP, not PDF entries. Assert both archived PNG signatures and preview classifications; preserve the separate edited-PDF-plus-images ZIP check. Add a unit regression for image-only archive previews. The original failure was an assertion error, not a Gotenberg conversion failure.
+- [x] **Patch 20:** Extend real v9 conformance integration coverage to PDF/A-3b and PDF/A-4 Chromium remediation, a non-compliant unremediated-PDF negative control, and an upstream-validated MINIMUM Factur-X invoice with PDF/A-3b validation and embedded XML inspection. These new Docker cases require local/CI execution; the existing v8.40.0 suite is unchanged.
 
 ## Remaining priorities
 
@@ -124,7 +126,7 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 - [x] `form`: list interactive PDF form fields and values (patch 5).
 - [x] Expose all 14 source-defined validation profiles and supported PDF/A + PDF/UA pairs through the v9 validation form (patch 5).
 - [x] Expose all eleven PDF/A and both PDF/UA profiles in v9 Chromium and Office conversion forms. Use native Office export only for supported combinations; explicit remediation is available for all profiles. Keep separate v8 fields with their original options (patch 11).
-- [ ] Verify real-image conformance for extended conversion profiles and Factur-X XML combinations. Patch 16 adds a pinned-v9.0.0 PDF/A-2b + PDF/UA-1 conversion/validation round-trip, pending Docker verification; other combinations still require tests.
+- [ ] Verify real-image conformance for extended conversion profiles and Factur-X XML combinations. Patch 16 adds a pinned-v9.0.0 PDF/A-2b + PDF/UA-1 conversion/validation round-trip. Patch 20 adds PDF/A-3b, PDF/A-4 and Factur-X PDF/A-3b validation plus an ordinary-PDF negative control. The new Docker cases still need user-run verification; PDF/A profiles requiring special source content and timestamp authorities remain.
 - [x] Forward and display `Gotenberg-Remediation-Residual` and `Gotenberg-Remediation-Rolled-Back`. A successful HTTP response alone does **not** establish PDF/A/PDF/UA compliance.
 - [x] Surface nonzero remediation counts and noncompliant/unreadable `pdf-validate` JSON in the browser batch queue without losing downloadable results (patch 15). This is a warning summary, not a new compliance validator or a claim that zero residual violations imply conformance.
 

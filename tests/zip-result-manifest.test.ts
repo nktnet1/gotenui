@@ -87,6 +87,15 @@ test('previews PDF and rendered image entries from a commented ZIP without extra
   )
 })
 
+test('classifies a multi-page render archive as images, not PDFs', async () => {
+  const result = await inspectZipResult(zipBlob(zipFixture(['page-1.png', 'page-2.png'])))
+  assert.equal(result.totalFiles, 2)
+  assert.deepEqual(
+    result.entries.map(({ kind }) => kind),
+    ['Image', 'Image'],
+  )
+})
+
 test('bounds the visible list and excludes directory entries', async () => {
   const archive = zipBlob(
     zipFixture(['photos/', ...Array.from({ length: 35 }, (_, i) => `page-${i}.png`)]),
