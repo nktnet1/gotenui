@@ -40,6 +40,7 @@ export function adaptPdfForm(
   major: SupportedGotenbergMajor,
   auxiliary: readonly File[],
   archives: readonly File[] = [],
+  archiveEntryNames: readonly string[] = [],
 ): { path: string; form: FormData } {
   if (major === 8) {
     if (V9_PDF_IDS.has(operation.id) || operation.id === 'pdf-pipeline') {
@@ -55,7 +56,9 @@ export function adaptPdfForm(
     }
     return { path: operation.path, form: legacy }
   }
-  if (operation.id === 'pdf-pipeline') return adaptPdfPipeline(payload, legacy, auxiliary, archives)
+  if (operation.id === 'pdf-pipeline') {
+    return adaptPdfPipeline(payload, legacy, auxiliary, archives, archiveEntryNames)
+  }
   const extra = adaptV9PdfExtra(operation.id, payload, legacy, auxiliary)
   if (extra) return extra
   if (!v9PdfOperations.has(operation.id) || operation.input !== 'pdf') {

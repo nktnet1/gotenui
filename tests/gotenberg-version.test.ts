@@ -3,6 +3,7 @@ import { describe, it } from 'vitest'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import {
   backendCompatibilityNotice,
+  canWebhookForOperation,
   unavailableOperationReason,
   versionAtLeast,
 } from '#/lib/operation-availability'
@@ -64,6 +65,32 @@ describe('per-operation API compatibility', () => {
     }
   })
 
+  it('gates v8 PDF/A and Factur-X on LibreOffice but not the v9 PDF engine', () => {
+    for (const toolId of ['pdfa', 'factur-x']) {
+      assert.match(
+        unavailableOperationReason(
+          { ...status('8.40.0'), modules: [{ name: 'libreoffice', status: 'down' }] },
+          operation(toolId),
+        ) ?? '',
+        /LibreOffice/,
+      )
+      assert.equal(
+        unavailableOperationReason(
+          { ...status('9.0.0'), modules: [{ name: 'libreoffice', status: 'down' }] },
+          operation(toolId),
+        ),
+        null,
+      )
+    }
+    assert.match(
+      unavailableOperationReason(
+        { ...status('9.0.0'), modules: [{ name: 'libreoffice', status: 'down' }] },
+        operation('office-pdf'),
+      ) ?? '',
+      /LibreOffice/,
+    )
+  })
+
   it('still requires healthy modules for shared v9 screenshots', () => {
     assert.match(
       unavailableOperationReason(
@@ -97,12 +124,27 @@ describe('per-operation API compatibility', () => {
     assert.equal(unavailableOperationReason(null, operation('merge')), null)
   })
 
-  it('shows an honest global compatibility notice', () => {
+  it('supports webhooks for v8 JSON reads but only non-JSON v9 operations', () => {
+    for (const id of [
+      'metadata-read',
+      'bookmarks-read',
+      'pdf-info',
+      'pdf-validate',
+      'pdf-attachments',
+      'pdf-form',
+    ]) {
+      assert.equal(canWebhookForOperation(9, operation(id)), false, id)
+      if (operation(id).supportedGotenbergMajors?.includes(8)) {
+        assert.equal(canWebhookForOperation(8, operation(id)), true, id)
+      }
+    }
+    assert.equal(canWebhookForOperation(9, operation('merge')), true)
+    assert.equal(canWebhookForOperation(9, operation('url-shot')), true)
+  })
+
+  it('only shows a global notice for an unknown or unsupported version', () => {
     assert.equal(backendCompatibilityNotice(status('8.39.0')), null)
-    assert.match(
-      backendCompatibilityNotice(status('9.0.0')) ?? '',
-      /PDF and conversion tools use the v9 API/,
-    )
+    assert.equal(backendCompatibilityNotice(status('9.0.0')), null)
     assert.match(backendCompatibilityNotice(status('Unknown')) ?? '', /could not verify/)
     assert.match(backendCompatibilityNotice(status('10.0.0')) ?? '', /not supported/)
     assert.equal(backendCompatibilityNotice({ ...status('9.0.0'), online: false }), null)

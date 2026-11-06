@@ -555,6 +555,21 @@ function validateStage(stage: PdfPipelineStage): void {
   }
 }
 
+const PDF_STAGE_FILE_FIELDS = ['source', 'image', 'file', 'certificate', 'key', 'xml'] as const
+
+/** Files resolved by Gotenberg, whether uploaded individually or extracted from archives. */
+export function pdfStageAssetNames(stages: readonly PdfPipelineStage[]): string[] {
+  return [
+    ...new Set(
+      stages.flatMap((stage) =>
+        PDF_STAGE_FILE_FIELDS.map((key) => stage[key]).filter(
+          (value): value is string => typeof value === 'string',
+        ),
+      ),
+    ),
+  ]
+}
+
 export type PdfPipelineValidation = {
   assetNames?: readonly string[]
   acknowledgedRedaction?: boolean
@@ -620,7 +635,7 @@ export function parsePdfPipeline(
     }
     if (context.assetNames) {
       const assetNames = new Set(context.assetNames)
-      for (const key of ['source', 'image', 'file', 'certificate', 'key', 'xml'] as const) {
+      for (const key of PDF_STAGE_FILE_FIELDS) {
         if (typeof stage[key] === 'string' && !assetNames.has(stage[key])) {
           throw new InputError(
             `${op}: upload an additional file named "${stage[key]}" for "${key}".`,

@@ -499,6 +499,36 @@ test.skipIf(!isV9)(
   120_000,
 )
 
+test.skipIf(!isV9)(
+  'Gotenberg 9 extracts named PDF stage assets while skipping macOS ZIP metadata',
+  async () => {
+    const pipeline = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
+    if (!pipeline) throw new Error('Missing v9 PDF pipeline')
+    const archive = officeZipFixture(['__MACOSX/._receipt.txt', 'assets/receipt.txt'], {
+      '__MACOSX/._receipt.txt': 'macOS metadata',
+      'assets/receipt.txt': 'Archived receipt content',
+    })
+    const response = await proxyConversionRequest(
+      request(
+        pipeline,
+        { fields: { stages: '[{"op":"attach","file":"receipt.txt"}]' } },
+        [pdfFile()],
+        [],
+        {},
+        [],
+        [archive],
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(`PDF ZIP asset: HTTP ${response.status}: ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    const attachments = await inspectV9Pdf('attachments', await response.arrayBuffer())
+    expect(JSON.stringify(attachments)).toContain('receipt.txt')
+  },
+  120_000,
+)
+
 /** Build a tiny AcroForm entirely in memory: no binary fixture or external dependency. */
 function formPdfFixture(): File {
   const objects = [

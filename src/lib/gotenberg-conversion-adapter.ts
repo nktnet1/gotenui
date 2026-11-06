@@ -226,6 +226,7 @@ export function adaptConversionForm(
   version: SupportedGotenbergMajor,
   stageFiles: readonly File[] = [],
   archives: readonly File[] = [],
+  archiveEntryNames: readonly string[] = [],
 ): FormData {
   if (version === 8) {
     if (payload.conversionStages || stageFiles.length) {
@@ -285,7 +286,7 @@ export function adaptConversionForm(
     const generated = v9PdfStages(form, operation, Boolean(payload.conversionStages))
     const userStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {
-          assetNames: stageFiles.map(({ name }) => name),
+          assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames],
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
@@ -313,7 +314,7 @@ export function adaptConversionForm(
     const stages = [...setup, ...userStages, ...remediation]
     if (stages.length) {
       parsePdfPipeline(JSON.stringify(stages), {
-        assetNames: stageFiles.map(({ name }) => name),
+        assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames],
         acknowledgedRedaction: payload.acknowledgedConversionRedaction,
       })
       form.set('stages', JSON.stringify(stages))

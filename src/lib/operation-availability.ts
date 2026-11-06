@@ -8,6 +8,11 @@ export function versionAtLeast(version: string | undefined, minor: number): bool
   return parsed?.major === 8 ? parsed.minor >= minor : null
 }
 
+/** Gotenberg 9 cannot use a webhook when the route answers with JSON directly. */
+export function canWebhookForOperation(major: number, operation: Operation): boolean {
+  return major !== 9 || operation.output !== 'json'
+}
+
 /** The selected instance decides availability; unknown/unsupported majors must not be treated as v8. */
 export function unavailableOperationReason(
   status: ServerStatus | null,
@@ -31,7 +36,8 @@ export function unavailableOperationReason(
   )
   const required = operation.path.startsWith('/forms/chromium/')
     ? 'chromium'
-    : operation.input === 'office' || ['pdfa', 'factur-x'].includes(operation.id)
+    : operation.input === 'office' ||
+        (version.major === 8 && ['pdfa', 'factur-x'].includes(operation.id))
       ? 'libreoffice'
       : null
   if (
@@ -55,10 +61,9 @@ export function backendCompatibilityNotice(status: ServerStatus | null): string 
   if (!version) {
     return 'Gotenui could not verify this Gotenberg version. Tools are paused until /version reports a supported version.'
   }
-  if (version.major === 9) {
-    return 'Gotenberg 9 detected. PDF and conversion tools use the v9 API, including ordered conversion-time processing stages. Legacy v8-only post-processing settings remain unavailable. Foreground overlays and form-only flattening require acknowledgement.'
-  }
-  if (version.major !== 8) {
+  // A supported version needs no global banner. Only the selected tool should
+  // explain an unsupported setting or request explicit safety confirmation.
+  if (version.major !== 8 && version.major !== 9) {
     return `Gotenberg ${version.major} is not supported. Select Gotenberg 8 or 9 to use the tools.`
   }
   return null

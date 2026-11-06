@@ -20,10 +20,10 @@ async function check(
     stageFiles?: File[]
     payload?: ConversionPayload
   } = {},
-): Promise<void> {
+): Promise<string[]> {
   const operation = OPERATION_BY_ID.get(operationId)
   if (!operation) throw new Error(`Missing operation: ${operationId}`)
-  await validateZipInputs(
+  return validateZipInputs(
     operation,
     options.payload ?? payload,
     options.files ?? [],
@@ -42,13 +42,150 @@ test('accepts PDF-only pipeline ZIPs, known Office files, and Chromium assets', 
   await check('markdown-shot', [zipFixture({ 'theme.css': 'body {}' })])
 })
 
+test('ignores macOS metadata, directory entries and Unix symlinks like Gotenberg', async () => {
+  const archive = zipFixture({
+    '__MACOSX/._input.pdf': 'macOS metadata',
+    'docs/._input.pdf': 'AppleDouble metadata',
+    '._extra.txt': 'AppleDouble metadata',
+    'docs/': '',
+    'input.pdf': '%PDF-1.7',
+  })
+  assert.deepEqual(await check('pdf-pipeline', [archive]), ['input.pdf'])
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ '__MACOSX/._input.pdf': 'metadata' })]),
+    /include at least one file/,
+  )
+
+  const symlink = new Uint8Array(
+    await zipFixture({ 'link.txt': 'input.pdf', 'input.pdf': '%PDF-1.7' }).arrayBuffer(),
+  )
+  // First central entry: built-by Unix and external attributes = S_IFLNK.
+  const directoryOffset = new DataView(symlink.buffer).getUint32(symlink.length - 6, true)
+  const directory = new DataView(symlink.buffer)
+  directory.setUint16(directoryOffset + 4, 0x0314, true)
+  directory.setUint32(directoryOffset + 38, 0o120777 << 16, true)
+  assert.deepEqual(await check('pdf-pipeline', [new File([symlink], 'linked.zip')]), ['input.pdf'])
+})
+
+test('normalises effective ZIP names like Gotenberg and prevents Unicode filename collisions', async () => {
+  assert.deepEqual(await check('pdf-pipeline', [zipFixture({ 'cafe\u0301.pdf': '%PDF' })]), [
+    'café.pdf',
+  ])
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'café.pdf': '%PDF', 'cafe\u0301.pdf': '%PDF' })]),
+    /duplicate or reserved filename: café\.pdf/,
+  )
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'cafe\u0301.pdf': '%PDF' })], {
+      files: [new File(['%PDF'], 'café.pdf')],
+    }),
+    /duplicate or reserved filename: café\.pdf/,
+  )
+})
+
+test('allows exact referenced PDF-pipeline and Office stage assets within ZIP inputs', async () => {
+  const pdfStagePayload: ConversionPayload = {
+    ...payload,
+    fields: {
+      stages: JSON.stringify([
+        { op: 'stamp-image', image: 'brand.png', x: 12, y: 12 },
+        { op: 'attach', file: 'invoice.xml' },
+      ]),
+    },
+  }
+  assert.deepEqual(
+    await check(
+      'pdf-pipeline',
+      [
+        zipFixture({
+          'input.pdf': '%PDF-1.7',
+          'assets/brand.png': 'image',
+          'invoice.xml': '<invoice />',
+        }),
+      ],
+      { payload: pdfStagePayload },
+    ),
+    ['input.pdf', 'brand.png', 'invoice.xml'],
+  )
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'input.pdf': '%PDF', 'brand.PNG': 'image' })], {
+      payload: pdfStagePayload,
+    }),
+    /requires PDFs or referenced stage assets/,
+  )
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'input.pdf': '%PDF', 'brand.png': 'image' })], {
+      payload,
+    }),
+    /requires PDFs or referenced stage assets/,
+  )
+
+  const officePayload: ConversionPayload = {
+    ...payload,
+    conversionStages: JSON.stringify([{ op: 'attach', file: 'invoice.bin' }]),
+  }
+  assert.deepEqual(
+    await check(
+      'office-pdf',
+      [
+        zipFixture({
+          'report.docx': 'office',
+          'invoice.bin': 'receipt',
+        }),
+      ],
+      { payload: officePayload },
+    ),
+    ['report.docx', 'invoice.bin'],
+  )
+  await assert.rejects(
+    check('office-pdf', [zipFixture({ 'report.docx': 'office', 'invoice.bin': 'unreferenced' })]),
+    /unsupported Gotenberg 9 Office entry/,
+  )
+})
+
+test('rejects asset-only ZIPs without a source document, including referenced PDFs', async () => {
+  const attachPayload: ConversionPayload = {
+    ...payload,
+    fields: { stages: '[{"op":"attach","file":"attachment.pdf"}]' },
+  }
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'attachment.pdf': '%PDF' })], {
+      payload: attachPayload,
+    }),
+    /at least one source PDF/,
+  )
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'attachment.pdf': '%PDF' })], {
+      payload: attachPayload,
+      files: [new File(['%PDF'], 'original.pdf')],
+    }),
+    ['attachment.pdf'],
+  )
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'attachment.pdf': '%PDF' })], {
+      payload: { ...attachPayload, downloadFrom: [{ url: 'https://example.com/source.pdf' }] },
+    }),
+    ['attachment.pdf'],
+  )
+  const officePayload: ConversionPayload = {
+    ...payload,
+    conversionStages: '[{"op":"attach","file":"attachment.docx"}]',
+  }
+  await assert.rejects(
+    check('office-pdf', [zipFixture({ 'attachment.docx': 'asset' })], {
+      payload: officePayload,
+    }),
+    /at least one source document/,
+  )
+})
+
 test('checks the formats of every ZIP entry, not just the first 30', async () => {
   const many = Object.fromEntries(
     Array.from({ length: 35 }, (_, index) => [`document-${index}.pdf`, '%PDF-1.7']),
   )
   await assert.rejects(
     check('pdf-pipeline', [zipFixture({ ...many, 'not-a-pdf.txt': 'bad' })]),
-    /PDF pipeline requires PDF entries.*not-a-pdf\.txt/,
+    /PDF pipeline requires PDFs or referenced stage assets.*not-a-pdf\.txt/,
   )
   await assert.rejects(
     check('office-pdf', [zipFixture({ 'document.docx': 'good', 'obsolete.epub': 'bad' })]),

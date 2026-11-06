@@ -9,6 +9,7 @@ import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
+import { canWebhookForOperation } from '#/lib/operation-availability'
 import { parsePdfPipeline, pipelineResponseTypes } from '#/lib/pdf-pipeline'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
@@ -548,15 +549,20 @@ export async function proxyConversionRequest(
   // ZIPs are still extracted and checked by Gotenberg. Before forwarding,
   // inspect only their bounded directory metadata to catch wrong source types,
   // collisions with generated documents, and invalid ZIP structures.
-  if (archives.length) {
-    await validateZipInputs(operation, payload, files, auxiliary, stageFiles, archives)
-  }
+  const archiveEntryNames = archives.length
+    ? await validateZipInputs(operation, payload, files, auxiliary, stageFiles, archives)
+    : []
   if (major === 9 && postFiles.embeds?.length) {
     throw new InputError(
       'Gotenberg 9 does not accept the legacy embeds field. Use an attach stage with a named pipeline stage file, or use a Gotenberg 8 connection.',
     )
   }
   if (payload.webhook && major === 9) {
+    if (!canWebhookForOperation(major, operation)) {
+      throw new InputError(
+        'Gotenberg 9 PDF inspection tools return JSON directly and cannot deliver results through a webhook.',
+      )
+    }
     if (!payload.webhook.eventsUrl) {
       throw new InputError('Gotenberg 9 webhooks require an events callback URL.')
     }
@@ -575,10 +581,18 @@ export async function proxyConversionRequest(
   )
   const { path, form } =
     operation.input === 'pdf'
-      ? adaptPdfForm(operation, payload, legacy, major, auxiliary, archives)
+      ? adaptPdfForm(operation, payload, legacy, major, auxiliary, archives, archiveEntryNames)
       : {
           path: operation.path,
-          form: adaptConversionForm(operation, payload, legacy, major, stageFiles, archives),
+          form: adaptConversionForm(
+            operation,
+            payload,
+            legacy,
+            major,
+            stageFiles,
+            archives,
+            archiveEntryNames,
+          ),
         }
   const upstream = await fetcher(urlJoin(url, path), {
     method: 'POST',

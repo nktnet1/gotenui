@@ -394,7 +394,7 @@ test('v9 blocks incompatible ZIP entries and generated-file shadows before upstr
       operation: 'pdf-pipeline',
       fields: { stages: '[{"op":"merge"}]' },
       archive: zipFixture({ 'source.pdf': '%PDF', 'readme.txt': 'not a PDF' }),
-      error: /PDF pipeline requires PDF entries/,
+      error: /PDF pipeline requires PDFs or referenced stage assets/,
     },
     {
       operation: 'office-pdf',
@@ -499,6 +499,81 @@ test('routes migrated PDF tools on v9, and still rejects unsupported majors', as
     /Unsupported Gotenberg version/,
   )
   assert.deepEqual(unknown.counts(), { probes: 1, conversions: 0 })
+})
+
+test('rejects v9 webhook delivery on JSON inspection routes before forwarding', async () => {
+  const v9 = upstreamFixture('9.0.0', () => assert.fail('Inspection webhooks are invalid.'))
+  for (const operation of [
+    'metadata-read',
+    'bookmarks-read',
+    'pdf-info',
+    'pdf-validate',
+    'pdf-attachments',
+    'pdf-form',
+  ]) {
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor(
+          operation,
+          operation === 'pdf-validate' ? { profile: 'PDF/A-2b' } : {},
+          {
+            webhook: {
+              url: 'https://hooks.example.test/result',
+              eventsUrl: 'https://hooks.example.test/events',
+            },
+          },
+          [new File(['%PDF-1.7'], 'report.pdf')],
+        ),
+        v9.fetcher,
+      ),
+      /return JSON directly and cannot deliver results through a webhook/,
+      operation,
+    )
+  }
+  assert.deepEqual(v9.counts(), { probes: 6, conversions: 0 })
+})
+
+test('forwards ZIP-based PDF pipeline assets only when their stage names match', async () => {
+  const v9 = upstreamFixture('9.0.0', (form) => {
+    assert.equal(form.get('stages'), '[{"op":"attach","file":"receipt.txt"}]')
+    assert.equal(form.getAll('archives').length, 1)
+    assert.equal(form.getAll('files').length, 1)
+  })
+  const stage = { fields: { stages: '[{"op":"attach","file":"receipt.txt"}]' } }
+  const source = new File(['%PDF-1.7'], 'report.pdf')
+  const archive = zipFixture({
+    'receipt.txt': 'Receipt',
+    '__MACOSX/._receipt.txt': 'ignored metadata',
+  })
+  assert.equal(
+    (
+      await proxyConversionRequest(
+        requestFor('pdf-pipeline', stage.fields, {}, [source], [], [], [archive]),
+        v9.fetcher,
+      )
+    ).status,
+    200,
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'pdf-pipeline',
+        stage.fields,
+        {},
+        [source],
+        [],
+        [],
+        [
+          zipFixture({
+            'other.txt': 'not referenced',
+          }),
+        ],
+      ),
+      v9.fetcher,
+    ),
+    /PDF pipeline requires PDFs or referenced stage assets/,
+  )
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 1 })
 })
 
 test('rejects incomplete v9 webhooks but preserves v8 callback fields', async () => {

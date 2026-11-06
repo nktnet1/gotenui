@@ -55,7 +55,7 @@ import {
 } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { officeAcceptForVersion } from '#/lib/office-formats'
-import { versionAtLeast } from '#/lib/operation-availability'
+import { canWebhookForOperation, versionAtLeast } from '#/lib/operation-availability'
 import { DEFAULT_PDF_PIPELINE, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import {
   type OverlayKind,
@@ -233,6 +233,7 @@ export function Workbench({
   )
   const hasPdfStructureEditor = hasMetadataEditor || hasBookmarksEditor || operation.id === 'embed'
   const isV9 = parseGotenbergVersion(backendVersion)?.major === 9
+  const canWebhook = canWebhookForOperation(isV9 ? 9 : 8, operation)
   const canUploadArchives = isV9 && supportsArchiveInputs(operation)
   const v8StandaloneOverlay = Boolean(standaloneKind) && !isV9
   const basicFields = v8StandaloneOverlay
@@ -300,7 +301,9 @@ export function Workbench({
     if (operation.id !== 'pdf-pipeline') return null
     try {
       parsePdfPipeline(String(fields.stages ?? ''), {
-        assetNames: auxFiles.map(({ name }) => name),
+        // Archive entries are indexed and checked against references by the proxy.
+        // Do not reject a stage asset solely because it is inside an uploaded ZIP.
+        assetNames: archives.length ? undefined : auxFiles.map(({ name }) => name),
         acknowledgedRedaction: fields.acknowledgedRedaction === true,
       })
       return null
@@ -312,7 +315,7 @@ export function Workbench({
     if (!conversionStages) return null
     try {
       parsePdfPipeline(conversionStages, {
-        assetNames: conversionStageFiles.map(({ name }) => name),
+        assetNames: archives.length ? undefined : conversionStageFiles.map(({ name }) => name),
         acknowledgedRedaction: acknowledgedConversionRedaction,
       })
       return null
@@ -391,7 +394,11 @@ export function Workbench({
 
   const buildCandidate = () => {
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
-    const webhook = webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined
+    // JSON inspection routes answer synchronously in v9. Preserve the v8
+    // webhook draft for a connection switch, but never send it on this route.
+    const webhook = !canWebhook
+      ? undefined
+      : (webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined)
     if (isV9 && webhook && !webhook.eventsUrl) {
       throw new InputError('Gotenberg 9 webhooks require an events callback URL.')
     }
@@ -490,8 +497,8 @@ export function Workbench({
     setPending(true)
     setAcceptedWebhook(null)
     try {
-      const webhook = webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined
       const candidate = buildCandidate()
+      const webhook = candidate.webhook
       const start = performance.now()
       const controller = new AbortController()
       requestAbort.current = controller
@@ -672,9 +679,9 @@ export function Workbench({
                 }
                 description={
                   operation.input === 'office'
-                    ? 'ZIP archives of Office documents. Gotenberg extracts each document as an input; multiple outputs may be returned as a ZIP.'
+                    ? 'ZIP archives of Office documents and any named PDF stage assets. Gotenberg extracts the inputs and enforces expansion limits; multiple outputs may return as a ZIP.'
                     : operation.id === 'pdf-pipeline'
-                      ? 'ZIP archives of input PDFs. Gotenberg extracts the entries under its archive limits; stage assets must still be uploaded separately and named in the editor.'
+                      ? 'ZIP archives of PDFs and named stage assets (images, certificates, or attachments). Reference the exact asset filename in the stage editor. Gotenui checks ZIP entries before forwarding; Gotenberg enforces extraction limits.'
                       : 'Optional ZIP archives of CSS, images, fonts or other HTML/Markdown assets. Refer to extracted files by name in your source; do not include index.html, header.html or footer.html. Gotenberg enforces archive expansion limits.'
                 }
                 files={archives}
@@ -1128,14 +1135,21 @@ export function Workbench({
                   onLegacyChange={setRemoteInput}
                   newId={() => nextOutboundId.current++}
                 />
-                <WebhookEditor
-                  isV9={isV9}
-                  value={webhookSettings}
-                  onChange={setWebhookSettings}
-                  legacy={webhookInput}
-                  onLegacyChange={setWebhookInput}
-                  newId={() => nextOutboundId.current++}
-                />
+                {!canWebhook ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    PDF inspection returns JSON directly on Gotenberg 9; webhook delivery is not
+                    available for this tool.
+                  </p>
+                ) : (
+                  <WebhookEditor
+                    isV9={isV9}
+                    value={webhookSettings}
+                    onChange={setWebhookSettings}
+                    legacy={webhookInput}
+                    onLegacyChange={setWebhookInput}
+                    newId={() => nextOutboundId.current++}
+                  />
+                )}
               </div>
             </details>
           </CardContent>
