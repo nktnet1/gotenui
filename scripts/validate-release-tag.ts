@@ -1,7 +1,7 @@
 import { appendFileSync, readFileSync } from 'node:fs'
 import { styleText } from 'node:util'
-import { readReleaseChangelog } from './release-notes.ts'
-import { validateReleaseTag } from './release-version.ts'
+import { readReleaseChangelog } from '#scripts/release-notes'
+import { validateReleaseTag } from '#scripts/release-version'
 
 try {
   const tag = process.argv[2] ?? process.env.GITHUB_REF_NAME

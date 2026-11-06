@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { styleText } from 'node:util'
-import { buildReleaseBody, readReleaseChangelog } from './release-notes.ts'
+import { buildReleaseBody, readReleaseChangelog } from '#scripts/release-notes'
 
 try {
   const tag = process.env.TAG

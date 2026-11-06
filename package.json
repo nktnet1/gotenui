@@ -56,6 +56,7 @@
     "node": ">=24"
   },
   "imports": {
+    "#/lib/*": "./src/lib/*.ts",
     "#/*": "./src/*",
     "#scripts/*": "./scripts/*.ts"
   }

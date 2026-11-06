@@ -9,7 +9,7 @@ import { Readable, Writable } from 'node:stream'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
-import { ChromeDevToolsPipe } from './chrome-devtools.ts'
+import { ChromeDevToolsPipe } from '#scripts/chrome-devtools'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = resolve(root, '.output/server/index.mjs')

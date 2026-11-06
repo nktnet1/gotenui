@@ -1,5 +1,5 @@
 import { styleText } from 'node:util'
-import { spawnVitest, type TestProcessResult } from './test-process'
+import { spawnVitest, type TestProcessResult } from '#scripts/test-process'
 
 export const TEST_SUITES = ['unit', 'v8', 'v9'] as const
 export type TestSuite = (typeof TEST_SUITES)[number]

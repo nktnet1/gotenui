@@ -111,6 +111,7 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 - [x] Route standalone v9 PDF tool documentation links to the new pipeline and read API pages; retain v8 links for v8 connections. Additional v9 documentation polish remains.
 - [ ] Test switching v8 ↔ v9 connections while a tool or batch queue is selected, status refreshes, and version/header mismatches.
 - [x] Add a CI matrix for pinned **Gotenberg 8.40.0** and **9.0.0** real-image integration tests, with basic conversions, screenshots, auth, native field mappings, webhooks and limited stages.
+- [x] Use extensionless Node package subpaths for the native TypeScript test runners and CLI script imports; cover actual Node ESM resolution to prevent `ERR_MODULE_NOT_FOUND` (patch 10).
 - [x] Add v9 integration fixtures for all four read endpoints and locally testable new stages (including signing), form read/write, PDF content checks and ZIP/image output; patch 5. Timestamp stage encoding and URL validation have unit coverage only; no external timestamp authority is called by tests.
 - [x] Add standalone multi-stage integration cases for merge/select/metadata, attachments, and rendered images (patch 6; pinned integration tests passed after the v1.0.6 fixes).
 - [ ] Extend real-image integration coverage to complex remediation headers and timestamp authorities. HTML and Office conversion-time pipeline assertions were confirmed passing by the user after patch 8; the remediation and timestamp edge cases remain.

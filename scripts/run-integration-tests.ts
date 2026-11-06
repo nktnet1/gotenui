@@ -1,5 +1,5 @@
 import { styleText } from 'node:util'
-import { spawnVitest, type TestProcessResult } from './test-process'
+import { spawnVitest, type TestProcessResult } from '#scripts/test-process'
 
 export const GOTENBERG_INTEGRATION_VERSIONS = ['8.40.0', '9.0.0'] as const
 export type GotenbergIntegrationVersion = (typeof GOTENBERG_INTEGRATION_VERSIONS)[number]

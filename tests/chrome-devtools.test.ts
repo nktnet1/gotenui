@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ChromeDevToolsPipe } from '../scripts/chrome-devtools.ts'
+import { ChromeDevToolsPipe } from '#scripts/chrome-devtools'
 
 const pipes: ChromeDevToolsPipe[] = []
 

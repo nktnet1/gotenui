@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { validateReleaseTag } from '../scripts/release-version'
+import { validateReleaseTag } from '#scripts/release-version'
 
 test.each(['v0.1.0', 'v1.2.3', 'v10.20.30'])('accepts stable release tag %s', (tag) => {
   assert.deepEqual(validateReleaseTag(tag, tag.slice(1)), {
