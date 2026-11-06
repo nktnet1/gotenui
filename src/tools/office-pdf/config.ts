@@ -2,6 +2,7 @@
 import {
   officeCompression,
   officeOutput,
+  officePaperDimensions,
   optimizeImages,
   paperSize,
   pdfa,
@@ -24,6 +25,7 @@ export const operation: Operation = {
   multiple: true,
   fields: [
     paperSize,
+    ...officePaperDimensions,
     { name: 'landscape', label: 'Landscape orientation', kind: 'toggle' },
     { name: 'singlePageSheets', label: 'Single page per sheet', kind: 'toggle' },
     { name: 'skipEmptyPages', label: 'Skip blank pages', kind: 'toggle', advanced: true },

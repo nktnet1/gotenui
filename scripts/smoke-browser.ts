@@ -68,7 +68,15 @@ class BrowserPage {
       returnByValue: true,
       awaitPromise: true,
     })
-    if (result.exceptionDetails) throw new Error(`Browser evaluation failed: ${expression}`)
+    if (result.exceptionDetails) {
+      const details = result.exceptionDetails as {
+        text?: string
+        exception?: { description?: string }
+      }
+      throw new Error(
+        `Browser evaluation failed: ${details.exception?.description ?? details.text ?? 'Unknown JavaScript exception'}\nExpression: ${expression}`,
+      )
+    }
     return (result.result as { value?: unknown } | undefined)?.value
   }
 
@@ -904,10 +912,20 @@ async function run(): Promise<void> {
     // Keep a v9-only tool selected while changing to v8. It must be blocked
     // during the pending /version request, then remain blocked by v8 compatibility.
     await page.evaluate(`(() => {
-      [...document.querySelectorAll('#gotenui-navigation nav button')]
-        .find(el => el.textContent.trim() === 'PDF pipeline builder').click()
-      [...document.querySelectorAll('#gotenui-navigation button')]
-        .find(el => el.textContent.trim() === 'Connection settings').click()
+      const button = [...document.querySelectorAll('#gotenui-navigation nav button')]
+        .find(el => el.textContent.trim() === 'PDF pipeline builder')
+      if (!button || button.disabled) throw new Error('PDF pipeline builder is unavailable on v9')
+      button.click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent.includes('PDF pipeline builder')",
+      'v9 pipeline builder rendered',
+    )
+    await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('#gotenui-navigation button')]
+        .find(el => el.textContent.trim() === 'Connection settings')
+      if (!button) throw new Error('Connection settings button is missing')
+      button.click()
     })()`)
     await page.waitUntil("document.querySelector('#connection-heading') !== null", 'v9 settings')
     await page.evaluate(`(() => {

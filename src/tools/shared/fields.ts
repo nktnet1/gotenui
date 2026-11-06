@@ -22,6 +22,30 @@ export const paperSize: FieldDefinition = {
   description: 'Gotenberg 9 only. Custom width and height override this preset.',
 }
 
+/** Gotenberg 9 LibreOffice accepts dimensions in addition to named paper sizes. */
+export const officePaperDimensions: FieldDefinition[] = [
+  {
+    name: 'paperWidth',
+    label: 'Custom paper width',
+    kind: 'text',
+    placeholder: '210mm',
+    advanced: true,
+    supportedGotenbergMajors: [9],
+    description:
+      'Gotenberg 9. Specify both width and height, or override one dimension of a named paper size. Units: pt, px, in, mm, cm or pc.',
+  },
+  {
+    name: 'paperHeight',
+    label: 'Custom paper height',
+    kind: 'text',
+    placeholder: '297mm',
+    advanced: true,
+    supportedGotenbergMajors: [9],
+    description:
+      'Gotenberg 9. Specify both dimensions unless a named paper size supplies the other.',
+  },
+]
+
 export const pdfMetadata: FieldDefinition = {
   name: 'metadata',
   label: 'PDF metadata',

@@ -151,7 +151,33 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
   return stages
 }
 
+/** Keep custom LibreOffice page dimensions consistent with Gotenberg 9's Inches parser. */
+function validateV9OfficePaper(form: FormData): void {
+  const hasDimension = (name: 'paperWidth' | 'paperHeight'): boolean => {
+    const raw = form.get(name)
+    if (raw === null) return false
+    // Gotenberg parses a finite numeric value with an optional CSS length unit.
+    const match =
+      typeof raw === 'string' &&
+      /^\+?((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:pt|px|in|mm|cm|pc)?$/.exec(raw)
+    if (!match || Number(match[1]) <= 0 || !Number.isFinite(Number(match[1]))) {
+      throw new InputError(
+        `Gotenberg 9 ${name} must be a positive number with an optional pt, px, in, mm, cm or pc unit.`,
+      )
+    }
+    return true
+  }
+  const width = hasDimension('paperWidth')
+  const height = hasDimension('paperHeight')
+  if (!form.has('paperSize') && width !== height) {
+    throw new InputError(
+      'Gotenberg 9 Office conversion requires both paperWidth and paperHeight, or a named paperSize for the other dimension.',
+    )
+  }
+}
+
 function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
+  validateV9OfficePaper(form)
   const bookmarks = form.get('openBookmarkLevels')
   if (typeof bookmarks === 'string' && bookmarks !== '') {
     const count = Number(bookmarks)
@@ -207,6 +233,9 @@ export function adaptConversionForm(
     if (form.has('paperSize')) {
       throw new InputError('Named paper sizes require Gotenberg 9.')
     }
+    if (operation.id === 'office-pdf' && (form.has('paperWidth') || form.has('paperHeight'))) {
+      throw new InputError('Custom Office paper dimensions require Gotenberg 9.')
+    }
     return form
   }
   if (stageFiles.length && !payload.conversionStages) {
@@ -229,6 +258,21 @@ export function adaptConversionForm(
     )
   }
   if (operation.path.startsWith('/forms/chromium/')) {
+    if (
+      operation.output === 'pdf' &&
+      form.get('omitBackground') === 'true' &&
+      form.get('printBackground') !== 'true'
+    ) {
+      throw new InputError(
+        'Gotenberg 9 Chromium PDF transparency requires Print background graphics.',
+      )
+    }
+    if (operation.output === 'image') {
+      const quality = form.get('quality')
+      if (typeof quality === 'string' && quality !== '' && Number(quality) < 1) {
+        throw new InputError('Gotenberg 9 screenshot quality must be between 1 and 100.')
+      }
+    }
     renameFields(form, chromiumNames)
     v9MediaFeatures(form)
   }

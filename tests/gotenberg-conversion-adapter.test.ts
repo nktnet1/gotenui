@@ -4,7 +4,7 @@ import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
 import type { ConversionPayload } from '#/lib/validation'
-import { fieldSupportsBackend } from '#/tools/registry'
+import { type FieldDefinition, fieldSupportsBackend } from '#/tools/registry'
 
 function fixture(id: string, overrides: Partial<ConversionPayload> = {}) {
   const operation = OPERATION_BY_ID.get(id)
@@ -485,4 +485,105 @@ test('v9 Office export rejects invalid bookmark expansion and clashing native wa
     adapt('office-pdf', { fields: { openBookmarkLevels: '100' } }, 8).get('openBookmarkLevels'),
     '100',
   )
+})
+
+test('Gotenberg 9 LibreOffice accepts custom dimensions and named-size overrides', () => {
+  const office = OPERATION_BY_ID.get('office-pdf')
+  assert.ok(office)
+  for (const name of ['paperWidth', 'paperHeight']) {
+    const field: FieldDefinition | undefined = office.fields.find((item) => item.name === name)
+    assert.ok(field)
+    assert.equal(fieldSupportsBackend(field, '9.0.0'), true)
+    assert.equal(fieldSupportsBackend(field, '8.40.0'), false)
+  }
+
+  const custom = adapt('office-pdf', { fields: { paperWidth: '210mm', paperHeight: '297mm' } }, 9)
+  assert.equal(custom.get('paperWidth'), '210mm')
+  assert.equal(custom.get('paperHeight'), '297mm')
+  assert.equal(custom.has('paperSize'), false)
+
+  const override = adapt('office-pdf', { fields: { paperSize: 'A4', paperWidth: '100mm' } }, 9)
+  assert.equal(override.get('paperSize'), 'A4')
+  assert.equal(override.get('paperWidth'), '100mm')
+  assert.equal(override.has('paperHeight'), false)
+
+  const defaults = adapt('office-pdf', {}, 9)
+  assert.equal(defaults.has('paperSize'), false)
+  assert.equal(defaults.has('paperWidth'), false)
+  assert.equal(defaults.has('paperHeight'), false)
+})
+
+test('Gotenberg 9 rejects incomplete or invalid Office dimensions without affecting v8', () => {
+  assert.throws(
+    () => adapt('office-pdf', { fields: { paperWidth: '210mm' } }, 9),
+    /both paperWidth and paperHeight, or a named paperSize/,
+  )
+  assert.throws(
+    () => adapt('office-pdf', { fields: { paperHeight: '297mm' } }, 9),
+    /both paperWidth and paperHeight, or a named paperSize/,
+  )
+  for (const value of ['0', '-1in', 'NaN', 'Infinity', '210em', '12in;bad']) {
+    assert.throws(
+      () => adapt('office-pdf', { fields: { paperSize: 'A4', paperWidth: value } }, 9),
+      /positive number.*optional/,
+      value,
+    )
+  }
+  // Chromium already has a separate, long-standing custom-size contract on v8.
+  assert.equal(
+    adapt('html-pdf', { fields: { paperWidth: '8in', paperHeight: '11in' } }, 8).get('paperWidth'),
+    '8in',
+  )
+  assert.throws(
+    () => adapt('office-pdf', { fields: { paperWidth: '210mm', paperHeight: '297mm' } }, 8),
+    /Custom Office paper dimensions require Gotenberg 9/,
+  )
+})
+
+test('Gotenberg 9 validates Chromium transparency and screenshot quality at the adapter boundary', () => {
+  assert.throws(
+    () => adapt('html-pdf', { fields: { omitBackground: true } }, 9),
+    /transparency requires Print background graphics/,
+  )
+  const pdf = adapt('html-pdf', { fields: { omitBackground: true, printBackground: true } }, 9)
+  assert.equal(pdf.get('omitBackground'), 'true')
+  assert.equal(pdf.get('printBackground'), 'true')
+  // Screenshots do not use printBackground, and the original v8 form is unchanged.
+  assert.equal(
+    adapt('html-shot', { fields: { omitBackground: true } }, 9).get('omitBackground'),
+    'true',
+  )
+  assert.equal(
+    adapt('html-pdf', { fields: { omitBackground: true } }, 8).get('omitBackground'),
+    'true',
+  )
+
+  assert.throws(
+    () => adapt('html-shot', { fields: { quality: '0' } }, 9),
+    /screenshot quality must be between 1 and 100/,
+  )
+  assert.equal(adapt('html-shot', { fields: { quality: '1' } }, 9).get('quality'), '1')
+  assert.equal(adapt('html-shot', { fields: { quality: '0' } }, 8).get('quality'), '0')
+})
+
+test('Gotenberg 9 LibreOffice retains native JPEG and downsampling settings', () => {
+  const form = adapt(
+    'office-pdf',
+    { fields: { quality: '84', reduceImageResolution: true, maxImageResolution: '150' } },
+    9,
+  )
+  assert.equal(form.get('nativeQuality'), '84')
+  assert.equal(form.get('nativeReduceImageResolution'), 'true')
+  assert.equal(form.get('nativeMaxImageResolution'), '150')
+  for (const legacy of ['quality', 'reduceImageResolution', 'maxImageResolution']) {
+    assert.equal(form.has(legacy), false)
+  }
+  const old = adapt(
+    'office-pdf',
+    { fields: { quality: '84', reduceImageResolution: true, maxImageResolution: '150' } },
+    8,
+  )
+  assert.equal(old.get('quality'), '84')
+  assert.equal(old.get('reduceImageResolution'), 'true')
+  assert.equal(old.get('maxImageResolution'), '150')
 })

@@ -1833,3 +1833,56 @@ test.skipIf(!isV9)(
   },
   120_000,
 )
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 converts Office sources with custom page dimensions and a preset override',
+  async () => {
+    const office = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!office) throw new Error('Missing Office conversion')
+    const dimensionCases: Record<string, string>[] = [
+      { paperWidth: '210mm', paperHeight: '297mm' },
+      { paperSize: 'A4', paperWidth: '100mm' },
+    ]
+    for (const fields of dimensionCases) {
+      const response = await retryTransientConversion(() =>
+        proxyConversionRequest(
+          request(office, { fields }, [new File(['Custom paper test'], 'document.txt')]),
+        ),
+      )
+      if (!response.ok) {
+        const trace = response.headers.get('gotenberg-trace')
+        throw new Error(
+          `v9 Office custom paper: ${response.status}` +
+            (trace ? ` (trace: ${trace})` : '') +
+            ` ${await response.text()}\n${await integrationContainerLogs(testContainerName)}`,
+        )
+      }
+      expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+      expect(
+        new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+      ).toBe('%PDF-')
+    }
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 Chromium prints a transparent background with printBackground enabled',
+  async () => {
+    const html = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!html) throw new Error('Missing HTML conversion')
+    const response = await proxyConversionRequest(
+      request(html, {
+        source: '<html><body style="background:transparent"><h1>Transparent</h1></body></html>',
+        fields: { omitBackground: true, printBackground: true },
+      }),
+    )
+    if (!response.ok)
+      throw new Error(`v9 transparent PDF: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+    expect(
+      new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+    ).toBe('%PDF-')
+  },
+  120_000,
+)
