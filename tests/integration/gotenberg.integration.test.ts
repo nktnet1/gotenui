@@ -19,10 +19,12 @@ import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-
 import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import type { ConversionPayload } from '#/lib/validation'
 import type { CallbackReceipt } from './async-fixture-server'
+import { integrationContainerLogs } from './container-logs'
 import { integrationSmokeOperations } from './operation-selection'
 import { retryTransientConversion } from './transient-conversion'
 
 const backendUrl = inject('gotenbergTestUrl')
+const testContainerName = inject('gotenbergTestContainerName')
 const testVersion = inject('gotenbergTestVersion')
 const isV9 = testVersion === '9.0.0'
 const fixtureUrl = inject('gotenbergFixtureUrl')
@@ -855,25 +857,27 @@ test.each([
         : new File(['Gotenui multi-document conversion'], name, { type: 'text/plain' }),
     )
     const convertDocuments = () => proxyConversionRequest(request(operation, { fields }, files))
-    // Gotenberg's PDF/A conversion can sporadically return a transient 5xx while
-    // LibreOffice or the PDF engine is busy. Retry only this known flaky case,
-    // without suppressing permanent failures or weakening the ZIP assertions.
-    const response =
-      id === 'pdfa'
-        ? await retryTransientConversion(convertDocuments, {
-            onRetry: ({ attempt, status, body, trace }) => {
-              console.warn(
-                `PDF/A multi-document attempt ${attempt} returned HTTP ${status}` +
-                  `${trace ? ` (trace: ${trace})` : ''}: ${body}`,
-              )
-            },
-          })
-        : await convertDocuments()
+    // Multi-document LibreOffice and PDF/A conversions can hit transient upstream
+    // 5xx responses under load. Print every retry and fail on a persistent error;
+    // never relax the ZIP content assertions after a retry.
+    let attempts = 1
+    const response = await retryTransientConversion(convertDocuments, {
+      onRetry: ({ attempt, status, body, trace }) => {
+        attempts = attempt + 1
+        console.warn(
+          `${id} multi-document attempt ${attempt} returned HTTP ${status}` +
+            `${trace ? ` (trace: ${trace})` : ''}: ${body}`,
+        )
+      },
+    })
     if (!response.ok) {
       const trace = response.headers.get('gotenberg-trace')
+      const body = (await response.text()).slice(0, 1_000)
+      const logs = await integrationContainerLogs(testContainerName)
       throw new Error(
-        `${id} multi-document conversion failed after ${id === 'pdfa' ? 'up to 3 attempts' : '1 attempt'}: ` +
-          `${response.status}${trace ? ` (trace: ${trace})` : ''} ${await response.text()}`,
+        `${id} multi-document conversion failed after ${attempts} attempt(s): ` +
+          `${response.status}${trace ? ` (trace: ${trace})` : ''} ${body}` +
+          `\nRecent ${testVersion} Gotenberg container logs:\n${logs}`,
       )
     }
     expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
@@ -1350,29 +1354,53 @@ test.skipIf(isV9).each(['url-pdf', 'office-pdf'])(
     const operation = OPERATIONS.find((item) => item.id === id)
     if (!operation) throw new Error(`Missing ${id} operation`)
     const inputs = inputFor(operation)
-    const response = await proxyConversionRequest(
-      request(
-        operation,
-        {
-          ...inputs.overrides,
-          postProcess: {
-            watermarks: [
-              { source: 'text', expression: 'INTERNAL' },
-              { source: 'pdf', expression: 'watermark.pdf' },
-            ],
-            stamps: [
-              { source: 'text', expression: 'APPROVED' },
-              { source: 'text', expression: 'VERSION 2', pages: '1' },
-            ],
+    // Rebuild the multipart request on each attempt; a Request body cannot be
+    // reused, and intermittent LibreOffice 5xx errors are not input failures.
+    const convertOverlays = () =>
+      proxyConversionRequest(
+        request(
+          operation,
+          {
+            ...inputs.overrides,
+            postProcess: {
+              watermarks: [
+                { source: 'text', expression: 'INTERNAL' },
+                { source: 'pdf', expression: 'watermark.pdf' },
+              ],
+              stamps: [
+                { source: 'text', expression: 'APPROVED' },
+                { source: 'text', expression: 'VERSION 2', pages: '1' },
+              ],
+            },
           },
-        },
-        inputs.files,
-        [],
-        { watermark: [new File([pdfBytes], 'watermark.pdf', { type: 'application/pdf' })] },
-      ),
-    )
-    if (!response.ok)
-      throw new Error(`${id} repeated overlays failed: ${response.status} ${await response.text()}`)
+          inputs.files,
+          [],
+          { watermark: [new File([pdfBytes], 'watermark.pdf', { type: 'application/pdf' })] },
+        ),
+      )
+    let attempts = 1
+    const response =
+      id === 'office-pdf'
+        ? await retryTransientConversion(convertOverlays, {
+            onRetry: ({ attempt, status, body, trace }) => {
+              attempts = attempt + 1
+              console.warn(
+                `${id} repeated overlays attempt ${attempt} returned HTTP ${status}` +
+                  `${trace ? ` (trace: ${trace})` : ''}: ${body}`,
+              )
+            },
+          })
+        : await convertOverlays()
+    if (!response.ok) {
+      const trace = response.headers.get('gotenberg-trace')
+      const details = (await response.text()).slice(0, 1_000)
+      const logs = id === 'office-pdf' ? await integrationContainerLogs(testContainerName) : ''
+      throw new Error(
+        `${id} repeated overlays failed after ${attempts} attempt(s): ` +
+          `${response.status}${trace ? ` (trace: ${trace})` : ''} ${details}` +
+          (logs ? `\nRecent ${testVersion} Gotenberg container logs:\n${logs}` : ''),
+      )
+    }
     expect(response.headers.get('content-type')).toContain('application/pdf')
     expect(
       new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),

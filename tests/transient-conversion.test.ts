@@ -27,6 +27,27 @@ describe('transient PDF/A integration failures', () => {
     })
   })
 
+  it('reissues a fresh request after a transient LibreOffice error', async () => {
+    const requests: Request[] = []
+    const convert = vi.fn(async () => {
+      const request = new Request('http://localhost/forms/libreoffice/convert', {
+        method: 'POST',
+        body: new FormData(),
+      })
+      requests.push(request)
+      return new Response(requests.length === 1 ? 'Busy' : '%PDF-', {
+        status: requests.length === 1 ? 500 : 200,
+      })
+    })
+    const pause = vi.fn().mockResolvedValue(undefined)
+
+    const response = await retryTransientConversion(convert, { pause })
+    expect(await response.text()).toBe('%PDF-')
+    expect(convert).toHaveBeenCalledTimes(2)
+    expect(requests).toHaveLength(2)
+    expect(requests[0]).not.toBe(requests[1])
+  })
+
   it('does not retry validation or authentication failures', async () => {
     const convert = vi.fn().mockResolvedValue(new Response('Bad input', { status: 400 }))
     const response = await retryTransientConversion(convert)

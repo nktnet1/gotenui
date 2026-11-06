@@ -21,6 +21,7 @@ const testPassword = 'local-only-test-password'
 declare module 'vitest' {
   export interface ProvidedContext {
     gotenbergTestUrl: string
+    gotenbergTestContainerName: string
     gotenbergTestVersion: string
     gotenbergFixtureUrl: string
     gotenbergTestUsername: string
@@ -180,6 +181,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
     console.info(`Waiting for ${styleText('cyan', image)} to become healthy...`)
     await waitForHealth(url)
     project.provide('gotenbergTestUrl', url)
+    project.provide('gotenbergTestContainerName', name)
     project.provide('gotenbergTestVersion', testVersion)
     project.provide('gotenbergFixtureUrl', html.url)
     project.provide('gotenbergTestUsername', testUsername)
