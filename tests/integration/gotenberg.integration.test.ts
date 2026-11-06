@@ -131,6 +131,9 @@ function inputFor(operation: Operation): {
     case 'rotate':
       fields.rotateAngle = '90'
       break
+    case 'flatten':
+      if (isV9) fields.v9FlattenFormsOnly = true
+      break
     case 'encrypt':
       fields.userPassword = 'test-password-123'
       break
@@ -144,6 +147,7 @@ function inputFor(operation: Operation): {
     case 'stamp':
       fields[`${operation.id}Source`] = 'text'
       fields[`${operation.id}Expression`] = 'GOTENUI TEST'
+      if (isV9) fields.v9OverlayAcknowledged = true
       break
     case 'embed':
       auxiliary.push(new File(['Local-only attachment'], 'notes.txt', { type: 'text/plain' }))
@@ -196,8 +200,7 @@ beforeAll(async () => {
   pdfBytes = await response.arrayBuffer()
   expect(new TextDecoder().decode(new Uint8Array(pdfBytes).subarray(0, 5))).toBe('%PDF-')
 
-  // The v8-only PDF engines merge route supplies the split fixture.
-  if (isV9) return
+  // Both Gotenberg versions now generate the two-page split fixture via their own merge adapter.
   const merge = OPERATIONS.find((operation) => operation.id === 'merge')
   if (!merge) throw new Error('Missing PDF merge operation')
   const merged = await proxyConversionRequest(
@@ -277,6 +280,101 @@ test.each(
   120_000,
 )
 
+/** Independently inspect PDF bytes with v9's read-only endpoints rather than
+ * accepting an HTTP 200 and a PDF signature as proof of a successful edit.
+ */
+async function inspectV9Pdf(
+  route: 'info' | 'metadata' | 'bookmarks' | 'attachments',
+  bytes: ArrayBuffer,
+): Promise<unknown> {
+  const body = new FormData()
+  body.append('files', new File([bytes], 'verified.pdf', { type: 'application/pdf' }))
+  const auth = Buffer.from(`${testUsername}:${testPassword}`, 'utf8').toString('base64')
+  const result = await fetch(`${backendUrl}/forms/pdf/${route}`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}` },
+    body,
+  })
+  if (!result.ok) {
+    throw new Error(`Gotenberg 9 PDF ${route}: HTTP ${result.status}: ${await result.text()}`)
+  }
+  return result.json()
+}
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 merge and select stages produce the expected page counts',
+  async () => {
+    const merge = OPERATIONS.find(({ id }) => id === 'merge')
+    const split = OPERATIONS.find(({ id }) => id === 'split')
+    if (!merge || !split) throw new Error('Missing PDF merge/split operations')
+    const merged = await proxyConversionRequest(
+      request(merge, {}, [pdfFile('first.pdf'), pdfFile('second.pdf')]),
+    )
+    if (!merged.ok) throw new Error(`Merge: ${merged.status} ${await merged.text()}`)
+    const mergedBytes = await merged.arrayBuffer()
+    expect(await inspectV9Pdf('info', mergedBytes)).toMatchObject({
+      'verified.pdf': { pages: 2 },
+    })
+
+    const selected = await proxyConversionRequest(
+      request(split, { fields: { splitMode: 'pages', splitSpan: '2', splitUnify: true } }, [
+        new File([mergedBytes], 'merged.pdf', { type: 'application/pdf' }),
+      ]),
+    )
+    if (!selected.ok) throw new Error(`Select: ${selected.status} ${await selected.text()}`)
+    expect(await inspectV9Pdf('info', await selected.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 metadata and bookmark writes round-trip through PDF readers',
+  async () => {
+    const metadata = OPERATIONS.find(({ id }) => id === 'metadata-write')
+    const bookmarks = OPERATIONS.find(({ id }) => id === 'bookmarks-write')
+    if (!metadata || !bookmarks) throw new Error('Missing PDF structure operations')
+    const updatedMetadata = await proxyConversionRequest(
+      request(metadata, { fields: { metadata: '{"Author":"Gotenui","Title":"Verified"}' } }, [
+        pdfFile(),
+      ]),
+    )
+    if (!updatedMetadata.ok)
+      throw new Error(`Metadata: ${updatedMetadata.status} ${await updatedMetadata.text()}`)
+    expect(await inspectV9Pdf('metadata', await updatedMetadata.arrayBuffer())).toMatchObject({
+      'verified.pdf': { author: 'Gotenui', title: 'Verified' },
+    })
+
+    const updatedBookmarks = await proxyConversionRequest(
+      request(bookmarks, { fields: { bookmarks: '[{"title":"Introduction","page":1}]' } }, [
+        pdfFile(),
+      ]),
+    )
+    if (!updatedBookmarks.ok)
+      throw new Error(`Bookmarks: ${updatedBookmarks.status} ${await updatedBookmarks.text()}`)
+    expect(await inspectV9Pdf('bookmarks', await updatedBookmarks.arrayBuffer())).toMatchObject({
+      'verified.pdf': [{ title: 'Introduction', pageNumber: 1 }],
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 attachment stages embed named files into the PDF',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'embed')
+    if (!operation) throw new Error('Missing PDF embed operation')
+    const embedded = await proxyConversionRequest(
+      request(operation, {}, [pdfFile()], [new File(['verification'], 'verification.txt')]),
+    )
+    if (!embedded.ok) throw new Error(`Attach: ${embedded.status} ${await embedded.text()}`)
+    const result = await inspectV9Pdf('attachments', await embedded.arrayBuffer())
+    expect(JSON.stringify(result)).toContain('verification.txt')
+  },
+  120_000,
+)
+
 test('the local proxy still rejects unapproved destinations', async () => {
   const operation = OPERATIONS.find((value) => value.id === 'url-pdf')
   if (!operation) throw new Error('Missing URL conversion operation')
@@ -290,29 +388,25 @@ test('the local proxy still rejects unapproved destinations', async () => {
   await expect(proxyConversionRequest(rejected)).rejects.toMatchObject({ status: 403 })
 })
 
-test.skipIf(isV9)(
-  'a single-page split returns a PDF without an unnecessary ZIP',
-  async () => {
-    const operation = OPERATIONS.find((value) => value.id === 'split')
-    if (!operation) throw new Error('Missing PDF split operation')
-    const response = await proxyConversionRequest(
-      request(operation, { fields: { splitMode: 'intervals', splitSpan: '1' } }, [pdfFile()]),
-    )
-    if (!response.ok) {
-      throw new Error(`Single-page split failed: ${response.status} ${await response.text()}`)
-    }
-    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
-  },
-  120_000,
-)
+test('a single-page split returns a PDF without an unnecessary ZIP', async () => {
+  const operation = OPERATIONS.find((value) => value.id === 'split')
+  if (!operation) throw new Error('Missing PDF split operation')
+  const response = await proxyConversionRequest(
+    request(operation, { fields: { splitMode: 'intervals', splitSpan: '1' } }, [pdfFile()]),
+  )
+  if (!response.ok) {
+    throw new Error(`Single-page split failed: ${response.status} ${await response.text()}`)
+  }
+  expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/pdf')
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
+}, 120_000)
 
 // Multi-document routes produce ZIP rather than PDF, even though a single
 // document uses the same endpoint with a PDF result.
 test.each([
   { id: 'office-pdf', filenames: ['first.txt', 'second.txt'] },
-  ...(!isV9 ? [{ id: 'pdfa', filenames: ['first.pdf', 'second.pdf'] }] : []),
+  { id: 'pdfa', filenames: ['first.pdf', 'second.pdf'] },
 ])(
   '$id accepts multiple documents as a ZIP result',
   async ({ id, filenames }) => {

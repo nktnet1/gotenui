@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'encrypt',
+  supportedGotenbergMajors: [8, 9],
   title: 'Encrypt PDFs',
   group: 'PDF tools',
   summary: 'Protect PDF content with passwords and permissions.',

@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'metadata-read',
+  supportedGotenbergMajors: [8, 9],
   title: 'Read metadata',
   group: 'PDF tools',
   summary: 'Inspect PDF metadata as JSON.',

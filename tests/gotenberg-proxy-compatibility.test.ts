@@ -91,14 +91,22 @@ test('rejects a Gotenberg 9-only option against v8 before forwarding conversion'
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
 })
 
-test('rejects unmigrated PDF tools and unsupported majors before forwarding', async () => {
+test('routes migrated PDF tools on v9, and still rejects unsupported majors', async () => {
   const source = new File(['%PDF-1.7\n'], 'input.pdf', { type: 'application/pdf' })
-  const v9 = upstreamFixture('9.0.0', () => {})
-  await assert.rejects(
-    proxyConversionRequest(requestFor('rotate', { rotateAngle: '90' }, {}, [source]), v9.fetcher),
-    /not available on Gotenberg 9/,
+  const v9 = upstreamFixture('9.0.0', (form) => {
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [{ op: 'rotate', angle: 90 }])
+    assert.equal(form.get('rotateAngle'), null)
+  })
+  assert.equal(
+    (
+      await proxyConversionRequest(
+        requestFor('rotate', { rotateAngle: '90' }, {}, [source]),
+        v9.fetcher,
+      )
+    ).status,
+    200,
   )
-  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 1 })
   const unknown = upstreamFixture('10.0.0', () => {})
   await assert.rejects(
     proxyConversionRequest(requestFor('html-pdf', {}, {}, []), unknown.fetcher),

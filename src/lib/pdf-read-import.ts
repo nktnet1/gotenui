@@ -12,10 +12,10 @@ export function importReadableMetadata(result: unknown, filename: string): strin
   const source = result[filename]
   const metadata: Record<string, string | string[]> = {}
   for (const { name } of METADATA_TEXT_FIELDS) {
-    const value = source[name]
+    const value = source[name] ?? source[name.charAt(0).toLowerCase() + name.slice(1)]
     if (typeof value === 'string' && value.trim()) metadata[name] = value
   }
-  const keywords = source.Keywords
+  const keywords = source.Keywords ?? source.keywords
   if (Array.isArray(keywords) && keywords.every((item) => typeof item === 'string')) {
     metadata.Keywords = keywords
   } else if (typeof keywords === 'string' && keywords.trim()) {
@@ -37,11 +37,31 @@ export function importReadableBookmarks(result: unknown, filenames: string[]): s
     const items = result[filename]
     if (!Array.isArray(items))
       throw new Error(`Gotenberg did not return bookmarks for ${filename}.`)
-    mapped[filename] = items
+    mapped[filename] = items.map(normalizeReadBookmark)
   }
   const value =
     filenames.length === 1 ? JSON.stringify(mapped[filenames[0] as string]) : JSON.stringify(mapped)
   validateBookmarkDocument(value)
   if (value.length > 10_000) throw new Error('Bookmarks are too large to import into the editor.')
   return value
+}
+
+/** Convert the v9 pageNumber JSON back to the existing v8-compatible editor shape. */
+function normalizeReadBookmark(value: unknown): unknown {
+  if (!isObject(value)) return value
+  const { pageNumber, children, ...rest } = value
+  if (pageNumber === undefined)
+    return {
+      ...rest,
+      ...(children !== undefined
+        ? { children: Array.isArray(children) ? children.map(normalizeReadBookmark) : children }
+        : {}),
+    }
+  return {
+    ...rest,
+    page: pageNumber,
+    ...(children !== undefined
+      ? { children: Array.isArray(children) ? children.map(normalizeReadBookmark) : children }
+      : {}),
+  }
 }

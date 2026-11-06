@@ -12,21 +12,24 @@
 - [x] **Patch 2:** The proxy fetches the selected, authenticated upstream `/version` **for every conversion request** (including queued and direct API calls), refuses unknown/unsupported majors, and chooses a v8 or v9 request adapter. A connection changing versions cannot silently send the wrong form.
 - [x] **Patch 2:** Pin the real integration-test matrix to **`gotenberg/gotenberg:8.40.0` and `gotenberg/gotenberg:9.0.0`**, verify `/version` against the selected image, and add version-specific assertions. Unit tests test both major-version encodings without Docker.
 - [x] **Patch 3:** Run both pinned Docker images by default in local `pnpm test`/`pnpm test:integration`, stream image-pull progress, and name each CI matrix job by version. The earlier local integration command exercised **only v8.40.0** unless `GOTENBERG_TEST_VERSION` was set; the four v9-only cases were skipped, not passed.
-- [ ] **Integration verification pending:** Observe passing suites for **both** v8.40.0 and v9.0.0 on a Docker-enabled host; the previously reported local run confirmed v8.40.0 only. Docker is unavailable in this environment.
+- [x] **Previous integration suites:** The user confirmed that both pinned v8.40.0 and v9.0.0 suites pass after patch 3. **Patch 4 expands the PDF test matrix; those new cases still require Docker-backed verification.** Docker is unavailable in this authoring environment.
+- [x] **Patch 4:** Add a version-specific standalone PDF adapter covering the 15 existing tools, retain all v8 endpoints and inputs, and encode supported v9 operations as ordered `/forms/pdf/pipe` stages or v9 read routes. Incompatible v8 semantics (behind-content watermarks, flattening annotations, lossy optimisation, legacy filename bookmark maps, and extended metadata) are never silently translated.
+- [x] **Patch 4:** Read v9 metadata/bookmark output back into the existing editors, display PDF/A remediation diagnostics returned by the upstream, and add v9 form controls for new foreground overlays and form-only flattening.
+- [ ] **Patch 4 integration verification:** Run the newly expanded real-image PDF test suite against both `gotenberg/gotenberg:8.40.0` and `gotenberg/gotenberg:9.0.0`, including content-level PDF assertions and remediation responses.
 
-### Compatibility baseline after patch 2
+### Compatibility baseline after patch 4 (v1.0.3)
 
-| Capability                                  | Gotenberg 8                                                | Gotenberg 9                                                                                                                 |
-| ------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Health, version, connection selection       | Existing support                                           | Existing support                                                                                                            |
-| URL/HTML/Markdown screenshots (synchronous) | Existing support                                           | Version-aware media settings and webhooks (events callback required); integration verification pending                      |
-| URL/HTML/Markdown to PDF                    | Existing support                                           | Form adapter, native controls, PDF/A remediation, and events webhooks; complex post-processing still unavailable            |
-| LibreOffice to PDF                          | Existing support                                           | Form adapter, native PDF/A/UA, merge/split stages, viewer and watermark mappings; complex post-processing still unavailable |
-| 15 PDF tools                                | Existing support (subject to existing v8 minimum versions) | Disabled until PDF API migration                                                                                            |
-| Webhooks and async jobs                     | Existing support                                           | URL + required events callback; removed error callback rejected before upstream                                             |
-| Metrics                                     | Existing legacy/OTel paths                                 | OTel exporter support needs verification; legacy `/prometheus/metrics` route was removed                                    |
+| Capability                                  | Gotenberg 8                                                | Gotenberg 9                                                                                                                                                                                                                       |
+| ------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Health, version, connection selection       | Existing support                                           | Existing support                                                                                                                                                                                                                  |
+| URL/HTML/Markdown screenshots (synchronous) | Existing support                                           | Version-aware media settings and webhooks (events callback required); integration verification pending                                                                                                                            |
+| URL/HTML/Markdown to PDF                    | Existing support                                           | Form adapter, native controls, PDF/A remediation, and events webhooks; complex post-processing still unavailable                                                                                                                  |
+| LibreOffice to PDF                          | Existing support                                           | Form adapter, native PDF/A/UA, merge/split stages, viewer and watermark mappings; complex post-processing still unavailable                                                                                                       |
+| 15 PDF tools                                | Existing support (subject to existing v8 minimum versions) | Version-aware v9 `/forms/pdf/pipe`, `/forms/pdf/metadata` and `/forms/pdf/bookmarks`. Some advanced v8 options require a separate workflow or are explicitly rejected; newly expanded real-image tests await Docker verification. |
+| Webhooks and async jobs                     | Existing support                                           | URL + required events callback; removed error callback rejected before upstream                                                                                                                                                   |
+| Metrics                                     | Existing legacy/OTel paths                                 | OTel exporter support needs verification; legacy `/prometheus/metrics` route was removed                                                                                                                                          |
 
-For now **do not use v9 for standalone PDF processing or complex conversion post-processing workflows**. Gotenui's v8 tools retain their v8 paths and field encodings. Any future operation that supports v9 must explicitly opt in only after its complete request and response contract has been verified.
+Gotenui's v8 tools retain their v8 paths and field encodings. **Standalone v9 PDF tools are implemented in patch 4, pending real-image verification.** Complex v8 conversion post-processing remains unavailable on v9 until the ordered pipeline builder is implemented. Unsupported or non-equivalent fields must fail visibly rather than be ignored.
 
 ## Migration workstreams (in dependency order)
 
@@ -46,10 +49,10 @@ For now **do not use v9 for standalone PDF processing or complex conversion post
 
 Gotenberg 9 removes the 15 `POST /forms/pdfengines/*` routes used here, replacing them with individual `POST /forms/pdf/{operation}` routes and `POST /forms/pdf/pipe` for an ordered JSON array of `stages`. A path-only replacement is insufficient: flat form keys, file inputs, JSON responses and post-processing are different.
 
-- [ ] Add a version-aware PDF adapter for the existing tools: merge, split, PDF/A (`remediate`), optimise, rotate, flatten form, encrypt, watermark/stamp, read/write metadata, read/write bookmarks, attachments (`attach`) and Factur-X (`remediate` plus its profile/invoice inputs).
+- [x] Add a version-aware PDF adapter for the existing tools: merge, split, PDF/A (`remediate`), optimise, rotate, flatten form, encrypt, watermark/stamp, read/write metadata, read/write bookmarks, attachments (`attach`) and Factur-X (`remediate` plus its profile/invoice inputs).
 - [ ] Build an ordered, validated v9 pipeline UI with explicit stage ordering, inputs and outputs (including `select` for `splitUnify`), preview, and safe composition with conversion endpoints.
-- [ ] Update PDF metadata/bookmarks editors and read-back/import for the v9 response structures. Differentiate v8 watermarks behind content from v9 foreground stamp behaviour; do not quietly alter a user's intended visual result.
-- [ ] Preserve all v8 PDF routes and v8 field behaviours behind the version-specific adapter.
+- [x] Update PDF metadata/bookmarks editors and read-back/import for the v9 response structures. Differentiate v8 watermarks behind content from v9 foreground stamp behaviour; do not quietly alter a user's intended visual result.
+- [x] Preserve all v8 PDF routes and v8 field behaviours behind the version-specific adapter.
 
 ### 4. Missing Gotenberg 9 stages — high
 
@@ -70,7 +73,7 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 - [ ] `attachments`: list PDF-embedded files.
 - [ ] `form`: list interactive PDF form fields and values.
 - [ ] Expose additional v9 PDF/A profiles and PDF/UA-2 where supported; distinguish native export from post-processing remediation.
-- [ ] Forward and display `Gotenberg-Remediation-Residual` and `Gotenberg-Remediation-Rolled-Back`. A successful HTTP response alone does **not** establish PDF/A/PDF/UA compliance.
+- [x] Forward and display `Gotenberg-Remediation-Residual` and `Gotenberg-Remediation-Rolled-Back`. A successful HTTP response alone does **not** establish PDF/A/PDF/UA compliance.
 
 ### 6. Remaining v9 compatibility and polish — medium
 
@@ -78,11 +81,11 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 - [ ] Archive inputs (`archives`), further remote-input fields and format-specific upload validation.
 - [ ] Revisit allowed Office extensions (including EPUB removal), named paper-size presets, native compression choices and Gotenberg 9 options for each tool.
 - [ ] Distinguish Gotenberg 8 legacy Prometheus `/prometheus/metrics` from Gotenberg 9 exporter-based metrics; do not rely on the deleted route.
-- [ ] Make tool-specific API documentation links version-aware as upstream v9 documentation becomes available.
+- [x] Route standalone v9 PDF tool documentation links to the new pipeline and read API pages; retain v8 links for v8 connections. Additional v9 documentation polish remains.
 - [ ] Test switching v8 ↔ v9 connections while a tool or batch queue is selected, status refreshes, and version/header mismatches.
 - [x] Add a CI matrix for pinned **Gotenberg 8.40.0** and **9.0.0** real-image integration tests, with basic conversions, screenshots, auth, native field mappings, webhooks and limited stages.
-- [ ] Expand v9 real-image fixtures for missing PDF endpoints, complex pipeline ordering, read JSON, ZIP/image outputs, metadata import and remediation headers.
-- [ ] Observe successful runs of both pinned integration suites in a Docker-enabled environment; local tests cannot substitute for upstream execution.
+- [ ] Expand v9 real-image fixtures for missing PDF endpoints, complex pipeline ordering, read JSON, ZIP/image outputs, metadata import and remediation headers. Patch 4 adds all existing PDF tool endpoints plus split ZIP and metadata/bookmark import unit coverage; comprehensive new-stage fixtures remain.
+- [ ] Observe successful runs of the **new PDF integration cases** on both pinned Gotenberg images in a Docker-enabled environment; patch 3 suites previously passed according to the user, but unit tests alone cannot verify patch 4 PDF stage execution.
 
 ## Acceptance criteria for complete dual-version support
 

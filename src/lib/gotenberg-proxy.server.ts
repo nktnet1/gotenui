@@ -3,6 +3,7 @@ import * as v from 'valibot'
 import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
+import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
 import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
   invalidateOAuth2Authorization,
@@ -275,6 +276,10 @@ async function conversionTargetVersion(
 function copyUpstreamDiagnostics(upstream: Response, headers: Headers): void {
   const trace = upstream.headers.get('gotenberg-trace')
   if (trace) headers.set('Gotenberg-Trace', trace)
+  for (const name of ['Gotenberg-Remediation-Residual', 'Gotenberg-Remediation-Rolled-Back']) {
+    const value = upstream.headers.get(name)
+    if (value && /^\d{1,10}$/.test(value)) headers.set(name, value)
+  }
   const version = upstream.headers.get('gotenberg-version')
   if (version && version.length <= 80 && /^v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version)) {
     headers.set('Gotenberg-Version', version)
@@ -485,13 +490,12 @@ export async function proxyConversionRequest(
       throw new InputError('Gotenberg 9 removed the separate webhook error callback.')
     }
   }
-  const form = adaptConversionForm(
-    operation,
-    payload,
-    createGotenbergForm(operation, payload, files, auxiliary, maxBytes, postFiles),
-    major,
-  )
-  const upstream = await fetcher(urlJoin(url, operation.path), {
+  const legacy = createGotenbergForm(operation, payload, files, auxiliary, maxBytes, postFiles)
+  const { path, form } =
+    operation.input === 'pdf'
+      ? adaptPdfForm(operation, payload, legacy, major, auxiliary)
+      : { path: operation.path, form: adaptConversionForm(operation, payload, legacy, major) }
+  const upstream = await fetcher(urlJoin(url, path), {
     method: 'POST',
     ...fetchOptions(request),
     body: form,

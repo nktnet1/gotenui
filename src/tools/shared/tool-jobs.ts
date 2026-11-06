@@ -1,3 +1,5 @@
+import type { RemediationReport } from '#/lib/gotenberg-client'
+
 /** Shared job, webhook, and output shapes used by the form and result panel. */
 export type Job = {
   id: number
@@ -21,4 +23,5 @@ export type Download = {
   type: string
   preview?: string
   trace?: string
+  remediation?: RemediationReport
 }

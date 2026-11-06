@@ -205,10 +205,16 @@ export function Workbench({
         [overlayProperty]: postProcess[overlayProperty] ?? [defaultOverlay(standaloneKind)],
       }
     : undefined
-  const hasMetadataEditor = operation.fields.some((field) => field.name === 'metadata')
-  const hasBookmarksEditor = operation.fields.some((field) => field.name === 'bookmarks')
+  const hasMetadataEditor = operation.fields.some(
+    (field) => field.name === 'metadata' && fieldSupportsBackend(field, backendVersion),
+  )
+  const hasBookmarksEditor = operation.fields.some(
+    (field) => field.name === 'bookmarks' && fieldSupportsBackend(field, backendVersion),
+  )
   const hasPdfStructureEditor = hasMetadataEditor || hasBookmarksEditor || operation.id === 'embed'
-  const basicFields = standaloneKind
+  const isV9 = parseGotenbergVersion(backendVersion)?.major === 9
+  const v8StandaloneOverlay = Boolean(standaloneKind) && !isV9
+  const basicFields = v8StandaloneOverlay
     ? []
     : operation.fields.filter(
         (field) =>
@@ -219,7 +225,7 @@ export function Workbench({
           !(field.customEditor && field.kind === 'json') &&
           !(operation.id === 'embed' && field.name === 'embedsMetadata'),
       )
-  const advancedFields = standaloneKind
+  const advancedFields = v8StandaloneOverlay
     ? []
     : operation.fields.filter(
         (field) =>
@@ -262,10 +268,12 @@ export function Workbench({
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
   const operationHasFileAssets = isSourceEditor
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
-  const isV9 = parseGotenbergVersion(backendVersion)?.major === 9
   const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && !isV9
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
-  const docsUrl = `https://gotenberg.dev/docs/${operation.docs}`
+  const docsUrl =
+    isV9 && operation.input === 'pdf'
+      ? `https://gotenberg.dev/docs/pdf/${operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`
+      : `https://gotenberg.dev/docs/${operation.docs}`
 
   const updateField = (name: string, value: string | boolean) =>
     setFields((current) => ({ ...current, [name]: value }))
@@ -360,7 +368,7 @@ export function Workbench({
     }
     const candidate = {
       operation: operation.id,
-      fields: standaloneKind
+      fields: v8StandaloneOverlay
         ? {}
         : hasChromiumNetwork
           ? { ...selectedFields, ...chromiumNetworkFields(cookies, resourceHeaders) }
@@ -375,7 +383,7 @@ export function Workbench({
         operation.input === 'markdown' ? (markdownTemplate ?? undefined) : undefined,
       headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
       footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
-      postProcess: standaloneKind
+      postProcess: v8StandaloneOverlay
         ? activeStandaloneSettings
         : hasPostProcessing && Object.values(postProcess).some((value) => value !== undefined)
           ? postProcess
@@ -402,7 +410,7 @@ export function Workbench({
         candidate: buildCandidate(),
         files,
         auxiliary: auxFiles,
-        postFiles,
+        postFiles: v8StandaloneOverlay || !standaloneKind ? postFiles : {},
       })
       toast.success(`Added job #${id} to the batch queue below.`)
     } catch (error) {
@@ -433,7 +441,7 @@ export function Workbench({
         files,
         auxFiles,
         signal,
-        postFiles,
+        v8StandaloneOverlay || !standaloneKind ? postFiles : {},
       )
       if (signal.aborted) {
         if (deadline.aborted) toast.error('Gotenberg did not respond within three minutes.')
@@ -453,12 +461,12 @@ export function Workbench({
         toast.message('Gotenberg accepted the request; callback delivery is not yet confirmed.')
         return
       }
-      const { blob, type, name, trace } = result
+      const { blob, type, name, trace, remediation } = result
       const url = URL.createObjectURL(blob)
       if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
       fileUrl.current = url
       const preview = type === 'application/json' ? (await blob.text()).slice(0, 16_000) : undefined
-      setLastDownload({ name, size: blob.size, type, url, preview, trace })
+      setLastDownload({ name, size: blob.size, type, url, preview, trace, remediation })
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = name
@@ -473,7 +481,11 @@ export function Workbench({
         elapsed: performance.now() - start,
         trace,
       })
-      toast.success(`${name} is ready to download`)
+      if (remediation?.residual || remediation?.rolledBack) {
+        toast.warning(
+          `Gotenberg generated ${name}, but PDF remediation reported ${remediation.residual} unresolved violations and ${remediation.rolledBack} rolled-back fixes. Validate the result before using it.`,
+        )
+      } else toast.success(`${name} is ready to download`)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         toast.message('Conversion cancelled.')
@@ -612,7 +624,7 @@ export function Workbench({
                 multiple={true}
               />
             )}
-            {operation.auxiliary && !standaloneKind && (
+            {operation.auxiliary && !v8StandaloneOverlay && (
               <UploadZone
                 label={operation.auxiliary.label}
                 description={operation.auxiliary.description}
@@ -653,7 +665,7 @@ export function Workbench({
                     />
                   ))}
               </div>
-            ) : !standaloneKind && !hasPdfStructureEditor ? (
+            ) : !v8StandaloneOverlay && !hasPdfStructureEditor ? (
               <p className="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
                 This operation works with its default settings.
               </p>
@@ -683,6 +695,13 @@ export function Workbench({
                 </p>
               </div>
             )}
+            {hasMetadataEditor && isV9 && (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Gotenberg 9 writes standard PDF metadata (title, author, subject, keywords, creator,
+                producer, and dates). Custom XMP fields such as Copyright remain available only with
+                Gotenberg 8.
+              </p>
+            )}
             {hasMetadataEditor && (
               <PdfMetadataEditor
                 value={String(fields.metadata ?? '{}')}
@@ -700,11 +719,11 @@ export function Workbench({
               <PdfBookmarksEditor
                 value={String(fields.bookmarks ?? '[]')}
                 onChange={(value) => updateField('bookmarks', value)}
-                allowFilenameMap
+                allowFilenameMap={!isV9}
                 filenames={files.map((file) => file.name)}
               />
             )}
-            {standaloneKind && activeStandaloneSettings && (
+            {v8StandaloneOverlay && standaloneKind && activeStandaloneSettings && (
               <OverlayGroupsEditor
                 kind={standaloneKind}
                 rows={activeStandaloneSettings[overlayProperty] ?? []}
@@ -830,7 +849,11 @@ export function Workbench({
                     {advancedFields.map((field) => (
                       <FieldControl
                         key={field.name}
-                        field={field}
+                        field={
+                          isV9 && operation.id === 'factur-x' && field.name === 'pdfa'
+                            ? { ...field, options: ['PDF/A-3b'] }
+                            : field
+                        }
                         value={fields[field.name]}
                         onChange={(value) => updateField(field.name, value)}
                         backendVersion={backendVersion}
@@ -971,10 +994,11 @@ export function Workbench({
         </div>
       </form>
       <JobPanel
+        backendVersion={backendVersion}
         operation={operation}
         files={files}
         auxFiles={auxFiles}
-        postFiles={postFiles}
+        postFiles={v8StandaloneOverlay || !standaloneKind ? postFiles : {}}
         source={isSourceEditor ? source : ''}
         pending={pending}
         lastDownload={lastDownload}

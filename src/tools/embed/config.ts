@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'embed',
+  supportedGotenbergMajors: [8, 9],
   title: 'Embed attachments',
   group: 'PDF tools',
   summary: 'Attach files within a PDF.',

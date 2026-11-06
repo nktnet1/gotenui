@@ -15,6 +15,7 @@ import { PdfResultPreview } from '#/components/pdf-result-preview'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import { formatBytes } from '#/lib/security'
 import { cn } from '#/lib/utils'
@@ -23,6 +24,7 @@ import type { AcceptedWebhook, Download, Job } from '#/tools/shared/tool-jobs'
 
 export function JobPanel({
   operation,
+  backendVersion,
   files,
   auxFiles,
   postFiles,
@@ -34,6 +36,7 @@ export function JobPanel({
   recent,
 }: {
   operation: Operation
+  backendVersion?: string
   files: File[]
   auxFiles: File[]
   postFiles: PostProcessFiles
@@ -76,7 +79,13 @@ export function JobPanel({
             <div className="space-y-1">
               <span className="text-xs text-slate-500 dark:text-slate-400">Gotenberg endpoint</span>
               <code className="block break-all rounded-lg bg-slate-100 dark:bg-slate-800 px-3 py-2.5 text-[11px] leading-5 text-slate-700 dark:text-slate-200">
-                {operation.path}
+                {parseGotenbergVersion(backendVersion)?.major === 9 && operation.input === 'pdf'
+                  ? operation.id === 'metadata-read'
+                    ? '/forms/pdf/metadata'
+                    : operation.id === 'bookmarks-read'
+                      ? '/forms/pdf/bookmarks'
+                      : '/forms/pdf/pipe'
+                  : operation.path}
               </code>
             </div>
             <div className="flex justify-between gap-4 text-xs">
@@ -200,6 +209,19 @@ export function JobPanel({
                       </p>
                     </div>
                   </div>
+                  {lastDownload.remediation &&
+                    (lastDownload.remediation.residual > 0 ||
+                      lastDownload.remediation.rolledBack > 0) && (
+                      <p
+                        role="alert"
+                        className="mb-4 rounded-lg border border-amber-500/50 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+                      >
+                        PDF remediation is not confirmed compliant:{' '}
+                        {lastDownload.remediation.residual} unresolved violations and{' '}
+                        {lastDownload.remediation.rolledBack} rolled-back fixes. Validate the output
+                        PDF.
+                      </p>
+                    )}
                   {lastDownload.type === 'application/pdf' && (
                     <PdfResultPreview
                       key={lastDownload.url}

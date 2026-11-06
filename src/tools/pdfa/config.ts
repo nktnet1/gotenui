@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'pdfa',
+  supportedGotenbergMajors: [8, 9],
   title: 'PDF/A & PDF/UA',
   group: 'PDF tools',
   summary: 'Make PDFs archival or accessibility compliant.',

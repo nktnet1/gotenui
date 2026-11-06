@@ -4,6 +4,7 @@ import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
   id: 'split',
+  supportedGotenbergMajors: [8, 9],
   title: 'Split PDFs',
   group: 'PDF tools',
   summary: 'Extract page ranges or split into intervals.',

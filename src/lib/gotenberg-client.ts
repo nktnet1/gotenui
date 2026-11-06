@@ -257,8 +257,17 @@ export function createGotenbergForm(
   return form
 }
 
+export type RemediationReport = { residual: number; rolledBack: number }
+
 export type ConversionResult =
-  | { mode: 'download'; blob: Blob; type: string; name: string; trace?: string }
+  | {
+      mode: 'download'
+      blob: Blob
+      type: string
+      name: string
+      trace?: string
+      remediation?: RemediationReport
+    }
   | { mode: 'webhook'; trace?: string; status: 202 | 204 }
 
 /** The proxy revalidates the JSON and files, and reconstructs a safe Gotenberg form. */
@@ -326,7 +335,18 @@ export async function convertWithGotenberg(
     type,
     name: filename,
     trace: response.headers.get('Gotenberg-Trace') ?? undefined,
+    remediation: readRemediationReport(response.headers),
   }
+}
+
+/** Gotenberg 9 may return HTTP 200 with unresolved conformance violations. */
+function readRemediationReport(headers: Headers): RemediationReport | undefined {
+  const residual = headers.get('Gotenberg-Remediation-Residual')
+  const rolledBack = headers.get('Gotenberg-Remediation-Rolled-Back')
+  if (residual === null && rolledBack === null) return undefined
+  const readCount = (value: string | null): number =>
+    value !== null && /^\d{1,10}$/.test(value) ? Number(value) : 0
+  return { residual: readCount(residual), rolledBack: readCount(rolledBack) }
 }
 
 /** Read selected-instance debug JSON using its upstream authentication; no Gotenui access key. */
