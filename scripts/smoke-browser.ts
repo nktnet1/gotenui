@@ -9,7 +9,7 @@ import { Readable, Writable } from 'node:stream'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
-import { ChromeDevToolsPipe } from '#scripts/chrome-devtools'
+import { attachToChromePage, ChromeDevToolsPipe } from '#scripts/chrome-devtools'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = resolve(root, '.output/server/index.mjs')
@@ -38,15 +38,7 @@ class BrowserPage {
     assert.ok(input instanceof Writable && output instanceof Readable)
     const page = new BrowserPage(new ChromeDevToolsPipe(input, output))
     try {
-      // Creating the target explicitly avoids racing Chrome's initial blank tab.
-      const { targetId } = await page.command('Target.createTarget', { url: 'about:blank' }, 20_000)
-      assert.ok(typeof targetId === 'string', 'Chrome did not create a debugging page target.')
-      const { sessionId } = await page.command('Target.attachToTarget', {
-        targetId,
-        flatten: true,
-      })
-      assert.ok(typeof sessionId === 'string', 'Chrome did not attach to the page target.')
-      page.sessionId = sessionId
+      page.sessionId = await attachToChromePage(page.devtools)
       return page
     } catch (error) {
       page.close()
@@ -183,6 +175,66 @@ async function terminate(child: ChildProcess): Promise<void> {
   }
 }
 
+/** Chrome startup occasionally stalls in CI before answering its first CDP command. */
+async function launchBrowser(
+  binary: string,
+): Promise<{ browser: ChildProcess; profile: string; page: BrowserPage }> {
+  const failures: string[] = []
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const profile = await mkdtemp(resolve(tmpdir(), 'gotenui-browser-'))
+    const browser = spawn(
+      binary,
+      [
+        '--headless=new',
+        '--no-sandbox',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-networking',
+        `--user-data-dir=${profile}`,
+        '--remote-debugging-pipe',
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] },
+    )
+    let chromeLogs = ''
+    browser.stderr?.on('data', (data: Buffer) => {
+      chromeLogs = `${chromeLogs}${data.toString()}`.slice(-4_000)
+    })
+    // Avoid an unhandled 'error' event if Chrome cannot be spawned.
+    let spawnError: Error | undefined
+    browser.on('error', (error: Error) => {
+      spawnError = error
+    })
+    try {
+      const page = await BrowserPage.connect(browser)
+      return { browser, profile, page }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      await terminate(browser)
+      const exit =
+        spawnError?.message ?? `exit=${browser.exitCode ?? '-'} signal=${browser.signalCode ?? '-'}`
+      failures.push(
+        `attempt ${attempt}: ${detail} (${exit}); stderr: ${chromeLogs.trim() || '(none)'}`,
+      )
+      await removeChromeProfile(profile)
+      if (spawnError) break
+      if (attempt < 2) {
+        console.warn('Browser smoke: Chrome startup stalled; retrying with a fresh profile.')
+        await sleep(250)
+      }
+    }
+  }
+  throw new Error(
+    `Chrome DevTools failed to start after ${failures.length} attempt(s):\n${failures.join('\n')}`,
+  )
+}
+
+async function removeChromeProfile(profile: string): Promise<void> {
+  // Chromium child helpers may briefly continue writing after the browser exits.
+  await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 })
+}
+
 /** Convert computed CSS colours to sRGB before comparing theme palettes in Chromium. */
 const toRgbScript = `((color) => {
   const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
@@ -247,7 +299,6 @@ async function waitForRgbColor(
 async function run(): Promise<void> {
   assert.ok(existsSync(entry), 'Build Gotenui before running the browser smoke suite.')
   assert.ok(chromium, 'Chrome/Chromium not found. Set GOTENUI_BROWSER_BIN to its executable path.')
-  const temp = await mkdtemp(resolve(tmpdir(), 'gotenui-browser-'))
   const appPort = await unusedPort()
   const app = spawn(process.execPath, [entry], {
     cwd: root,
@@ -267,38 +318,19 @@ async function run(): Promise<void> {
   }
   app.stdout.on('data', log)
   app.stderr.on('data', log)
-  const browser = spawn(
-    chromium,
-    [
-      '--headless=new',
-      '--no-sandbox',
-      '--disable-gpu',
-      '--disable-dev-shm-usage',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-networking',
-      `--user-data-dir=${temp}`,
-      '--remote-debugging-pipe',
-    ],
-    { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] },
-  )
-  let chromeLogs = ''
-  assert.ok(browser.stderr, 'Chrome did not expose its stderr pipe.')
-  browser.stderr.on('data', (data: Buffer) => {
-    chromeLogs = `${chromeLogs}${data.toString()}`.slice(-4_000)
-  })
+  let browser: ChildProcess | undefined
+  let browserProfile: string | undefined
   let page: BrowserPage | undefined
   let checks = 0
   try {
     const origin = `http://127.0.0.1:${appPort}`
     await waitForEndpoint(`${origin}/`, app, () => logs)
-    try {
-      page = await BrowserPage.connect(browser)
-    } catch (error) {
-      throw new Error(`Chrome DevTools failed to start: ${chromeLogs || '(no stderr)'}`, {
-        cause: error,
-      })
-    }
+    // Launch only after Nitro is ready, and retry only failed Chrome startup.
+    // A fresh profile and process avoid carrying a stuck renderer into attempt 2.
+    const launched = await launchBrowser(chromium)
+    browser = launched.browser
+    browserProfile = launched.profile
+    page = launched.page
     await page.command('Page.enable')
     await page.command('Runtime.enable')
     await page.resize(1440)
@@ -1348,10 +1380,9 @@ async function run(): Promise<void> {
     checks++
   } finally {
     page?.close()
-    await terminate(browser)
+    if (browser) await terminate(browser)
     await terminate(app)
-    // Chromium helpers may still be writing to the profile after the parent exits.
-    await rm(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    if (browserProfile) await removeChromeProfile(browserProfile)
   }
   console.log(
     `Browser smoke: ${styleText('green', 'PASS')} (${checks} checks, desktop and mobile Chromium)`,

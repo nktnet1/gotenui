@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ChromeDevToolsPipe } from '#scripts/chrome-devtools'
+import { attachToChromePage, ChromeDevToolsPipe } from '#scripts/chrome-devtools'
 
 const pipes: ChromeDevToolsPipe[] = []
 
@@ -11,12 +11,61 @@ function createPipe() {
   pipes.push(devtools)
   const sent: string[] = []
   input.on('data', (chunk: Buffer) => sent.push(chunk.toString('utf8')))
-  return { devtools, output, sent }
+  return { devtools, input, output, sent }
 }
 
 afterEach(() => {
   for (const pipe of pipes.splice(0)) pipe.close()
   vi.useRealTimers()
+})
+
+describe('Chrome page bootstrap', () => {
+  function mockChrome(targetInfos: unknown[]) {
+    const { devtools, input, output } = createPipe()
+    // The mock speaks the same NUL-delimited protocol as the real debugging pipe.
+    const commands: { method: string; params: Record<string, unknown> }[] = []
+    const responses: Record<string, Record<string, unknown>> = {
+      'Browser.getVersion': { product: 'Chrome/144.0' },
+      'Target.getTargets': { targetInfos },
+      'Target.createTarget': { targetId: 'new-page' },
+      'Target.attachToTarget': { sessionId: 'page-session' },
+    }
+    input.on('data', (chunk: Buffer) => {
+      for (const raw of chunk.toString('utf8').split('\0').filter(Boolean)) {
+        const request = JSON.parse(raw) as {
+          id: number
+          method: string
+          params: Record<string, unknown>
+        }
+        commands.push(request)
+        output.write(`${JSON.stringify({ id: request.id, result: responses[request.method] })}\0`)
+      }
+    })
+    return { devtools, commands }
+  }
+
+  it('attaches to the initial Chrome page without creating another renderer', async () => {
+    const chrome = mockChrome([{ type: 'page', targetId: 'existing-page', attached: false }])
+    await expect(attachToChromePage(chrome.devtools)).resolves.toBe('page-session')
+    expect(chrome.commands.map(({ method }) => method)).toEqual([
+      'Browser.getVersion',
+      'Target.getTargets',
+      'Target.attachToTarget',
+    ])
+    expect(chrome.commands[2]?.params).toEqual({ targetId: 'existing-page', flatten: true })
+  })
+
+  it('creates a page only when Chrome has no available page target', async () => {
+    const chrome = mockChrome([{ type: 'service_worker', targetId: 'worker' }])
+    await expect(attachToChromePage(chrome.devtools)).resolves.toBe('page-session')
+    expect(chrome.commands.map(({ method }) => method)).toEqual([
+      'Browser.getVersion',
+      'Target.getTargets',
+      'Target.createTarget',
+      'Target.attachToTarget',
+    ])
+    expect(chrome.commands.at(-1)?.params).toEqual({ targetId: 'new-page', flatten: true })
+  })
 })
 
 describe('Chrome DevTools pipe', () => {

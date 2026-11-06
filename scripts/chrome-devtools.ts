@@ -99,3 +99,45 @@ export class ChromeDevToolsPipe {
     this.output.destroy()
   }
 }
+
+/** Attach to Chrome's initial page instead of starting another renderer during startup. */
+export async function attachToChromePage(
+  devtools: ChromeDevToolsPipe,
+  timeoutMs = 12_000,
+): Promise<string> {
+  // A successful browser-level command confirms that the debugging pipe is ready.
+  await devtools.command('Browser.getVersion', {}, undefined, timeoutMs)
+  const { targetInfos } = await devtools.command('Target.getTargets', {}, undefined, timeoutMs)
+  const pages = Array.isArray(targetInfos) ? targetInfos : []
+  const existing = pages.find(
+    (target): target is { type: string; attached: boolean; targetId: string } =>
+      typeof target === 'object' &&
+      target !== null &&
+      target.type === 'page' &&
+      target.attached !== true &&
+      typeof target.targetId === 'string',
+  )
+  let targetId = existing?.targetId
+  if (!targetId) {
+    const created = await devtools.command(
+      'Target.createTarget',
+      { url: 'about:blank' },
+      undefined,
+      timeoutMs,
+    )
+    if (typeof created.targetId !== 'string') {
+      throw new Error('Chrome did not create a debugging page target.')
+    }
+    targetId = created.targetId
+  }
+  const attached = await devtools.command(
+    'Target.attachToTarget',
+    { targetId, flatten: true },
+    undefined,
+    timeoutMs,
+  )
+  if (typeof attached.sessionId !== 'string') {
+    throw new Error('Chrome did not attach to the page target.')
+  }
+  return attached.sessionId
+}
