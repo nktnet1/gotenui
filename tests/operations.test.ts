@@ -3,11 +3,12 @@ import { expect, test } from 'vitest'
 import { GROUPS, OPERATION_BY_ID, OPERATIONS, operationDefaults } from '#/lib/operations'
 
 test('all operation identifiers and Gotenberg endpoints are unique', () => {
-  assert.equal(OPERATIONS.length, 22)
+  assert.equal(OPERATIONS.length, 39)
   assert.equal(OPERATION_BY_ID.size, OPERATIONS.length)
-  assert.equal(new Set(OPERATIONS.map((operation) => operation.path)).size, OPERATIONS.length)
+  const v8 = OPERATIONS.filter((operation) => operation.supportedGotenbergMajors?.includes(8))
+  assert.equal(new Set(v8.map((operation) => operation.path)).size, v8.length)
   for (const operation of OPERATIONS) {
-    assert.match(operation.path, /^\/forms\/(chromium|libreoffice|pdfengines)\//)
+    assert.match(operation.path, /^\/forms\/(chromium|libreoffice|pdfengines|pdf)\//)
     assert.ok(GROUPS.includes(operation.group))
     assert.ok(operation.docs && !operation.docs.startsWith('/'))
     assert.equal(new Set(operation.fields.map((field) => field.name)).size, operation.fields.length)
@@ -89,5 +90,9 @@ const documentedRoutes = [
 ] as const
 
 test('implements every published Gotenberg multipart processing endpoint', () => {
-  expect(OPERATIONS.map(({ path }) => path).sort()).toEqual([...documentedRoutes].sort())
+  expect(
+    OPERATIONS.filter(({ supportedGotenbergMajors }) => supportedGotenbergMajors?.includes(8))
+      .map(({ path }) => path)
+      .sort(),
+  ).toEqual([...documentedRoutes].sort())
 })

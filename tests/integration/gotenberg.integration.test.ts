@@ -1,5 +1,8 @@
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterAll, beforeAll, expect, inject, test } from 'vitest'
 import {
@@ -13,6 +16,7 @@ import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
 import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import type { ConversionPayload } from '#/lib/validation'
+import { V9_PDF_IDS } from '#/tools/v9-pdf-config'
 import type { CallbackReceipt } from './async-fixture-server'
 import { retryTransientConversion } from './transient-conversion'
 
@@ -241,7 +245,10 @@ function zipEntryCount(bytes: Uint8Array): number {
 // Drive each UI operation through the real server-side proxy into the local Docker instance.
 // No mocks and no network calls to demo.gotenberg.dev are used in this suite.
 test.each(
-  OPERATIONS.filter((operation) => !isV9 || operation.supportedGotenbergMajors?.includes(9)),
+  OPERATIONS.filter(
+    (operation) =>
+      !V9_PDF_IDS.has(operation.id) && (!isV9 || operation.supportedGotenbergMajors?.includes(9)),
+  ),
 )(
   '$id - $path',
   async (operation) => {
@@ -371,6 +378,213 @@ test.skipIf(!isV9)(
     if (!embedded.ok) throw new Error(`Attach: ${embedded.status} ${await embedded.text()}`)
     const result = await inspectV9Pdf('attachments', await embedded.arrayBuffer())
     expect(JSON.stringify(result)).toContain('verification.txt')
+  },
+  120_000,
+)
+
+/** Build a tiny AcroForm entirely in memory: no binary fixture or external dependency. */
+function formPdfFixture(): File {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Annots [4 0 R] /Contents 6 0 R >>',
+    '<< /Type /Annot /Subtype /Widget /FT /Tx /T (customer) /V () /Rect [50 700 300 725] /P 3 0 R /F 4 /DA (/F1 12 Tf 0 g) >>',
+    '<< /Fields [4 0 R] /DA (/F1 12 Tf 0 g) /DR << /Font << /F1 7 0 R >> >> >>',
+    '<< /Length 0 >>\nstream\n\nendstream',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let content = '%PDF-1.7\n'
+  const offsets = [0]
+  for (const [index, object] of objects.entries()) {
+    offsets.push(content.length)
+    content += `${index + 1} 0 obj\n${object}\nendobj\n`
+  }
+  const startXref = content.length
+  content += `xref\n0 ${offsets.length}\n0000000000 65535 f \n`
+  for (const offset of offsets.slice(1)) content += `${String(offset).padStart(10, '0')} 00000 n \n`
+  content += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${startXref}\n%%EOF\n`
+  return new File([content], 'form.pdf', { type: 'application/pdf' })
+}
+
+async function convertV9(
+  id: string,
+  fields: Record<string, string | boolean> = {},
+  inputs: File[] = [pdfFile()],
+  assets: File[] = [],
+): Promise<Response> {
+  const operation = OPERATIONS.find(({ id: operationId }) => operationId === id)
+  if (!operation) throw new Error(`Missing v9 tool: ${id}`)
+  return proxyConversionRequest(request(operation, { fields }, inputs, assets))
+}
+
+/** Each v9 feature must use the real 9.0.0 container, not a mocked upstream. */
+const v9PdfWorkflows: { id: string; fields: Record<string, string | boolean>; type: string }[] = [
+  { id: 'pdf-info', fields: {}, type: 'application/json' },
+  { id: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, type: 'application/json' },
+  { id: 'pdf-attachments', fields: {}, type: 'application/json' },
+  { id: 'pdf-form', fields: {}, type: 'application/json' },
+  { id: 'select-pages', fields: { pages: '2' }, type: 'application/pdf' },
+  { id: 'delete-pages', fields: { pages: '1' }, type: 'application/pdf' },
+  { id: 'insert-pages', fields: { at: '1' }, type: 'application/pdf' },
+  { id: 'flatten-transparency', fields: {}, type: 'application/pdf' },
+  { id: 'convert-colors', fields: { target: 'rgb' }, type: 'application/pdf' },
+  {
+    id: 'redact',
+    fields: {
+      regions: '[{"page":1,"x":48,"y":500,"width":50,"height":30}]',
+      confirmRedaction: true,
+    },
+    type: 'application/pdf',
+  },
+  { id: 'autotag', fields: {}, type: 'application/pdf' },
+  { id: 'render-pages', fields: { format: 'png', pages: '1' }, type: 'image/png' },
+]
+
+test.skipIf(!isV9).each(v9PdfWorkflows)(
+  'Gotenberg 9 executes $id on real PDF content',
+  async ({ id, fields, type }) => {
+    const inputs = ['select-pages', 'delete-pages'].includes(id)
+      ? [new File([splitPdfBytes], 'two-pages.pdf', { type: 'application/pdf' })]
+      : [pdfFile()]
+    const assets = id === 'insert-pages' ? [pdfFile('inserted.pdf')] : []
+    const response = await convertV9(id, fields, inputs, assets)
+    if (!response.ok) throw new Error(`${id}: HTTP ${response.status}: ${await response.text()}`)
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe(type)
+    const bytes = await response.arrayBuffer()
+    expect(bytes.byteLength).toBeGreaterThan(30)
+    if (type === 'application/pdf') {
+      expect(await inspectV9Pdf('info', bytes)).toMatchObject({
+        'verified.pdf': { pages: id === 'insert-pages' ? 2 : 1 },
+      })
+    } else if (type === 'application/json') {
+      const parsed = JSON.parse(new TextDecoder().decode(bytes))
+      expect(parsed).toHaveProperty('original.pdf')
+      if (id === 'pdf-validate') {
+        expect(parsed['original.pdf']).toMatchObject({ profile: 'PDF/A-2b' })
+        expect(typeof parsed['original.pdf'].compliant).toBe('boolean')
+        expect(Array.isArray(parsed['original.pdf'].violations)).toBe(true)
+      }
+    } else if (type === 'image/png') {
+      expect([...new Uint8Array(bytes).subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+    }
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 renders several pages to an image archive',
+  async () => {
+    const response = await convertV9('render-pages', { format: 'png' }, [
+      new File([splitPdfBytes], 'two-pages.pdf', { type: 'application/pdf' }),
+    ])
+    if (!response.ok)
+      throw new Error(`Render ZIP: HTTP ${response.status}: ${await response.text()}`)
+    expect(response.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    expect(zipEntryCount(bytes)).toBe(2)
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 fills and reads back an actual PDF form field',
+  async () => {
+    const source = formPdfFixture()
+    const read = await convertV9('pdf-form', {}, [source])
+    if (!read.ok) throw new Error(`Form read: HTTP ${read.status}: ${await read.text()}`)
+    expect(JSON.stringify(await read.json())).toContain('customer')
+    const filled = await convertV9('fill-form', { formValues: '{"customer":"Gotenui"}' }, [source])
+    if (!filled.ok) throw new Error(`Form fill: HTTP ${filled.status}: ${await filled.text()}`)
+    const updated = await convertV9('pdf-form', {}, [
+      new File([await filled.arrayBuffer()], 'filled.pdf'),
+    ])
+    if (!updated.ok)
+      throw new Error(`Form read-back: HTTP ${updated.status}: ${await updated.text()}`)
+    expect(JSON.stringify(await updated.json())).toContain('Gotenui')
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 decrypts a password-protected PDF',
+  async () => {
+    const encrypted = await convertV9('encrypt', { userPassword: 'secret' })
+    if (!encrypted.ok) throw new Error(`Encrypt: ${encrypted.status} ${await encrypted.text()}`)
+    const decrypted = await convertV9('decrypt', { password: 'secret' }, [
+      new File([await encrypted.arrayBuffer()], 'locked.pdf'),
+    ])
+    if (!decrypted.ok) throw new Error(`Decrypt: ${decrypted.status} ${await decrypted.text()}`)
+    expect(await inspectV9Pdf('info', await decrypted.arrayBuffer())).toMatchObject({
+      'verified.pdf': { encrypted: false, pages: 1 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 removes an embedded attachment by name',
+  async () => {
+    const embedded = await convertV9(
+      'embed',
+      {},
+      [pdfFile()],
+      [new File(['proof'], 'remove-me.txt')],
+    )
+    if (!embedded.ok) throw new Error(`Embed: ${embedded.status} ${await embedded.text()}`)
+    const cleaned = await convertV9('detach', { attachmentName: 'remove-me.txt' }, [
+      new File([await embedded.arrayBuffer()], 'attached.pdf'),
+    ])
+    if (!cleaned.ok) throw new Error(`Detach: ${cleaned.status} ${await cleaned.text()}`)
+    expect(await inspectV9Pdf('attachments', await cleaned.arrayBuffer())).toMatchObject({
+      'verified.pdf': [],
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 signs a PDF with an ephemeral PEM certificate',
+  async () => {
+    const temporary = realpathSync(mkdtempSync(join(tmpdir(), 'gotenui-v9-sign-')))
+    const certificate = join(temporary, 'signer.pem')
+    const privateKey = join(temporary, 'signer.key')
+    try {
+      execFileSync(
+        'openssl',
+        [
+          'req',
+          '-x509',
+          '-newkey',
+          'rsa:2048',
+          '-sha256',
+          '-nodes',
+          '-days',
+          '1',
+          '-subj',
+          '/CN=Gotenui integration test',
+          '-keyout',
+          privateKey,
+          '-out',
+          certificate,
+        ],
+        { stdio: 'ignore' },
+      )
+      const signed = await convertV9(
+        'sign',
+        { reason: 'Gotenui integration' },
+        [pdfFile()],
+        [
+          new File([readFileSync(certificate)], 'signer.pem'),
+          new File([readFileSync(privateKey)], 'signer.key'),
+        ],
+      )
+      if (!signed.ok) throw new Error(`Sign: ${signed.status} ${await signed.text()}`)
+      const bytes = new Uint8Array(await signed.arrayBuffer())
+      expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
+      expect(new TextDecoder().decode(bytes).includes('/ByteRange')).toBe(true)
+    } finally {
+      rmSync(temporary, { recursive: true, force: true })
+    }
   },
   120_000,
 )

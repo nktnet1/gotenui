@@ -49,6 +49,23 @@ const orderedIds = [
   'bookmarks-write',
   'embed',
   'factur-x',
+  'pdf-info',
+  'pdf-validate',
+  'pdf-attachments',
+  'pdf-form',
+  'select-pages',
+  'delete-pages',
+  'insert-pages',
+  'fill-form',
+  'flatten-transparency',
+  'convert-colors',
+  'redact',
+  'autotag',
+  'detach',
+  'decrypt',
+  'sign',
+  'timestamp',
+  'render-pages',
 ]
 
 test('every independent tool module is registered exactly once and preserves tool order', () => {

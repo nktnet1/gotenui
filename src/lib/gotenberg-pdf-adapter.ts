@@ -1,8 +1,10 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
+import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { metadataObject } from '#/lib/pdf-structure-editors'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
+import { V9_PDF_IDS } from '#/tools/v9-pdf-config'
 
 type Stage = { op: string; [name: string]: unknown }
 
@@ -38,6 +40,9 @@ export function adaptPdfForm(
   auxiliary: readonly File[],
 ): { path: string; form: FormData } {
   if (major === 8) {
+    if (V9_PDF_IDS.has(operation.id)) {
+      throw new InputError(`${operation.title} requires Gotenberg 9.`, 409)
+    }
     if (
       Object.keys(payload.fields).some(
         (key) =>
@@ -48,6 +53,8 @@ export function adaptPdfForm(
     }
     return { path: operation.path, form: legacy }
   }
+  const extra = adaptV9PdfExtra(operation.id, payload, legacy, auxiliary)
+  if (extra) return extra
   if (!v9PdfOperations.has(operation.id) || operation.input !== 'pdf') {
     throw new InputError(
       `The ${operation.title} tool is not supported by the Gotenberg 9 PDF adapter.`,

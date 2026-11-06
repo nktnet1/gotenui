@@ -4,14 +4,22 @@
  * Keep the order stable: it controls the tool lists and featured defaults.
  */
 
+import { operation as autotag } from '#/tools/autotag/config'
 import { operation as bookmarksRead } from '#/tools/bookmarks-read/config'
 import { operation as bookmarksWrite } from '#/tools/bookmarks-write/config'
+import { operation as convertColors } from '#/tools/convert-colors/config'
+import { operation as decrypt } from '#/tools/decrypt/config'
+import { operation as deletePages } from '#/tools/delete-pages/config'
+import { operation as detach } from '#/tools/detach/config'
 import { operation as embed } from '#/tools/embed/config'
 import { operation as encrypt } from '#/tools/encrypt/config'
 import { operation as facturX } from '#/tools/factur-x/config'
+import { operation as fillForm } from '#/tools/fill-form/config'
 import { operation as flatten } from '#/tools/flatten/config'
+import { operation as flattenTransparency } from '#/tools/flatten-transparency/config'
 import { operation as htmlPdf } from '#/tools/html-pdf/config'
 import { operation as htmlShot } from '#/tools/html-shot/config'
+import { operation as insertPages } from '#/tools/insert-pages/config'
 import { operation as markdownPdf } from '#/tools/markdown-pdf/config'
 import { operation as markdownShot } from '#/tools/markdown-shot/config'
 import { operation as merge } from '#/tools/merge/config'
@@ -19,10 +27,19 @@ import { operation as metadataRead } from '#/tools/metadata-read/config'
 import { operation as metadataWrite } from '#/tools/metadata-write/config'
 import { operation as officePdf } from '#/tools/office-pdf/config'
 import { operation as optimize } from '#/tools/optimize/config'
+import { operation as pdfAttachments } from '#/tools/pdf-attachments/config'
+import { operation as pdfForm } from '#/tools/pdf-form/config'
+import { operation as pdfInfo } from '#/tools/pdf-info/config'
+import { operation as pdfValidate } from '#/tools/pdf-validate/config'
 import { operation as pdfa } from '#/tools/pdfa/config'
+import { operation as redact } from '#/tools/redact/config'
+import { operation as renderPages } from '#/tools/render-pages/config'
 import { operation as rotate } from '#/tools/rotate/config'
+import { operation as selectPages } from '#/tools/select-pages/config'
+import { operation as sign } from '#/tools/sign/config'
 import { operation as split } from '#/tools/split/config'
 import { operation as stamp } from '#/tools/stamp/config'
+import { operation as timestamp } from '#/tools/timestamp/config'
 import type { Operation, OperationGroup } from '#/tools/types'
 import { operation as urlPdf } from '#/tools/url-pdf/config'
 import { operation as urlShot } from '#/tools/url-shot/config'
@@ -51,6 +68,23 @@ export const OPERATIONS: readonly Operation[] = [
   bookmarksWrite,
   embed,
   facturX,
+  pdfInfo,
+  pdfValidate,
+  pdfAttachments,
+  pdfForm,
+  selectPages,
+  deletePages,
+  insertPages,
+  fillForm,
+  flattenTransparency,
+  convertColors,
+  redact,
+  autotag,
+  detach,
+  decrypt,
+  sign,
+  timestamp,
+  renderPages,
 ]
 
 export const OPERATION_BY_ID = new Map(OPERATIONS.map((operation) => [operation.id, operation]))

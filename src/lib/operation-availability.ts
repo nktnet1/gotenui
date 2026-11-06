@@ -22,7 +22,9 @@ export function unavailableOperationReason(
     return `Gotenberg ${version.major} is not supported. Select a Gotenberg 8 or 9 connection.`
   }
   if (!(operation.supportedGotenbergMajors ?? [8]).includes(version.major)) {
-    return `This tool has not been migrated to Gotenberg ${version.major} yet. Select a Gotenberg 8 connection for this workflow.`
+    return version.major === 8
+      ? 'This tool requires Gotenberg 9. Select a Gotenberg 9 connection for this workflow.'
+      : 'This tool has not been migrated to Gotenberg 9 yet. Select a Gotenberg 8 connection for this workflow.'
   }
   const healthModules = status.modules.filter((module) =>
     ['chromium', 'libreoffice'].includes(module.name.toLowerCase()),

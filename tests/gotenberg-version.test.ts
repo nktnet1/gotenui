@@ -46,7 +46,9 @@ describe('Gotenberg major-version detection', () => {
 describe('per-operation API compatibility', () => {
   it('keeps all existing Gotenberg 8 tools enabled (subject to existing module/minor checks)', () => {
     for (const tool of OPERATIONS) {
-      assert.equal(unavailableOperationReason(status('8.39.0'), tool), null, tool.id)
+      const reason = unavailableOperationReason(status('8.39.0'), tool)
+      if (tool.supportedGotenbergMajors?.includes(8)) assert.equal(reason, null, tool.id)
+      else assert.match(reason ?? '', /requires Gotenberg 9/, tool.id)
     }
     assert.match(unavailableOperationReason(status('8.35.0'), operation('optimize')) ?? '', /8\.36/)
   })
@@ -54,7 +56,11 @@ describe('per-operation API compatibility', () => {
   it('enables conversions, screenshots and standalone PDF processing on both versions', () => {
     for (const tool of OPERATIONS) {
       assert.equal(unavailableOperationReason(status('9.0.0'), tool), null, tool.id)
-      assert.deepEqual(tool.supportedGotenbergMajors, [8, 9], tool.id)
+      assert.deepEqual(
+        tool.supportedGotenbergMajors,
+        tool.path.startsWith('/forms/pdf/') ? [9] : [8, 9],
+        tool.id,
+      )
     }
   })
 

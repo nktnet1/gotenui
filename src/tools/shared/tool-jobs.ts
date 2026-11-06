@@ -1,4 +1,5 @@
 import type { RemediationReport } from '#/lib/gotenberg-client'
+import type { PdfValidationResult } from '#/lib/pdf-validation-report'
 
 /** Shared job, webhook, and output shapes used by the form and result panel. */
 export type Job = {
@@ -24,4 +25,5 @@ export type Download = {
   preview?: string
   trace?: string
   remediation?: RemediationReport
+  validation?: PdfValidationResult[]
 }

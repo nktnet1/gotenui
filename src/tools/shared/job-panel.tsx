@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ArrowDownToLine,
   Check,
   CheckCircle2,
@@ -21,6 +22,7 @@ import { formatBytes } from '#/lib/security'
 import { cn } from '#/lib/utils'
 import type { Operation } from '#/tools/registry'
 import type { AcceptedWebhook, Download, Job } from '#/tools/shared/tool-jobs'
+import { V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
 
 export function JobPanel({
   operation,
@@ -48,6 +50,9 @@ export function JobPanel({
   recent: Job[]
 }) {
   const Icon = operationIcon(operation.id)
+  const validationNeedsReview =
+    operation.id === 'pdf-validate' &&
+    (!lastDownload?.validation || lastDownload.validation.some((report) => !report.compliant))
   return (
     <div className="space-y-5 lg:sticky lg:top-7 lg:self-start">
       <Card>
@@ -80,11 +85,12 @@ export function JobPanel({
               <span className="text-xs text-slate-500 dark:text-slate-400">Gotenberg endpoint</span>
               <code className="block break-all rounded-lg bg-slate-100 dark:bg-slate-800 px-3 py-2.5 text-[11px] leading-5 text-slate-700 dark:text-slate-200">
                 {parseGotenbergVersion(backendVersion)?.major === 9 && operation.input === 'pdf'
-                  ? operation.id === 'metadata-read'
-                    ? '/forms/pdf/metadata'
-                    : operation.id === 'bookmarks-read'
-                      ? '/forms/pdf/bookmarks'
-                      : '/forms/pdf/pipe'
+                  ? (V9_PDF_READ_ROUTES.get(operation.id) ??
+                    (operation.id === 'metadata-read'
+                      ? '/forms/pdf/metadata'
+                      : operation.id === 'bookmarks-read'
+                        ? '/forms/pdf/bookmarks'
+                        : '/forms/pdf/pipe'))
                   : operation.path}
               </code>
             </div>
@@ -118,11 +124,13 @@ export function JobPanel({
             <div className="flex justify-between gap-4 text-xs">
               <span className="text-slate-500 dark:text-slate-400">Target output</span>
               <span className="font-semibold uppercase text-slate-700 dark:text-slate-200">
-                {operation.output === 'image'
-                  ? 'PNG / JPEG / WebP'
-                  : operation.output === 'pdf' || operation.id === 'split'
-                    ? 'PDF / ZIP'
-                    : operation.output}
+                {operation.id === 'render-pages'
+                  ? 'PNG / JPEG / ZIP'
+                  : operation.output === 'image'
+                    ? 'PNG / JPEG / WebP'
+                    : operation.output === 'pdf' || operation.id === 'split'
+                      ? 'PDF / ZIP'
+                      : operation.output}
               </span>
             </div>
           </div>
@@ -197,15 +205,31 @@ export function JobPanel({
               lastDownload && (
                 <>
                   <div className="mb-4 flex items-center gap-3">
-                    <div className="flex size-10 items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400">
-                      <Check className="size-5" />
+                    <div
+                      className={cn(
+                        'flex size-10 items-center justify-center rounded-full',
+                        validationNeedsReview
+                          ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400'
+                          : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400',
+                      )}
+                    >
+                      {validationNeedsReview ? (
+                        <AlertTriangle className="size-5" />
+                      ) : (
+                        <Check className="size-5" />
+                      )}
                     </div>
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-slate-900 dark:text-slate-100">
                         {lastDownload.name}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                        {formatBytes(lastDownload.size)} · Ready
+                        {formatBytes(lastDownload.size)} ·{' '}
+                        {validationNeedsReview
+                          ? 'Report requires review'
+                          : operation.id === 'pdf-validate'
+                            ? 'Validation complete: compliant'
+                            : 'Ready'}
                       </p>
                     </div>
                   </div>
@@ -222,6 +246,53 @@ export function JobPanel({
                         PDF.
                       </p>
                     )}
+                  {operation.id === 'pdf-validate' && !lastDownload.validation && (
+                    <p
+                      role="alert"
+                      className="mb-4 rounded-lg border border-amber-400 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+                    >
+                      The compliance result could not be interpreted. Review the downloaded JSON;
+                      compliance has not been established.
+                    </p>
+                  )}
+                  {lastDownload.validation && (
+                    <section className="mb-4 space-y-2" aria-label="PDF compliance results">
+                      {lastDownload.validation.map((result) => (
+                        <div
+                          key={result.filename}
+                          role={result.compliant ? 'status' : 'alert'}
+                          className={cn(
+                            'rounded-lg border p-3 text-xs',
+                            result.compliant
+                              ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200'
+                              : 'border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200',
+                          )}
+                        >
+                          <p className="font-semibold">
+                            {result.filename}: {result.compliant ? 'Compliant' : 'Not compliant'}
+                          </p>
+                          <p>
+                            {result.profile} · {result.totalViolations} reported finding(s)
+                          </p>
+                          {result.violations.length > 0 && (
+                            <ul className="mt-2 list-disc space-y-1 pl-4">
+                              {result.violations.map((violation) => (
+                                <li key={violation.id}>
+                                  {violation.severity ? `${violation.severity}: ` : ''}
+                                  {violation.description}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {result.totalViolations > result.violations.length && (
+                            <p className="mt-2">
+                              Download the JSON report for the remaining findings.
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </section>
+                  )}
                   {lastDownload.type === 'application/pdf' && (
                     <PdfResultPreview
                       key={lastDownload.url}
@@ -233,7 +304,9 @@ export function JobPanel({
                     <img
                       className="mb-4 max-h-52 w-full rounded-lg border border-slate-100 dark:border-slate-800 object-contain"
                       src={lastDownload.url}
-                      alt="Latest screenshot"
+                      alt={
+                        operation.id === 'render-pages' ? 'Rendered PDF page' : 'Latest screenshot'
+                      }
                     />
                   )}
                   {lastDownload.preview && (

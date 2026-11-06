@@ -325,6 +325,10 @@ function allowedConversionContentTypes(
   files: readonly File[],
 ): readonly string[] {
   const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
+  if (operation.id === 'render-pages') {
+    const imageType = payload.fields.format === 'jpeg' ? 'image/jpeg' : 'image/png'
+    return [imageType, 'application/zip']
+  }
   // Even an intervals split can produce a PDF when there is just one output.
   // The proxy cannot know its page count without reading the input document.
   if (operation.id === 'split') return ['application/pdf', 'application/zip']

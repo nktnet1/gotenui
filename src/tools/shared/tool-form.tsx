@@ -59,6 +59,7 @@ import {
   type PostProcessFiles,
 } from '#/lib/pdf-post-processing'
 import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
+import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import { cn } from '#/lib/utils'
 import { InputError, parseAdvanced, type WebhookConfig } from '#/lib/validation'
 import {
@@ -465,8 +466,13 @@ export function Workbench({
       const url = URL.createObjectURL(blob)
       if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
       fileUrl.current = url
-      const preview = type === 'application/json' ? (await blob.text()).slice(0, 16_000) : undefined
-      setLastDownload({ name, size: blob.size, type, url, preview, trace, remediation })
+      const jsonText = type === 'application/json' ? await blob.text() : undefined
+      const preview = jsonText?.slice(0, 16_000)
+      const validation =
+        operation.id === 'pdf-validate' && jsonText
+          ? (parsePdfValidationReport(jsonText) ?? undefined)
+          : undefined
+      setLastDownload({ name, size: blob.size, type, url, preview, trace, remediation, validation })
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = name
@@ -481,7 +487,15 @@ export function Workbench({
         elapsed: performance.now() - start,
         trace,
       })
-      if (remediation?.residual || remediation?.rolledBack) {
+      if (validation?.some((result) => !result.compliant)) {
+        toast.warning(
+          'PDF validation found non-compliant documents. Review the reported violations before relying on them.',
+        )
+      } else if (operation.id === 'pdf-validate' && !validation) {
+        toast.warning(
+          'PDF validation response could not be summarised. Review the downloaded JSON.',
+        )
+      } else if (remediation?.residual || remediation?.rolledBack) {
         toast.warning(
           `Gotenberg generated ${name}, but PDF remediation reported ${remediation.residual} unresolved violations and ${remediation.rolledBack} rolled-back fixes. Validate the result before using it.`,
         )
