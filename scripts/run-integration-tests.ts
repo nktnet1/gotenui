@@ -1,6 +1,5 @@
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
+import { spawnVitest, type TestProcessResult } from './test-process'
 
 export const GOTENBERG_INTEGRATION_VERSIONS = ['8.40.0', '9.0.0'] as const
 export type GotenbergIntegrationVersion = (typeof GOTENBERG_INTEGRATION_VERSIONS)[number]
@@ -22,35 +21,14 @@ export function integrationVersions(
   return [version as GotenbergIntegrationVersion]
 }
 
-type IntegrationResult = {
-  status: number | null
-  signal?: NodeJS.Signals | null
-  error?: Error
-}
-
 type RunVersion = (
   version: GotenbergIntegrationVersion,
-) => IntegrationResult | Promise<IntegrationResult>
+) => TestProcessResult | Promise<TestProcessResult>
 
-function runVitest(version: GotenbergIntegrationVersion): Promise<IntegrationResult> {
-  const root = fileURLToPath(new URL('../', import.meta.url))
-  const vitest = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url))
-  return new Promise((resolve) => {
-    let error: Error | undefined
-    const child = spawn(
-      process.execPath,
-      [vitest, 'run', '--config', 'vitest.integration.config.ts'],
-      {
-        cwd: root,
-        env: { ...process.env, GOTENBERG_TEST_VERSION: version },
-        // Do not buffer Vitest or Docker pull output: both suites stream live.
-        stdio: 'inherit',
-      },
-    )
-    child.once('error', (cause) => {
-      error = cause
-    })
-    child.once('close', (status, signal) => resolve({ status, signal, error }))
+function runVitest(version: GotenbergIntegrationVersion): Promise<TestProcessResult> {
+  return spawnVitest('vitest.integration.config.ts', version === '8.40.0' ? 'v8' : 'v9', {
+    ...process.env,
+    GOTENBERG_TEST_VERSION: version,
   })
 }
 
@@ -61,23 +39,22 @@ export async function runIntegrationMatrix(
 ): Promise<number> {
   const outcomes = await Promise.all(
     versions.map(async (version) => {
-      console.info(
-        `\nStarting integration tests with ${styleText('cyan', `Gotenberg ${version}`)}...`,
-      )
+      const label = styleText('cyan', `[v${version[0]}]`)
+      console.info(`\n${label} Starting Gotenberg ${version} integration tests...`)
       try {
         const result = await runVersion(version)
         if (result.status === 0 && !result.error && !result.signal) {
-          console.info(`${styleText('green', 'Passed')}: Gotenberg ${version}`)
+          console.info(`${label} ${styleText('green', 'Passed')}: Gotenberg ${version}`)
           return { version, passed: true }
         }
         console.error(
-          `${styleText('red', 'Failed')}: Gotenberg ${version}` +
+          `${label} ${styleText('red', 'Failed')}: Gotenberg ${version}` +
             (result.error ? ` (${result.error.message})` : '') +
             (result.signal ? ` (signal ${result.signal})` : ''),
         )
       } catch (error) {
         console.error(
-          `${styleText('red', 'Failed')}: Gotenberg ${version} (${error instanceof Error ? error.message : String(error)})`,
+          `${label} ${styleText('red', 'Failed')}: Gotenberg ${version} (${error instanceof Error ? error.message : String(error)})`,
         )
       }
       return { version, passed: false }

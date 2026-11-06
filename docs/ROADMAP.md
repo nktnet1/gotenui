@@ -12,7 +12,7 @@
 - [x] **Patch 2:** The proxy fetches the selected, authenticated upstream `/version` **for every conversion request** (including queued and direct API calls), refuses unknown/unsupported majors, and chooses a v8 or v9 request adapter. A connection changing versions cannot silently send the wrong form.
 - [x] **Patch 2:** Pin the real integration-test matrix to **`gotenberg/gotenberg:8.40.0` and `gotenberg/gotenberg:9.0.0`**, verify `/version` against the selected image, and add version-specific assertions. Unit tests test both major-version encodings without Docker.
 - [x] **Patch 3:** Run both pinned Docker images by default in local `pnpm test`/`pnpm test:integration`, stream image-pull progress, and name each CI matrix job by version. The earlier local integration command exercised **only v8.40.0** unless `GOTENBERG_TEST_VERSION` was set; the four v9-only cases were skipped, not passed.
-- [x] **Previous integration suites:** The user confirmed both pinned v8.40.0 and v9.0.0 suites passing after patch 3 and, again, after the expanded PDF test fixes in v1.0.6. New tests introduced by v1.0.7 still require a Docker-backed run.
+- [x] **Previous integration suites:** The user confirmed both pinned v8.40.0 and v9.0.0 suites passing after patch 3 and, again, after the expanded PDF test fixes in v1.0.6. The user subsequently confirmed the new v1.0.7 tests passing on both pinned versions.
 - [x] **Patch 4:** Add a version-specific standalone PDF adapter covering the 15 existing tools, retain all v8 endpoints and inputs, and encode supported v9 operations as ordered `/forms/pdf/pipe` stages or v9 read routes. Incompatible v8 semantics (behind-content watermarks, flattening annotations, lossy optimisation, legacy filename bookmark maps, and extended metadata) are never silently translated.
 - [x] **Patch 4:** Read v9 metadata/bookmark output back into the existing editors, display PDF/A remediation diagnostics returned by the upstream, and add v9 form controls for new foreground overlays and form-only flattening.
 - [x] **Patch 4 integration verification (user-run):** The expanded PDF integration cases through v1.0.6 were confirmed passing on both pinned images after the pipeline-test corrections. Additional remediation-header edge cases remain in the workstreams below.
@@ -27,7 +27,17 @@
 - [x] **Patch 7 integration verification (user-run):** The user confirmed that **both** `gotenberg/gotenberg:8.40.0` and `gotenberg/gotenberg:9.0.0` integration suites pass after v1.0.6. This covers the pre-v1.0.7 integration cases, including the corrected pipeline and ZIP assertions.
 - [x] **Patch 8 (v1.0.7):** `pnpm test` concurrently launches the unit suite and the already-parallel v8/v9 integration suites, retains live stdout/stderr and aggregates failures. A sequential opt-out is available through `GOTENUI_TEST_SEQUENTIAL=1` for limited-memory hosts. CI already runs quality and both pinned integration jobs in parallel.
 - [x] **Patch 8:** Allow PDF conversions on v9 to use the visual ordered-stage editor and named stage-file uploads, while preserving the original Chromium/LibreOffice routes and Gotenberg 8 conversion forms. The client, batch queue, and server validate uploaded filenames, sizes, stage operations and ordering, redaction acknowledgement, and version compatibility. Built-in merge/split precede user stages; automatic PDF/A/UA remediation follows them.
-- [ ] **Patch 8 integration verification:** Execute the newly added HTML metadata and Office attachment conversion-time pipeline cases on `gotenberg/gotenberg:9.0.0`. No Docker daemon is available in the patch authoring environment.
+- [x] **Patch 8 integration verification (user-run):** The user confirmed that all unit, v8.40.0 and v9.0.0 tests passed after applying v1.0.7, including the new conversion-time pipeline cases.
+- [x] **Patch 9 (v1.0.8):** Prefix output from the three simultaneous test suites with `[unit]`, `[v8]`, and `[v9]`, including carriage-return Docker pull progress, without adding a Turbo dependency. Keep each suite's own status and the sequential opt-out.
+
+## Remaining priorities
+
+1. **Conversion parity:** Verify outstanding v9 Chromium advanced options, and expose remaining native-vs-remediation PDF/A and PDF/UA profiles in conversion forms.
+2. **Input/output completeness:** Add archive inputs (`archives`), finish remote-source and format-specific file rules, and verify multi-stage image/ZIP filename and preview behaviour.
+3. **Version-specific observability and UX:** Separate v8 legacy Prometheus from v9 OpenTelemetry metrics, improve v9 webhook guidance and callback progress, and review Office-format and native compression controls.
+4. **Hardening:** Add connection-swap and batch-switch regression coverage, plus real-image tests for remediation edge cases and timestamp authority integration.
+
+These are tracked below; no remaining core v9 PDF stage or inspection route is absent from the tool catalogue.
 
 ### Compatibility baseline after patch 8 (v1.0.7)
 
@@ -43,7 +53,7 @@
 | Webhooks and async jobs                     | Existing support                                           | URL + required events callback; removed error callback rejected before upstream                                                                                             |
 | Metrics                                     | Existing legacy/OTel paths                                 | OTel exporter support needs verification; legacy `/prometheus/metrics` route was removed                                                                                    |
 
-Gotenui's v8 tools retain their v8 paths and field encodings. **All original standalone PDF tools are implemented for v9 in patch 4, 17 additional tools in patch 5, and the ordered PDF pipeline builder in patch 6. Conversion-time stages are added in patch 8. Existing integration cases through patch 7 were confirmed passing by the user; the new patch 8 cases await Docker verification.** Legacy v8 post-processing forms are still unavailable on v9 because their effects are not all equivalent. Users can deliberately configure compatible v9 stages in the new conversion-time editor. Unsupported or non-equivalent fields must fail visibly rather than be ignored.
+Gotenui's v8 tools retain their v8 paths and field encodings. **All original standalone PDF tools are implemented for v9 in patch 4, 17 additional tools in patch 5, and the ordered PDF pipeline builder in patch 6. Conversion-time stages are added in patch 8. The user confirmed all suites passing after patch 8, including the added conversion-time pipeline cases.** Legacy v8 post-processing forms are still unavailable on v9 because their effects are not all equivalent. Users can deliberately configure compatible v9 stages in the new conversion-time editor. Unsupported or non-equivalent fields must fail visibly rather than be ignored.
 
 ## Migration workstreams (in dependency order)
 
@@ -56,7 +66,7 @@ Gotenui's v8 tools retain their v8 paths and field encodings. **All original sta
 - [x] Implement limited ordered v9 `stages` for conversion-time Office merge/split/select, Chromium PDF/A/UA remediation, and PDF/A-4 + PDF/UA-2 native-export safety.
 - [x] Expose applicable conversion-time encryption, metadata, foreground stamping, attachments, redaction and other source-defined v9 stages through the validated visual editor, including named asset uploads and batch queue support (patch 8). Decryption is deliberately excluded for newly generated PDFs. The v9 proxy **continues to reject** v8 post-processing payloads: those options have no universally equivalent v9 encoding and must be explicitly configured as v9 stages instead.
 - [x] Support image/ZIP responses for the standalone v9 `render` operation through the bounded proxy, with MIME/signature validation and browser downloads. Preserve v8 handling.
-- [ ] Verify the full v9 archive/image response matrix for conversion-time pipelines, including safe filenames and previews. Stage-specific MIME acceptance and signature verification are implemented; new live-image assertions still need a Docker run.
+- [ ] Verify the full v9 archive/image response matrix for conversion-time pipelines, including safe filenames and previews. Stage-specific MIME acceptance and signature verification are implemented; the existing conversion-time integration cases passed on the user's Docker setup; additional output variants still need coverage.
 - [x] Handle v9 webhooks using `Gotenberg-Webhook-Url` **and** `Gotenberg-Webhook-Events-Url`. The UI already has an events URL input; reject v8-only error URL/method fields on v9 and preserve them unchanged for v8.
 - [ ] Improve version-specific webhook editor guidance and callback progress display.
 
@@ -74,11 +84,11 @@ Gotenberg 9 removes the 15 `POST /forms/pdfengines/*` routes used here, replacin
 
 The supplied v9 `pkg/modules/pdf/stages.go` registers **26 stage types**. Of these, the following **13 are not existing distinct Gotenui workflows**:
 
-- [x] `select` (select/unify PDF pages), `delete`, `insert` (patch 5; live-image verification pending).
-- [x] `set-form` (fill forms), `flatten-transparency`, `convert-colors`, `redact`, `autotag` (patch 5; live-image verification pending).
-- [x] `detach` (remove embedded attachments), `decrypt`, `sign`, `timestamp`, `render` (pages to images; patch 5; live-image verification pending).
+- [x] `select` (select/unify PDF pages), `delete`, `insert` (patch 5; pinned integration tests passed; further edge cases remain).
+- [x] `set-form` (fill forms), `flatten-transparency`, `convert-colors`, `redact`, `autotag` (patch 5; pinned integration tests passed; further edge cases remain).
+- [x] `detach` (remove embedded attachments), `decrypt`, `sign`, `timestamp`, `render` (pages to images; patch 5; integration tests passed except live timestamp-authority validation).
 
-These stages are available as individual v9-only workflows and through the standalone, ordered pipeline composer added in patch 6. Pipeline composition directly after Chromium/LibreOffice conversion is available from patch 8 (new live integration cases pending). Redaction requires explicit acknowledgement and validated rectangles; signing requires uploaded credentials. Verify results before using redacted or signed documents in security-critical workflows.
+These stages are available as individual v9-only workflows and through the standalone, ordered pipeline composer added in patch 6. Pipeline composition directly after Chromium/LibreOffice conversion is available from patch 8 (integration cases confirmed by the user). Redaction requires explicit acknowledgement and validated rectangles; signing requires uploaded credentials. Verify results before using redacted or signed documents in security-critical workflows.
 
 ### 5. PDF inspection, compliance and metadata — high
 
@@ -102,9 +112,9 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 - [ ] Test switching v8 ↔ v9 connections while a tool or batch queue is selected, status refreshes, and version/header mismatches.
 - [x] Add a CI matrix for pinned **Gotenberg 8.40.0** and **9.0.0** real-image integration tests, with basic conversions, screenshots, auth, native field mappings, webhooks and limited stages.
 - [x] Add v9 integration fixtures for all four read endpoints and locally testable new stages (including signing), form read/write, PDF content checks and ZIP/image output; patch 5. Timestamp stage encoding and URL validation have unit coverage only; no external timestamp authority is called by tests.
-- [x] Add standalone multi-stage integration cases for merge/select/metadata, attachments, and rendered images (patch 6; execution pending).
-- [ ] Extend real-image integration coverage to complex remediation headers and timestamp authorities. Patch 8 adds HTML and Office conversion-time pipeline assertions; those await a Docker-backed run.
-- [x] The user confirmed that the **expanded PDF integration cases** through v1.0.6 pass on both pinned images, including the corrected compact JSON response assertions and staged ZIP rendering. New conversion-time stage cases from v1.0.7 still require live Docker verification.
+- [x] Add standalone multi-stage integration cases for merge/select/metadata, attachments, and rendered images (patch 6; pinned integration tests passed after the v1.0.6 fixes).
+- [ ] Extend real-image integration coverage to complex remediation headers and timestamp authorities. HTML and Office conversion-time pipeline assertions were confirmed passing by the user after patch 8; the remediation and timestamp edge cases remain.
+- [x] The user confirmed that the **expanded PDF integration cases** through v1.0.6 pass on both pinned images, including the corrected compact JSON response assertions and staged ZIP rendering. The user confirmed the new conversion-time stage cases from v1.0.7 pass on the pinned Docker versions.
 
 ## Acceptance criteria for complete dual-version support
 

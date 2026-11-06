@@ -7,32 +7,34 @@ const quiet = () => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
 }
 
-test('top-level runner starts unit and both Docker suites at the same time', async () => {
+test('top-level runner starts unit and two pinned Docker suites at the same time', async () => {
   quiet()
-  assert.deepEqual(TEST_SUITES, ['unit', 'integration'])
+  assert.deepEqual(TEST_SUITES, ['unit', 'v8', 'v9'])
   const started: TestSuite[] = []
   const finish = new Map<TestSuite, (value: { status: number }) => void>()
   const run = runTestSuites((suite) => {
     started.push(suite)
     return new Promise((resolve) => finish.set(suite, resolve))
   })
-  assert.deepEqual(started, ['unit', 'integration'])
-  finish.get('integration')?.({ status: 0 })
+  assert.deepEqual(started, ['unit', 'v8', 'v9'])
+  finish.get('v9')?.({ status: 0 })
   finish.get('unit')?.({ status: 0 })
+  finish.get('v8')?.({ status: 0 })
   assert.equal(await run, 0)
 })
 
-test('top-level runner waits for both failures and reports them', async () => {
+test('top-level runner waits for all three outcomes and reports failed suites separately', async () => {
   quiet()
   const started: TestSuite[] = []
   assert.equal(
     await runTestSuites((suite) => {
       started.push(suite)
-      return { status: suite === 'unit' ? 0 : 1 }
+      return { status: suite === 'v8' ? 1 : 0 }
     }),
     1,
   )
-  assert.deepEqual(started, ['unit', 'integration'])
+  assert.deepEqual(started, ['unit', 'v8', 'v9'])
+  assert.match(vi.mocked(console.error).mock.calls.flat().join(' '), /Failed test suites: v8/)
 })
 
 test('top-level runner handles signals, launch errors and rejected suites', async () => {
@@ -44,16 +46,16 @@ test('top-level runner handles signals, launch errors and rejected suites', asyn
     1,
   )
   assert.equal(
-    await runTestSuites((suite) =>
-      suite === 'unit'
-        ? { status: null, error: new Error('Vitest missing') }
-        : Promise.reject(new Error('Docker missing')),
-    ),
+    await runTestSuites((suite) => {
+      if (suite === 'unit') return { status: null, error: new Error('Vitest missing') }
+      if (suite === 'v8') return Promise.reject(new Error('Docker missing'))
+      return { status: 0 }
+    }),
     1,
   )
 })
 
-test('resource-constrained machines can run unit then integration sequentially', async () => {
+test('resource-constrained machines can run unit, v8 and v9 sequentially', async () => {
   quiet()
   const started: TestSuite[] = []
   const finish = new Map<TestSuite, (value: { status: number }) => void>()
@@ -65,12 +67,16 @@ test('resource-constrained machines can run unit then integration sequentially',
   finish.get('unit')?.({ status: 0 })
   await Promise.resolve()
   await Promise.resolve()
-  assert.deepEqual(started, ['unit', 'integration'])
-  finish.get('integration')?.({ status: 0 })
+  assert.deepEqual(started, ['unit', 'v8'])
+  finish.get('v8')?.({ status: 0 })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(started, ['unit', 'v8', 'v9'])
+  finish.get('v9')?.({ status: 0 })
   assert.equal(await run, 0)
 })
 
-test('sequential mode still runs integration if the unit suite fails', async () => {
+test('sequential mode still runs both integrations if the unit suite fails', async () => {
   quiet()
   const started: TestSuite[] = []
   assert.equal(
@@ -80,5 +86,5 @@ test('sequential mode still runs integration if the unit suite fails', async () 
     }, false),
     1,
   )
-  assert.deepEqual(started, ['unit', 'integration'])
+  assert.deepEqual(started, ['unit', 'v8', 'v9'])
 })
