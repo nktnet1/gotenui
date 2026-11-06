@@ -3,12 +3,14 @@ import { useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Label } from '#/components/ui/label'
 import { Textarea } from '#/components/ui/textarea'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import {
   DEFAULT_PDF_PIPELINE,
   PDF_PIPELINE_STAGES,
   type PdfPipelineOp,
   parsePdfPipeline,
   safePipelinePreview,
+  V9_1_PDF_STAGES,
 } from '#/lib/pdf-pipeline'
 
 type EditorStage = { id: number; op: PdfPipelineOp; settings: string }
@@ -49,6 +51,7 @@ export function PdfPipelineBuilder({
   onRedactionChange,
   error,
   conversionMode = false,
+  backendVersion,
 }: {
   value: string
   onChange: (value: string) => void
@@ -56,14 +59,16 @@ export function PdfPipelineBuilder({
   onRedactionChange: (value: boolean) => void
   error: string | null
   conversionMode?: boolean
+  backendVersion?: string
 }) {
   const [stages, setStages] = useState<EditorStage[]>(() => initialStages(value))
   const [selected, setSelected] = useState<PdfPipelineOp>('select')
   const nextId = useRef(Math.max(...initialStages(value).map(({ id }) => id)) + 1)
   const [editorError, setEditorError] = useState<string | null>(null)
-  const availableStages = conversionMode
-    ? PDF_PIPELINE_STAGES.filter(({ op }) => op !== 'decrypt')
-    : PDF_PIPELINE_STAGES
+  const minor = parseGotenbergVersion(backendVersion)?.minor ?? 0
+  const availableStages = PDF_PIPELINE_STAGES.filter(
+    ({ op }) => !(conversionMode && op === 'decrypt') && !(minor < 1 && V9_1_PDF_STAGES.has(op)),
+  )
 
   const update = (next: EditorStage[]) => {
     setStages(next)
@@ -113,8 +118,8 @@ export function PdfPipelineBuilder({
         </p>
         <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">
           Stages run from top to bottom. Use the arrows to change their order; the final stage
-          determines whether Gotenberg returns PDFs or rendered images. Each stage accepts the exact
-          Gotenberg 9 option names as JSON.
+          determines whether Gotenberg returns PDFs, rendered images, text or attachments. Each
+          stage accepts the exact Gotenberg 9 option names as JSON.
         </p>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="min-w-52 flex-1 space-y-1">

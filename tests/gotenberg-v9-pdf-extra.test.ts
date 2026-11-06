@@ -33,8 +33,8 @@ function adapted(
 }
 
 describe('version-gated PDF tool catalogue', () => {
-  it('adds 13 processing stages and four inspection endpoints exclusively to v9', () => {
-    assert.equal(V9_PDF_IDS.size, 17)
+  it('adds processing, extraction and inspection endpoints on the supported v9 minor', () => {
+    assert.equal(V9_PDF_IDS.size, 19)
     for (const id of V9_PDF_IDS) {
       const op = OPERATION_BY_ID.get(id)
       assert.deepEqual(op?.supportedGotenbergMajors, [9])

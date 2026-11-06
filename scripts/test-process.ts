@@ -4,7 +4,7 @@ import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
 
-export type TestLabel = 'unit' | 'v8' | 'v9'
+export type TestLabel = 'unit' | 'v8' | 'v9' | 'v91'
 export type TestProcessResult = {
   status: number | null
   signal?: NodeJS.Signals | null

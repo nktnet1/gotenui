@@ -4,13 +4,17 @@ import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.se
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
 import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
-import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import {
+  type GotenbergVersion,
+  parseGotenbergVersion,
+  type SupportedGotenbergMajor,
+} from '#/lib/gotenberg-version'
 import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
 import { canWebhookForOperation } from '#/lib/operation-availability'
-import { parsePdfPipeline, pipelineResponseTypes } from '#/lib/pdf-pipeline'
+import { parsePdfPipeline, pipelineResponseTypes, V9_1_PDF_STAGES } from '#/lib/pdf-pipeline'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
@@ -244,7 +248,7 @@ async function conversionTargetVersion(
   request: Request,
   fetcher: typeof fetch,
   target: { url: string; headers?: HeadersInit; oauth2?: OAuth2ClientCredentials },
-): Promise<SupportedGotenbergMajor> {
+): Promise<GotenbergVersion> {
   const response = await fetcher(urlJoin(target.url, '/version'), {
     method: 'GET',
     ...fetchOptions(request),
@@ -272,7 +276,7 @@ async function conversionTargetVersion(
       409,
     )
   }
-  return parsed.major
+  return parsed
 }
 
 /** Preserve Gotenberg's diagnostic headers, not arbitrary upstream response headers. */
@@ -326,6 +330,10 @@ function expectedConversionContentType(output: string, format: string | boolean 
       return 'application/zip'
     case 'json':
       return 'application/json'
+    case 'text':
+      return 'text/plain'
+    case 'file':
+      return 'application/octet-stream'
     case 'image':
       return `image/${format === 'jpeg' || format === 'webp' ? format : 'png'}`
     default:
@@ -342,6 +350,8 @@ function allowedConversionContentTypes(
   files: readonly File[],
   archives: readonly File[] = [],
 ): readonly string[] {
+  if (operation.id === 'extract-attachments') return ['*', 'application/zip']
+  if (operation.id === 'extract-text') return ['text/plain', 'application/zip']
   if (operation.id === 'pdf-pipeline') {
     return pipelineResponseTypes(
       parsePdfPipeline(String(payload.fields.stages ?? ''), {
@@ -393,7 +403,11 @@ function allowedConversionContentTypes(
 }
 
 /** An untrusted upstream may send an incorrect or missing content-length. */
-function conversionResponseLength(header: string | null, maxBytes: number): number | undefined {
+function conversionResponseLength(
+  header: string | null,
+  maxBytes: number,
+  allowEmpty = false,
+): number | undefined {
   if (header === null) return undefined
   if (!/^(0|[1-9]\d*)$/.test(header)) {
     throw new ProxyInputError('Gotenberg returned an invalid response length.', 502)
@@ -402,7 +416,7 @@ function conversionResponseLength(header: string | null, maxBytes: number): numb
   if (!Number.isSafeInteger(length)) {
     throw new ProxyInputError('Gotenberg returned an invalid response length.', 502)
   }
-  if (length === 0) {
+  if (length === 0 && !allowEmpty) {
     throw new ProxyInputError('Gotenberg returned an empty conversion response.', 502)
   }
   if (length > maxBytes) {
@@ -521,12 +535,37 @@ export async function proxyConversionRequest(
     fetcher,
   )
   const { url, headers: authHeaders } = target
-  const major = await conversionTargetVersion(request, fetcher, target)
+  const version = await conversionTargetVersion(request, fetcher, target)
+  const major = version.major as SupportedGotenbergMajor
   if (!(operation.supportedGotenbergMajors ?? [8]).includes(major)) {
     throw new ProxyInputError(
       `The ${operation.title} tool is not available on Gotenberg ${major} yet.`,
       409,
     )
+  }
+  let requiredMinorVersion = operation.minGotenbergMinor ?? 0
+  if (major === 9 && version.minor < requiredMinorVersion) {
+    throw new ProxyInputError(
+      `${operation.title} requires Gotenberg 9.${requiredMinorVersion} or later.`,
+      409,
+    )
+  }
+  // Validate the actual stages and remember the minimum supported minor so
+  // a load-balanced conversion cannot land on a 9.0 worker after probing 9.1.
+  if (major === 9 && (operation.id === 'pdf-pipeline' || payload.conversionStages)) {
+    const stages = parsePdfPipeline(
+      operation.id === 'pdf-pipeline'
+        ? String(payload.fields.stages ?? '')
+        : (payload.conversionStages ?? ''),
+      {
+        acknowledgedRedaction:
+          operation.id === 'pdf-pipeline'
+            ? payload.fields.acknowledgedRedaction === true
+            : payload.acknowledgedConversionRedaction,
+        gotenbergMinor: version.minor,
+      },
+    )
+    if (stages.some((stage) => V9_1_PDF_STAGES.has(stage.op))) requiredMinorVersion = 1
   }
   // The initial validation accepts the union of both Office extension sets.
   // Recheck after authenticating /version so neither version receives an unsupported format.
@@ -609,10 +648,16 @@ export async function proxyConversionRequest(
     const returnedVersion = upstream.headers.get('Gotenberg-Version')
     if (returnedVersion !== null) {
       const parsed = parseGotenbergVersion(returnedVersion)
-      if (!parsed || parsed.major !== major) {
+      if (
+        !parsed ||
+        parsed.major !== major ||
+        (major === 9 && parsed.minor < requiredMinorVersion)
+      ) {
         await upstream.body?.cancel().catch(() => {})
         const detail = parsed
-          ? `Gotenberg changed from v${major} to v${parsed.major} during conversion.`
+          ? parsed.major === major
+            ? `Gotenberg 9.${parsed.minor} cannot handle this 9.${requiredMinorVersion}+ operation.`
+            : `Gotenberg changed from v${major} to v${parsed.major} during conversion.`
           : 'Gotenberg returned an invalid version header.'
         const accepted = upstream.status === 202 || upstream.status === 204
         throw new ProxyInputError(
@@ -651,15 +696,47 @@ export async function proxyConversionRequest(
   const allowedTypes = allowedConversionContentTypes(operation, payload, files, archives)
   const upstreamContentType = upstream.headers.get('content-type')
   const returnedType = upstreamContentType?.split(';')[0]?.trim().toLowerCase()
+  // An extracted attachment has its own MIME type, which may be anything.
+  // Require an actual filename-bearing attachment response before accepting it,
+  // so an HTML SPA fallback can never be mistaken for a successful extraction.
+  const extractsAttachment =
+    operation.id === 'extract-attachments' ||
+    (operation.id === 'pdf-pipeline' &&
+      (() => {
+        const stages = parsePdfPipeline(String(payload.fields.stages ?? ''))
+        return stages.length === 1 && stages[0]?.op === 'extract-attachments'
+      })()) ||
+    (payload.conversionStages !== undefined &&
+      (() => {
+        const stages = parsePdfPipeline(payload.conversionStages)
+        return stages.length === 1 && stages[0]?.op === 'extract-attachments'
+      })())
+  const attachmentDisposition = upstream.headers.get('content-disposition')
+  const wildcardAllowed =
+    allowedTypes.includes('*') &&
+    returnedType !== undefined &&
+    /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(returnedType) &&
+    // Filename is required for arbitrary content; don't accept inline responses.
+    /^attachment\s*;/i.test(attachmentDisposition ?? '') &&
+    /(?:^|;)\s*filename\*?=/i.test(attachmentDisposition ?? '')
   if (
     upstream.status !== 200 ||
     !returnedType ||
-    !allowedTypes.includes(returnedType) ||
+    !(allowedTypes.includes(returnedType) || wildcardAllowed) ||
     !upstream.body
   ) {
     await upstream.body?.cancel().catch(() => {})
     throw new ProxyInputError('Gotenberg returned an unexpected conversion response.', 502)
   }
+  // A scanned PDF may contain no extractable text. Embedded files can also be
+  // empty or have a misleading MIME type; preserve their exact bytes rather
+  // than requiring a document signature or manufacturing a nonempty body.
+  const arbitraryAttachment =
+    extractsAttachment && wildcardAllowed && returnedType !== 'application/zip'
+  const allowEmptyResponse =
+    arbitraryAttachment ||
+    (returnedType === 'text/plain' &&
+      (operation.id === 'extract-text' || allowedTypes.includes('text/plain')))
   let declaredLength: number | undefined
   try {
     // Fetch decodes compressed upstream responses but leaves their compressed
@@ -669,13 +746,18 @@ export async function proxyConversionRequest(
       declaredLength = conversionResponseLength(
         upstream.headers.get('content-length'),
         maxResponseBytes,
+        allowEmptyResponse,
       )
     }
   } catch (error) {
     await upstream.body.cancel().catch(() => {})
     throw error
   }
-  const checkedBody = await verifyConversionSignature(upstream.body, returnedType, declaredLength)
+  const checkedBody = await verifyConversionSignature(
+    upstream.body,
+    arbitraryAttachment ? 'application/octet-stream' : returnedType,
+    declaredLength,
+  )
   headers.set('Content-Type', upstreamContentType ?? returnedType)
   headers.set(
     'Content-Disposition',
@@ -684,12 +766,16 @@ export async function proxyConversionRequest(
       operation.id,
       returnedType,
       payload.outputName,
+      extractsAttachment && returnedType !== 'application/zip',
     ),
   )
-  return new Response(limitResponseStream(checkedBody, maxResponseBytes, declaredLength), {
-    status: 200,
-    headers,
-  })
+  return new Response(
+    limitResponseStream(checkedBody, maxResponseBytes, declaredLength, allowEmptyResponse),
+    {
+      status: 200,
+      headers,
+    },
+  )
 }
 
 /** A compact JSON status response for the browser, with no browser-to-Gotenberg fetches. */
@@ -834,7 +920,7 @@ export async function proxyMetricsRequest(
     !isOtel,
   )
   const { url, headers: authHeaders } = target
-  if (!isOtel && (await conversionTargetVersion(request, fetcher, target)) === 9) {
+  if (!isOtel && (await conversionTargetVersion(request, fetcher, target)).major === 9) {
     throw new ProxyInputError(
       'Gotenberg 9 no longer serves /prometheus/metrics. Configure a server-managed connection with a separate OpenTelemetry Prometheus metricsUrl.',
       409,

@@ -59,7 +59,7 @@ export function adaptPdfForm(
   if (operation.id === 'pdf-pipeline') {
     return adaptPdfPipeline(payload, legacy, auxiliary, archives, archiveEntryNames)
   }
-  const extra = adaptV9PdfExtra(operation.id, payload, legacy, auxiliary)
+  const extra = adaptV9PdfExtra(operation.id, payload, legacy, auxiliary, archives)
   if (extra) return extra
   if (!v9PdfOperations.has(operation.id) || operation.input !== 'pdf') {
     throw new InputError(
@@ -91,6 +91,7 @@ export function adaptPdfForm(
   }
   const remote = legacy.get('downloadFrom')
   if (typeof remote === 'string') output.set('downloadFrom', remote)
+  for (const archive of archives) output.append('archives', archive, archive.name)
   const stages: Stage[] = []
   const allow = new Set<string>()
   const permitted = (...names: string[]) => {

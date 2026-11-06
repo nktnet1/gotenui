@@ -99,6 +99,45 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
     },
   ),
   tool(
+    'extract-attachments',
+    'Extract PDF attachments',
+    'Download embedded files from one or more PDFs, individually or as a ZIP.',
+    [
+      {
+        name: 'name',
+        label: 'Attachment filename (optional)',
+        kind: 'text',
+        description: 'Leave blank to extract all attachments, or enter an exact embedded filename.',
+      },
+    ],
+    {
+      path: '/forms/pdf/extract-attachments',
+      output: 'file',
+      minGotenbergMinor: 1,
+    },
+  ),
+  tool(
+    'extract-text',
+    'Extract PDF text',
+    'Save page text as UTF-8 .txt files (multiple documents return a ZIP). No OCR.',
+    [
+      { ...pages, required: false },
+      { name: 'invisible', label: 'Include invisible text', kind: 'toggle', advanced: true },
+      {
+        name: 'artifacts',
+        label: 'Include header, footer and stamp artifacts',
+        kind: 'toggle',
+        advanced: true,
+      },
+      { name: 'annotations', label: 'Include annotation text', kind: 'toggle', advanced: true },
+    ],
+    {
+      path: '/forms/pdf/extract-text',
+      output: 'text',
+      minGotenbergMinor: 1,
+    },
+  ),
+  tool(
     'pdf-form',
     'Read PDF forms',
     'Inspect interactive form fields, states and current values.',

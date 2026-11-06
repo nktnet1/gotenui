@@ -75,6 +75,7 @@ export function limitResponseStream(
   body: ReadableStream<Uint8Array>,
   limit: number,
   declaredLength?: number,
+  allowEmpty = false,
 ): ReadableStream<Uint8Array> {
   const reader = body.getReader()
   let received = 0
@@ -93,7 +94,7 @@ export function limitResponseStream(
         if (cancelled) return
         if (done) {
           release()
-          if (received === 0) {
+          if (received === 0 && !allowEmpty) {
             controller.error(new Error('Gotenberg returned an empty conversion response.'))
           } else if (declaredLength !== undefined && declaredLength !== received) {
             controller.error(new Error('Gotenberg returned a truncated conversion response.'))

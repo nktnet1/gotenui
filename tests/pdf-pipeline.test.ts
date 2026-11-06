@@ -38,9 +38,9 @@ const error = (stages: unknown, matches: RegExp) => {
 }
 
 describe('PDF pipeline catalogue and stage contract', () => {
-  it('lists all 26 distinct Gotenberg 9 stages, including explicit option templates', () => {
-    assert.equal(PDF_PIPELINE_STAGES.length, 26)
-    assert.equal(new Set(PDF_PIPELINE_STAGES.map(({ op }) => op)).size, 26)
+  it('lists all 28 distinct Gotenberg 9.1 stages, including explicit option templates', () => {
+    assert.equal(PDF_PIPELINE_STAGES.length, 28)
+    assert.equal(new Set(PDF_PIPELINE_STAGES.map(({ op }) => op)).size, 28)
     for (const stage of PDF_PIPELINE_STAGES) {
       assert.ok(stage.label)
       assert.ok(stage.description)
@@ -243,9 +243,10 @@ describe('PDF pipeline rejects unsafe or invalid sequences', () => {
 })
 
 describe('visual pipeline builder', () => {
-  it('renders all 26 stage choices and accessible stage movement controls', () => {
+  it('renders all 28 stage choices and accessible stage movement controls', () => {
     const markup = renderToStaticMarkup(
       createElement(PdfPipelineBuilder, {
+        backendVersion: '9.1.0',
         value: DEFAULT_PDF_PIPELINE,
         onChange: () => {},
         acknowledgedRedaction: false,
@@ -263,6 +264,22 @@ describe('visual pipeline builder', () => {
     assert.match(markup, /aria-label="Remove Optimise"/)
     assert.match(markup, /Preview ordered stages/)
   })
+  it('hides Gotenberg 9.1-only extraction stages from a 9.0 pipeline editor', () => {
+    const markup = renderToStaticMarkup(
+      createElement(PdfPipelineBuilder, {
+        backendVersion: '9.0.0',
+        value: DEFAULT_PDF_PIPELINE,
+        onChange: () => {},
+        acknowledgedRedaction: false,
+        onRedactionChange: () => {},
+        error: null,
+      }),
+    )
+    assert.doesNotMatch(markup, /value="extract-attachments"/)
+    assert.doesNotMatch(markup, /value="extract-text"/)
+    assert.match(markup, /value="render"/)
+  })
+
   it('hides decryption in conversion-time pipelines and labels their file uploader', () => {
     const markup = renderToStaticMarkup(
       createElement(PdfPipelineBuilder, {

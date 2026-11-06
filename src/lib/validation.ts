@@ -74,17 +74,12 @@ export const payloadSchema = v.object({
 
 export type ConversionPayload = v.InferOutput<typeof payloadSchema>
 
-/** Gotenberg 9 extracts `archives` into its shared input-file workspace.
- * Office and the PDF pipeline use them as documents; Chromium HTML/Markdown
- * uses them as assets. Other PDF and URL tools do not expose archive uploads.
+/** Gotenberg 9 accepts `archives` on every multipart route, extracting files
+ * into its shared workspace before identifying inputs and named stage assets.
+ * The upstream version check refuses archives on Gotenberg 8.
  */
-export function supportsArchiveInputs(operation: Operation): boolean {
-  return (
-    operation.id === 'office-pdf' ||
-    operation.id === 'pdf-pipeline' ||
-    operation.input === 'html' ||
-    operation.input === 'markdown'
-  )
+export function supportsArchiveInputs(_operation: Operation): boolean {
+  return true
 }
 
 export class InputError extends Error {
@@ -98,7 +93,7 @@ export class InputError extends Error {
 }
 
 const extension = /\.[a-z0-9]+$/i
-const filenamePattern = /^[a-zA-Z0-9][a-zA-Z0-9 _.()-]{0,150}$/
+const filenamePattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M} _.()-]{0,150}$/u
 const fieldNamePattern = /^[a-z][a-zA-Z0-9]{0,63}$/
 const forbiddenAdvanced = new Set([
   'files',
@@ -124,6 +119,9 @@ export function safeFilename(name: string): string {
   return name
 }
 
+/** Match filenames that collapse to the same key when Gotenberg normalises uploads. */
+const filenameKey = (name: string): string => name.normalize('NFC').toLowerCase()
+
 function markdownName(name: string): string {
   safeFilename(name)
   if (!/\.md$/i.test(name)) throw new InputError(`Markdown filename must end in .md: ${name}`)
@@ -148,7 +146,7 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
       markdownName(payload.markdownName ?? DEFAULT_MARKDOWN_NAME),
       ...(payload.markdownFiles ?? []).map((file) => markdownName(file.name)),
     ]
-    if (new Set(names.map((name) => name.toLowerCase())).size !== names.length) {
+    if (new Set(names.map(filenameKey)).size !== names.length) {
       throw new InputError('Markdown filenames must be unique (case-insensitive).')
     }
     for (const file of payload.markdownFiles ?? []) {
@@ -552,9 +550,7 @@ export function validateFiles(
   const remote = remoteCounts(payload)
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
   if (archives.length && !supportsArchiveInputs(operation)) {
-    throw new InputError(
-      'ZIP archive inputs are supported only by Office, the PDF pipeline, and Chromium HTML/Markdown tools on Gotenberg 9.',
-    )
+    throw new InputError('ZIP archive inputs are not supported for this operation.')
   }
   if (archives.length > 10) throw new InputError('At most 10 ZIP archives are supported.')
   if (operation.id === 'embed' && payload?.fields.embedsMetadata) {
@@ -570,7 +566,9 @@ export function validateFiles(
   }
   if (operation.input === 'pdf' || operation.input === 'office') {
     const documentCount = files.length + remote.input + archives.length
-    if (documentCount < minFiles || documentCount > 20) {
+    // An archive can contain several source documents; validate its actual
+    // directory entries in validateZipInputs after upstream version detection.
+    if ((documentCount < minFiles && !archives.length) || documentCount > 20) {
       throw new InputError(`Upload ${minFiles} to 20 input files.`)
     }
   } else if (files.length > 0) {
@@ -609,8 +607,8 @@ export function validateFiles(
   if (operation.input === 'html' || operation.input === 'markdown') {
     for (const name of ['index.html', 'header.html', 'footer.html']) names.add(name)
     if (operation.input === 'markdown') {
-      names.add((payload?.markdownName ?? DEFAULT_MARKDOWN_NAME).toLowerCase())
-      for (const file of payload?.markdownFiles ?? []) names.add(file.name.toLowerCase())
+      names.add(filenameKey(payload?.markdownName ?? DEFAULT_MARKDOWN_NAME))
+      for (const file of payload?.markdownFiles ?? []) names.add(filenameKey(file.name))
     }
   }
   const generatedTemplate =
@@ -647,10 +645,10 @@ export function validateFiles(
     const allowsOrderedDuplicates =
       operation.id === 'merge' ||
       (operation.id === 'office-pdf' && payload?.fields.merge === true && files.includes(file))
-    if (names.has(name.toLowerCase()) && !allowsOrderedDuplicates) {
+    if (names.has(filenameKey(name)) && !allowsOrderedDuplicates) {
       throw new InputError(`Duplicate filename: ${name}`)
     }
-    names.add(name.toLowerCase())
+    names.add(filenameKey(name))
     total += file.size
     if (file.size === 0) throw new InputError(`${name} is empty.`)
     if (total > maxBytes)
@@ -696,7 +694,7 @@ export function validateFiles(
         if (row.source === 'text') continue
         const filename =
           row.expression || (rows.length === 1 && uploads.length === 1 ? uploads[0]?.name : '')
-        if (filename && names.has(filename.toLowerCase())) {
+        if (filename && names.has(filenameKey(filename))) {
           throw new InputError(`Overlay filename collides with an input or asset: ${filename}`)
         }
       }
@@ -1208,7 +1206,7 @@ export function validatePayload(input: unknown): {
   ) {
     throw new InputError('Unify is supported only in pages mode.')
   }
-  if (payload.outputName && !/^[a-zA-Z0-9][a-zA-Z0-9 _-]{0,99}$/.test(payload.outputName)) {
+  if (payload.outputName && !/^[\p{L}\p{N}][\p{L}\p{N}\p{M} _-]{0,99}$/u.test(payload.outputName)) {
     throw new InputError('Output name contains invalid characters.')
   }
   if (operation.id === 'merge' && payload.advanced.bookmarks !== undefined) {

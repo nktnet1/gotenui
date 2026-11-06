@@ -148,6 +148,20 @@ export const PDF_PIPELINE_STAGES = [
     fields: ['name'],
   },
   {
+    op: 'extract-attachments',
+    label: 'Extract attachments',
+    description: 'Download embedded files. Must be the final stage (Gotenberg 9.1+).',
+    options: {},
+    fields: ['name'],
+  },
+  {
+    op: 'extract-text',
+    label: 'Extract text',
+    description: 'Save text as .txt. Scanned pages need external OCR. Final stage (9.1+).',
+    options: {},
+    fields: ['pages', 'invisible', 'artifacts', 'annotations'],
+  },
+  {
     op: 'optimize',
     label: 'Optimise',
     description: 'Losslessly optimise PDF contents.',
@@ -212,10 +226,12 @@ export type PdfPipelineOp = (typeof PDF_PIPELINE_STAGES)[number]['op']
 export type PdfPipelineStage = { op: PdfPipelineOp; [key: string]: unknown }
 
 export const DEFAULT_PDF_PIPELINE = '[{"op":"optimize"}]'
+export const V9_1_PDF_STAGES = new Set<PdfPipelineOp>(['extract-attachments', 'extract-text'])
 const pipelineByOp = new Map<string, (typeof PDF_PIPELINE_STAGES)[number]>(
   PDF_PIPELINE_STAGES.map((stage) => [stage.op, stage]),
 )
-const pageRange = /^(?:\d+(?:-\d+)?|odd|even)(?:\s*,\s*(?:\d+(?:-\d+)?|odd|even))*$/i
+const pageRange =
+  /^(?:[1-9]\d*(?:-[1-9]\d*)?|odd|even)(?:\s*,\s*(?:[1-9]\d*(?:-[1-9]\d*)?|odd|even))*$/i
 const profiles = new Set([
   'PDF/A-1a',
   'PDF/A-1b',
@@ -330,6 +346,9 @@ function validateStage(stage: PdfPipelineStage): void {
     }
   }
   for (const key of [
+    'invisible',
+    'artifacts',
+    'annotations',
     'objectStreams',
     'dedup',
     'recompressImages',
@@ -485,6 +504,11 @@ function validateStage(stage: PdfPipelineStage): void {
     case 'detach':
       requiredText(stage, 'name')
       break
+    case 'extract-attachments':
+      // No name means every attachment. A filename is an exact match, including spaces.
+      if (stage.name !== undefined && !String(stage.name).trim())
+        throw new InputError('extract-attachments: name must be an embedded filename or omitted.')
+      break
     case 'encrypt':
       if (!stage.userPassword && !stage.ownerPassword)
         throw new InputError('encrypt: enter a user or owner password.')
@@ -571,6 +595,8 @@ export function pdfStageAssetNames(stages: readonly PdfPipelineStage[]): string[
 }
 
 export type PdfPipelineValidation = {
+  /** Verified minor version when connected to Gotenberg 9. */
+  gotenbergMinor?: number
   assetNames?: readonly string[]
   acknowledgedRedaction?: boolean
 }
@@ -600,6 +626,13 @@ export function parsePdfPipeline(
     if (!object(value) || typeof value.op !== 'string' || !pipelineByOp.has(value.op))
       throw new InputError(`Stage ${index + 1} must select a supported PDF operation.`)
     const stage = value as PdfPipelineStage
+    if (
+      V9_1_PDF_STAGES.has(stage.op) &&
+      context.gotenbergMinor !== undefined &&
+      context.gotenbergMinor < 1
+    ) {
+      throw new InputError(`${stage.op} requires Gotenberg 9.1 or later.`, 409)
+    }
     validateStage(stage)
     const op = stage.op
     const previous = counts.get(op) ?? 0
@@ -610,16 +643,33 @@ export function parsePdfPipeline(
       if (index !== 0) throw new InputError('Decryption must be the first stage.')
       hasDecryption = true
     }
-    if (op === 'render' && index !== decoded.length - 1)
-      throw new InputError('Rendering must be the last stage.')
+    if (
+      ['render', 'extract-attachments', 'extract-text'].includes(op) &&
+      index !== decoded.length - 1
+    )
+      throw new InputError(`${op} must be the last stage.`)
     if (
       seenFinal === 'remediate' &&
-      !['encrypt', 'optimize', 'sign', 'timestamp', 'render'].includes(op)
+      ![
+        'encrypt',
+        'optimize',
+        'sign',
+        'timestamp',
+        'render',
+        'extract-attachments',
+        'extract-text',
+      ].includes(op)
     )
       throw new InputError(`Stage ${index + 1} cannot follow remediation.`)
-    if (seenFinal === 'encrypt' && !['optimize', 'render'].includes(op))
+    if (
+      seenFinal === 'encrypt' &&
+      !['optimize', 'render', 'extract-attachments', 'extract-text'].includes(op)
+    )
       throw new InputError(`Stage ${index + 1} cannot follow encryption.`)
-    if (seenFinal === 'sign' && !['sign', 'timestamp', 'render'].includes(op))
+    if (
+      seenFinal === 'sign' &&
+      !['sign', 'timestamp', 'render', 'extract-attachments', 'extract-text'].includes(op)
+    )
       throw new InputError(`Stage ${index + 1} cannot follow digital signing.`)
     if (op === 'remediate') {
       hasPdfa = true
@@ -669,6 +719,12 @@ export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): read
   const render = stages.at(-1)
   if (render?.op === 'render')
     return [render.format === 'jpeg' ? 'image/jpeg' : 'image/png', 'application/zip']
+  // A sole extraction returns extracted files only; combined stages also return
+  // the processed PDF(s) alongside the extracted files, always as a ZIP.
+  if (render?.op === 'extract-text')
+    return stages.length === 1 ? ['text/plain', 'application/zip'] : ['application/zip']
+  if (render?.op === 'extract-attachments')
+    return stages.length === 1 ? ['*', 'application/zip'] : ['application/zip']
   return ['application/pdf', 'application/zip']
 }
 

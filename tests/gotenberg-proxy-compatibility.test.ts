@@ -348,7 +348,7 @@ test('v9 PDF pipeline can use only remote PDF inputs, rejecting legacy destinati
   assert.deepEqual(v9.counts(), { probes: 2, conversions: 1 })
 })
 
-test('v9 PDF pipeline rejects malformed source ZIPs before forwarding, and other PDF tools stay gated', async () => {
+test('v9 PDF tools reject malformed ZIPs before forwarding', async () => {
   const v9 = upstreamFixture('9.0.0', () => {})
   await assert.rejects(
     proxyConversionRequest(
@@ -378,9 +378,9 @@ test('v9 PDF pipeline rejects malformed source ZIPs before forwarding, and other
       ),
       v9.fetcher,
     ),
-    /supported only by Office, the PDF pipeline, and Chromium HTML\/Markdown/,
+    /the ZIP central directory is missing|not a ZIP file/,
   )
-  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 0 })
 })
 
 test('v9 blocks incompatible ZIP entries and generated-file shadows before upstream conversion', async () => {
@@ -443,7 +443,7 @@ test('rejects non-ZIP archive uploads, duplicates and unsupported operations at 
       ),
       v9.fetcher,
     ),
-    /supported only by Office, the PDF pipeline, and Chromium HTML\/Markdown/,
+    /the ZIP central directory is missing|not a ZIP file/,
   )
   await assert.rejects(
     proxyConversionRequest(
@@ -474,7 +474,7 @@ test('rejects non-ZIP archive uploads, duplicates and unsupported operations at 
     ),
     /At most 10 ZIP archives/,
   )
-  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 0 })
 })
 
 test('routes migrated PDF tools on v9, and still rejects unsupported majors', async () => {

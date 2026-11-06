@@ -251,7 +251,7 @@ export function adaptConversionForm(
     throw new InputError(`The ${operation.title} tool has not been migrated to Gotenberg 9.`, 409)
   }
   if (archives.length && !supportsArchiveInputs(operation)) {
-    throw new InputError('ZIP archive inputs require an Office or Chromium HTML/Markdown tool.')
+    throw new InputError('ZIP archive inputs are not supported on this route.')
   }
   if (payload.downloadFrom?.some((item) => item.embedded || item.field)) {
     throw new InputError(
@@ -307,11 +307,18 @@ export function adaptConversionForm(
         throw new InputError(`Unused conversion stage file: ${file.name}.`)
       }
     }
-    // Merge/split controls run first; user stages follow; built-in PDF/A remediation
-    // stays last so subsequent edits cannot silently invalidate the requested profile.
+    // Final read stages (render or extraction) must come after any generated
+    // remediation: their results are added alongside the converted PDF(s).
     const remediation = generated.filter((stage) => stage.op === 'remediate')
     const setup = generated.filter((stage) => stage.op !== 'remediate')
-    const stages = [...setup, ...userStages, ...remediation]
+    const finalStage = userStages.at(-1)
+    const isFinalRead = ['render', 'extract-attachments', 'extract-text'].includes(
+      finalStage?.op ?? '',
+    )
+    const stages =
+      isFinalRead && finalStage
+        ? [...setup, ...userStages.slice(0, -1), ...remediation, finalStage]
+        : [...setup, ...userStages, ...remediation]
     if (stages.length) {
       parsePdfPipeline(JSON.stringify(stages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames],

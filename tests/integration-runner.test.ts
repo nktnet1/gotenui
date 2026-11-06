@@ -6,19 +6,19 @@ import {
   runIntegrationMatrix,
 } from '#scripts/run-integration-tests'
 
-test('local integration runs both exact pinned versions by default', () => {
-  assert.deepEqual(integrationVersions(), ['8.40.0', '9.0.0'])
+test('local integration runs all three exact pinned versions by default', () => {
+  assert.deepEqual(integrationVersions(), ['8.40.0', '9.0.0', '9.1.0'])
   assert.deepEqual(integrationVersions('9.0.0'), ['9.0.0'])
   assert.deepEqual(integrationVersions(undefined, '8.40.0'), ['8.40.0'])
 })
 
 test('integration runner rejects unknown or conflicting versions', () => {
-  assert.throws(() => integrationVersions('latest'), /8\.40\.0 or 9\.0\.0/)
-  assert.throws(() => integrationVersions(undefined, '8.37.0'), /8\.40\.0 or 9\.0\.0/)
+  assert.throws(() => integrationVersions('latest'), /8\.40\.0, 9\.0\.0, or 9\.1\.0/)
+  assert.throws(() => integrationVersions(undefined, '8.37.0'), /8\.40\.0, 9\.0\.0, or 9\.1\.0/)
   assert.throws(() => integrationVersions('9.0.0', '8.40.0'), /Conflicting/)
 })
 
-test('both suites start concurrently before either completes', async () => {
+test('all three suites start concurrently before any completes', async () => {
   vi.spyOn(console, 'info').mockImplementation(() => {})
   const started: GotenbergIntegrationVersion[] = []
   const finish = new Map<GotenbergIntegrationVersion, (result: { status: number }) => void>()
@@ -26,13 +26,14 @@ test('both suites start concurrently before either completes', async () => {
     started.push(version)
     return new Promise((resolve) => finish.set(version, resolve))
   })
-  assert.deepEqual(started, ['8.40.0', '9.0.0'])
+  assert.deepEqual(started, ['8.40.0', '9.0.0', '9.1.0'])
   finish.get('9.0.0')?.({ status: 0 })
+  finish.get('9.1.0')?.({ status: 0 })
   finish.get('8.40.0')?.({ status: 0 })
   assert.equal(await matrix, 0)
 })
 
-test('a failed suite does not prevent the other version from completing', async () => {
+test('a failed suite does not prevent the other versions from completing', async () => {
   vi.spyOn(console, 'info').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
   const executed: GotenbergIntegrationVersion[] = []
@@ -41,10 +42,10 @@ test('a failed suite does not prevent the other version from completing', async 
     return { status: version === '8.40.0' ? 1 : 0 }
   })
   assert.equal(result, 1)
-  assert.deepEqual(executed, ['8.40.0', '9.0.0'])
+  assert.deepEqual(executed, ['8.40.0', '9.0.0', '9.1.0'])
 })
 
-test('integration runner reports success only after both suites pass', async () => {
+test('integration runner reports success only after all three suites pass', async () => {
   vi.spyOn(console, 'info').mockImplementation(() => {})
   const executed: string[] = []
   assert.equal(
@@ -54,10 +55,10 @@ test('integration runner reports success only after both suites pass', async () 
     }),
     0,
   )
-  assert.deepEqual(executed, ['8.40.0', '9.0.0'])
+  assert.deepEqual(executed, ['8.40.0', '9.0.0', '9.1.0'])
 })
 
-test('an interrupted subprocess fails the matrix while the other suite completes', async () => {
+test('an interrupted subprocess fails the matrix while the other suites complete', async () => {
   vi.spyOn(console, 'info').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
   const executed: string[] = []
@@ -68,10 +69,10 @@ test('an interrupted subprocess fails the matrix while the other suite completes
     }),
     1,
   )
-  assert.deepEqual(executed, ['8.40.0', '9.0.0'])
+  assert.deepEqual(executed, ['8.40.0', '9.0.0', '9.1.0'])
 })
 
-test('an integration runner exception is reported without cancelling the other suite', async () => {
+test('an integration runner exception is reported without cancelling the other suites', async () => {
   vi.spyOn(console, 'info').mockImplementation(() => {})
   vi.spyOn(console, 'error').mockImplementation(() => {})
   const executed: string[] = []
@@ -83,5 +84,5 @@ test('an integration runner exception is reported without cancelling the other s
     }),
     1,
   )
-  assert.deepEqual(executed, ['8.40.0', '9.0.0'])
+  assert.deepEqual(executed, ['8.40.0', '9.0.0', '9.1.0'])
 })

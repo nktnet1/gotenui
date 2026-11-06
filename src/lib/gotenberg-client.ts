@@ -349,6 +349,11 @@ export async function convertWithGotenberg(
       operation.id,
       type,
       payload.outputName,
+      (operation.id === 'extract-attachments' ||
+        (operation.id === 'pdf-pipeline' &&
+          String(payload.fields.stages ?? '').includes('extract-attachments')) ||
+        (payload.conversionStages?.includes('extract-attachments') ?? false)) &&
+        type !== 'application/zip',
     ),
     fallback,
   )

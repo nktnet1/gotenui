@@ -480,10 +480,11 @@ test('v9 rejects invalid stage references and dangerous ordering before conversi
     fields: { pdfa: 'PDF/A-2b' },
     conversionStages: '[{"op":"render","pages":"1","format":"png"}]',
   })
-  assert.throws(
-    () => adaptConversionForm(render.operation, render.payload, render.form, 9),
-    /Rendering must be the last stage/,
-  )
+  const combined = adaptConversionForm(render.operation, render.payload, render.form, 9)
+  assert.deepEqual(JSON.parse(String(combined.get('stages'))), [
+    { op: 'remediate', profile: 'PDF/A-2b' },
+    { op: 'render', pages: '1', format: 'png' },
+  ])
 })
 
 test('conversion stage files cannot be sent without a configured v9 pipeline', () => {

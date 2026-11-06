@@ -3,7 +3,8 @@ import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
 
-const pageSelector = /^(?:\d+(?:-\d+)?|odd|even)(?:\s*,\s*(?:\d+(?:-\d+)?|odd|even))*$/i
+const pageSelector =
+  /^(?:[1-9]\d*(?:-[1-9]\d*)?|odd|even)(?:\s*,\s*(?:[1-9]\d*(?:-[1-9]\d*)?|odd|even))*$/i
 
 function jsonValue(raw: string, label: string): unknown {
   try {
@@ -69,6 +70,7 @@ export function adaptV9PdfExtra(
   payload: ConversionPayload,
   legacy: FormData,
   auxiliary: readonly File[],
+  archives: readonly File[] = [],
 ): { path: string; form: FormData } | null {
   if (!V9_PDF_IDS.has(operationId)) return null
   const fields = payload.fields
@@ -79,6 +81,7 @@ export function adaptV9PdfExtra(
   }
   const downloadFrom = legacy.get('downloadFrom')
   if (typeof downloadFrom === 'string') form.set('downloadFrom', downloadFrom)
+  for (const archive of archives) form.append('archives', archive, archive.name)
   const stages: Record<string, unknown>[] = []
   const value = (name: string): string =>
     typeof fields[name] === 'string' ? fields[name].trim() : ''
@@ -99,6 +102,19 @@ export function adaptV9PdfExtra(
   const requirePages = (name: string) => namedPages(value(name), name)
 
   switch (operationId) {
+    case 'extract-attachments':
+      allow('name')
+      onlyPdfInputs()
+      if (typeof fields.name === 'string' && fields.name) form.set('name', fields.name)
+      return { path: '/forms/pdf/extract-attachments', form }
+    case 'extract-text':
+      allow('pages', 'invisible', 'artifacts', 'annotations')
+      onlyPdfInputs()
+      if (value('pages')) form.set('pages', requirePages('pages'))
+      for (const name of ['invisible', 'artifacts', 'annotations'] as const) {
+        if (fields[name] === true) form.set(name, 'true')
+      }
+      return { path: '/forms/pdf/extract-text', form }
     case 'pdf-info':
     case 'pdf-attachments':
       allow('password')

@@ -4,9 +4,14 @@ import unitConfig from '../vitest.config'
 import integrationConfig from '../vitest.integration.config'
 
 describe('parallel Vitest module caches', () => {
-  it('uses distinct persistent caches for all three concurrently running suites', () => {
-    const paths = [UNIT_TEST_CACHE, integrationTestCache('8.40.0'), integrationTestCache('9.0.0')]
-    expect(new Set(paths).size).toBe(3)
+  it('uses distinct persistent caches for all four concurrently running suites', () => {
+    const paths = [
+      UNIT_TEST_CACHE,
+      integrationTestCache('8.40.0'),
+      integrationTestCache('9.0.0'),
+      integrationTestCache('9.1.0'),
+    ]
+    expect(new Set(paths).size).toBe(4)
     expect(paths.every((path) => path.startsWith('node_modules/.vitest-cache-'))).toBe(true)
     expect(paths).not.toContain('node_modules/.vitest-cache')
   })

@@ -76,6 +76,8 @@
 
 - [x] **Patch 30 (v1.0.29):** Align the Gotenberg 9 experience with the uploaded upstream source audit. A supported v9 connection no longer displays the unconditional migration-era notice; only real version/operation issues surface. PDF/A and Factur-X are not gated on LibreOffice module health in v9 (their v8 requirements are unchanged). Suppress webhook input on direct JSON inspection tools, omit any retained v8 webhook draft on v9, and refuse unsupported webhooks at the authenticated proxy. Accept archive entries explicitly referenced by PDF or conversion stages, match Gotenberg's macOS metadata/symlink skipping and NFC filename normalisation, reject asset-only archives with no source input, and preserve ZIP directory bounds. Add unit/proxy regressions and a pinned-v9 ZIP-attachment integration fixture, awaiting Docker execution.
 
+- [x] **Patch 31 (v1.0.30):** Complete source-reviewed Gotenberg 9.1 PDF extraction support while retaining all 9.0 functionality: expose **Extract PDF attachments** (`name`) and **Extract PDF text** (`pages`, `invisible`, `artifacts`, `annotations`) as standalone tools and as final stages in both PDF and conversion-time pipelines. The stage catalogue expands from 26 (9.0) to **28 (9.1)**, with 9.1-only controls and requests gated by the authenticated minor version and checked against load-balanced response headers. Accept text/plain, arbitrary attachment MIME types (including empty or misleadingly labelled embedded data), ZIP outputs and Unicode filenames. Extend Gotenberg 9 ZIP uploads across multipart routes and validate embedded PDF source counts. Add unit/proxy regressions, pinned v9.1 Docker scenarios and a three-version CI integration matrix. **Local unit/type/build tests are distinct from live Docker verification**; new Docker scenarios are pending execution on a Docker-enabled runner.
+
 **Remaining patch estimate after v1.0.29:** **~2 verification/hardening patches**, contingent on hosted browser and pinned Docker results. The new ZIP-attachment fixture and previously added live-image, conformance and timestamp cases still need real-container runs; Gotenberg 8 compatibility must be reconfirmed. A stateful webhook callback inbox remains out of scope.
 
 ## Remaining priorities
@@ -85,7 +87,7 @@
 3. **Version-specific observability and UX:** Metrics distinguish v8's legacy route from v9's separately configured exporter; webhook delivery guidance distinguishes output and event receivers. Patch 30 removes the unconditional healthy-v9 warning, stops incorrectly disabling v9 PDF-engine operations when LibreOffice is down, and prevents JSON-read webhooks. A callback inbox or delivery-progress tracking would require a new stateful service and remains out of scope. Verify native compression controls against both images.
 4. **Hardening:** Batch queues preserve per-job targets and show bounded conformance warnings. Patch 28 bounds JSON summaries, treats incomplete remediation diagnostics as requiring review, normalises timestamp-authority URLs, and adds a disposable failing-TSA fixture for pinned v9 tests. The CI browser smoke now pauses the active PNG queue before verifying a waiting ZIP job. Live PDF/A/UA and timestamp behaviour still require pinned-image verification.
 
-These are tracked below; no remaining core v9 PDF stage or inspection route is absent from the tool catalogue.
+These are tracked below; patch 31 adds the two Gotenberg 9.1 terminal extraction stages and their standalone endpoints. The 9.0 catalogue remains fully supported with those controls hidden until 9.1; no known 9.0 or 9.1 core PDF stage or inspection route is absent from the frontend.
 
 ### Compatibility baseline after patch 8 (v1.0.7)
 
@@ -131,7 +133,7 @@ Gotenberg 9 removes the 15 `POST /forms/pdfengines/*` routes used here, replacin
 
 ### 4. Missing Gotenberg 9 stages — high
 
-The supplied v9 `pkg/modules/pdf/stages.go` registers **26 stage types**. Of these, the following **13 are not existing distinct Gotenui workflows**:
+The supplied Gotenberg **9.0.0** `pkg/modules/pdf/stages.go` registers **26 stage types** (Gotenberg 9.1.0 adds `extract-text` and `extract-attachments`, making **28**). Of these, the following **13 are not existing distinct Gotenui workflows**:
 
 - [x] `select` (select/unify PDF pages), `delete`, `insert` (patch 5; pinned integration tests passed; further edge cases remain).
 - [x] `set-form` (fill forms), `flatten-transparency`, `convert-colors`, `redact`, `autotag` (patch 5; pinned integration tests passed; further edge cases remain).
@@ -165,7 +167,7 @@ The supplied v9 `pkg/modules/pdf/routes.go` exposes **six read endpoints**: `met
 - [x] Route standalone v9 PDF tool documentation links to the new pipeline and read API pages; retain v8 links for v8 connections. Additional v9 documentation polish remains.
 - [x] Prevent stale `/version` status from enabling tools during connection/credential switches; the server refuses successful conversion and async-acceptance responses that advertise a different major version (or an invalid version header) after the authenticated probe (patch 14; mock-backed).
 - [ ] Verify the v8 → v9 → v8 connection-switch browser smoke on CI after patch 22 also waits for the actual saved-profile draft URL (not merely its select value), including the patch 21 Diagnostics/queued-batch checks, and extend coverage to a live version/header mismatch. The click-transition regression is unit-tested; browser runtime verification is pending. Queued jobs retain a snapshot of their selected connection when enqueued.
-- [x] Add a CI matrix for pinned **Gotenberg 8.40.0** and **9.0.0** real-image integration tests, with basic conversions, screenshots, auth, native field mappings, webhooks and limited stages.
+- [x] Add a CI matrix for pinned **Gotenberg 8.40.0**, **9.0.0**, and **9.1.0** real-image integration tests, with basic conversions, screenshots, auth, native field mappings, webhooks, PDF processing and 9.1 extraction (new v9.1 cases require Docker verification).
 - [x] Use extensionless Node package subpaths for the native TypeScript test runners and CLI script imports; cover actual Node ESM resolution to prevent `ERR_MODULE_NOT_FOUND` (patch 10).
 - [x] Add v9 integration fixtures for all four read endpoints and locally testable new stages (including signing), form read/write, PDF content checks and ZIP/image output; patch 5. Patch 28 adds shared timestamp URL validation and a pinned-v9 integration fixture with a local deliberately failing RFC 3161 authority; no public timestamp service is needed. The new test still needs a live Docker run.
 - [x] Add standalone multi-stage integration cases for merge/select/metadata, attachments, and rendered images (patch 6; pinned integration tests passed after the v1.0.6 fixes).

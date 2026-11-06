@@ -143,8 +143,9 @@ export async function validateZipInputs(
     expected.add('header.html')
     expected.add('footer.html')
     if (operation.input === 'markdown') {
-      expected.add((payload.markdownName ?? DEFAULT_MARKDOWN_NAME).toLowerCase())
-      for (const source of payload.markdownFiles ?? []) expected.add(source.name.toLowerCase())
+      expected.add((payload.markdownName ?? DEFAULT_MARKDOWN_NAME).normalize('NFC').toLowerCase())
+      for (const source of payload.markdownFiles ?? [])
+        expected.add(source.name.normalize('NFC').toLowerCase())
     }
   }
   const extensions = officeExtensionSetForMajor(9)
@@ -183,10 +184,10 @@ export async function validateZipInputs(
       expected.add(flatName)
       extracted.push(normalizedName)
       const isStageAsset = stageAssets.has(normalizedName)
-      if (operation.id === 'pdf-pipeline' && !flatName.endsWith('.pdf') && !isStageAsset) {
+      if (operation.input === 'pdf' && !flatName.endsWith('.pdf') && !isStageAsset) {
         invalidArchive(
           archive.name,
-          `the PDF pipeline requires PDFs or referenced stage assets (found ${label}).`,
+          `${operation.id === 'pdf-pipeline' ? 'PDF pipeline requires PDFs or referenced stage assets' : 'PDF tools require PDFs or referenced pipeline stage assets'} (found ${label}).`,
         )
       }
       if (operation.id === 'office-pdf') {
@@ -200,20 +201,33 @@ export async function validateZipInputs(
   // Gotenberg treats PDFs/Documents consumed by stages as assets, not source
   // inputs. Catch asset-only archives before forwarding them upstream.
   if (
-    (operation.id === 'pdf-pipeline' || operation.id === 'office-pdf') &&
+    (operation.input === 'pdf' || operation.id === 'office-pdf') &&
     !files.length &&
     !payload.downloadFrom?.some((remote) => !remote.field && !remote.embedded) &&
     !extracted.some((name) => {
       if (stageAssets.has(name)) return false
-      if (operation.id === 'pdf-pipeline') return name.toLowerCase().endsWith('.pdf')
+      if (operation.input === 'pdf') return name.toLowerCase().endsWith('.pdf')
       return extensions.has(name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '')
     })
   ) {
     throw new InputError(
-      operation.id === 'pdf-pipeline'
+      operation.input === 'pdf'
         ? 'The PDF ZIP must contain at least one source PDF not reserved by a pipeline stage, or include a separate PDF input.'
         : 'The Office ZIP must contain at least one source document not reserved by a pipeline stage, or include a separate Office input.',
     )
+  }
+  if (operation.input === 'pdf') {
+    const available =
+      files.length +
+      (payload.downloadFrom ?? []).filter((remote) => !remote.embedded && !remote.field).length +
+      extracted.filter((name) => name.toLowerCase().endsWith('.pdf') && !stageAssets.has(name))
+        .length
+    const required = operation.id === 'merge' ? 2 : 1
+    if (available < required) {
+      throw new InputError(
+        `Upload at least ${required} PDF input${required > 1 ? 's' : ''}, including PDFs inside ZIP archives.`,
+      )
+    }
   }
   return extracted
 }
