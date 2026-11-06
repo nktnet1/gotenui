@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
 
@@ -28,39 +28,63 @@ type IntegrationResult = {
   error?: Error
 }
 
-type RunVersion = (version: GotenbergIntegrationVersion) => IntegrationResult
+type RunVersion = (
+  version: GotenbergIntegrationVersion,
+) => IntegrationResult | Promise<IntegrationResult>
 
-function runVitest(version: GotenbergIntegrationVersion): IntegrationResult {
+function runVitest(version: GotenbergIntegrationVersion): Promise<IntegrationResult> {
   const root = fileURLToPath(new URL('../', import.meta.url))
   const vitest = fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url))
-  return spawnSync(process.execPath, [vitest, 'run', '--config', 'vitest.integration.config.ts'], {
-    cwd: root,
-    env: { ...process.env, GOTENBERG_TEST_VERSION: version },
-    stdio: 'inherit',
+  return new Promise((resolve) => {
+    let error: Error | undefined
+    const child = spawn(
+      process.execPath,
+      [vitest, 'run', '--config', 'vitest.integration.config.ts'],
+      {
+        cwd: root,
+        env: { ...process.env, GOTENBERG_TEST_VERSION: version },
+        // Do not buffer Vitest or Docker pull output: both suites stream live.
+        stdio: 'inherit',
+      },
+    )
+    child.once('error', (cause) => {
+      error = cause
+    })
+    child.once('close', (status, signal) => resolve({ status, signal, error }))
   })
 }
 
-export function runIntegrationMatrix(
+/** Run separate Vitest processes concurrently; each provisions its own Docker container and fixture. */
+export async function runIntegrationMatrix(
   versions: readonly GotenbergIntegrationVersion[],
   runVersion: RunVersion = runVitest,
-): number {
-  const failed: GotenbergIntegrationVersion[] = []
-  for (const version of versions) {
-    console.info(`\nRunning integration tests with ${styleText('cyan', `Gotenberg ${version}`)}...`)
-    const result = runVersion(version)
-    if (result.status === 0 && !result.error && !result.signal) {
-      console.info(`${styleText('green', 'Passed')}: Gotenberg ${version}`)
-      continue
-    }
-    failed.push(version)
-    console.error(
-      `${styleText('red', 'Failed')}: Gotenberg ${version}` +
-        (result.error ? ` (${result.error.message})` : '') +
-        (result.signal ? ` (signal ${result.signal})` : ''),
-    )
-    if (result.signal) break
-  }
+): Promise<number> {
+  const outcomes = await Promise.all(
+    versions.map(async (version) => {
+      console.info(
+        `\nStarting integration tests with ${styleText('cyan', `Gotenberg ${version}`)}...`,
+      )
+      try {
+        const result = await runVersion(version)
+        if (result.status === 0 && !result.error && !result.signal) {
+          console.info(`${styleText('green', 'Passed')}: Gotenberg ${version}`)
+          return { version, passed: true }
+        }
+        console.error(
+          `${styleText('red', 'Failed')}: Gotenberg ${version}` +
+            (result.error ? ` (${result.error.message})` : '') +
+            (result.signal ? ` (signal ${result.signal})` : ''),
+        )
+      } catch (error) {
+        console.error(
+          `${styleText('red', 'Failed')}: Gotenberg ${version} (${error instanceof Error ? error.message : String(error)})`,
+        )
+      }
+      return { version, passed: false }
+    }),
+  )
 
+  const failed = outcomes.filter(({ passed }) => !passed).map(({ version }) => version)
   if (failed.length > 0) {
     console.error(`Integration failures: ${failed.join(', ')}`)
     return 1
@@ -74,7 +98,7 @@ export function runIntegrationMatrix(
 if (import.meta.main) {
   try {
     if (process.argv.length > 3) throw new Error('Provide at most one Gotenberg version.')
-    process.exitCode = runIntegrationMatrix(
+    process.exitCode = await runIntegrationMatrix(
       integrationVersions(process.argv[2], process.env.GOTENBERG_TEST_VERSION),
     )
   } catch (error) {

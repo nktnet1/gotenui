@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { inflateRawSync } from 'node:zlib'
 import { afterAll, beforeAll, expect, inject, test } from 'vitest'
 import {
   proxyConversionRequest,
@@ -16,8 +17,8 @@ import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
 import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import type { ConversionPayload } from '#/lib/validation'
-import { V9_PDF_IDS } from '#/tools/v9-pdf-config'
 import type { CallbackReceipt } from './async-fixture-server'
+import { integrationSmokeOperations } from './operation-selection'
 import { retryTransientConversion } from './transient-conversion'
 
 const backendUrl = inject('gotenbergTestUrl')
@@ -226,10 +227,9 @@ afterAll(() => {
   }
 })
 
-function zipEntryCount(bytes: Uint8Array): number {
-  // ZIP end-of-central-directory stores the number of entries at offset 10.
-  // Search backwards because ZIP files can have a trailing comment.
+function zipEndRecordOffset(bytes: Uint8Array): number {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  // Search backwards because ZIP archives can have a trailing comment.
   for (
     let offset = bytes.length - 22;
     offset >= Math.max(0, bytes.length - 22 - 65_535);
@@ -237,19 +237,56 @@ function zipEntryCount(bytes: Uint8Array): number {
   ) {
     if (view.getUint32(offset, true) !== 0x06054b50) continue
     const commentLength = view.getUint16(offset + 20, true)
-    if (offset + 22 + commentLength === bytes.length) return view.getUint16(offset + 10, true)
+    if (offset + 22 + commentLength === bytes.length) return offset
   }
   throw new Error('Missing ZIP end-of-central-directory record')
 }
 
+function zipEntryCount(bytes: Uint8Array): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  return view.getUint16(zipEndRecordOffset(bytes) + 10, true)
+}
+
+/** Inspect actual archived files instead of trusting an HTTP 200 or a ZIP header. */
+function zipEntries(bytes: Uint8Array): Map<string, Uint8Array> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const end = zipEndRecordOffset(bytes)
+  const entries = new Map<string, Uint8Array>()
+  let cursor = view.getUint32(end + 16, true)
+  for (let index = 0; index < view.getUint16(end + 10, true); index++) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) {
+      throw new Error('Invalid ZIP central directory')
+    }
+    const method = view.getUint16(cursor + 10, true)
+    const compressedSize = view.getUint32(cursor + 20, true)
+    const filenameLength = view.getUint16(cursor + 28, true)
+    const extraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const filename = new TextDecoder().decode(
+      bytes.subarray(cursor + 46, cursor + 46 + filenameLength),
+    )
+    const localOffset = view.getUint32(cursor + 42, true)
+    if (view.getUint32(localOffset, true) !== 0x04034b50) {
+      throw new Error(`Invalid ZIP local header for ${filename}`)
+    }
+    const dataStart =
+      localOffset +
+      30 +
+      view.getUint16(localOffset + 26, true) +
+      view.getUint16(localOffset + 28, true)
+    const compressed = bytes.subarray(dataStart, dataStart + compressedSize)
+    if (compressed.length !== compressedSize) throw new Error(`Truncated ZIP entry: ${filename}`)
+    if (method !== 0 && method !== 8) throw new Error(`Unsupported ZIP compression: ${method}`)
+    const contents = method === 0 ? compressed : inflateRawSync(compressed)
+    entries.set(filename, contents)
+    cursor += 46 + filenameLength + extraLength + commentLength
+  }
+  return entries
+}
+
 // Drive each UI operation through the real server-side proxy into the local Docker instance.
 // No mocks and no network calls to demo.gotenberg.dev are used in this suite.
-test.each(
-  OPERATIONS.filter(
-    (operation) =>
-      !V9_PDF_IDS.has(operation.id) && (!isV9 || operation.supportedGotenbergMajors?.includes(9)),
-  ),
-)(
+test.each(integrationSmokeOperations(isV9 ? 9 : 8))(
   '$id - $path',
   async (operation) => {
     const response = await convert(operation)
@@ -520,7 +557,7 @@ test.skipIf(!isV9)(
 )
 
 test.skipIf(!isV9)(
-  'Gotenberg 9 pipeline renders its final PDF to a PNG',
+  'Gotenberg 9 pipeline returns a ZIP containing its edited PDF and rendered PNG',
   async () => {
     const result = await convertV9('pdf-pipeline', {
       stages: JSON.stringify([
@@ -529,10 +566,16 @@ test.skipIf(!isV9)(
       ]),
     })
     if (!result.ok) throw new Error(`Pipeline render: ${result.status} ${await result.text()}`)
-    expect(result.headers.get('content-type')?.split(';')[0]).toBe('image/png')
-    expect([...new Uint8Array(await result.arrayBuffer()).subarray(0, 8)]).toEqual([
-      137, 80, 78, 71, 13, 10, 26, 10,
-    ])
+    // A render-only route returns the PNG directly. A pipeline that edits a PDF
+    // before rendering returns both the edited PDF and image in a ZIP archive.
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
+    const entries = [...zipEntries(new Uint8Array(await result.arrayBuffer()))]
+    expect(entries).toHaveLength(2)
+    const pdf = entries.find(([name]) => name.endsWith('.pdf'))?.[1]
+    const png = entries.find(([name]) => name.endsWith('.png'))?.[1]
+    if (!pdf || !png) throw new Error('Expected both PDF and PNG entries in the pipeline ZIP')
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-')
+    expect([...png.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
   },
   120_000,
 )

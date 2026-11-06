@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { expect, test } from 'vitest'
 import { GROUPS, OPERATION_BY_ID, OPERATIONS, operationDefaults } from '#/lib/operations'
+import { integrationSmokeOperations } from './integration/operation-selection'
 
 test('all operation identifiers and Gotenberg endpoints are unique', () => {
   assert.equal(OPERATIONS.length, 40)
@@ -95,4 +96,15 @@ test('implements every published Gotenberg multipart processing endpoint', () =>
       .map(({ path }) => path)
       .sort(),
   ).toEqual([...documentedRoutes].sort())
+})
+
+test('integration smoke matrix includes the pipeline only on Gotenberg 9', () => {
+  const v8 = integrationSmokeOperations(8).map(({ id }) => id)
+  const v9 = integrationSmokeOperations(9).map(({ id }) => id)
+  expect(v8).not.toContain('pdf-pipeline')
+  expect(v9).toContain('pdf-pipeline')
+  expect(v8).toContain('merge')
+  expect(v9).toContain('merge')
+  expect(v8).not.toContain('pdf-info')
+  expect(v9).not.toContain('pdf-info') // Has its own specialised v9 integration fixture.
 })
