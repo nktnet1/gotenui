@@ -732,6 +732,14 @@ export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): read
     return stages.length === 1 ? ['text/plain', 'application/zip'] : ['application/zip']
   if (render?.op === 'extract-attachments')
     return stages.length === 1 ? ['*', 'application/zip'] : ['application/zip']
+  // Merge collapses all current documents into exactly one. Subsequent edits
+  // preserve that document count; only a later split can produce a ZIP again.
+  // The final read operations above are different: they add rendered/extracted
+  // files alongside the PDF even after a merge.
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (stages[i]?.op === 'merge') return ['application/pdf']
+    if (stages[i]?.op === 'split') break
+  }
   return ['application/pdf', 'application/zip']
 }
 

@@ -765,6 +765,35 @@ test('PDF pipeline merges local documents in selection order despite upstream fi
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
 })
 
+test('PDF pipeline after its final merge accepts one PDF but rejects a ZIP', async () => {
+  const source = new File(['%PDF-1.7\n'], 'source.pdf', { type: 'application/pdf' })
+  const stages = '[{"op":"split","every":1},{"op":"merge"},{"op":"optimize"}]'
+  const archive = zipFixture({ 'source.pdf': '%PDF-1.7\n' })
+  const unexpectedZip: typeof fetch = async (input, options) => {
+    if (String(input) === `${upstream}/version`) return new Response('9.1.0')
+    assert.ok(options?.body instanceof FormData)
+    assert.deepEqual(JSON.parse(String(options.body.get('stages'))), JSON.parse(stages))
+    return new Response(await archive.arrayBuffer(), {
+      headers: { 'Content-Type': 'application/zip' },
+    })
+  }
+  await assert.rejects(
+    proxyConversionRequest(requestFor('pdf-pipeline', { stages }, {}, [source]), unexpectedZip),
+    /unexpected conversion response/,
+  )
+
+  const expectedPdf: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.1.0')
+      : new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+  const result = await proxyConversionRequest(
+    requestFor('pdf-pipeline', { stages }, {}, [source]),
+    expectedPdf,
+  )
+  assert.equal(result.headers.get('content-type'), 'application/pdf')
+  assert.equal(await result.text(), '%PDF-1.7\n')
+})
+
 test('multi-stage PDF rendering requires ZIP and rejects a successful single-image response', async () => {
   const source = new File(['%PDF-1.7\n'], 'source.pdf', { type: 'application/pdf' })
   const stages = '[{"op":"rotate","angle":90},{"op":"render","format":"png"}]'

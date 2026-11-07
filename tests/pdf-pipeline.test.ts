@@ -517,6 +517,23 @@ describe('PDF pipeline catalogue and stage contract', () => {
       'application/pdf',
       'application/zip',
     ])
+    assert.deepEqual(pipelineResponseTypes(parsePdfPipeline('[{"op":"merge"}]')), [
+      'application/pdf',
+    ])
+    assert.deepEqual(
+      pipelineResponseTypes(
+        parsePdfPipeline('[{"op":"split","every":1},{"op":"merge"},{"op":"optimize"}]'),
+      ),
+      ['application/pdf'],
+    )
+    assert.deepEqual(
+      pipelineResponseTypes(parsePdfPipeline('[{"op":"merge"},{"op":"split","every":1}]')),
+      ['application/pdf', 'application/zip'],
+    )
+    assert.deepEqual(
+      pipelineResponseTypes(parsePdfPipeline('[{"op":"merge"},{"op":"render","format":"png"}]')),
+      ['application/zip'],
+    )
   })
   it('redacts secrets in previews', () => {
     const preview = safePipelinePreview([
