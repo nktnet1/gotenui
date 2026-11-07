@@ -226,7 +226,6 @@ export type PdfPipelineOp = (typeof PDF_PIPELINE_STAGES)[number]['op']
 export type PdfPipelineStage = { op: PdfPipelineOp; [key: string]: unknown }
 
 export const DEFAULT_PDF_PIPELINE = '[{"op":"optimize"}]'
-export const V9_1_PDF_STAGES = new Set<PdfPipelineOp>(['extract-attachments', 'extract-text'])
 const pipelineByOp = new Map<string, (typeof PDF_PIPELINE_STAGES)[number]>(
   PDF_PIPELINE_STAGES.map((stage) => [stage.op, stage]),
 )
@@ -595,8 +594,6 @@ export function pdfStageAssetNames(stages: readonly PdfPipelineStage[]): string[
 }
 
 export type PdfPipelineValidation = {
-  /** Verified minor version when connected to Gotenberg 9. */
-  gotenbergMinor?: number
   assetNames?: readonly string[]
   acknowledgedRedaction?: boolean
 }
@@ -626,13 +623,6 @@ export function parsePdfPipeline(
     if (!object(value) || typeof value.op !== 'string' || !pipelineByOp.has(value.op))
       throw new InputError(`Stage ${index + 1} must select a supported PDF operation.`)
     const stage = value as PdfPipelineStage
-    if (
-      V9_1_PDF_STAGES.has(stage.op) &&
-      context.gotenbergMinor !== undefined &&
-      context.gotenbergMinor < 1
-    ) {
-      throw new InputError(`${stage.op} requires Gotenberg 9.1 or later.`, 409)
-    }
     validateStage(stage)
     const op = stage.op
     const previous = counts.get(op) ?? 0

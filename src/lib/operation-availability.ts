@@ -31,13 +31,6 @@ export function unavailableOperationReason(
       ? 'This tool requires Gotenberg 9. Select a Gotenberg 9 connection for this workflow.'
       : 'This tool has not been migrated to Gotenberg 9 yet. Select a Gotenberg 8 connection for this workflow.'
   }
-  if (
-    version.major === 9 &&
-    operation.minGotenbergMinor !== undefined &&
-    version.minor < operation.minGotenbergMinor
-  ) {
-    return `${operation.title} requires Gotenberg 9.${operation.minGotenbergMinor} or later.`
-  }
   const healthModules = status.modules.filter((module) =>
     ['chromium', 'libreoffice'].includes(module.name.toLowerCase()),
   )

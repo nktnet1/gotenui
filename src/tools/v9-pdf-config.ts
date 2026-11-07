@@ -113,7 +113,6 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
     {
       path: '/forms/pdf/extract-attachments',
       output: 'file',
-      minGotenbergMinor: 1,
     },
   ),
   tool(
@@ -134,7 +133,6 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
     {
       path: '/forms/pdf/extract-text',
       output: 'text',
-      minGotenbergMinor: 1,
     },
   ),
   tool(

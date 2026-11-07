@@ -63,39 +63,25 @@ beforeEach(() => vi.stubEnv('GOTENBERG_ALLOWED_URLS', upstream))
 afterEach(() => vi.unstubAllEnvs())
 
 test.each(['extract-attachments', 'extract-text'])(
-  'Gotenberg 9.0 rejects %s before contacting the conversion endpoint',
+  'only exposes %s for Gotenberg major 9',
   async (id) => {
-    const upstream = fixture('9.0.0', () => assert.fail('No conversion should be sent'))
+    const upstream = fixture('8.40.0', () => assert.fail('No conversion should be sent'))
     await assert.rejects(proxyConversionRequest(requestFor(id), upstream.fetcher), {
       status: 409,
-      message: /requires Gotenberg 9\.1 or later/,
+      message: /not available on Gotenberg 8/,
     })
     assert.equal(upstream.calls(), 0)
   },
 )
 
 test.each(['extract-attachments', 'extract-text'])(
-  'Gotenberg 9.0 rejects %s in standalone and conversion-time pipelines',
-  async (stage) => {
-    const upstream = fixture('9.0.0', () => assert.fail('No conversion should be sent'))
-    for (const request of [
-      requestFor('pdf-pipeline', {}, { stages: JSON.stringify([{ op: stage }]) }),
-      requestFor(
-        'html-pdf',
-        {},
-        {
-          files: [],
-          conversionStages: JSON.stringify([{ op: stage }]),
-        },
-      ),
-    ]) {
-      await assert.rejects(proxyConversionRequest(request, upstream.fetcher), (error: unknown) => {
-        assert.ok(error instanceof Error)
-        assert.match(error.message, new RegExp(`${stage} requires Gotenberg 9\\.1`))
-        return true
-      })
-    }
-    assert.equal(upstream.calls(), 0)
+  'explains missing %s routes without guessing capabilities from /version',
+  async (id) => {
+    const upstream = fixture('9.1.0', () => new Response('404 Not Found', { status: 404 }))
+    const response = await proxyConversionRequest(requestFor(id), upstream.fetcher)
+    assert.equal(response.status, 404)
+    assert.match(await response.text(), new RegExp(`does not expose /forms/pdf/${id}`))
+    assert.equal(upstream.calls(), 1)
   },
 )
 
@@ -316,40 +302,47 @@ test('pipeline extraction returns MIME types matching sole and multi-stage pipel
   }
 })
 
-test('rejects a 9.0 worker selected by a 9.1 load-balanced version probe', async () => {
+test('still rejects cross-major worker switches during a conversion', async () => {
   for (const id of ['extract-text', 'extract-attachments']) {
     const upstream = fixture(
       '9.1.0',
       () =>
         new Response('unexpected result', {
-          headers: { 'Content-Type': 'text/plain', 'Gotenberg-Version': '9.0.0' },
+          headers: { 'Content-Type': 'text/plain', 'Gotenberg-Version': '8.40.0' },
         }),
     )
     await assert.rejects(proxyConversionRequest(requestFor(id), upstream.fetcher), {
       status: 409,
-      message: /cannot handle this 9\.1\+ operation/,
+      message: /changed from v9 to v8/,
     })
   }
   const upstream = fixture(
     '9.1.0',
     () =>
       new Response(zipBytes, {
-        headers: { 'Content-Type': 'application/zip', 'Gotenberg-Version': '9.0.0' },
+        headers: { 'Content-Type': 'application/zip', 'Gotenberg-Version': '8.40.0' },
       }),
   )
   await assert.rejects(
     proxyConversionRequest(
-      requestFor(
-        'pdf-pipeline',
-        {},
-        {
-          stages: '[{"op":"optimize"},{"op":"extract-text"}]',
-        },
-      ),
+      requestFor('pdf-pipeline', {}, { stages: '[{"op":"optimize"},{"op":"extract-text"}]' }),
       upstream.fetcher,
     ),
     { status: 409 },
   )
+})
+
+test('accepts same-major response headers without pinning a minor version', async () => {
+  const upstream = fixture(
+    '9.1.0',
+    () =>
+      new Response('extracted text', {
+        headers: { 'Content-Type': 'text/plain', 'Gotenberg-Version': '9.3.0' },
+      }),
+  )
+  const response = await proxyConversionRequest(requestFor('extract-text'), upstream.fetcher)
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), 'extracted text')
 })
 
 test('validates both extraction options and terminal-only rules', () => {
@@ -375,17 +368,14 @@ test('validates both extraction options and terminal-only rules', () => {
     /last stage/,
   )
   assert.throws(() => parsePdfPipeline('[{"op":"extract-text"},{"op":"render"}]'), /last stage/)
-  assert.throws(() => parsePdfPipeline('[{"op":"extract-text"}]', { gotenbergMinor: 0 }), {
-    status: 409,
-  })
-  assert.equal(parsePdfPipeline('[{"op":"extract-text"}]', { gotenbergMinor: 1 }).length, 1)
+  assert.equal(parsePdfPipeline('[{"op":"extract-text"}]').length, 1)
 
   const attachment = OPERATION_BY_ID.get('extract-attachments')
   const text = OPERATION_BY_ID.get('extract-text')
   assert.ok(attachment)
   assert.ok(text)
-  assert.equal(attachment.minGotenbergMinor, 1)
-  assert.equal(text.minGotenbergMinor, 1)
+  assert.deepEqual(attachment.supportedGotenbergMajors, [9])
+  assert.deepEqual(text.supportedGotenbergMajors, [9])
   for (const operation of [attachment, text]) {
     const payload: ConversionPayload = { operation: operation.id, fields: {}, advanced: {} }
     const legacy = new FormData()

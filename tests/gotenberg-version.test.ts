@@ -54,14 +54,10 @@ describe('per-operation API compatibility', () => {
     assert.match(unavailableOperationReason(status('8.35.0'), operation('optimize')) ?? '', /8\.36/)
   })
 
-  it('enables conversions, screenshots and standalone PDF processing on both versions', () => {
+  it('gates by major version without assuming minor-version capabilities', () => {
     for (const tool of OPERATIONS) {
-      if (tool.minGotenbergMinor) {
-        assert.match(unavailableOperationReason(status('9.0.0'), tool) ?? '', /Gotenberg 9\.1/)
-      } else {
-        assert.equal(unavailableOperationReason(status('9.0.0'), tool), null, tool.id)
-      }
       assert.equal(unavailableOperationReason(status('9.1.0'), tool), null, tool.id)
+      assert.equal(unavailableOperationReason(status('9.3.0'), tool), null, tool.id)
       assert.deepEqual(
         tool.supportedGotenbergMajors,
         tool.path.startsWith('/forms/pdf/') ? [9] : [8, 9],

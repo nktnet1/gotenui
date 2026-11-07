@@ -3,14 +3,12 @@ import { useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Label } from '#/components/ui/label'
 import { Textarea } from '#/components/ui/textarea'
-import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import {
   DEFAULT_PDF_PIPELINE,
   PDF_PIPELINE_STAGES,
   type PdfPipelineOp,
   parsePdfPipeline,
   safePipelinePreview,
-  V9_1_PDF_STAGES,
 } from '#/lib/pdf-pipeline'
 
 type EditorStage = { id: number; op: PdfPipelineOp; settings: string }
@@ -51,7 +49,6 @@ export function PdfPipelineBuilder({
   onRedactionChange,
   error,
   conversionMode = false,
-  backendVersion,
 }: {
   value: string
   onChange: (value: string) => void
@@ -59,15 +56,13 @@ export function PdfPipelineBuilder({
   onRedactionChange: (value: boolean) => void
   error: string | null
   conversionMode?: boolean
-  backendVersion?: string
 }) {
   const [stages, setStages] = useState<EditorStage[]>(() => initialStages(value))
   const [selected, setSelected] = useState<PdfPipelineOp>('select')
   const nextId = useRef(Math.max(...initialStages(value).map(({ id }) => id)) + 1)
   const [editorError, setEditorError] = useState<string | null>(null)
-  const minor = parseGotenbergVersion(backendVersion)?.minor ?? 0
   const availableStages = PDF_PIPELINE_STAGES.filter(
-    ({ op }) => !(conversionMode && op === 'decrypt') && !(minor < 1 && V9_1_PDF_STAGES.has(op)),
+    ({ op }) => !(conversionMode && op === 'decrypt'),
   )
 
   const update = (next: EditorStage[]) => {

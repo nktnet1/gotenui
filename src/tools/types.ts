@@ -55,8 +55,6 @@ export type Operation = {
   path: `/forms/${string}`
   /** Unspecified means v8 only; opt in to v9 after its form fields and responses are verified. */
   supportedGotenbergMajors?: readonly SupportedGotenbergMajor[]
-  /** Minimum minor of Gotenberg 9 for features added after 9.0. */
-  minGotenbergMinor?: number
   docs: string
   input: InputKind
   fields: readonly FieldDefinition[]

@@ -1,7 +1,7 @@
 import { styleText } from 'node:util'
 import { spawnVitest, type TestProcessResult } from '#scripts/test-process'
 
-export const GOTENBERG_INTEGRATION_VERSIONS = ['8.40.0', '9.0.0', '9.1.0'] as const
+export const GOTENBERG_INTEGRATION_VERSIONS = ['8.40.0', '9.1.0'] as const
 export type GotenbergIntegrationVersion = (typeof GOTENBERG_INTEGRATION_VERSIONS)[number]
 
 export function integrationVersions(
@@ -16,7 +16,7 @@ export function integrationVersions(
   const version = requested || environment
   if (!version) return [...GOTENBERG_INTEGRATION_VERSIONS]
   if (!GOTENBERG_INTEGRATION_VERSIONS.some((candidate) => candidate === version)) {
-    throw new Error('Integration tests require Gotenberg 8.40.0, 9.0.0, or 9.1.0.')
+    throw new Error('Integration tests require Gotenberg 8.40.0 or 9.1.0.')
   }
   return [version as GotenbergIntegrationVersion]
 }
@@ -26,14 +26,10 @@ type RunVersion = (
 ) => TestProcessResult | Promise<TestProcessResult>
 
 function runVitest(version: GotenbergIntegrationVersion): Promise<TestProcessResult> {
-  return spawnVitest(
-    'vitest.integration.config.ts',
-    version === '8.40.0' ? 'v8' : version === '9.0.0' ? 'v9' : 'v91',
-    {
-      ...process.env,
-      GOTENBERG_TEST_VERSION: version,
-    },
-  )
+  return spawnVitest('vitest.integration.config.ts', version === '8.40.0' ? 'v8' : 'v9', {
+    ...process.env,
+    GOTENBERG_TEST_VERSION: version,
+  })
 }
 
 /** Run separate Vitest processes concurrently; each provisions its own Docker container and fixture. */
@@ -43,10 +39,7 @@ export async function runIntegrationMatrix(
 ): Promise<number> {
   const outcomes = await Promise.all(
     versions.map(async (version) => {
-      const label = styleText(
-        'cyan',
-        version === '9.1.0' ? '[v91]' : version === '9.0.0' ? '[v9]' : '[v8]',
-      )
+      const label = styleText('cyan', version === '8.40.0' ? '[v8]' : '[v9]')
       console.info(`\n${label} Starting Gotenberg ${version} integration tests...`)
       try {
         const result = await runVersion(version)

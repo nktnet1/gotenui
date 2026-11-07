@@ -305,7 +305,6 @@ export function Workbench({
         // Do not reject a stage asset solely because it is inside an uploaded ZIP.
         assetNames: archives.length ? undefined : auxFiles.map(({ name }) => name),
         acknowledgedRedaction: fields.acknowledgedRedaction === true,
-        gotenbergMinor: parseGotenbergVersion(backendVersion)?.minor,
       })
       return null
     } catch (error) {
@@ -318,7 +317,6 @@ export function Workbench({
       parsePdfPipeline(conversionStages, {
         assetNames: archives.length ? undefined : conversionStageFiles.map(({ name }) => name),
         acknowledgedRedaction: acknowledgedConversionRedaction,
-        gotenbergMinor: parseGotenbergVersion(backendVersion)?.minor,
       })
       return null
     } catch (error) {
@@ -803,7 +801,6 @@ export function Workbench({
                 acknowledgedRedaction={fields.acknowledgedRedaction === true}
                 onRedactionChange={(value) => updateField('acknowledgedRedaction', value)}
                 error={pipelineError}
-                backendVersion={backendVersion}
               />
             )}
             {(operation.id === 'metadata-write' || operation.id === 'bookmarks-write') && (
@@ -914,7 +911,6 @@ export function Workbench({
                       onRedactionChange={setAcknowledgedConversionRedaction}
                       error={conversionPipelineError}
                       conversionMode
-                      backendVersion={backendVersion}
                     />
                     <UploadZone
                       label="Pipeline stage files"

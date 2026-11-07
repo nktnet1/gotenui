@@ -246,7 +246,6 @@ describe('visual pipeline builder', () => {
   it('renders all 28 stage choices and accessible stage movement controls', () => {
     const markup = renderToStaticMarkup(
       createElement(PdfPipelineBuilder, {
-        backendVersion: '9.1.0',
         value: DEFAULT_PDF_PIPELINE,
         onChange: () => {},
         acknowledgedRedaction: false,
@@ -264,10 +263,9 @@ describe('visual pipeline builder', () => {
     assert.match(markup, /aria-label="Remove Optimise"/)
     assert.match(markup, /Preview ordered stages/)
   })
-  it('hides Gotenberg 9.1-only extraction stages from a 9.0 pipeline editor', () => {
+  it('offers both extraction stages without relying on a backend minor version', () => {
     const markup = renderToStaticMarkup(
       createElement(PdfPipelineBuilder, {
-        backendVersion: '9.0.0',
         value: DEFAULT_PDF_PIPELINE,
         onChange: () => {},
         acknowledgedRedaction: false,
@@ -275,8 +273,8 @@ describe('visual pipeline builder', () => {
         error: null,
       }),
     )
-    assert.doesNotMatch(markup, /value="extract-attachments"/)
-    assert.doesNotMatch(markup, /value="extract-text"/)
+    assert.match(markup, /value="extract-attachments"/)
+    assert.match(markup, /value="extract-text"/)
     assert.match(markup, /value="render"/)
   })
 

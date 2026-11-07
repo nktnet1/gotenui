@@ -14,7 +14,7 @@ import {
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
 import { canWebhookForOperation } from '#/lib/operation-availability'
-import { parsePdfPipeline, pipelineResponseTypes, V9_1_PDF_STAGES } from '#/lib/pdf-pipeline'
+import { parsePdfPipeline, pipelineResponseTypes } from '#/lib/pdf-pipeline'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
@@ -543,17 +543,10 @@ export async function proxyConversionRequest(
       409,
     )
   }
-  let requiredMinorVersion = operation.minGotenbergMinor ?? 0
-  if (major === 9 && version.minor < requiredMinorVersion) {
-    throw new ProxyInputError(
-      `${operation.title} requires Gotenberg 9.${requiredMinorVersion} or later.`,
-      409,
-    )
-  }
-  // Validate the actual stages and remember the minimum supported minor so
-  // a load-balanced conversion cannot land on a 9.0 worker after probing 9.1.
+  // Validate the actual stages. Gotenberg exposes /version but not a reliable
+  // feature-discovery API, so v9 tools share the v9 major-version gate.
   if (major === 9 && (operation.id === 'pdf-pipeline' || payload.conversionStages)) {
-    const stages = parsePdfPipeline(
+    parsePdfPipeline(
       operation.id === 'pdf-pipeline'
         ? String(payload.fields.stages ?? '')
         : (payload.conversionStages ?? ''),
@@ -562,10 +555,8 @@ export async function proxyConversionRequest(
           operation.id === 'pdf-pipeline'
             ? payload.fields.acknowledgedRedaction === true
             : payload.acknowledgedConversionRedaction,
-        gotenbergMinor: version.minor,
       },
     )
-    if (stages.some((stage) => V9_1_PDF_STAGES.has(stage.op))) requiredMinorVersion = 1
   }
   // The initial validation accepts the union of both Office extension sets.
   // Recheck after authenticating /version so neither version receives an unsupported format.
@@ -648,16 +639,10 @@ export async function proxyConversionRequest(
     const returnedVersion = upstream.headers.get('Gotenberg-Version')
     if (returnedVersion !== null) {
       const parsed = parseGotenbergVersion(returnedVersion)
-      if (
-        !parsed ||
-        parsed.major !== major ||
-        (major === 9 && parsed.minor < requiredMinorVersion)
-      ) {
+      if (!parsed || parsed.major !== major) {
         await upstream.body?.cancel().catch(() => {})
         const detail = parsed
-          ? parsed.major === major
-            ? `Gotenberg 9.${parsed.minor} cannot handle this 9.${requiredMinorVersion}+ operation.`
-            : `Gotenberg changed from v${major} to v${parsed.major} during conversion.`
+          ? `Gotenberg changed from v${major} to v${parsed.major} during conversion.`
           : 'Gotenberg returned an invalid version header.'
         const accepted = upstream.status === 202 || upstream.status === 204
         throw new ProxyInputError(
@@ -671,15 +656,24 @@ export async function proxyConversionRequest(
   }
   if (!upstream.ok) {
     invalidateUnauthorized(upstream.status, target)
+    const missingExtractionEndpoint =
+      upstream.status === 404 &&
+      (operation.id === 'extract-text' || operation.id === 'extract-attachments')
     const headers = new Headers({
       ...safeResponseHeaders,
       'Content-Type': 'text/plain; charset=utf-8',
     })
     copyUpstreamDiagnostics(upstream, headers)
-    return new Response(await upstreamErrorText(upstream), {
-      status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
-      headers,
-    })
+    if (missingExtractionEndpoint) await upstream.body?.cancel().catch(() => {})
+    return new Response(
+      missingExtractionEndpoint
+        ? `This Gotenberg instance does not expose ${operation.path}. Use the latest Gotenberg 9 release with PDF routes enabled.`
+        : await upstreamErrorText(upstream),
+      {
+        status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
+        headers,
+      },
+    )
   }
   const headers = new Headers(safeResponseHeaders)
   copyUpstreamDiagnostics(upstream, headers)
