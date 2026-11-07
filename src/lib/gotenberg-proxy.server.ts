@@ -364,13 +364,16 @@ function allowedConversionContentTypes(
     const stages = parsePdfPipeline(payload.conversionStages, {
       acknowledgedRedaction: payload.acknowledgedConversionRedaction,
     })
-    const types = pipelineResponseTypes(stages)
-    // Each ZIP can contain several Office documents, whose count is only
-    // known after Gotenberg extracts it. Even one uploaded ZIP can yield
-    // several independent output PDFs in another ZIP.
-    return archives.length && operation.id === 'office-pdf'
-      ? [...new Set([...types, 'application/zip'])]
-      : types
+    // Gotenberg's Chromium and LibreOffice conversion routes pass newly
+    // generated PDFs to Processor.Run and include those PDFs in its outputs.
+    // Unlike /forms/pdf/pipe, they do not drop the source PDF when the sole
+    // stage renders pages or extracts content. The PDF plus at least one
+    // generated file therefore always produces a ZIP, never a lone image,
+    // text file or arbitrary attachment.
+    if (['render', 'extract-text', 'extract-attachments'].includes(stages.at(-1)?.op ?? '')) {
+      return ['application/zip']
+    }
+    return pipelineResponseTypes(stages)
   }
   const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
   if (operation.id === 'render-pages') {
@@ -713,11 +716,6 @@ export async function proxyConversionRequest(
     (operation.id === 'pdf-pipeline' &&
       (() => {
         const stages = parsePdfPipeline(String(payload.fields.stages ?? ''))
-        return stages.length === 1 && stages[0]?.op === 'extract-attachments'
-      })()) ||
-    (payload.conversionStages !== undefined &&
-      (() => {
-        const stages = parsePdfPipeline(payload.conversionStages)
         return stages.length === 1 && stages[0]?.op === 'extract-attachments'
       })())
   const attachmentDisposition = upstream.headers.get('content-disposition')

@@ -342,6 +342,69 @@ test('pipeline extraction returns MIME types matching sole and multi-stage pipel
   }
 })
 
+test.each([
+  [
+    'render',
+    { op: 'render', format: 'png' },
+    'image/png',
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+  ],
+  ['extract-text', { op: 'extract-text' }, 'text/plain', 'extracted text'],
+  ['extract-attachments', { op: 'extract-attachments' }, 'application/xml', '<file/>'],
+] as const)(
+  'conversion-time %s cannot return a standalone %s file instead of the required ZIP',
+  async (_operation, stage, contentType, content) => {
+    const stages = JSON.stringify([stage])
+    const upstream = fixture('9.1.0', (path, form) => {
+      assert.equal(path, '/forms/chromium/convert/html')
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [stage])
+      return new Response(content, {
+        headers: {
+          'Content-Type': contentType,
+          'Content-Disposition': 'attachment; filename="unexpected-file.xml"',
+        },
+      })
+    })
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('html-pdf', {}, { files: [], conversionStages: stages }),
+        upstream.fetcher,
+      ),
+      { status: 502, message: /unexpected conversion response/ },
+    )
+    assert.equal(upstream.calls(), 1)
+  },
+)
+
+test.each([
+  ['html-pdf', '/forms/chromium/convert/html', []],
+  ['office-pdf', '/forms/libreoffice/convert', [new File(['Office source'], 'report.docx')]],
+] as const)(
+  '%s accepts the ZIP containing the PDF and a final extraction or render result',
+  async (id, path, files) => {
+    for (const stage of [
+      { op: 'render', format: 'jpeg' },
+      { op: 'extract-text' },
+      { op: 'extract-attachments' },
+    ]) {
+      const stages = JSON.stringify([stage])
+      const upstream = fixture('9.1.0', (route, form) => {
+        assert.equal(route, path)
+        assert.deepEqual(JSON.parse(String(form.get('stages'))), [stage])
+        return new Response(zipBytes, { headers: { 'Content-Type': 'application/zip' } })
+      })
+      const response = await proxyConversionRequest(
+        requestFor(id, {}, { files: [...files], conversionStages: stages }),
+        upstream.fetcher,
+      )
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('content-type'), 'application/zip')
+      assert.deepEqual(new Uint8Array(await response.arrayBuffer()), zipBytes)
+      assert.equal(upstream.calls(), 1)
+    }
+  },
+)
+
 test('still rejects cross-major worker switches during a conversion', async () => {
   for (const id of ['extract-text', 'extract-attachments']) {
     const upstream = fixture(
