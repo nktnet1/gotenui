@@ -84,7 +84,50 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
       { pdfa: 'PDF/A-4', pdfua: true },
       [{ op: 'remediate', profile: ['PDF/A-4', 'PDF/UA-2'] }],
     ],
+    [
+      'pdfa',
+      { pdfaProfile: 'PDF/A-1b', pdfuaProfile: 'PDF/UA-1' },
+      [{ op: 'remediate', profile: ['PDF/A-1b', 'PDF/UA-1'] }],
+    ],
+    [
+      'pdfa',
+      {
+        pdfaProfile: 'PDF/A-4f',
+        pdfuaProfile: 'PDF/UA-2',
+        v9Language: 'en-AU',
+        v9Aggressive: true,
+        v9FigureAltText: 'Figure without a description',
+      },
+      [
+        {
+          op: 'remediate',
+          profile: ['PDF/A-4f', 'PDF/UA-2'],
+          language: 'en-AU',
+          aggressive: true,
+          figureAltText: 'Figure without a description',
+        },
+      ],
+    ],
+    ['pdfa', { pdfuaProfile: 'PDF/UA-2' }, [{ op: 'remediate', profile: 'PDF/UA-2' }]],
     ['optimize', {}, [{ op: 'optimize' }]],
+    [
+      'optimize',
+      {
+        v9ObjectStreams: 'disabled',
+        v9Dedup: 'enabled',
+        v9RecompressImages: 'disabled',
+        v9SubsetFonts: 'disabled',
+      },
+      [
+        {
+          op: 'optimize',
+          objectStreams: false,
+          dedup: true,
+          recompressImages: false,
+          subsetFonts: false,
+        },
+      ],
+    ],
     [
       'rotate',
       { rotateAngle: '270', rotatePages: '1-3' },
@@ -102,6 +145,31 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
             print: false,
             printHighQuality: false,
             extractText: false,
+            modifyContent: true,
+            modifyAnnotations: true,
+            fillForms: true,
+            assemble: true,
+          },
+        },
+      ],
+    ],
+    [
+      'encrypt',
+      {
+        userPassword: 'pass',
+        allowPrinting: false,
+        v9PrintHighQuality: 'allow',
+        v9Algorithm: 'aes128',
+      },
+      [
+        {
+          op: 'encrypt',
+          userPassword: 'pass',
+          algorithm: 'aes128',
+          permissions: {
+            print: false,
+            printHighQuality: true,
+            extractText: true,
             modifyContent: true,
             modifyAnnotations: true,
             fillForms: true,
@@ -169,6 +237,55 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
         .status,
       200,
     )
+  })
+
+  it.each([
+    ['pdfa', { pdfaProfile: 'PDF/A-3u' }, /require Gotenberg 9/],
+    ['pdfa', { pdfa: 'PDF/A-1b', pdfua: true }, /cannot combine/],
+    ['optimize', { v9Dedup: 'disabled' }, /Gotenberg 9 PDF controls/],
+    ['encrypt', { userPassword: 'pass', v9Algorithm: 'aes128' }, /Gotenberg 9 PDF controls/],
+  ] as const)(
+    'does not forward v9-only or incompatible settings to v8 %s',
+    async (id, fields, error) => {
+      const remote = fixture('8.40.0', () => {
+        throw new Error('Should not forward')
+      })
+      await assert.rejects(proxyConversionRequest(requestFor(id, fields), remote.fetcher), error)
+      assert.equal(remote.count(), 0)
+    },
+  )
+
+  it.each([
+    [{ pdfaProfile: 'PDF/A-4f', pdfuaProfile: 'PDF/UA-1' }, /cannot be combined/],
+    [{ pdfa: 'PDF/A-2b', pdfaProfile: 'PDF/A-3a' }, /either a legacy/],
+    [{ pdfua: true, pdfuaProfile: 'PDF/UA-2' }, /either legacy/],
+  ] as const)(
+    'rejects conflicting v9 standalone PDF conformance options',
+    async (fields, error) => {
+      const remote = fixture('9.1.0', () => {
+        throw new Error('Should not forward')
+      })
+      await assert.rejects(
+        proxyConversionRequest(requestFor('pdfa', fields), remote.fetcher),
+        error,
+      )
+      assert.equal(remote.count(), 0)
+    },
+  )
+
+  it('accepts legacy PDF/A-1b plus PDF/UA when the selected server is v9.1', async () => {
+    const remote = fixture('9.1.0', (form, path) => {
+      assert.equal(path, '/forms/pdf/pipe')
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+        { op: 'remediate', profile: ['PDF/A-1b', 'PDF/UA-1'] },
+      ])
+    })
+    const response = await proxyConversionRequest(
+      requestFor('pdfa', { pdfa: 'PDF/A-1b', pdfua: true }),
+      remote.fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(remote.count(), 1)
   })
 
   it.each([
@@ -560,6 +677,38 @@ describe('version-specific merge editor fields', () => {
     assert.equal(v9.bookmarks, undefined)
     assert.equal(v9.metadata, undefined)
     assert.equal(v9.pdfa, 'PDF/A-2b')
+  })
+})
+
+describe('Gotenberg 9.1 standalone PDF controls', () => {
+  it.each([
+    [
+      'pdfa',
+      ['pdfa', 'pdfua'],
+      ['pdfaProfile', 'pdfuaProfile', 'v9Language', 'v9Aggressive', 'v9FigureAltText'],
+    ],
+    [
+      'optimize',
+      ['imageQuality'],
+      ['v9ObjectStreams', 'v9Dedup', 'v9RecompressImages', 'v9SubsetFonts'],
+    ],
+    ['encrypt', [], ['v9Algorithm', 'v9PrintHighQuality']],
+  ] as const)('%s displays the right version-specific controls', (id, legacy, modern) => {
+    const operation = OPERATION_BY_ID.get(id)
+    assert.ok(operation)
+    const selected = Object.fromEntries(
+      [...legacy, ...modern].map((name) => [name, name === 'v9Aggressive' ? true : 'enabled']),
+    )
+    const v8 = activeOperationFields(operation, selected, '8.40.0')
+    const v9 = activeOperationFields(operation, selected, '9.1.0')
+    for (const name of legacy) {
+      assert.notEqual(v8[name], undefined)
+      assert.equal(v9[name], undefined)
+    }
+    for (const name of modern) {
+      assert.equal(v8[name], undefined)
+      assert.notEqual(v9[name], undefined)
+    }
   })
 })
 

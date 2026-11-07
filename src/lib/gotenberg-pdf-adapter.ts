@@ -56,6 +56,17 @@ export function adaptPdfForm(
     ) {
       throw new InputError('Gotenberg 9 PDF controls cannot be sent to a Gotenberg 8 connection.')
     }
+    if (operation.id === 'pdfa' && (payload.fields.pdfaProfile || payload.fields.pdfuaProfile)) {
+      throw new InputError('Advanced PDF conformance profiles require Gotenberg 9.')
+    }
+    if (
+      (payload.fields.pdfa ?? payload.advanced.pdfa) === 'PDF/A-1b' &&
+      (payload.fields.pdfua ?? payload.advanced.pdfua) === true
+    ) {
+      throw new InputError(
+        'Gotenberg 8 cannot combine PDF/A-1b and PDF/UA. Select another PDF/A profile.',
+      )
+    }
     if (
       (operation.id === 'metadata-read' || operation.id === 'bookmarks-read') &&
       payload.fields.password
@@ -119,14 +130,40 @@ export function adaptPdfForm(
   }
   const pdfaStage = (): void => {
     permitted('pdfa', 'pdfua')
-    const pdfa = optional('pdfa')
-    const pdfua = fields.pdfua === true
+    const standalone = operation.id === 'pdfa'
+    const legacyPdfa = optional('pdfa')
+    const legacyPdfua = fields.pdfua === true
+    const selectedPdfa = standalone ? optional('pdfaProfile') : undefined
+    const selectedPdfua = standalone ? optional('pdfuaProfile') : undefined
+    if (standalone) {
+      permitted('pdfaProfile', 'pdfuaProfile', 'v9Language', 'v9Aggressive', 'v9FigureAltText')
+      if (legacyPdfa && selectedPdfa) {
+        throw new InputError('Choose either a legacy PDF/A standard or a Gotenberg 9 profile.')
+      }
+      if (legacyPdfua && selectedPdfua) {
+        throw new InputError('Choose either legacy PDF/UA or a Gotenberg 9 PDF/UA profile.')
+      }
+    }
+    const pdfa = selectedPdfa || legacyPdfa
+    const pdfua =
+      selectedPdfua ||
+      (legacyPdfua ? (pdfa?.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1') : undefined)
     if (!pdfa && !pdfua) return
-    const profiles = [
-      pdfa,
-      pdfua ? (pdfa?.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1') : undefined,
-    ].filter((profile): profile is string => Boolean(profile))
-    stages.push({ op: 'remediate', profile: profiles.length === 1 ? profiles[0] : profiles })
+    if (pdfa && pdfua && pdfua !== (pdfa.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1')) {
+      throw new InputError(
+        'This PDF/A profile cannot be combined with the selected PDF/UA profile.',
+      )
+    }
+    const profiles = [pdfa, pdfua].filter((profile): profile is string => Boolean(profile))
+    stages.push({
+      op: 'remediate',
+      profile: profiles.length === 1 ? profiles[0] : profiles,
+      ...(standalone && optional('v9Language') ? { language: fields.v9Language } : {}),
+      ...(standalone && fields.v9Aggressive === true ? { aggressive: true } : {}),
+      ...(standalone && typeof fields.v9FigureAltText === 'string' && fields.v9FigureAltText !== ''
+        ? { figureAltText: fields.v9FigureAltText }
+        : {}),
+    })
   }
   const v8Optimization = (): void => {
     permitted('optimizeImages', 'imageQuality')
@@ -196,15 +233,26 @@ export function adaptPdfForm(
       pdfaStage()
       if (!stages.length) throw new InputError('Choose PDF/A or PDF/UA remediation.')
       break
-    case 'optimize':
-      permitted('imageQuality')
+    case 'optimize': {
+      permitted('imageQuality', 'v9ObjectStreams', 'v9Dedup', 'v9RecompressImages', 'v9SubsetFonts')
       if (optional('imageQuality')) {
         throw new InputError(
           'Gotenberg 9 optimization is lossless; its PDF pipeline has no image quality slider.',
         )
       }
-      stages.push({ op: 'optimize' })
+      const options: Record<string, boolean> = {}
+      for (const [name, option] of Object.entries({
+        v9ObjectStreams: 'objectStreams',
+        v9Dedup: 'dedup',
+        v9RecompressImages: 'recompressImages',
+        v9SubsetFonts: 'subsetFonts',
+      })) {
+        if (fields[name] === 'enabled') options[option] = true
+        if (fields[name] === 'disabled') options[option] = false
+      }
+      stages.push({ op: 'optimize', ...options })
       break
+    }
     case 'rotate': {
       permitted('rotateAngle', 'rotatePages')
       stages.push({
@@ -233,6 +281,8 @@ export function adaptPdfForm(
         'allowAnnotating',
         'allowFillingForms',
         'allowAssembling',
+        'v9Algorithm',
+        'v9PrintHighQuality',
       )
       const mapped: Readonly<Record<string, readonly string[]>> = {
         allowPrinting: ['print', 'printHighQuality'],
@@ -247,10 +297,13 @@ export function adaptPdfForm(
         if (typeof fields[name] !== 'boolean') continue
         for (const key of keys) permissions[key] = fields[name]
       }
+      if (fields.v9PrintHighQuality === 'allow') permissions.printHighQuality = true
+      if (fields.v9PrintHighQuality === 'deny') permissions.printHighQuality = false
       stages.push({
         op: 'encrypt',
         ...(optionalPassword('userPassword') ? { userPassword: fields.userPassword } : {}),
         ...(optionalPassword('ownerPassword') ? { ownerPassword: fields.ownerPassword } : {}),
+        ...(optional('v9Algorithm') ? { algorithm: fields.v9Algorithm } : {}),
         ...(Object.keys(permissions).length ? { permissions } : {}),
       })
       break

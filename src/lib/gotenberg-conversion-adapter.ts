@@ -230,6 +230,14 @@ export function adaptConversionForm(
   archiveEntryNames: readonly string[] = [],
 ): FormData {
   if (version === 8) {
+    if (
+      (payload.fields.pdfa ?? payload.advanced.pdfa) === 'PDF/A-1b' &&
+      (payload.fields.pdfua ?? payload.advanced.pdfua) === true
+    ) {
+      throw new InputError(
+        'Gotenberg 8 cannot combine PDF/A-1b and PDF/UA. Select another PDF/A profile.',
+      )
+    }
     if (payload.conversionStages || stageFiles.length) {
       throw new InputError('Conversion-time PDF pipeline stages require Gotenberg 9.')
     }

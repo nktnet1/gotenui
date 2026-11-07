@@ -22,6 +22,31 @@ export const operation: Operation = {
       max: 100,
       placeholder: '80',
     },
+    ...(
+      [
+        [
+          'v9ObjectStreams',
+          'PDF object streams',
+          'Compress eligible PDF objects into object streams.',
+        ],
+        ['v9Dedup', 'Deduplicate resources', 'Reuse duplicate objects across the document.'],
+        [
+          'v9RecompressImages',
+          'Recompress images',
+          'Losslessly recompress images without changing their quality.',
+        ],
+        ['v9SubsetFonts', 'Subset fonts', 'Keep only the glyphs used in embedded fonts.'],
+      ] as const
+    ).map(([name, label, description]) => ({
+      name,
+      label,
+      description: `${description} Gotenberg 9 enables this by default.`,
+      kind: 'select' as const,
+      options: ['enabled', 'disabled'],
+      optionLabels: { enabled: 'Enabled', disabled: 'Disabled' },
+      supportedGotenbergMajors: [9] as const,
+      advanced: true,
+    })),
   ],
   output: 'pdf',
 }

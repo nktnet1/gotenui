@@ -1196,22 +1196,22 @@ export function validatePayload(input: unknown): {
   validatePostProcessSettings(operation, payload)
   if (definitions.has('pdfa')) {
     const pdfa = payload.fields.pdfa ?? payload.advanced.pdfa
-    const pdfua = payload.fields.pdfua ?? payload.advanced.pdfua
     const userPassword = payload.postProcess?.userPassword ?? payload.advanced.userPassword
     const ownerPassword = payload.postProcess?.ownerPassword ?? payload.advanced.ownerPassword
     if (pdfa && (userPassword || ownerPassword)) {
       throw new InputError('PDF/A and PDF encryption cannot be combined.')
     }
-    if (pdfa === 'PDF/A-1b' && pdfua === true) {
-      throw new InputError(
-        'PDF/UA is not supported with PDF/A-1b. Use PDF/A-2b, PDF/A-3b or PDF/A-4.',
-      )
-    }
   }
   if (operation.id === 'encrypt' && !payload.fields.userPassword && !payload.fields.ownerPassword) {
     throw new InputError('Enter an open password or owner password.')
   }
-  if (operation.id === 'pdfa' && !payload.fields.pdfa && !payload.fields.pdfua) {
+  if (
+    operation.id === 'pdfa' &&
+    !payload.fields.pdfa &&
+    !payload.fields.pdfua &&
+    !payload.fields.pdfaProfile &&
+    !payload.fields.pdfuaProfile
+  ) {
     throw new InputError('Choose a PDF/A standard or enable PDF/UA.')
   }
   if (

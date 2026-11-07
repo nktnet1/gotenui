@@ -120,6 +120,15 @@ test('v9 Chromium exposes extended PDF/A and PDF/UA remediation profiles', () =>
   assert.equal(form.has('pdfuaProfile'), false)
 })
 
+test('v9 Chromium permits PDF/A-1b with PDF/UA-1, while v8 keeps the legacy restriction', () => {
+  const options = { fields: { pdfa: 'PDF/A-1b', pdfua: true } }
+  const v9 = adapt('html-pdf', options, 9)
+  assert.deepEqual(JSON.parse(String(v9.get('stages'))), [
+    { op: 'remediate', profile: ['PDF/A-1b', 'PDF/UA-1'] },
+  ])
+  assert.throws(() => adapt('html-pdf', options, 8), /cannot combine/)
+})
+
 test('v9 rejects incompatible PDF/A and PDF/UA profiles rather than silently changing the target', () => {
   assert.throws(
     () => adapt('html-pdf', { fields: { pdfaProfile: 'PDF/A-2u', pdfuaProfile: 'PDF/UA-2' } }, 9),
@@ -222,9 +231,12 @@ test('version-specific PDF profiles are visible only for the intended version an
     assert.equal(fieldSupportsBackend(modern, '9.0.0'), true)
   }
   const existing = standalone.fields.find(({ name }) => name === 'pdfa')
-  assert.ok(existing)
+  const modern = standalone.fields.find(({ name }) => name === 'pdfaProfile')
+  assert.ok(existing && modern)
   assert.equal(fieldSupportsBackend(existing, '8.40.0'), true)
-  assert.equal(fieldSupportsBackend(existing, '9.0.0'), true)
+  assert.equal(fieldSupportsBackend(existing, '9.1.0'), false)
+  assert.equal(fieldSupportsBackend(modern, '8.40.0'), false)
+  assert.equal(fieldSupportsBackend(modern, '9.1.0'), true)
 })
 
 test('v9 screenshots also convert emulated media features to the new JSON object', () => {
