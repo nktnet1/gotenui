@@ -202,25 +202,25 @@ test('checks the formats of every ZIP entry, not just the first 30', async () =>
 
 test('rejects input collisions within and across ZIPs and with explicit uploads', async () => {
   await assert.rejects(
-    check('pdf-pipeline', [zipFixture({ 'input.pdf': '1', 'other/INPUT.PDF': '2' })]),
+    check('pdf-pipeline', [zipFixture({ 'input.pdf': '1', 'other/input.pdf': '2' })]),
     /duplicate or reserved filename: input\.pdf/,
   )
   await assert.rejects(
     check('office-pdf', [
       zipFixture({ 'first.docx': '1' }, 'first.zip'),
-      zipFixture({ 'FIRST.docx': '2' }, 'second.zip'),
+      zipFixture({ 'first.docx': '2' }, 'second.zip'),
     ]),
     /duplicate or reserved filename: first\.docx/,
   )
   await assert.rejects(
     check('pdf-pipeline', [zipFixture({ 'source.pdf': '%PDF-1.7' })], {
-      files: [new File(['%PDF'], 'SOURCE.pdf')],
+      files: [new File(['%PDF'], 'source.pdf')],
     }),
     /duplicate or reserved filename: source\.pdf/,
   )
   await assert.rejects(
     check('html-pdf', [zipFixture({ 'logo.png': 'image' })], {
-      auxiliary: [new File(['image'], 'LOGO.PNG')],
+      auxiliary: [new File(['image'], 'logo.png')],
     }),
     /duplicate or reserved filename: logo\.png/,
   )
@@ -233,7 +233,7 @@ test('rejects input collisions within and across ZIPs and with explicit uploads'
 })
 
 test('rejects archive assets that could shadow generated HTML or Markdown sources', async () => {
-  for (const name of ['index.html', 'HEADER.HTML', 'footer.html']) {
+  for (const name of ['index.html', 'header.html', 'footer.html']) {
     await assert.rejects(
       check('html-pdf', [zipFixture({ [name]: 'shadow' })]),
       /duplicate or reserved filename/,
@@ -357,5 +357,32 @@ test('matches the default upstream ZIP entry limit before requesting extraction'
   await assert.rejects(
     check('pdf-pipeline', [zipFixture(many)]),
     /too many entries or is too large/,
+  )
+})
+
+test('keeps case-distinct ZIP names separate like the Gotenberg file registry', async () => {
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'Report.PDF': '%PDF', 'report.pdf': '%PDF' })]),
+    ['Report.PDF', 'report.pdf'],
+  )
+  assert.deepEqual(
+    await check('office-pdf', [
+      zipFixture({ 'Budget.DOCX': 'one' }, 'budget-1.zip'),
+      zipFixture({ 'budget.docx': 'two' }, 'budget-2.zip'),
+    ]),
+    ['Budget.DOCX', 'budget.docx'],
+  )
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'report.pdf': '%PDF' })], {
+      files: [new File(['%PDF'], 'Report.pdf')],
+    }),
+    ['report.pdf'],
+  )
+  assert.deepEqual(await check('html-pdf', [zipFixture({ 'HEADER.HTML': 'asset' })]), [
+    'HEADER.HTML',
+  ])
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'cafe\u0301.pdf': '%PDF', 'café.pdf': '%PDF' })]),
+    /duplicate or reserved filename/,
   )
 })

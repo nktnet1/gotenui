@@ -1,4 +1,5 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
+import { filenameKey } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
@@ -139,7 +140,7 @@ export function adaptPdfForm(
     if (
       output
         .getAll('files')
-        .some((item) => item instanceof File && item.name.toLowerCase() === file.name.toLowerCase())
+        .some((item) => item instanceof File && filenameKey(item.name) === filenameKey(file.name))
     ) {
       throw new InputError(
         `The PDF and attachment filenames must be unique on Gotenberg 9: ${file.name}.`,

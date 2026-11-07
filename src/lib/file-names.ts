@@ -17,5 +17,5 @@ export function safeFilename(name: string): string {
   return name
 }
 
-/** Gotenberg NFC-normalises filenames; reject collisions using that spelling. */
-export const filenameKey = (name: string): string => name.normalize('NFC').toLowerCase()
+/** Gotenberg NFC-normalises filenames, but resolves them case-sensitively. */
+export const filenameKey = (name: string): string => name.normalize('NFC')

@@ -148,7 +148,7 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
       ...(payload.markdownFiles ?? []).map((file) => markdownName(file.name).normalize('NFC')),
     ]
     if (new Set(names.map(filenameKey)).size !== names.length) {
-      throw new InputError('Markdown filenames must be unique (case-insensitive).')
+      throw new InputError('Markdown filenames must be unique after Unicode normalisation.')
     }
     const template = payload.markdownTemplate ?? defaultMarkdownTemplate(names)
     if (!template.trim()) throw new InputError('The Markdown template must not be empty.')
@@ -361,10 +361,10 @@ function validatePostProcessFiles(
       throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
   }
   for (const file of embedded) {
-    const lower = file.name.toLowerCase()
-    if (embeddedNames.has(lower))
+    const key = filenameKey(file.name)
+    if (embeddedNames.has(key))
       throw new InputError(`Duplicate PDF attachment filename: ${file.name}`)
-    embeddedNames.add(lower)
+    embeddedNames.add(key)
   }
   if (settings?.embedsMetadata) {
     if (!embedded.length && !remote.embedded)
@@ -408,12 +408,12 @@ function validatePostProcessFiles(
       )
     }
     const localByName = new Map<string, File>()
-    const localCaseFolded = new Set<string>()
+    const localNames = new Set<string>()
     for (const file of uploads) {
-      const key = file.name.toLowerCase()
-      if (localCaseFolded.has(key))
+      const key = filenameKey(file.name)
+      if (localNames.has(key))
         throw new InputError(`Duplicate ${kind} upload filename: ${file.name}`)
-      localCaseFolded.add(key)
+      localNames.add(key)
       localByName.set(file.name, file)
     }
     const usedLocal = new Set<string>()
@@ -431,7 +431,7 @@ function validatePostProcessFiles(
         )
       }
       safeFilename(expression)
-      const key = expression.toLowerCase()
+      const key = filenameKey(expression)
       if (allNames.has(key)) throw new InputError(`Duplicate overlay filename: ${expression}`)
       allNames.add(key)
       const ext = expression.match(extension)?.[0]?.toLowerCase()

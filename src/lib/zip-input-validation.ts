@@ -1,4 +1,5 @@
 import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
+import { filenameKey } from '#/lib/file-names'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -205,18 +206,17 @@ export async function validateZipInputs(
 ): Promise<string[]> {
   if (!archives.length) return []
   const expected = new Set<string>([
-    ...files.map(({ name }) => name.normalize('NFC').toLowerCase()),
-    ...auxiliary.map(({ name }) => name.normalize('NFC').toLowerCase()),
-    ...stageFiles.map(({ name }) => name.normalize('NFC').toLowerCase()),
+    ...files.map(({ name }) => filenameKey(name)),
+    ...auxiliary.map(({ name }) => filenameKey(name)),
+    ...stageFiles.map(({ name }) => filenameKey(name)),
   ])
   if (operation.input === 'html' || operation.input === 'markdown') {
     expected.add('index.html')
     expected.add('header.html')
     expected.add('footer.html')
     if (operation.input === 'markdown') {
-      expected.add((payload.markdownName ?? DEFAULT_MARKDOWN_NAME).normalize('NFC').toLowerCase())
-      for (const source of payload.markdownFiles ?? [])
-        expected.add(source.name.normalize('NFC').toLowerCase())
+      expected.add(filenameKey(payload.markdownName ?? DEFAULT_MARKDOWN_NAME))
+      for (const source of payload.markdownFiles ?? []) expected.add(filenameKey(source.name))
     }
   }
   const extensions = officeExtensionSetForMajor(9)
@@ -242,24 +242,24 @@ export async function validateZipInputs(
     for (const name of await zipEntryNames(archive)) {
       // Gotenberg strips the path and NFC-normalises the filename it registers.
       const normalizedName = basename(name).normalize('NFC')
-      const flatName = normalizedName.toLowerCase()
-      const label = flatName.slice(0, 120)
+      const flatName = filenameKey(normalizedName)
+      const label = normalizedName.slice(0, 120)
       // Gotenberg resolves entries as named input files; compare basenames
-      // case-insensitively, including across separate archives and uploads.
+      // by exact NFC spelling, including across separate archives and uploads.
       if (expected.has(flatName)) {
         invalidArchive(archive.name, `duplicate or reserved filename: ${label}.`)
       }
       expected.add(flatName)
       extracted.push(normalizedName)
       const isStageAsset = stageAssets.has(normalizedName)
-      if (operation.input === 'pdf' && !flatName.endsWith('.pdf') && !isStageAsset) {
+      if (operation.input === 'pdf' && !flatName.toLowerCase().endsWith('.pdf') && !isStageAsset) {
         invalidArchive(
           archive.name,
           `${operation.id === 'pdf-pipeline' ? 'PDF pipeline requires PDFs or referenced stage assets' : 'PDF tools require PDFs or referenced pipeline stage assets'} (found ${label}).`,
         )
       }
       if (operation.id === 'office-pdf') {
-        const suffix = flatName.match(/\.[a-z0-9]+$/)?.[0] ?? ''
+        const suffix = flatName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? ''
         if (!extensions.has(suffix) && !isStageAsset) {
           invalidArchive(archive.name, `unsupported Gotenberg 9 Office entry: ${label}.`)
         }

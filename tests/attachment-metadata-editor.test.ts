@@ -59,7 +59,10 @@ describe('native PDF/A attachment metadata editor', () => {
   test('adds an exact remote filename with a safe default relationship', () => {
     const remote = addRemoteAttachmentMetadata('', 'invoice.xml')
     expect(JSON.parse(remote)).toEqual({ 'invoice.xml': { relationship: 'Unspecified' } })
-    expect(() => addRemoteAttachmentMetadata(remote, 'INVOICE.XML')).toThrow(/already/)
+    expect(JSON.parse(addRemoteAttachmentMetadata(remote, 'INVOICE.XML'))).toEqual({
+      'invoice.xml': { relationship: 'Unspecified' },
+      'INVOICE.XML': { relationship: 'Unspecified' },
+    })
     expect(() => addRemoteAttachmentMetadata('', '../secret.xml')).toThrow(/filename/)
     expect(() => addRemoteAttachmentMetadata('', 'folder/invoice.xml')).toThrow(/filename/)
     expect(JSON.parse(addRemoteAttachmentMetadata('', ' invoice.xml'))).toEqual({

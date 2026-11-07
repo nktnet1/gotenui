@@ -331,10 +331,15 @@ describe('Single-request PDF post-processing', () => {
     )
   })
 
-  test('rejects duplicate and oversized files while permitting empty embedded attachments', () => {
+  test('rejects exact duplicates and oversized files while permitting case-distinct and empty attachments', () => {
     assert.throws(
-      () => form('url-pdf', {}, { embeds: [first, new File(['other'], 'FIRST.TXT')] }),
+      () => form('url-pdf', {}, { embeds: [first, new File(['other'], 'first.txt')] }),
       /Duplicate PDF attachment/,
+    )
+    const caseDistinct = form('url-pdf', {}, { embeds: [first, new File(['other'], 'FIRST.TXT')] })
+    assert.deepEqual(
+      (caseDistinct.getAll('embeds') as File[]).map((file) => file.name),
+      ['first.txt', 'FIRST.TXT'],
     )
     assert.equal(
       (form('url-pdf', {}, { embeds: [new File([], 'empty.txt')] }).get('embeds') as File).size,

@@ -100,7 +100,7 @@ describe('Chromium PDF headers and footers', () => {
   )
 
   test('rejects reserved header/footer asset names even if the HTML fields were not supplied', () => {
-    for (const fileName of ['header.html', 'HEADER.HTML', 'footer.html', 'index.html']) {
+    for (const fileName of ['header.html', 'footer.html', 'index.html']) {
       assert.throws(
         () => validateAssets('html-pdf', {}, [new File(['file content'], fileName)]),
         /Duplicate filename/,
@@ -264,11 +264,21 @@ describe('Markdown files and templates', () => {
     )
   })
 
+  test('allows Markdown filenames differing only by case', () => {
+    const { operation, payload } = makePayload('markdown-pdf', {
+      markdownName: 'document.md',
+      markdownFiles: [{ name: 'DOCUMENT.MD', content: '# Separate' }],
+    })
+    validateFiles(operation, [], [], 4_000_000, payload)
+    const form = createGotenbergForm(operation, payload, [], [])
+    assert.deepEqual(
+      (form.getAll('files') as File[]).map((file) => file.name),
+      ['index.html', 'document.md', 'DOCUMENT.MD'],
+    )
+  })
+
   test('rejects filename collisions and unsafe or invalid Markdown filenames', () => {
-    const invalid = [
-      { markdownFiles: [{ name: 'DOCUMENT.MD', content: 'Duplicate' }] },
-      { markdownFiles: [{ name: 'document.md', content: 'Duplicate' }] },
-    ]
+    const invalid = [{ markdownFiles: [{ name: 'document.md', content: 'Duplicate' }] }]
     for (const extras of invalid) {
       assert.throws(() => makePayload('markdown-pdf', extras), /unique/)
     }

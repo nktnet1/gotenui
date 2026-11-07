@@ -1,5 +1,6 @@
 /** Strict request mapping for the Gotenberg 9-only PDF workflows. */
 
+import { filenameKey } from '#/lib/file-names'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
@@ -95,13 +96,13 @@ export function adaptV9PdfExtra(
     if (auxiliary.length) throw new InputError('This PDF tool does not accept additional files.')
   }
   const uploaded = new Set(
-    form.getAll('files').map((entry) => (entry instanceof File ? entry.name.toLowerCase() : '')),
+    form.getAll('files').map((entry) => (entry instanceof File ? filenameKey(entry.name) : '')),
   )
   const addAsset = (file: File): void => {
-    if (uploaded.has(file.name.toLowerCase())) {
+    if (uploaded.has(filenameKey(file.name))) {
       throw new InputError(`Additional file '${file.name}' collides with a PDF input filename.`)
     }
-    uploaded.add(file.name.toLowerCase())
+    uploaded.add(filenameKey(file.name))
     form.append('files', file, file.name)
   }
   const requirePages = (name: string) => namedPages(value(name), name)
