@@ -35,7 +35,8 @@ function headerMap(rows: ExtraHeaderRow[]): Record<string, string> | undefined {
   const seen = new Set<string>()
   for (const row of rows) {
     const name = row.name.trim()
-    if (!name || !row.value) throw new InputError('Complete every HTTP header name and value.')
+    // An empty HTTP header value is legal; only the name is required.
+    if (!name) throw new InputError('Complete every HTTP header name.')
     if (seen.has(name.toLowerCase())) {
       throw new InputError(`Duplicate HTTP header name: ${name}`)
     }

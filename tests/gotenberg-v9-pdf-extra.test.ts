@@ -131,6 +131,17 @@ describe('Gotenberg 9 PDF stages', () => {
     assert.deepEqual(result.stages, [stage])
   })
 
+  it('uses exact attachment names, including meaningful surrounding spaces', () => {
+    const attachmentName = ' invoice.xml '
+    const result = adapted('detach', { attachmentName })
+    assert.deepEqual(result.stages, [{ op: 'detach', name: attachmentName }])
+    const args = request('detach', { attachmentName })
+    assert.doesNotThrow(() => validatePayload(args.payload))
+    assert.deepEqual(adapted('detach', { attachmentName: '   ' }).stages, [
+      { op: 'detach', name: '   ' },
+    ])
+  })
+
   it('normalises the timestamp authority for standalone timestamping and PAdES signing', () => {
     assert.deepEqual(
       adapted('timestamp', { timestampUrl: 'HTTPS://TSA.EXAMPLE.test:443/issue?key=1' }).stages,

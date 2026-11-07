@@ -243,12 +243,17 @@ export function adaptV9PdfExtra(
       stages.push({ op: 'redact', regions })
       break
     }
-    case 'detach':
+    case 'detach': {
       allow('attachmentName')
       onlyPdfInputs()
-      if (!value('attachmentName')) throw new InputError('Specify the exact embedded filename.')
-      stages.push({ op: 'detach', name: value('attachmentName') })
+      // Embedded attachment names are exact strings, including surrounding spaces.
+      const name = fields.attachmentName
+      if (typeof name !== 'string' || name === '') {
+        throw new InputError('Specify the exact embedded filename.')
+      }
+      stages.push({ op: 'detach', name })
       break
+    }
     case 'decrypt':
       allow('password')
       onlyPdfInputs()

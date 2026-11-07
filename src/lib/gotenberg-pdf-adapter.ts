@@ -268,8 +268,11 @@ export function adaptPdfForm(
         )
       }
       const source = fields[`${kind}Source`]
-      const expression = optional(`${kind}Expression`)
-      if (!expression) throw new InputError('Enter overlay text or the exact uploaded filename.')
+      // An overlay filename or text can contain significant leading/trailing spaces.
+      const expression = fields[`${kind}Expression`]
+      if (typeof expression !== 'string' || expression === '') {
+        throw new InputError('Enter overlay text or the exact uploaded filename.')
+      }
       const options = overlayOptions(optional(`${kind}Options`))
       const common: Record<string, unknown> = {
         ...(optional(`${kind}Pages`) ? { pages: optional(`${kind}Pages`) } : {}),

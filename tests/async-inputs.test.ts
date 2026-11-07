@@ -109,6 +109,36 @@ test('remote downloads and webhooks accept large URLs and more than 20 headers',
   )
 })
 
+test('remote and webhook HTTP headers preserve explicitly empty values', () => {
+  const headers = [{ id: 1, name: 'X-Feature-Flag', value: '' }]
+  const remote = remoteInputsPayload([remoteRow({ headers })], '')
+  const { payload, operation } = validated('office-pdf', { downloadFrom: remote })
+  assert.deepEqual(payload.downloadFrom?.[0]?.extraHttpHeaders, { 'X-Feature-Flag': '' })
+  const form = createGotenbergForm(operation, payload, [], [])
+  assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), payload.downloadFrom)
+
+  const webhook = webhookPayload(
+    {
+      ...emptyWebhook,
+      enabled: true,
+      url: 'https://hooks.example.test/success',
+      eventsUrl: 'https://hooks.example.test/events',
+      headers,
+    },
+    '',
+  )
+  assert.deepEqual(webhook, {
+    url: 'https://hooks.example.test/success',
+    eventsUrl: 'https://hooks.example.test/events',
+    extraHttpHeaders: { 'X-Feature-Flag': '' },
+  })
+  const result = validated('url-pdf', {
+    fields: { url: 'https://example.test/' },
+    webhook,
+  })
+  assert.deepEqual(result.payload.webhook?.extraHttpHeaders, { 'X-Feature-Flag': '' })
+})
+
 test('legacy downloadFrom JSON remains supported but cannot override structured rows', () => {
   const legacy = '[{"url":"https://files.example.test/legacy.docx","embedded":false}]'
   assert.deepEqual(remoteInputsPayload([], legacy), JSON.parse(legacy))
@@ -120,7 +150,6 @@ test('legacy downloadFrom JSON remains supported but cannot override structured 
 test('outbound header editing rejects incomplete and case-insensitive duplicate names', () => {
   for (const headers of [
     [{ id: 1, name: '', value: 'secret' }],
-    [{ id: 1, name: 'X-Api-Key', value: '' }],
     [
       { id: 1, name: 'X-Api-Key', value: 'a' },
       { id: 2, name: 'x-api-key', value: 'b' },

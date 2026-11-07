@@ -177,7 +177,6 @@ function validateHeaderMap(headers: Record<string, string> | undefined): void {
   for (const [name, value] of entries) {
     if (
       !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
-      !value ||
       [...value].some((character) => {
         const code = character.charCodeAt(0)
         return (code < 32 && code !== 9) || code === 127

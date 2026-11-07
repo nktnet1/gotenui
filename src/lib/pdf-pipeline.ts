@@ -409,7 +409,8 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('rotate: angle must be a multiple of 90.')
       break
     case 'stamp-text':
-      requiredText(stage, 'text')
+      // Litho rejects only the empty string; whitespace is valid stamp content.
+      if (stage.text === '') throw new InputError('stamp-text: text must be non-empty.')
       break
     case 'stamp-image':
       if (!/\.(png|jpe?g)$/i.test(requiredText(stage, 'image')))

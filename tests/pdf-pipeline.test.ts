@@ -90,6 +90,17 @@ describe('PDF pipeline catalogue and stage contract', () => {
     error([{ op: 'stamp-text', text: '', x: 12, y: 12 }], /non-empty/)
   })
 
+  it('preserves a whitespace-only text stamp exactly as Gotenberg accepts it', () => {
+    const stages = [{ op: 'stamp-text', text: '  \t  ', x: 12, y: 24 }]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const { payload, legacy } = input(stages)
+    assert.doesNotThrow(() => validatePayload(payload))
+    assert.deepEqual(
+      JSON.parse(String(adaptPdfPipeline(payload, legacy, []).form.get('stages'))),
+      stages,
+    )
+  })
+
   it('accepts default insert position, negative redaction offsets, and extensionless signing assets', () => {
     const pipeline = [
       { op: 'insert', source: 'source.pdf' },

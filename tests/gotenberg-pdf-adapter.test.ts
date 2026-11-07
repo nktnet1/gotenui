@@ -291,6 +291,67 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
     assert.equal(remote.count(), 1)
   })
 
+  it('preserves whitespace in standalone stamps and exact overlay filenames', async () => {
+    const text = '  CONFIDENTIAL  '
+    const remoteText = fixture('9.0.0', (form, path) => {
+      assert.equal(path, '/forms/pdf/pipe')
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+        { op: 'stamp-text', text, x: 48, y: 48, fontSize: 24 },
+      ])
+    })
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor('stamp', {
+            stampSource: 'text',
+            stampExpression: text,
+            v9OverlayAcknowledged: true,
+          }),
+          remoteText.fetcher,
+        )
+      ).status,
+      200,
+    )
+
+    const whitespace = fixture('9.0.0', (form) => {
+      assert.equal(JSON.parse(String(form.get('stages')))[0]?.text, '   ')
+    })
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor('watermark', {
+            watermarkSource: 'text',
+            watermarkExpression: '   ',
+            v9OverlayAcknowledged: true,
+          }),
+          whitespace.fetcher,
+        )
+      ).status,
+      200,
+    )
+
+    const filename = ' logo.png'
+    const remoteImage = fixture('9.0.0', (form) => {
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+        { op: 'stamp-image', image: filename, x: 48, y: 48, width: 0, height: 0 },
+      ])
+      assert.equal((form.getAll('files')[1] as File).name, filename)
+    })
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor(
+            'stamp',
+            { stampSource: 'image', stampExpression: filename, v9OverlayAcknowledged: true },
+            { auxiliary: [new File(['image'], filename, { type: 'image/png' })] },
+          ),
+          remoteImage.fetcher,
+        )
+      ).status,
+      200,
+    )
+  })
+
   it('converts legacy opacity to inverse litho opacity without assuming equal defaults', async () => {
     const remote = fixture('9.0.0', (form) => {
       assert.deepEqual(JSON.parse(String(form.get('stages'))), [
