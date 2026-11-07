@@ -268,6 +268,22 @@ describe('read existing PDF structure into visual writers', () => {
     )
   })
 
+  it('imports large metadata and bookmark documents without the old 10 KB editor cap', () => {
+    const title = 'Annual report '.repeat(1_000)
+    const metadata = importReadableMetadata({ 'report.pdf': { Title: title } }, 'report.pdf')
+    assert.deepEqual(JSON.parse(metadata), { Title: title })
+    assert.ok(metadata.length > 10_000)
+
+    const original = Array.from({ length: 600 }, (_, index) => ({
+      title: `Bookmark ${index} - ${'Section'.repeat(5)}`,
+      pageNumber: index + 1,
+    }))
+    const bookmarks = importReadableBookmarks({ 'report.pdf': original }, ['report.pdf'])
+    assert.ok(bookmarks.length > 10_000)
+    assert.equal(JSON.parse(bookmarks).length, 600)
+    assert.doesNotThrow(() => validateBookmarkDocument(bookmarks))
+  })
+
   it('imports one bookmark tree as a list, multiple as a filename-keyed map', () => {
     const first = [{ title: 'Intro', page: 1, children: [] }]
     const second = [{ title: 'Appendix', page: 2, children: [] }]

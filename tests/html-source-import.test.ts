@@ -31,16 +31,17 @@ describe('browser HTML source import', () => {
     }
   })
 
-  it('enforces the schema-compatible 300 KB source limit before reading', async () => {
+  it('enforces the configured upload limit before reading', async () => {
     const file = new File(['x'.repeat(MAX_HTML_SOURCE_BYTES + 1)], 'index.html')
     file.arrayBuffer = () => {
       throw new Error('Oversized files must not be read')
     }
-    await expect(readHtmlSource(file)).rejects.toThrow(/300 KB/)
+    await expect(readHtmlSource(file)).rejects.toThrow(/configured upload limit/)
   })
 
-  it('accepts content at the exact limit', async () => {
-    const data = 'a'.repeat(MAX_HTML_SOURCE_BYTES)
+  it('accepts content beyond the old 300 KB cap, up to the configured import limit', async () => {
+    const data = 'a'.repeat(300_001)
+    expect(MAX_HTML_SOURCE_BYTES).toBeGreaterThan(300_001)
     expect(await readHtmlSource(new File([data], 'index.htm'))).toBe(data)
   })
 

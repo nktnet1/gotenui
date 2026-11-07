@@ -43,13 +43,12 @@ export function ChromiumNetworkEditor({
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-            Cookies ({cookies.length}/20)
+            Cookies ({cookies.length})
           </p>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            disabled={cookies.length >= 20}
             onClick={() =>
               onCookiesChange([
                 ...cookies,
@@ -167,13 +166,13 @@ export function ChromiumNetworkEditor({
       <div className="space-y-3 border-t border-slate-100 dark:border-slate-800 pt-4">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-            Resource headers ({headers.length}/20)
+            Resource headers ({headers.length}/64)
           </p>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            disabled={headers.length >= 20}
+            disabled={headers.length >= 64}
             onClick={() =>
               onHeadersChange([...headers, { id: newId(), name: '', value: '', scope: '' }])
             }

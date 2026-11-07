@@ -74,6 +74,22 @@ describe('PDF pipeline catalogue and stage contract', () => {
     const { payload, legacy } = input([{ op: 'merge' }])
     assert.throws(() => adaptPdfForm(operation, payload, legacy, 8, []), { status: 409 })
   })
+  it('accepts large stamp text and metadata fields within the configured request budget', () => {
+    const longText = 'Confidential report '.repeat(900)
+    const stages = [
+      { op: 'stamp-text', text: longText, x: 12, y: 12 },
+      { op: 'set-metadata', title: longText },
+    ]
+    assert.ok(longText.length > 10_000)
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const { payload, legacy } = input(stages)
+    assert.doesNotThrow(() => validatePayload(payload))
+    const output = adaptPdfPipeline(payload, legacy, [])
+    assert.deepEqual(JSON.parse(String(output.form.get('stages'))), stages)
+    // Keep type/shape validation even when string length is unrestricted.
+    error([{ op: 'stamp-text', text: '', x: 12, y: 12 }], /non-empty/)
+  })
+
   it('preserves order and named auxiliary inputs on the v9 form', () => {
     const auxiliary = [new File(['asset'], 'receipt.txt')]
     const stages = [

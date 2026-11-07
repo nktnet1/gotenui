@@ -40,6 +40,16 @@ function form(
 }
 
 describe('Single-request PDF post-processing', () => {
+  test('preserves metadata above 10 KB without bypassing metadata validation', () => {
+    const metadata = JSON.stringify({ Title: 'Quarterly results '.repeat(800) })
+    assert.ok(metadata.length > 10_000)
+    assert.equal(form('url-pdf', { postProcess: { metadata } }).get('metadata'), metadata)
+    assert.throws(
+      () => form('url-pdf', { postProcess: { metadata: '{broken' } }),
+      /Metadata must be a valid JSON object/,
+    )
+  })
+
   test.each(['url-pdf', 'html-pdf', 'markdown-pdf', 'office-pdf'])(
     '%s includes watermark, stamp, metadata and flatten in the original conversion request',
     (id) => {

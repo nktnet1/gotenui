@@ -25,7 +25,6 @@ export function importReadableMetadata(result: unknown, filename: string): strin
       .filter(Boolean)
   }
   const editable = JSON.stringify(metadata)
-  if (editable.length > 10_000) throw new Error('Metadata is too large to import into the editor.')
   return editable
 }
 
@@ -42,7 +41,6 @@ export function importReadableBookmarks(result: unknown, filenames: string[]): s
   const value =
     filenames.length === 1 ? JSON.stringify(mapped[filenames[0] as string]) : JSON.stringify(mapped)
   validateBookmarkDocument(value)
-  if (value.length > 10_000) throw new Error('Bookmarks are too large to import into the editor.')
   return value
 }
 

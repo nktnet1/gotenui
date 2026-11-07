@@ -158,7 +158,7 @@ test('validates cookie domains, types, boundaries and security attributes', () =
       /cookie/i,
     )
   }
-  for (const bad of ['{}', '[]', '{', JSON.stringify(Array(21).fill(cookie))]) {
+  for (const bad of ['{}', '{']) {
     assert.throws(() => validatePayload(request('url-pdf', { cookies: bad })), /cookie/i)
   }
 })
@@ -171,9 +171,8 @@ test('rejects secret browser headers without a scope, unsafe header names and ma
     { 'Set-Cookie': 'a=b' },
     { 'X-Safe': 'secret\r\nCookie: a=b' },
     { Authorization: 'Bearer secret;scope=' },
-    { Authorization: 'Bearer secret;scope=^https://[broken' },
     { Authorization: 'Bearer secret;scope=^https://a\\.test/;scope=^https://b\\.test/' },
-    { Authorization: `Bearer secret;scope=${'a'.repeat(257)}` },
+    { Authorization: `Bearer secret;scope=${'a'.repeat(1025)}` },
   ]) {
     assert.throws(
       () => validatePayload(request('url-pdf', { extraHttpHeaders: JSON.stringify(fields) })),
@@ -197,6 +196,75 @@ test('rejects secret browser headers without a scope, unsafe header names and ma
       request('url-pdf', { extraHttpHeaders: JSON.stringify({ 'X-Public-Header': 'public' }) }),
     ),
   )
+})
+
+test('accepts Chromium resource headers to Gotenberg 9 limits and delegates regexp2 syntax', () => {
+  const manyHeaders = Object.fromEntries(
+    Array.from({ length: 64 }, (_, i) => [
+      `X-Header-${i}`,
+      `value-${i};scope=^https://example\\.test/`,
+    ]),
+  )
+  const encoded = JSON.stringify(manyHeaders)
+  const parsed = validatePayload(request('url-pdf', { extraHttpHeaders: encoded }))
+  assert.equal(parsed.payload.fields.extraHttpHeaders, encoded)
+  assert.throws(
+    () =>
+      validatePayload(
+        request('url-pdf', {
+          extraHttpHeaders: JSON.stringify({
+            ...manyHeaders,
+            'X-Extra': 'additional;scope=^https://',
+          }),
+        }),
+      ),
+    /64 entries/,
+  )
+
+  // Gotenberg 9 uses .NET regexp2, not JavaScript RegExp: (?i) is valid upstream.
+  const dotNetPattern = '(?i)^https://portal\\.example\\.test/'
+  for (const scope of [dotNetPattern, 'a'.repeat(1024)]) {
+    assert.doesNotThrow(() =>
+      validatePayload(
+        request('url-pdf', {
+          extraHttpHeaders: JSON.stringify({ Authorization: `Bearer token;SCOPE=${scope}` }),
+        }),
+      ),
+    )
+  }
+  for (const scope of ['a'.repeat(1025), 'é'.repeat(513)]) {
+    assert.throws(
+      () =>
+        validatePayload(
+          request('url-pdf', {
+            extraHttpHeaders: JSON.stringify({ Authorization: `Bearer token;scope=${scope}` }),
+          }),
+        ),
+      /1,024 UTF-8 bytes/,
+    )
+  }
+  // Invalid syntax is diagnosed by the backend's regexp2 compiler.
+  assert.doesNotThrow(() =>
+    validatePayload(
+      request('url-pdf', {
+        extraHttpHeaders: JSON.stringify({ Authorization: 'Bearer secret;scope=^https://[broken' }),
+      }),
+    ),
+  )
+  assert.doesNotThrow(() => validatePayload(request('url-pdf', { extraHttpHeaders: '{}' })))
+})
+
+test('supports large Chromium cookie lists without an unrelated 20-cookie cap', () => {
+  const cookies = Array.from({ length: 64 }, (_, index) => ({
+    ...cookie,
+    name: `session_${index}`,
+  }))
+  const settings = chromiumNetworkFields(cookies, [])
+  const parsed = validatePayload(request('html-shot', settings))
+  const spec = OPERATION_BY_ID.get('html-shot')
+  assert.ok(spec)
+  assert.equal(createGotenbergForm(spec, parsed.payload, [], []).get('cookies'), settings.cookies)
+  assert.doesNotThrow(() => validatePayload(request('url-pdf', { cookies: '[]' })))
 })
 
 test('validates Chromium typed printing, waiting and tag/outline controls', () => {

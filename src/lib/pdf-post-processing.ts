@@ -22,8 +22,8 @@ export const pdfPostProcessSchema = v.strictObject({
   // Ordered, nonempty lists for Gotenberg 8.36+ parallel multipart parameters.
   watermarks: v.optional(v.pipe(v.array(overlaySchema), v.minLength(1), v.maxLength(10))),
   stamps: v.optional(v.pipe(v.array(overlaySchema), v.minLength(1), v.maxLength(10))),
-  metadata: v.optional(v.pipe(v.string(), v.maxLength(10_000))),
-  embedsMetadata: v.optional(v.pipe(v.string(), v.maxLength(10_000))),
+  metadata: v.optional(v.string()),
+  embedsMetadata: v.optional(v.string()),
   facturxConformanceLevel: v.optional(
     v.picklist(['MINIMUM', 'BASIC WL', 'BASIC', 'EN 16931', 'EXTENDED', 'XRECHNUNG']),
   ),

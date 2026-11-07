@@ -5,6 +5,7 @@ import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Textarea } from '#/components/ui/textarea'
 import { defaultMarkdownTemplate } from '#/lib/chromium-documents'
+import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
 import { safeFilename } from '#/lib/validation'
 
 export type MarkdownSource = { id: number; name: string; content: string }
@@ -51,8 +52,10 @@ export function MarkdownAssetsEditor({
     try {
       for (const file of selected) {
         safeFilename(file.name)
-        if (!/\.md$/i.test(file.name) || !file.size || file.size > 300_000) {
-          throw new Error(`Choose a non-empty .md file under 300 KB: ${file.name}`)
+        if (!/\.md$/i.test(file.name) || !file.size || file.size > MAX_UPLOAD_BYTES) {
+          throw new Error(
+            `Choose a non-empty .md file within the configured upload limit: ${file.name}`,
+          )
         }
         if (seen.has(file.name.toLowerCase())) {
           throw new Error(`Duplicate Markdown filename: ${file.name}`)
@@ -67,8 +70,8 @@ export function MarkdownAssetsEditor({
   }
   const importTemplate = async (file: File | undefined) => {
     if (!file) return
-    if (!/\.html?$/i.test(file.name) || !file.size || file.size > 150_000) {
-      toast.error('Choose a non-empty HTML template under 150 KB.')
+    if (!/\.html?$/i.test(file.name) || !file.size || file.size > MAX_UPLOAD_BYTES) {
+      toast.error('Choose a non-empty HTML template within the configured upload limit.')
       return
     }
     try {

@@ -35,6 +35,19 @@ function validateAssets(operationId: string, extras: Record<string, unknown>, as
 }
 
 describe('Chromium PDF headers and footers', () => {
+  test('accepts complete HTML headers/footers above prior field caps within upload budget', () => {
+    const largeHtml = `<html><head></head><body>${'x'.repeat(80_000)}</body></html>`
+    const { operation, payload } = makePayload('html-pdf', {
+      source: `<html><head></head><body>${'main'.repeat(100_000)}</body></html>`,
+      headerHtml: largeHtml,
+      footerHtml: largeHtml,
+    })
+    validateFiles(operation, [], [], 1_000_000, payload)
+    assert.equal(payload.headerHtml, largeHtml)
+    assert.equal(payload.footerHtml, largeHtml)
+    assert.throws(() => validateFiles(operation, [], [], 200_000, payload), /configured size limit/)
+  })
+
   test.each(['url-pdf', 'html-pdf', 'markdown-pdf'])(
     '%s sends optional named HTML files through the files field',
     async (id) => {
@@ -90,6 +103,20 @@ describe('Chromium PDF headers and footers', () => {
 })
 
 describe('Markdown files and templates', () => {
+  test('accepts Markdown sources and templates above the old independent character limits', () => {
+    const additional = '# Secondary\n'.repeat(30_000)
+    const longTemplate = `<!doctype html><html><body>${' '.repeat(151_000)}{{ toHTML "document.md" }}{{ toHTML "extra.md" }}</body></html>`
+    const { operation, payload } = makePayload('markdown-pdf', {
+      source: '# Primary\n'.repeat(31_000),
+      markdownFiles: [{ name: 'extra.md', content: additional }],
+      markdownTemplate: longTemplate,
+    })
+    validateFiles(operation, [], [], 1_000_000, payload)
+    assert.equal(payload.markdownFiles?.[0]?.content, additional)
+    assert.equal(payload.markdownTemplate, longTemplate)
+    assert.throws(() => validateFiles(operation, [], [], 50_000, payload), /configured size limit/)
+  })
+
   test('retains the original one-file generated-template contract', async () => {
     const form = validateAssets('markdown-pdf', {}, [])
     const files = form.getAll('files') as File[]

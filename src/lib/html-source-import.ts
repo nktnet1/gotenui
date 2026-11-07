@@ -1,12 +1,15 @@
+import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
 import { InputError } from '#/lib/validation'
 
-// ConversionPayload.source is limited to 300,000 UTF-16 code units.
-export const MAX_HTML_SOURCE_BYTES = 300_000
+// Use the configured upload budget rather than an unrelated 300 KB field cap.
+export const MAX_HTML_SOURCE_BYTES = MAX_UPLOAD_BYTES
 
 /** Read imported HTML as editable text, never as an additional multipart upload. */
 export async function readHtmlSource(file: File): Promise<string> {
   if (!/\.html?$/i.test(file.name) || file.size === 0 || file.size > MAX_HTML_SOURCE_BYTES) {
-    throw new InputError('Choose a non-empty .html or .htm file up to 300 KB.')
+    throw new InputError(
+      'Choose a non-empty .html or .htm file within the configured upload limit.',
+    )
   }
   let content: string
   try {
@@ -16,7 +19,7 @@ export async function readHtmlSource(file: File): Promise<string> {
   }
   if (!content.trim()) throw new InputError('The HTML file is empty.')
   if (content.length > MAX_HTML_SOURCE_BYTES) {
-    throw new InputError('The imported HTML exceeds the source editor limit of 300,000 characters.')
+    throw new InputError('The imported HTML exceeds the configured upload limit.')
   }
   return content
 }

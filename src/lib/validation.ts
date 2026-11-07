@@ -31,7 +31,7 @@ const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
 const markdownFileSchema = v.object({
   name: v.pipe(v.string(), v.minLength(1)),
-  content: v.pipe(v.string(), v.maxLength(300_000)),
+  content: v.string(),
 })
 
 const remoteFileSchema = v.object({
@@ -59,12 +59,12 @@ export const payloadSchema = v.object({
   operation: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   fields: v.record(v.string(), fieldValue),
   advanced: v.record(v.string(), advancedValue),
-  source: v.optional(v.pipe(v.string(), v.maxLength(300_000))),
+  source: v.optional(v.string()),
   markdownName: v.optional(v.string()),
   markdownFiles: v.optional(v.array(markdownFileSchema)),
-  markdownTemplate: v.optional(v.pipe(v.string(), v.maxLength(150_000))),
-  headerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
-  footerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
+  markdownTemplate: v.optional(v.string()),
+  headerHtml: v.optional(v.string()),
+  footerHtml: v.optional(v.string()),
   postProcess: v.optional(pdfPostProcessSchema),
   conversionStages: v.optional(v.pipe(v.string(), v.minLength(1))),
   acknowledgedConversionRedaction: v.optional(v.boolean()),
@@ -746,8 +746,8 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     throw new InputError(`Chromium ${name} must be valid JSON.`)
   }
   if (name === 'cookies') {
-    if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 20) {
-      throw new InputError('Chromium cookies must be a JSON array of 1 to 20 entries.')
+    if (!Array.isArray(parsed)) {
+      throw new InputError('Chromium cookies must be a JSON array.')
     }
     for (const cookie of parsed) {
       if (!cookie || typeof cookie !== 'object' || Array.isArray(cookie)) {
@@ -799,8 +799,8 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     throw new InputError('Chromium resource headers must be a JSON object.')
   }
   const entries = Object.entries(parsed)
-  if (entries.length < 1 || entries.length > 20) {
-    throw new InputError('Chromium resource headers must contain 1 to 20 entries.')
+  if (entries.length > 64) {
+    throw new InputError('Chromium resource headers must contain at most 64 entries.')
   }
   const names = new Set<string>()
   for (const [key, headerValue] of entries) {
@@ -832,11 +832,21 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     ) {
       throw new InputError('Invalid Chromium resource header value.')
     }
-    const index = headerValue.indexOf(';scope=')
-    if (index !== headerValue.lastIndexOf(';scope=')) {
+    // Gotenberg splits header values at semicolons and accepts case-insensitive
+    // `scope=` tokens. It uses .NET regexp2, not JavaScript's RegExp engine:
+    // syntax validity must be checked upstream so valid .NET patterns survive.
+    const tokens = headerValue.split(';')
+    const scopes = tokens.flatMap((token) => {
+      const separator = token.indexOf('=')
+      return separator >= 0 && token.slice(0, separator).trim().toLowerCase() === 'scope'
+        ? [token.slice(separator + 1).replace(/\s+/g, '')]
+        : []
+    })
+    if (scopes.length > 1) {
       throw new InputError('Chromium resource header must contain at most one URL scope.')
     }
-    if (index < 0) {
+    const scope = scopes[0]
+    if (scope === undefined) {
       if (/authorization|token|secret|key|credential|auth/i.test(key)) {
         throw new InputError(
           'Authentication headers require an explicit URL scope to avoid credential disclosure.',
@@ -844,17 +854,12 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       }
       continue
     }
-    const scope = headerValue.slice(index + ';scope='.length)
-    if (!headerValue.slice(0, index) || !scope || scope.length > 256 || scope.trim() !== scope) {
+    if (!tokens[0]?.trim() || !scope || new TextEncoder().encode(scope).length > 1024) {
       throw new InputError(
-        'Chromium resource header scope must be a non-empty regex (max 256 characters).',
+        'Chromium resource header scope must be a non-empty regex (max 1,024 UTF-8 bytes).',
       )
     }
-    try {
-      new RegExp(scope)
-    } catch {
-      throw new InputError('Invalid Chromium resource header scope regular expression.')
-    }
+    // The upstream regexp2 parser checks the pattern before any header is applied.
   }
 }
 
@@ -1043,11 +1048,7 @@ export function validatePayload(input: unknown): {
       if (typeof value !== 'boolean') throw new InputError(`${field.label} must be true or false.`)
     } else {
       if (typeof value !== 'string') throw new InputError(`${field.label} must be text.`)
-      // Structured JSON is bounded by the proxy's total payload/body limits.
-      // Do not impose an unrelated 10 KB field ceiling on large bookmark,
-      // form, redaction or ordered-stage documents.
-      if (field.kind !== 'json' && value.length > 10_000)
-        throw new InputError(`${field.label} is too long.`)
+      // The proxy's byte limit covers large values, including non-JSON stage text.
       if (field.kind === 'select' && value && !field.options?.includes(value)) {
         throw new InputError(`Invalid option for ${field.label}.`)
       }
@@ -1195,7 +1196,6 @@ export function validatePayload(input: unknown): {
     }
     if (typeof value === 'number' && !Number.isFinite(value))
       throw new InputError('Advanced values must be finite.')
-    if (String(value).length > 10000) throw new InputError(`Advanced field ${name} is too long.`)
   }
   if ((operation.input === 'html' || operation.input === 'markdown') && !payload.source?.trim()) {
     throw new InputError('Enter some source content first.')

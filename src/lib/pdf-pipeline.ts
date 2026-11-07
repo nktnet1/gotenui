@@ -258,7 +258,7 @@ const permissions = new Set([
 ])
 const requiredText = (stage: PdfPipelineStage, key: string): string => {
   const value = stage[key]
-  if (typeof value !== 'string' || !value.trim() || value.length > 10_000) {
+  if (typeof value !== 'string' || !value.trim()) {
     throw new InputError(`${stage.op}: "${key}" must be a non-empty string.`)
   }
   return value
@@ -278,12 +278,9 @@ function validateStage(stage: PdfPipelineStage): void {
   const name = stage.op
   const known = pipelineByOp.get(name)
   if (!known) throw new InputError(`Unknown PDF stage: ${name}.`)
-  for (const [key, value] of Object.entries(stage)) {
+  for (const key of Object.keys(stage)) {
     if (key !== 'op' && !(known.fields as readonly string[]).includes(key)) {
       throw new InputError(`${name}: unknown option "${key}".`)
-    }
-    if (typeof value === 'string' && value.length > 10_000) {
-      throw new InputError(`${name}: "${key}" is too long.`)
     }
   }
   const stringOptions = new Set([
