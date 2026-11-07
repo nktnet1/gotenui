@@ -1,4 +1,4 @@
-/** Gotenberg 9.0.0 PDF pipeline catalogue and shared client/server validation.
+/** Gotenberg 9 PDF pipeline catalogue and shared client/server validation.
  * Keep this aligned with pkg/modules/pdf/stages.go and stage_types.go.
  */
 
@@ -268,7 +268,12 @@ const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 const optionalPages = (stage: PdfPipelineStage, key: string): void => {
   const value = stage[key]
-  if (value !== undefined && !isPdfPageSelector(value)) {
+  // Litho interprets an omitted, empty, or whitespace-only optional page range as all pages.
+  if (
+    value !== undefined &&
+    !(typeof value === 'string' && !value.trim()) &&
+    !isPdfPageSelector(value)
+  ) {
     throw new InputError(`${stage.op}: "${key}" must select pages such as 1-3, last or all.`)
   }
 }
@@ -367,8 +372,6 @@ function validateStage(stage: PdfPipelineStage): void {
     throw new InputError(`${name}: scale must be positive.`)
   if (stage.fontSize !== undefined && (stage.fontSize as number) <= 0)
     throw new InputError(`${name}: font size must be positive.`)
-  if (stage.pages !== undefined && typeof stage.pages === 'string' && stage.pages === '')
-    throw new InputError(`${name}: pages cannot be empty.`)
   if (stage.permissions !== undefined) {
     if (
       !object(stage.permissions) ||
@@ -498,9 +501,7 @@ function validateStage(stage: PdfPipelineStage): void {
       requiredText(stage, 'name')
       break
     case 'extract-attachments':
-      // No name means every attachment. A filename is an exact match, including spaces.
-      if (stage.name !== undefined && !String(stage.name).trim())
-        throw new InputError('extract-attachments: name must be an embedded filename or omitted.')
+      // A missing or empty name extracts every attachment; non-empty names match exactly.
       break
     case 'encrypt':
       if (!stage.userPassword && !stage.ownerPassword)

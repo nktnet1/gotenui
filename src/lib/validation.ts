@@ -658,6 +658,28 @@ export function validateFiles(
   if (total > maxBytes) {
     throw new InputError('Combined document content exceeds the configured size limit.', 413)
   }
+  // Gotenberg can embed a zero-byte attachment. Keep rejecting empty input
+  // documents and other assets; only an explicit `attach` stage can consume an
+  // empty uploaded file as meaningful output.
+  const stageJson =
+    operation.id === 'pdf-pipeline' ? payload?.fields?.stages : payload?.conversionStages
+  const emptyAttachmentNames = new Set<string>()
+  if (
+    typeof stageJson === 'string' &&
+    stageJson &&
+    [...auxiliary, ...stageFiles].some((file) => file.size === 0)
+  ) {
+    for (const stage of parsePdfPipeline(stageJson, {
+      acknowledgedRedaction:
+        operation.id === 'pdf-pipeline'
+          ? payload?.fields?.acknowledgedRedaction === true
+          : payload?.acknowledgedConversionRedaction,
+    })) {
+      if (stage.op === 'attach' && typeof stage.file === 'string') {
+        emptyAttachmentNames.add(stage.file)
+      }
+    }
+  }
   for (const file of [...files, ...auxiliary, ...stageFiles, ...archives]) {
     const name = safeFilename(file.name)
     if (operation.input === 'markdown' && auxiliary.includes(file) && /\.md$/i.test(name)) {
@@ -673,7 +695,12 @@ export function validateFiles(
     }
     names.add(filenameKey(name))
     total += file.size
-    if (file.size === 0) throw new InputError(`${name} is empty.`)
+    if (
+      file.size === 0 &&
+      !((auxiliary.includes(file) || stageFiles.includes(file)) && emptyAttachmentNames.has(name))
+    ) {
+      throw new InputError(`${name} is empty.`)
+    }
     if (total > maxBytes)
       throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
     const ext = name.match(extension)?.[0]?.toLowerCase()
@@ -766,9 +793,9 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       }
       if (
         typeof entry.name !== 'string' ||
-        !/^[a-z0-9!#$%&'*+.^_`|~-]{1,128}$/i.test(entry.name) ||
+        !/^[a-z0-9!#$%&'*+.^_`|~-]+$/i.test(entry.name) ||
         typeof entry.value !== 'string' ||
-        entry.value.length > 2048 ||
+        !entry.value.trim() ||
         [...entry.value].some(
           (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === ';',
         ) ||
@@ -780,18 +807,17 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
         (entry.path !== undefined &&
           (typeof entry.path !== 'string' ||
             !entry.path.startsWith('/') ||
-            entry.path.length > 512 ||
             /[\r\n]/.test(entry.path))) ||
         (entry.secure !== undefined && typeof entry.secure !== 'boolean') ||
         (entry.httpOnly !== undefined && typeof entry.httpOnly !== 'boolean') ||
         (entry.sameSite !== undefined &&
-          !['Strict', 'Lax', 'None'].includes(String(entry.sameSite)))
+          !['strict', 'lax', 'none'].includes(String(entry.sameSite).toLowerCase()))
       ) {
         throw new InputError(
           'Chromium cookie requires a valid name, value, domain and optional attributes.',
         )
       }
-      if (entry.sameSite === 'None' && entry.secure !== true) {
+      if (String(entry.sameSite).toLowerCase() === 'none' && entry.secure !== true) {
         throw new InputError('SameSite=None cookies require the HTTPS-only (secure) flag.')
       }
     }
@@ -826,12 +852,7 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       throw new InputError('Invalid or unsafe Chromium resource header name.')
     }
     names.add(lower)
-    if (
-      typeof headerValue !== 'string' ||
-      !headerValue ||
-      headerValue.length > 2000 ||
-      /[\r\n]/.test(headerValue)
-    ) {
+    if (typeof headerValue !== 'string' || !headerValue || /[\r\n]/.test(headerValue)) {
       throw new InputError('Invalid Chromium resource header value.')
     }
     // Gotenberg splits header values at semicolons and accepts case-insensitive

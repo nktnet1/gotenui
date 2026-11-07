@@ -119,6 +119,73 @@ describe('PDF pipeline catalogue and stage contract', () => {
     error([{ op: 'insert', source: 'source.pdf', at: -1 }], /valid integer/)
   })
 
+  it('accepts explicit empty optional page selectors and attachment names, as upstream does', () => {
+    const stages = [
+      { op: 'insert', source: 'extra.pdf', sourcePages: '' },
+      { op: 'rotate', angle: 90, pages: '' },
+      { op: 'stamp-text', text: 'TEST', pages: '  ' },
+      { op: 'extract-text', pages: '' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const { form } = adapted(stages, [new File(['%PDF-1.7'], 'extra.pdf')])
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
+    assert.deepEqual(parsePdfPipeline('[{"op":"extract-attachments","name":""}]'), [
+      { op: 'extract-attachments', name: '' },
+    ])
+    assert.deepEqual(parsePdfPipeline('[{"op":"extract-attachments","name":"  "}]'), [
+      { op: 'extract-attachments', name: '  ' },
+    ])
+    error([{ op: 'select', pages: '' }], /non-empty/)
+    error([{ op: 'delete', pages: '   ' }], /non-empty/)
+    error([{ op: 'rotate', angle: 90, pages: 'all,1' }], /select pages/)
+  })
+
+  it('allows zero-byte attachment assets but not zero-byte source PDFs or other stage files', () => {
+    const emptyAttachment = new File([], 'empty.txt')
+    const stages = [{ op: 'attach', file: 'empty.txt' }]
+    const { payload, legacy } = input(stages, [emptyAttachment])
+    const source = new File(['%PDF-1.7\n'], 'input.pdf')
+    assert.doesNotThrow(() =>
+      validateFiles(operation, [source], [emptyAttachment], 4_000_000, payload),
+    )
+    const result = adaptPdfPipeline(payload, legacy, [emptyAttachment])
+    assert.equal((result.form.getAll('files')[1] as File).size, 0)
+    assert.throws(
+      () =>
+        validateFiles(
+          operation,
+          [new File([], 'input.pdf')],
+          [emptyAttachment],
+          4_000_000,
+          payload,
+        ),
+      /input\.pdf is empty/,
+    )
+    assert.throws(
+      () =>
+        validateFiles(operation, [source], [new File([], 'unreferenced.txt')], 4_000_000, payload),
+      /unreferenced\.txt is empty/,
+    )
+    const stamped = input([{ op: 'stamp-image', image: 'logo.png' }])
+    assert.throws(
+      () =>
+        validateFiles(operation, [source], [new File([], 'logo.png')], 4_000_000, stamped.payload),
+      /logo\.png is empty/,
+    )
+    const office = OPERATION_BY_ID.get('html-pdf')
+    assert.ok(office)
+    const conversion = {
+      operation: office.id,
+      fields: {},
+      advanced: {},
+      source: '<html><body>Invoice</body></html>',
+      conversionStages: JSON.stringify(stages),
+    }
+    assert.doesNotThrow(() =>
+      validateFiles(office, [], [], 4_000_000, conversion, {}, [emptyAttachment]),
+    )
+  })
+
   it('supports parameterised MIME types on attachment stages', () => {
     const pipeline = [
       { op: 'attach', file: 'invoice.xml', mimeType: 'application/xml; charset=UTF-8' },

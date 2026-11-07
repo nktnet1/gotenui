@@ -163,6 +163,51 @@ test('validates cookie domains, types, boundaries and security attributes', () =
   }
 })
 
+test('accepts long Chromium cookie values and case-insensitive SameSite settings', () => {
+  // Gotenberg 9 explicitly normalises SameSite before decoding the cookies.
+  const longValue = `jwt-${'x'.repeat(4_096)}`
+  const cookies = [
+    {
+      ...cookie,
+      name: `session_${'y'.repeat(150)}`,
+      value: longValue,
+      path: `/${'p'.repeat(600)}`,
+      sameSite: 'lAx',
+    },
+    { ...cookie, sameSite: 'nOnE' },
+  ]
+  const fields = request('url-pdf', { cookies: JSON.stringify(cookies) })
+  const { payload, operation } = validatePayload(fields)
+  assert.deepEqual(
+    JSON.parse(String(createGotenbergForm(operation, payload, [], []).get('cookies'))),
+    cookies,
+  )
+  assert.throws(
+    () =>
+      validatePayload(request('url-pdf', { cookies: JSON.stringify([{ ...cookie, value: ' ' }]) })),
+    /cookie/i,
+  )
+  assert.throws(
+    () =>
+      validatePayload(
+        request('url-pdf', {
+          cookies: JSON.stringify([{ ...cookie, sameSite: 'nOnE', secure: false }]),
+        }),
+      ),
+    /SameSite=None/,
+  )
+})
+
+test('forwards large scoped Chromium header values without an artificial length cap', () => {
+  const value = `Bearer ${'x'.repeat(8_192)};scope=^https://internal\\.example\\.test/`
+  const fields = request('url-pdf', { extraHttpHeaders: JSON.stringify({ Authorization: value }) })
+  const { operation, payload } = validatePayload(fields)
+  assert.deepEqual(
+    JSON.parse(String(createGotenbergForm(operation, payload, [], []).get('extraHttpHeaders'))),
+    { Authorization: value },
+  )
+})
+
 test('rejects secret browser headers without a scope, unsafe header names and malformed scoped headers', () => {
   for (const fields of [
     { Authorization: 'Bearer secret' },
