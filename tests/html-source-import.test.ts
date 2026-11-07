@@ -23,11 +23,9 @@ describe('browser HTML source import', () => {
     },
   )
 
-  it('rejects empty files and whitespace-only documents', async () => {
+  it('imports blank HTML documents exactly as Gotenberg accepts them', async () => {
     for (const text of ['', ' \n\t ']) {
-      await expect(readHtmlSource(new File([text], 'index.html'))).rejects.toThrow(
-        /empty|non-empty/i,
-      )
+      expect(await readHtmlSource(new File([text], 'index.html'))).toBe(text)
     }
   })
 

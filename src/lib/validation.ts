@@ -150,9 +150,7 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
     if (new Set(names.map(filenameKey)).size !== names.length) {
       throw new InputError('Markdown filenames must be unique after Unicode normalisation.')
     }
-    const template = payload.markdownTemplate ?? defaultMarkdownTemplate(names)
-    if (!template.trim()) throw new InputError('The Markdown template must not be empty.')
-    // Go html/template permits static, dynamic and conditional toHTML calls.
+    // Go html/template permits even empty, static, dynamic and conditional templates.
     // Unused or conditionally missing files are valid; Gotenberg resolves
     // actual references when executing the template.
   }

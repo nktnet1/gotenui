@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'vitest'
 import { defaultMarkdownTemplate, markdownTemplateReferences } from '#/lib/chromium-documents'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
+import { readHtmlSource } from '#/lib/html-source-import'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
 import { InputError, validateFiles, validatePayload } from '#/lib/validation'
 
@@ -219,6 +220,25 @@ describe('Markdown files and templates', () => {
           (form.getAll('files') as File[]).map((file) => file.name),
           ['index.html', 'document.md', 'unused.md'],
         )
+      }
+    }
+  })
+
+  test('allows blank or whitespace-only custom Markdown HTML templates', async () => {
+    for (const markdownTemplate of ['', '  \n\t ']) {
+      const imported = await readHtmlSource(new File([markdownTemplate], 'index.html'))
+      for (const operationId of ['markdown-pdf', 'markdown-shot']) {
+        const { operation, payload } = makePayload(operationId, {
+          markdownTemplate: imported,
+          source: '',
+        })
+        validateFiles(operation, [], [], 4_000_000, payload)
+        const form = createGotenbergForm(operation, payload, [], [])
+        const files = form.getAll('files') as File[]
+        assert.equal(files[0]?.name, 'index.html')
+        assert.equal(files[0]?.size, new TextEncoder().encode(markdownTemplate).length)
+        assert.equal(await files[0]?.text(), markdownTemplate)
+        assert.equal(files[1]?.name, 'document.md')
       }
     }
   })

@@ -7,6 +7,7 @@ import { Textarea } from '#/components/ui/textarea'
 import { defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { filenameKey } from '#/lib/file-names'
 import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
+import { readHtmlSource } from '#/lib/html-source-import'
 import { safeFilename } from '#/lib/validation'
 
 export type MarkdownSource = { id: number; name: string; content: string }
@@ -69,14 +70,10 @@ export function MarkdownAssetsEditor({
   }
   const importTemplate = async (file: File | undefined) => {
     if (!file) return
-    if (!/\.html?$/i.test(file.name) || !file.size || file.size > MAX_UPLOAD_BYTES) {
-      toast.error('Choose a non-empty HTML template within the configured upload limit.')
-      return
-    }
     try {
-      onCustomTemplateChange(await file.text())
-    } catch {
-      toast.error('Could not read the Markdown template.')
+      onCustomTemplateChange(await readHtmlSource(file))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not read the Markdown template.')
     }
   }
   return (
@@ -232,8 +229,9 @@ export function MarkdownAssetsEditor({
           }}
         />
         <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-          Each Markdown file needs a matching <code>{'{{ toHTML "filename.md" }}'}</code> call.
-          Assets must be referenced by their filename, not a directory path.
+          Use <code>{'{{ toHTML "filename.md" }}'}</code> to render a Markdown source. Custom
+          templates may render only selected files, or none; reference assets by filename, not a
+          directory path.
         </p>
       </div>
     </section>
