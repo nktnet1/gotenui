@@ -489,6 +489,70 @@ test('v9 Office conversion merges first, then runs custom stages and remediates 
   ])
 })
 
+test('v9 conversion places conformance remediation before PDF signing and timestamps', () => {
+  const { operation, payload, form } = fixture('html-pdf', {
+    fields: { pdfaProfile: 'PDF/A-2b' },
+    conversionStages: JSON.stringify([
+      { op: 'set-metadata', title: 'Final statement' },
+      { op: 'sign', certificate: 'signer.p12', pades: true },
+      { op: 'timestamp', timestampUrl: 'https://tsa.example.test' },
+    ]),
+  })
+  const certificate = new File(['pkcs12'], 'signer.p12')
+  const adapted = adaptConversionForm(operation, payload, form, 9, [certificate])
+  assert.deepEqual(JSON.parse(String(adapted.get('stages'))), [
+    { op: 'set-metadata', title: 'Final statement' },
+    { op: 'remediate', profile: 'PDF/A-2b' },
+    { op: 'sign', certificate: 'signer.p12', pades: true },
+    { op: 'timestamp', timestampUrl: 'https://tsa.example.test/' },
+  ])
+})
+
+test('v9 remediation precedes PDF/UA encryption, while PDF/A encryption remains forbidden', () => {
+  const encrypt = '[{"op":"encrypt","userPassword":"secret"},{"op":"optimize"}]'
+  const valid = adapt(
+    'office-pdf',
+    {
+      fields: { pdfuaProfile: 'PDF/UA-1' },
+      conversionStages: encrypt,
+    },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(valid.get('stages'))), [
+    { op: 'remediate', profile: 'PDF/UA-1' },
+    { op: 'encrypt', userPassword: 'secret' },
+    { op: 'optimize' },
+  ])
+  assert.throws(
+    () =>
+      adapt(
+        'office-pdf',
+        {
+          fields: { pdfaProfile: 'PDF/A-2b' },
+          conversionStages: encrypt,
+        },
+        9,
+      ),
+    /cannot be encrypted/,
+  )
+})
+
+test('v9 remediation precedes a final rendered output without moving earlier edits', () => {
+  const form = adapt(
+    'html-pdf',
+    {
+      fields: { pdfaProfile: 'PDF/A-4' },
+      conversionStages: '[{"op":"rotate","angle":90},{"op":"render","format":"jpeg"}]',
+    },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+    { op: 'rotate', angle: 90 },
+    { op: 'remediate', profile: 'PDF/A-4' },
+    { op: 'render', format: 'jpeg' },
+  ])
+})
+
 test('v9 attaches named stage uploads to PDF conversions, without changing the source document', () => {
   const { operation, payload, form } = fixture('office-pdf', {
     conversionStages: '[{"op":"attach","file":"receipt.txt"}]',

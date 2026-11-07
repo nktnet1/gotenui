@@ -358,18 +358,24 @@ export function adaptConversionForm(
         throw new InputError(`Unused conversion stage file: ${file.name}.`)
       }
     }
-    // Final read stages (render or extraction) must come after any generated
-    // remediation: their results are added alongside the converted PDF(s).
+    // Remediation must follow page/content edits but precede encryption,
+    // signing, document timestamps and final readers. Placing it after a
+    // signature would rewrite signed bytes; placing it after encryption would
+    // violate Gotenberg's stage ordering even for PDF/UA-only remediation.
     const remediation = generated.filter((stage) => stage.op === 'remediate')
     const setup = generated.filter((stage) => stage.op !== 'remediate')
-    const finalStage = userStages.at(-1)
-    const isFinalRead = ['render', 'extract-attachments', 'extract-text'].includes(
-      finalStage?.op ?? '',
+    const firstFinalizingStage = userStages.findIndex((stage) =>
+      ['encrypt', 'sign', 'timestamp', 'render', 'extract-attachments', 'extract-text'].includes(
+        stage.op,
+      ),
     )
-    const stages =
-      isFinalRead && finalStage
-        ? [...setup, ...userStages.slice(0, -1), ...remediation, finalStage]
-        : [...setup, ...userStages, ...remediation]
+    const remediationAt = firstFinalizingStage === -1 ? userStages.length : firstFinalizingStage
+    const stages = [
+      ...setup,
+      ...userStages.slice(0, remediationAt),
+      ...remediation,
+      ...userStages.slice(remediationAt),
+    ]
     if (stages.length) {
       parsePdfPipeline(JSON.stringify(stages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
