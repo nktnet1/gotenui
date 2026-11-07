@@ -725,3 +725,70 @@ test('v9 Chromium forwards extended media feature maps without prototype collisi
     Object.fromEntries(features.map(({ name, value }) => [name, value])),
   )
 })
+
+test('v9 Chromium conversion forwards optional PDF remediation settings without leaking form fields', () => {
+  const form = adapt(
+    'html-pdf',
+    {
+      fields: {
+        pdfaProfile: 'PDF/A-4f',
+        pdfuaProfile: 'PDF/UA-2',
+        v9Language: '  en-AU  ',
+        v9Aggressive: true,
+        v9FigureAltText: '  Figure description  ',
+      },
+    },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+    {
+      op: 'remediate',
+      profile: ['PDF/A-4f', 'PDF/UA-2'],
+      language: 'en-AU',
+      aggressive: true,
+      figureAltText: '  Figure description  ',
+    },
+  ])
+  for (const key of ['v9Language', 'v9Aggressive', 'v9FigureAltText']) {
+    assert.equal(form.has(key), false)
+  }
+})
+
+test('v9 Office switches from native export to remediation when remediation settings are requested', () => {
+  const options = {
+    fields: {
+      pdfaProfile: 'PDF/A-2b',
+      v9Language: 'en-AU',
+      v9FigureAltText: 'Missing alt text',
+    },
+  }
+  const auto = adapt('office-pdf', options, 9)
+  assert.equal(auto.get('nativePdfa'), null)
+  assert.deepEqual(JSON.parse(String(auto.get('stages'))), [
+    {
+      op: 'remediate',
+      profile: 'PDF/A-2b',
+      language: 'en-AU',
+      figureAltText: 'Missing alt text',
+    },
+  ])
+  assert.throws(
+    () => adapt('office-pdf', { fields: { ...options.fields, pdfaMethod: 'native' } }, 9),
+    /requires PDF remediation/,
+  )
+  assert.throws(
+    () => adapt('office-pdf', { fields: { v9Aggressive: true } }, 9),
+    /Choose PDF\/A or PDF\/UA/,
+  )
+  assert.throws(
+    () => adapt('url-pdf', { fields: { v9Language: 'en-AU' } }, 9),
+    /Choose PDF\/A or PDF\/UA/,
+  )
+})
+
+test('v8 conversion rejects Gotenberg 9 remediation stage options', () => {
+  assert.throws(
+    () => adapt('office-pdf', { fields: { pdfa: 'PDF/A-2b', v9Language: 'en-AU' } }, 8),
+    /require Gotenberg 9|Unsupported|Advanced/,
+  )
+})

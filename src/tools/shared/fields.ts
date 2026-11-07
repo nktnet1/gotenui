@@ -105,6 +105,35 @@ export const v9PdfuaProfile: FieldDefinition = {
     'Gotenberg 9. PDF/A-4 profiles require PDF/UA-2; older PDF/A profiles require PDF/UA-1.',
 }
 
+/** Gotenberg 9 remediation settings, available for every remediate stage. */
+export const v9RemediationFields: FieldDefinition[] = [
+  {
+    name: 'v9Language',
+    label: 'Document language',
+    kind: 'text',
+    placeholder: 'en-AU',
+    description: 'Optional document language for PDF/A, PDF/UA or Factur-X remediation.',
+    supportedGotenbergMajors: [9],
+    advanced: true,
+  },
+  {
+    name: 'v9Aggressive',
+    label: 'Allow appearance-changing repairs',
+    kind: 'toggle',
+    description: 'Permits remediation changes that may alter how the pages look.',
+    supportedGotenbergMajors: [9],
+    advanced: true,
+  },
+  {
+    name: 'v9FigureAltText',
+    label: 'Fallback figure alt text',
+    kind: 'text',
+    description: 'Text assigned to figures missing alternative text.',
+    supportedGotenbergMajors: [9],
+    advanced: true,
+  },
+]
+
 export const v9OfficePdfaMethod: FieldDefinition = {
   name: 'pdfaMethod',
   label: 'PDF conformance method',
@@ -446,6 +475,7 @@ export const chromePdf: FieldDefinition[] = [
   { ...pdfua, supportedGotenbergMajors: [8] },
   { ...v9PdfaProfile },
   { ...v9PdfuaProfile },
+  ...v9RemediationFields,
 ]
 
 export const screenshot: FieldDefinition[] = [

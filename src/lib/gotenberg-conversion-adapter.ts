@@ -1,5 +1,6 @@
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { normalizePdfStageAssets, parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError, supportsArchiveInputs } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
@@ -82,8 +83,15 @@ function take(form: FormData, name: string): string | null {
   return typeof value === 'string' ? value : null
 }
 
-function v9PdfStages(form: FormData, operation: Operation, postProcessing: boolean): Stage[] {
+function v9PdfStages(
+  form: FormData,
+  operation: Operation,
+  postProcessing: boolean,
+  fields: ConversionPayload['fields'],
+): Stage[] {
   const stages: Stage[] = []
+  const remediationOptions = v9RemediationOptions(fields)
+  for (const name of V9_REMEDIATION_FIELD_NAMES) form.delete(name)
   if (form.has('stages')) {
     throw new InputError('Advanced stages require the Gotenberg 9 PDF pipeline editor.')
   }
@@ -120,6 +128,9 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
   const pdfa = selectedPdfa || legacyPdfa
   const pdfua =
     selectedPdfua || (legacyPdfua ? (pdfa?.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1') : null)
+  if (Object.keys(remediationOptions).length && !pdfa && !pdfua) {
+    throw new InputError('Choose PDF/A or PDF/UA before setting remediation options.')
+  }
   if (pdfa && pdfua && pdfua !== (pdfa.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1')) {
     throw new InputError('This PDF/A profile cannot be combined with the selected PDF/UA profile.')
   }
@@ -132,6 +143,7 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
     operation.id === 'office-pdf' &&
     !postProcessing &&
     !hasBuiltInStages &&
+    !Object.keys(remediationOptions).length &&
     (!pdfa || nativePdfaProfiles.has(pdfa)) &&
     (!pdfua || pdfua === 'PDF/UA-1') &&
     !(pdfa === 'PDF/A-4' && pdfua)
@@ -145,7 +157,11 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
     if (pdfua) form.set('nativePdfua', pdfua)
   } else if (pdfa || pdfua) {
     const profiles = [pdfa, pdfua].filter((profile): profile is string => Boolean(profile))
-    stages.push({ op: 'remediate', profile: profiles.length === 1 ? profiles[0] : profiles })
+    stages.push({
+      op: 'remediate',
+      profile: profiles.length === 1 ? profiles[0] : profiles,
+      ...remediationOptions,
+    })
   }
   const optimize = take(form, 'optimizeImages')
   const imageQuality = take(form, 'imageQuality')
@@ -245,6 +261,9 @@ export function adaptConversionForm(
     if (form.has('pdfaProfile') || form.has('pdfuaProfile') || form.has('pdfaMethod')) {
       throw new InputError('Advanced PDF conformance profiles require Gotenberg 9.')
     }
+    if (V9_REMEDIATION_FIELD_NAMES.some((name) => form.has(name))) {
+      throw new InputError('Advanced PDF remediation options require Gotenberg 9.')
+    }
     if (form.has('paperSize')) {
       throw new InputError('Named paper sizes require Gotenberg 9.')
     }
@@ -292,7 +311,12 @@ export function adaptConversionForm(
     v9MediaFeatures(form)
   }
   if (operation.output === 'pdf') {
-    const generated = v9PdfStages(form, operation, Boolean(payload.conversionStages))
+    const generated = v9PdfStages(
+      form,
+      operation,
+      Boolean(payload.conversionStages),
+      payload.fields,
+    )
     const remoteNames = payload.conversionStages
       ? remoteStageAssets(
           payload.downloadFrom,

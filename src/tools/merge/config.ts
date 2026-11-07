@@ -6,6 +6,9 @@ import {
   pdfFiles,
   pdfMetadata,
   pdfua,
+  v9PdfaProfile,
+  v9PdfuaProfile,
+  v9RemediationFields,
 } from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
@@ -22,6 +25,9 @@ export const operation: Operation = {
     ...optimizeImages,
     pdfa,
     pdfua,
+    v9PdfaProfile,
+    v9PdfuaProfile,
+    ...v9RemediationFields,
     {
       name: 'autoIndexBookmarks',
       label: 'Keep document bookmarks',

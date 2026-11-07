@@ -10,6 +10,7 @@ import {
   v9OfficePdfaMethod,
   v9PdfaProfile,
   v9PdfuaProfile,
+  v9RemediationFields,
 } from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
@@ -309,6 +310,7 @@ export const operation: Operation = {
     { ...pdfua, supportedGotenbergMajors: [8] },
     v9PdfaProfile,
     v9PdfuaProfile,
+    ...v9RemediationFields,
     v9OfficePdfaMethod,
     {
       name: 'generateTaggedPdf',
