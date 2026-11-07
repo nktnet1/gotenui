@@ -44,8 +44,8 @@ describe('PDF pipeline catalogue and stage contract', () => {
     for (const stage of PDF_PIPELINE_STAGES) {
       assert.ok(stage.label)
       assert.ok(stage.description)
-      if (['encrypt', 'decrypt', 'timestamp'].includes(stage.op)) {
-        // The template intentionally requires a password instead of supplying one.
+      if (['encrypt', 'timestamp'].includes(stage.op)) {
+        // These templates intentionally require explicit credentials or an authority.
         assert.throws(
           () => parsePdfPipeline(JSON.stringify([{ op: stage.op, ...stage.options }])),
           /password|timestampUrl/,
@@ -239,6 +239,47 @@ describe('PDF pipeline rejects unsafe or invalid sequences', () => {
     error([{ op: 'hack' }], /supported PDF operation/)
     error([{ op: 'merge', unexpected: true }], /unknown option/)
     error([{ op: 'merge', password: 'secret' }], /unknown option/)
+  })
+  it('accepts upstream page selectors and owner-password-only decryption', () => {
+    const stages = [
+      { op: 'decrypt' },
+      { op: 'split', ranges: ['all', 'last', 'odd,2'] },
+      { op: 'insert', source: 'additional.pdf', at: 0, sourcePages: 'last' },
+      { op: 'rotate', angle: 90, pages: 'all' },
+      { op: 'select', pages: 'last,1' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    assert.deepEqual(parsePdfPipeline('[{"op":"decrypt","password":""}]'), [
+      { op: 'decrypt', password: '' },
+    ])
+    error([{ op: 'decrypt', password: 123 }], /password.*string/)
+    error([{ op: 'select', pages: 'all,1' }], /select pages/)
+    error([{ op: 'split', ranges: ['all,last'] }], /page selectors/)
+    error([{ op: 'delete', pages: '1;echo unsafe' }], /select pages/)
+  })
+  it('allows large form and redaction arrays, but still rejects invalid values', () => {
+    const fields: Record<string, string | string[]> = Object.fromEntries(
+      Array.from({ length: 120 }, (_, index) => [`Input.${index}`, 'Yes']),
+    )
+    fields[`VeryLong.${'name'.repeat(60)}`] = Array.from({ length: 60 }, (_, i) => `item${i}`)
+    const regions = Array.from({ length: 150 }, (_, index) => ({
+      page: 1,
+      x: index,
+      y: 0,
+      width: 1,
+      height: 1,
+    }))
+    assert.deepEqual(parsePdfPipeline(JSON.stringify([{ op: 'set-form', fields }])), [
+      { op: 'set-form', fields },
+    ])
+    assert.deepEqual(
+      parsePdfPipeline(JSON.stringify([{ op: 'redact', regions }]), {
+        acknowledgedRedaction: true,
+      }),
+      [{ op: 'redact', regions }],
+    )
+    error([{ op: 'set-form', fields: { bad: [5] } }], /fields must map/)
+    error([{ op: 'redact', regions: [] }], /at least one rectangle/)
   })
   it('enforces positions and duplicate singleton stages', () => {
     error([{ op: 'merge' }, { op: 'decrypt', password: 'secret' }], /first stage/)

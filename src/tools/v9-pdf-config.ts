@@ -5,7 +5,7 @@ const pages: FieldDefinition = {
   name: 'pages',
   label: 'Pages',
   kind: 'text',
-  placeholder: '1-3,5 or odd',
+  placeholder: '1-3,5, last or all',
   required: true,
   description: 'One-based page selection in Gotenberg 9 syntax.',
 }
@@ -251,14 +251,19 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
       description: 'Inspect embedded attachments first to obtain the exact name.',
     },
   ]),
-  tool('decrypt', 'Decrypt PDF', 'Remove encryption from a PDF using its password.', [
-    {
-      ...password,
-      required: true,
-      advanced: false,
-      description: 'Password used to open the encrypted PDF.',
-    },
-  ]),
+  tool(
+    'decrypt',
+    'Decrypt PDF',
+    'Remove encryption from a PDF, including owner-password-only documents.',
+    [
+      {
+        ...password,
+        required: false,
+        advanced: false,
+        description: 'Leave blank for PDFs protected only by an owner password.',
+      },
+    ],
+  ),
   tool(
     'sign',
     'Digitally sign PDF',
@@ -322,7 +327,6 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
         label: 'Resolution (DPI)',
         kind: 'number',
         min: 1,
-        max: 600,
         integer: true,
         placeholder: 'Default Gotenberg DPI',
         advanced: true,

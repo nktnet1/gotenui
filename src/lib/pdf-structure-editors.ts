@@ -1,3 +1,5 @@
+import { filenameKey, safeFilename } from '#/lib/file-names'
+
 /** Common XMP keys supported by Gotenberg's metadata/write route. */
 export const METADATA_TEXT_FIELDS = [
   { name: 'Title', label: 'Title', placeholder: 'Document title' },
@@ -133,42 +135,66 @@ export function validateBookmarkDocument(text: string): void {
   } catch {
     throw new Error('Bookmarks must contain valid JSON.')
   }
-  let count = 0
-  const checkList = (list: unknown, label: string, depth: number): void => {
-    if (!Array.isArray(list)) throw new Error(`${label} must be a list of bookmarks.`)
-    if (depth > 16) throw new Error('Bookmark nesting exceeds 16 levels.')
-    for (const [index, item] of list.entries()) {
-      const where = `${label} item ${index + 1}`
-      if (!isRecord(item)) throw new Error(`${where} must be an object.`)
-      count++
-      if (count > 300) throw new Error('A request cannot contain more than 300 bookmarks.')
-      if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 300) {
-        throw new Error(`${where} needs a title (up to 300 characters).`)
+  const checkList = (list: unknown, label: string): void => {
+    const pending: { list: unknown; label: string }[] = [{ list, label }]
+    while (pending.length) {
+      const current = pending.pop()
+      if (!current) break
+      if (!Array.isArray(current.list))
+        throw new Error(`${current.label} must be a list of bookmarks.`)
+      for (const [index, item] of current.list.entries()) {
+        const where = `${current.label} item ${index + 1}`
+        if (!isRecord(item)) throw new Error(`${where} must be an object.`)
+        if (typeof item.title !== 'string' || !item.title.trim()) {
+          throw new Error(`${where} needs a title.`)
+        }
+        if (!Number.isSafeInteger(item.page) || (item.page as number) < 1) {
+          throw new Error(`${where} needs a positive whole-number page (starting at 1).`)
+        }
+        if (item.children !== undefined)
+          pending.push({ list: item.children, label: `${where} children` })
       }
-      if (!Number.isSafeInteger(item.page) || (item.page as number) < 1) {
-        throw new Error(`${where} needs a positive whole-number page (starting at 1).`)
-      }
-      if (item.children !== undefined) checkList(item.children, `${where} children`, depth + 1)
     }
   }
   if (Array.isArray(value)) {
-    checkList(value, 'Bookmarks', 1)
+    checkList(value, 'Bookmarks')
     return
   }
   if (!isRecord(value) || Object.keys(value).length === 0) {
     throw new Error('Bookmarks must be a list or a filename-to-bookmarks map.')
   }
   for (const [filename, list] of Object.entries(value)) {
-    if (
-      !filename ||
-      filename.length > 255 ||
-      /[/\\]/.test(filename) ||
-      [...filename].some((character) => character.charCodeAt(0) < 32)
-    ) {
+    try {
+      safeFilename(filename)
+    } catch {
       throw new Error('Bookmark map keys must be plain PDF filenames.')
     }
-    checkList(list, `Bookmarks for ${filename}`, 1)
+    checkList(list, `Bookmarks for ${filename}`)
   }
+}
+
+function convertBookmarkList(value: unknown): BookmarkNode[] | null {
+  if (!Array.isArray(value)) return null
+  const root: BookmarkNode[] = []
+  const pending: { source: unknown; output: BookmarkNode[] }[] = [{ source: value, output: root }]
+  while (pending.length) {
+    const current = pending.pop()
+    if (!current) break
+    if (!Array.isArray(current.source)) return null
+    for (const item of current.source) {
+      if (
+        !isRecord(item) ||
+        typeof item.title !== 'string' ||
+        (typeof item.page !== 'number' && typeof item.page !== 'string')
+      ) {
+        return null
+      }
+      const children: BookmarkNode[] = []
+      current.output.push({ ...item, title: item.title, page: item.page, children })
+      pending.push({ source: item.children ?? [], output: children })
+    }
+  }
+  return root
 }
 
 /** A filename-keyed map stays in raw JSON mode rather than being silently flattened. */
@@ -179,25 +205,7 @@ export function visualBookmarkList(text: string): BookmarkNode[] | null {
   } catch {
     return null
   }
-  if (!Array.isArray(value)) return null
-  const convert = (list: unknown, depth: number): BookmarkNode[] | null => {
-    if (!Array.isArray(list) || depth > 8 || list.length > 300) return null
-    const nodes: BookmarkNode[] = []
-    for (const item of list) {
-      if (
-        !isRecord(item) ||
-        typeof item.title !== 'string' ||
-        (typeof item.page !== 'number' && typeof item.page !== 'string')
-      ) {
-        return null
-      }
-      const children = convert(item.children ?? [], depth + 1)
-      if (!children) return null
-      nodes.push({ ...item, title: item.title, page: item.page, children })
-    }
-    return nodes
-  }
-  return convert(value, 1)
+  return convertBookmarkList(value)
 }
 
 export type BookmarkEdit =
@@ -219,9 +227,6 @@ export function editBookmarks(text: string, edit: BookmarkEdit): string {
     siblings = node.children
   }
   if (edit.kind === 'add') {
-    if (path.length >= 8 || JSON.stringify(root).length > 9500) {
-      throw new Error('Bookmark tree is too large for the visual editor.')
-    }
     siblings.push({ title: 'New bookmark', page: 1, children: [] })
   } else {
     const index = edit.path.at(-1)
@@ -263,7 +268,7 @@ export function visualBookmarkMap(text: string): Record<string, BookmarkNode[]> 
   if (!isRecord(value) || Object.keys(value).length === 0) return null
   const mapped: Record<string, BookmarkNode[]> = Object.create(null)
   for (const [filename, items] of Object.entries(value)) {
-    const visual = visualBookmarkList(JSON.stringify(items))
+    const visual = convertBookmarkList(items)
     if (!visual) return null
     mapped[filename] = visual
   }
@@ -271,7 +276,10 @@ export function visualBookmarkMap(text: string): Record<string, BookmarkNode[]> 
 }
 
 export function addBookmarkMapping(text: string, filename: string): string {
-  if (!/^[a-z0-9][a-z0-9 _.()-]{0,150}\.pdf$/i.test(filename)) {
+  try {
+    safeFilename(filename)
+    if (!/\.pdf$/i.test(filename)) throw new Error('Not a PDF filename.')
+  } catch {
     throw new Error('Enter a PDF filename without a path (for example: report.pdf).')
   }
   const tree = visualBookmarkList(text)
@@ -280,7 +288,8 @@ export function addBookmarkMapping(text: string, filename: string): string {
     throw new Error('Remove shared bookmarks before switching to per-file bookmarks.')
   }
   if (tree === null && map === null) throw new Error('Fix bookmarks JSON before adding a file.')
-  if (map && Object.hasOwn(map, filename)) throw new Error('This filename already has bookmarks.')
+  if (map && Object.keys(map).some((existing) => filenameKey(existing) === filenameKey(filename)))
+    throw new Error('This filename already has bookmarks.')
   return JSON.stringify({ ...map, [filename]: [] })
 }
 

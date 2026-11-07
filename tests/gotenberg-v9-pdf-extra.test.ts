@@ -55,6 +55,8 @@ describe('version-gated PDF tool catalogue', () => {
       () => validatePayload({ operation: 'select-pages', fields: { hidden: '1' }, advanced: {} }),
       /Unsupported field/,
     )
+    // An owner-password-only document opens with an empty user password.
+    assert.doesNotThrow(() => validatePayload({ operation: 'decrypt', fields: {}, advanced: {} }))
   })
 })
 
@@ -73,6 +75,8 @@ describe('Gotenberg 9 read endpoints', () => {
 
   it('maps optional form page filtering to the read endpoint', () => {
     assert.equal(adapted('pdf-form', { pages: '1-2,5' }).form.get('pages'), '1-2,5')
+    assert.equal(adapted('pdf-form', { pages: 'all' }).form.get('pages'), 'all')
+    assert.equal(adapted('extract-text', { pages: 'last' }).form.get('pages'), 'last')
   })
 
   it('encodes validation profiles as repeated multipart fields', () => {
@@ -170,6 +174,13 @@ describe('Gotenberg 9 PDF stages', () => {
     for (const input of ['{}', '[]', '{"empty":4}', '{"null":null}', '{"items":[5]}']) {
       assert.throws(() => adapted('fill-form', { formValues: input }), /Form (field names|values)/)
     }
+    const manyFields: Record<string, string | string[]> = Object.fromEntries(
+      Array.from({ length: 125 }, (_, index) => [`Form.Field.${index}`, 'signed']),
+    )
+    manyFields[`Form.${'long'.repeat(75)}`] = Array.from({ length: 75 }, (_, i) => `Option ${i}`)
+    assert.deepEqual(adapted('fill-form', { formValues: JSON.stringify(manyFields) }).stages, [
+      { op: 'set-form', fields: manyFields },
+    ])
   })
 
   it('validates redaction coordinates and requires explicit confirmation', () => {
@@ -178,6 +189,17 @@ describe('Gotenberg 9 PDF stages', () => {
       { op: 'redact', regions: [{ page: 1, x: 48, y: 100, width: 150, height: 20 }] },
     ])
     assert.throws(() => adapted('redact', { regions }), /Confirm permanent redaction/)
+    const manyRegions = Array.from({ length: 125 }, (_, index) => ({
+      page: 1,
+      x: index,
+      y: 0,
+      width: 1,
+      height: 1,
+    }))
+    assert.deepEqual(
+      adapted('redact', { regions: JSON.stringify(manyRegions), confirmRedaction: true }).stages,
+      [{ op: 'redact', regions: manyRegions }],
+    )
     for (const invalid of [
       [{ page: 0, x: 1, y: 1, width: 3, height: 2 }],
       [{ page: 1, x: -1, y: 0, width: 3, height: 2 }],
@@ -223,14 +245,36 @@ describe('Gotenberg 9 PDF stages', () => {
 
   it.each([
     ['select-pages', { pages: '1;rm -rf /' }, /pages/],
+    ['select-pages', { pages: 'all,1' }, /pages/],
     ['delete-pages', { pages: '' }, /pages/],
     ['render-pages', { format: 'png', quality: '50' }, /JPEG quality/],
-    ['render-pages', { format: 'jpeg', dpi: '1000' }, /DPI/],
+    ['render-pages', { format: 'jpeg', dpi: '0' }, /DPI/],
+    ['render-pages', { format: 'jpeg', dpi: '1.5' }, /DPI/],
     ['timestamp', { timestampUrl: 'file:///etc/passwd' }, /HTTP\(S\)/],
     ['convert-colors', { target: 'invalid' }, /colour space/],
     ['detach', { attachmentName: '' }, /embedded filename/],
   ] as const)('rejects unsafe or invalid %s inputs', (id, fields, reason) => {
     assert.throws(() => adapted(id, fields), reason)
+  })
+
+  it('supports all/last page selections, empty decryption passwords and high-resolution render', () => {
+    assert.deepEqual(adapted('select-pages', { pages: 'ALL' }).stages, [
+      { op: 'select', pages: 'ALL' },
+    ])
+    assert.deepEqual(adapted('delete-pages', { pages: 'last,odd' }).stages, [
+      { op: 'delete', pages: 'last,odd' },
+    ])
+    assert.deepEqual(adapted('decrypt').stages, [{ op: 'decrypt', password: '' }])
+    assert.deepEqual(adapted('decrypt', { password: '  secret  ' }).stages, [
+      { op: 'decrypt', password: '  secret  ' },
+    ])
+    assert.deepEqual(adapted('render-pages', { format: 'png', dpi: '1200' }).stages, [
+      { op: 'render', format: 'png', dpi: 1200 },
+    ])
+    assert.equal(
+      OPERATION_BY_ID.get('render-pages')?.fields.find((field) => field.name === 'dpi')?.max,
+      undefined,
+    )
   })
 
   it('rejects legacy v8 extras and unused upload bytes', () => {

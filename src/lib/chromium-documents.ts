@@ -7,7 +7,11 @@ export function defaultMarkdownTemplate(names: readonly string[]): string {
   if (names.length === 1 && names[0] === DEFAULT_MARKDOWN_NAME) {
     return '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Markdown</title><style>body{font:16px/1.6 system-ui;margin:40px auto;max-width:820px;padding:0 24px}</style></head><body>{{ toHTML "document.md" }}</body></html>'
   }
-  const sections = names.map((name) => `    <section>{{ toHTML "${name}" }}</section>`).join('\n')
+  // Quote filenames as template string literals. Names may legitimately
+  // contain quotes or punctuation; interpolating them raw breaks the action.
+  const sections = names
+    .map((name) => `    <section>{{ toHTML ${JSON.stringify(name)} }}</section>`)
+    .join('\n')
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -23,6 +27,12 @@ ${sections}
 
 /** Literal toHTML references supported by the Gotenberg Markdown template contract. */
 export function markdownTemplateReferences(template: string): string[] {
-  const matches = template.matchAll(/{{-?\s*toHTML\s+"([^"\r\n]+)"\s*-?}}/g)
-  return Array.from(matches, (match) => match[1] as string)
+  const matches = template.matchAll(/{{-?\s*toHTML\s+("(?:\\.|[^"\\])*")\s*-?}}/g)
+  return Array.from(matches, (match) => {
+    try {
+      return JSON.parse(match[1] as string) as string
+    } catch {
+      return ''
+    }
+  }).filter(Boolean)
 }

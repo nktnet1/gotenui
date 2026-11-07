@@ -6,6 +6,7 @@ import {
   markdownTemplateReferences,
 } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
+import { safeFilename as checkFilename, filenameKey } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
@@ -29,14 +30,14 @@ import { isFieldVisible, OPERATION_BY_ID, type Operation } from '#/tools/registr
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
 const markdownFileSchema = v.object({
-  name: v.pipe(v.string(), v.minLength(1), v.maxLength(155)),
+  name: v.pipe(v.string(), v.minLength(1)),
   content: v.pipe(v.string(), v.maxLength(300_000)),
 })
 
 const remoteFileSchema = v.object({
   url: v.pipe(v.string(), v.maxLength(2048)),
   /** Client-side filename hint for v9 named pipeline assets; never sent upstream. */
-  name: v.optional(v.pipe(v.string(), v.maxLength(155))),
+  name: v.optional(v.string()),
   field: v.optional(v.picklist(['embedded', 'watermark', 'stamp'])),
   embedded: v.optional(v.boolean()),
   extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
@@ -59,13 +60,13 @@ export const payloadSchema = v.object({
   fields: v.record(v.string(), fieldValue),
   advanced: v.record(v.string(), advancedValue),
   source: v.optional(v.pipe(v.string(), v.maxLength(300_000))),
-  markdownName: v.optional(v.pipe(v.string(), v.maxLength(155))),
-  markdownFiles: v.optional(v.pipe(v.array(markdownFileSchema), v.maxLength(19))),
+  markdownName: v.optional(v.string()),
+  markdownFiles: v.optional(v.array(markdownFileSchema)),
   markdownTemplate: v.optional(v.pipe(v.string(), v.maxLength(150_000))),
   headerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   footerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   postProcess: v.optional(pdfPostProcessSchema),
-  conversionStages: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(60_000))),
+  conversionStages: v.optional(v.pipe(v.string(), v.minLength(1))),
   acknowledgedConversionRedaction: v.optional(v.boolean()),
   outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
   requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
@@ -96,7 +97,6 @@ export class InputError extends Error {
 }
 
 const extension = /\.[a-z0-9]+$/i
-const filenamePattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M} _.()-]{0,150}$/u
 const fieldNamePattern = /^[a-z][a-zA-Z0-9]{0,63}$/
 const forbiddenAdvanced = new Set([
   'files',
@@ -116,14 +116,12 @@ const forbiddenAdvanced = new Set([
 ])
 
 export function safeFilename(name: string): string {
-  if (!filenamePattern.test(name) || name === '.' || name === '..') {
-    throw new InputError('File names must be simple names without paths or special characters.')
+  try {
+    return checkFilename(name)
+  } catch {
+    throw new InputError('File names must not be empty, paths or contain control characters.')
   }
-  return name
 }
-
-/** Match filenames that collapse to the same key when Gotenberg normalises uploads. */
-const filenameKey = (name: string): string => name.normalize('NFC').toLowerCase()
 
 function markdownName(name: string): string {
   safeFilename(name)
@@ -1045,7 +1043,10 @@ export function validatePayload(input: unknown): {
       if (typeof value !== 'boolean') throw new InputError(`${field.label} must be true or false.`)
     } else {
       if (typeof value !== 'string') throw new InputError(`${field.label} must be text.`)
-      if (value.length > (operation.id === 'pdf-pipeline' && key === 'stages' ? 60_000 : 10_000))
+      // Structured JSON is bounded by the proxy's total payload/body limits.
+      // Do not impose an unrelated 10 KB field ceiling on large bookmark,
+      // form, redaction or ordered-stage documents.
+      if (field.kind !== 'json' && value.length > 10_000)
         throw new InputError(`${field.label} is too long.`)
       if (field.kind === 'select' && value && !field.options?.includes(value)) {
         throw new InputError(`Invalid option for ${field.label}.`)
