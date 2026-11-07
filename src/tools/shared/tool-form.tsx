@@ -325,7 +325,7 @@ export function Workbench({
   })()
   const docsUrl =
     isV9 && operation.input === 'pdf'
-      ? `https://gotenberg.dev/docs/pdf/${operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`
+      ? `https://gotenberg.dev/docs/pdf/${operation.id === 'extract-attachments' ? 'attachments' : operation.id === 'extract-text' ? 'pages' : operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`
       : `https://gotenberg.dev/docs/${operation.docs}`
 
   const updateField = (name: string, value: string | boolean) =>
@@ -537,7 +537,9 @@ export function Workbench({
       const url = URL.createObjectURL(blob)
       if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
       fileUrl.current = url
-      const preview = type === 'application/json' ? await blob.slice(0, 16_000).text() : undefined
+      const preview = ['application/json', 'text/plain'].includes(type)
+        ? await blob.slice(0, 16_000).text()
+        : undefined
       const validation =
         operation.id === 'pdf-validate'
           ? ((await summarisePdfValidationBlob(blob)) ?? undefined)
@@ -673,22 +675,21 @@ export function Workbench({
                 label={
                   operation.input === 'office'
                     ? 'Office ZIP archives'
-                    : operation.id === 'pdf-pipeline'
+                    : operation.input === 'pdf'
                       ? 'PDF ZIP archives'
                       : 'Asset ZIP archives'
                 }
                 description={
                   operation.input === 'office'
                     ? 'ZIP archives of Office documents and any named PDF stage assets. Gotenberg extracts the inputs and enforces expansion limits; multiple outputs may return as a ZIP.'
-                    : operation.id === 'pdf-pipeline'
-                      ? 'ZIP archives of PDFs and named stage assets (images, certificates, or attachments). Reference the exact asset filename in the stage editor. Gotenui checks ZIP entries before forwarding; Gotenberg enforces extraction limits.'
-                      : 'Optional ZIP archives of CSS, images, fonts or other HTML/Markdown assets. Refer to extracted files by name in your source; do not include index.html, header.html or footer.html. Gotenberg enforces archive expansion limits.'
+                    : operation.input === 'pdf'
+                      ? 'ZIP archives of PDFs and, for the pipeline, referenced stage assets. PDFs inside archives count as input documents. Gotenberg enforces extraction limits.'
+                      : 'Optional ZIP archives of named assets used by this route or conversion pipeline. HTML/Markdown assets must not shadow index.html, header.html or footer.html.'
                 }
                 files={archives}
                 onChange={setArchives}
                 accept=".zip,application/zip"
                 multiple
-                maxFiles={10}
               />
             )}
             {operation.input === 'url' && (
@@ -916,7 +917,6 @@ export function Workbench({
                       files={conversionStageFiles}
                       onChange={setConversionStageFiles}
                       multiple
-                      maxFiles={20}
                     />
                   </div>
                 )}

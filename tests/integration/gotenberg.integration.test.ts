@@ -28,7 +28,8 @@ import { retryTransientConversion } from './transient-conversion'
 const backendUrl = inject('gotenbergTestUrl')
 const testContainerName = inject('gotenbergTestContainerName')
 const testVersion = inject('gotenbergTestVersion')
-const isV9 = testVersion === '9.0.0'
+const isV9 = testVersion.startsWith('9.')
+const isV91 = testVersion === '9.1.0'
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -564,7 +565,159 @@ async function convertV9(
   return proxyConversionRequest(request(operation, { fields }, inputs, assets))
 }
 
-/** Each v9 feature must use the real 9.0.0 container, not a mocked upstream. */
+test.skipIf(!isV9 || isV91)(
+  'Gotenberg 9.0 rejects 9.1-only extraction tools and ordered extraction stages',
+  async () => {
+    for (const id of ['extract-text', 'extract-attachments']) {
+      await expect(convertV9(id)).rejects.toMatchObject({ status: 409 })
+      await expect(
+        convertV9('pdf-pipeline', { stages: JSON.stringify([{ op: id }]) }),
+      ).rejects.toMatchObject({ status: 409 })
+    }
+  },
+  120_000,
+)
+
+test.skipIf(!isV91)(
+  'Gotenberg 9.1 extracts selected PDF text with full plain-text response semantics',
+  async () => {
+    const result = await convertV9('extract-text', {
+      pages: '1',
+      invisible: true,
+      artifacts: true,
+      annotations: true,
+    })
+    if (!result.ok) throw new Error(`Text extraction: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')).toContain('text/plain')
+    expect(result.headers.get('content-disposition')).toMatch(/\.txt/i)
+    expect(await result.text()).toContain('Local PDF fixture')
+  },
+  120_000,
+)
+
+test.skipIf(!isV91)(
+  'Gotenberg 9.1 returns per-document text results inside a ZIP for multiple source PDFs',
+  async () => {
+    const result = await convertV9('extract-text', {}, [
+      pdfFile('first.pdf'),
+      pdfFile('second.pdf'),
+    ])
+    if (!result.ok) throw new Error(`Text ZIP: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')).toContain('application/zip')
+    const entries = zipEntries(new Uint8Array(await result.arrayBuffer()))
+    expect([...entries.keys()].sort()).toEqual(['first.txt', 'second.txt'])
+    for (const text of entries.values()) {
+      expect(new TextDecoder().decode(text)).toContain('Local PDF fixture')
+    }
+  },
+  120_000,
+)
+
+test.skipIf(!isV91)(
+  'Gotenberg 9.1 round-trips a named extracted attachment with its original contents',
+  async () => {
+    const source = await convertV9(
+      'pdf-pipeline',
+      { stages: JSON.stringify([{ op: 'attach', file: 'receipt.txt' }]) },
+      [pdfFile('invoice.pdf')],
+      [new File(['Gotenui receipt content'], 'receipt.txt')],
+    )
+    if (!source.ok) throw new Error(`Attach: ${source.status} ${await source.text()}`)
+    const attachedPdf = new File([await source.arrayBuffer()], 'invoice.pdf', {
+      type: 'application/pdf',
+    })
+    const result = await convertV9('extract-attachments', { name: 'receipt.txt' }, [attachedPdf])
+    if (!result.ok)
+      throw new Error(`Attachment extraction: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-disposition')).toMatch(/invoice_receipt\.txt/i)
+    expect(await result.text()).toBe('Gotenui receipt content')
+  },
+  120_000,
+)
+
+test.skipIf(!isV91)(
+  'Gotenberg 9.1 returns all embedded attachments as ZIP entries',
+  async () => {
+    const source = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'attach', file: 'receipt.txt' },
+          { op: 'attach', file: 'record.xml' },
+        ]),
+      },
+      [pdfFile('invoice.pdf')],
+      [
+        new File(['receipt content'], 'receipt.txt'),
+        new File(['<record>one</record>'], 'record.xml'),
+      ],
+    )
+    if (!source.ok) throw new Error(`Attach: ${source.status} ${await source.text()}`)
+    const result = await convertV9('extract-attachments', {}, [
+      new File([await source.arrayBuffer()], 'invoice.pdf', { type: 'application/pdf' }),
+    ])
+    if (!result.ok) throw new Error(`All attachments: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')).toContain('application/zip')
+    const entries = zipEntries(new Uint8Array(await result.arrayBuffer()))
+    expect([...entries.keys()].sort()).toEqual(['invoice_receipt.txt', 'invoice_record.xml'])
+    expect(new TextDecoder().decode(entries.get('invoice_receipt.txt'))).toBe('receipt content')
+    expect(new TextDecoder().decode(entries.get('invoice_record.xml'))).toBe('<record>one</record>')
+  },
+  120_000,
+)
+
+test.skipIf(!isV91)(
+  'Gotenberg 9.1 ordered pipelines return the processed PDF and extracted text or attachment',
+  async () => {
+    for (const [stage, expectedSuffix] of [
+      [{ op: 'extract-text', pages: '1' }, '.txt'],
+      [{ op: 'extract-attachments', name: 'receipt.txt' }, '_receipt.txt'],
+    ] as const) {
+      const stages = [
+        { op: 'attach', file: 'receipt.txt' },
+        { op: 'set-metadata', title: 'Pipeline extraction' },
+        stage,
+      ]
+      const result = await convertV9(
+        'pdf-pipeline',
+        { stages: JSON.stringify(stages) },
+        [pdfFile('invoice.pdf')],
+        [new File(['receipt'], 'receipt.txt')],
+      )
+      if (!result.ok)
+        throw new Error(`Pipeline extraction: ${result.status} ${await result.text()}`)
+      expect(result.headers.get('content-type')).toContain('application/zip')
+      const entries = zipEntries(new Uint8Array(await result.arrayBuffer()))
+      expect([...entries.keys()].some((name) => name.endsWith('.pdf'))).toBe(true)
+      expect([...entries.keys()].some((name) => name.endsWith(expectedSuffix))).toBe(true)
+    }
+  },
+  120_000,
+)
+
+test.skipIf(!isV91)(
+  'Gotenberg 9.1 conversion-time pipelines return generated PDFs and text together as ZIP',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!operation) throw new Error('Missing HTML PDF converter')
+    const result = await proxyConversionRequest(
+      request(operation, {
+        source: '<html><body><h1>Conversion-stage text verified</h1></body></html>',
+        conversionStages: JSON.stringify([{ op: 'extract-text' }]),
+      }),
+    )
+    if (!result.ok) throw new Error(`Conversion text: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')).toContain('application/zip')
+    const entries = zipEntries(new Uint8Array(await result.arrayBuffer()))
+    expect([...entries.keys()].some((name) => name.endsWith('.pdf'))).toBe(true)
+    const text = [...entries.entries()].find(([name]) => name.endsWith('.txt'))?.[1]
+    if (!text) throw new Error('Conversion-time extraction did not include a text file')
+    expect(new TextDecoder().decode(text)).toContain('Conversion-stage text verified')
+  },
+  120_000,
+)
+
+/** Each v9 feature must use the real pinned 9.x container, not a mocked upstream. */
 const v9PdfWorkflows: { id: string; fields: Record<string, string | boolean>; type: string }[] = [
   { id: 'pdf-info', fields: {}, type: 'application/json' },
   { id: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, type: 'application/json' },

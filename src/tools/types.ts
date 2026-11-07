@@ -59,7 +59,7 @@ export type Operation = {
   input: InputKind
   fields: readonly FieldDefinition[]
   auxiliary?: AuxiliaryUpload
-  output: 'pdf' | 'image' | 'zip' | 'json'
+  output: 'pdf' | 'image' | 'zip' | 'json' | 'text' | 'file'
   featured?: boolean
   multiple?: boolean
 }

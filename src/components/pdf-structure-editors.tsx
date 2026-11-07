@@ -182,7 +182,6 @@ function BookmarkItems({
                 <Input
                   id={`${id}-${index}-title`}
                   value={item.title}
-                  maxLength={300}
                   aria-invalid={!item.title.trim()}
                   onChange={(event) =>
                     onEdit({ kind: 'update', path, field: 'title', value: event.target.value })
@@ -253,16 +252,14 @@ function BookmarkItems({
                 <BookmarkItems items={item.children} parent={path} onEdit={onEdit} />
               </div>
             )}
-            {path.length < 8 && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => onEdit({ kind: 'add', parent: path })}
-              >
-                <Plus className="size-4" /> Add child
-              </Button>
-            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => onEdit({ kind: 'add', parent: path })}
+            >
+              <Plus className="size-4" /> Add child
+            </Button>
           </li>
         )
       })}
@@ -437,8 +434,8 @@ export function PdfBookmarksEditor({
                 role="status"
                 className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
               >
-                This is a filename map, invalid JSON, or a tree too deep for this editor. Switch to
-                JSON mode to edit without losing any entries.
+                This is a filename map or invalid bookmark JSON. Switch to JSON mode to edit without
+                losing any entries.
               </p>
             ) : (
               <>

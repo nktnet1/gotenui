@@ -202,7 +202,14 @@ export function createGotenbergForm(
     const mediaFeatures = encodeChromiumMediaFeatures(payload.fields)
     if (mediaFeatures) form.set('emulatedMediaFeatures', mediaFeatures)
   }
-  if (payload.downloadFrom?.length) form.set('downloadFrom', JSON.stringify(payload.downloadFrom))
+  if (payload.downloadFrom?.length) {
+    // The optional name is a client-side hint used only to resolve pipeline
+    // assets; Gotenberg names downloads from Content-Disposition instead.
+    form.set(
+      'downloadFrom',
+      JSON.stringify(payload.downloadFrom.map(({ name: _name, ...remote }) => remote)),
+    )
+  }
   if (operation.input === 'html' || operation.input === 'markdown') {
     const markdownNames = [
       payload.markdownName ?? DEFAULT_MARKDOWN_NAME,
@@ -349,6 +356,11 @@ export async function convertWithGotenberg(
       operation.id,
       type,
       payload.outputName,
+      (operation.id === 'extract-attachments' ||
+        (operation.id === 'pdf-pipeline' &&
+          String(payload.fields.stages ?? '').includes('extract-attachments')) ||
+        (payload.conversionStages?.includes('extract-attachments') ?? false)) &&
+        type !== 'application/zip',
     ),
     fallback,
   )

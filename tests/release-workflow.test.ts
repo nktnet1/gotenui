@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 import { test } from 'vitest'
 
 const root = new URL('../', import.meta.url)
-const release = readFileSync(new URL('.github/workflows/release.yml', root), 'utf8')
-const ci = readFileSync(new URL('.github/workflows/ci.yml', root), 'utf8')
+const release = readFileSync(new URL('.github/workflows/release.yaml', root), 'utf8')
+const ci = readFileSync(new URL('.github/workflows/ci.yaml', root), 'utf8')
 const validator = readFileSync(new URL('scripts/validate-release-tag.ts', root), 'utf8')
 
 test('release workflow is exclusively tag-driven and requires a version match', () => {
@@ -17,7 +17,7 @@ test('release workflow is exclusively tag-driven and requires a version match', 
 test('release reuses both CI jobs before it publishes any container', () => {
   assert.match(ci, /workflow_call:/)
   assert.match(ci, /branches:\s+- ['"]\*\*['"]/)
-  assert.match(release, /needs: verify\s+uses: \.\/\.github\/workflows\/ci\.yml/)
+  assert.match(release, /needs: verify\s+uses: \.\/\.github\/workflows\/ci\.yaml/)
   assert.match(release, /needs: \[verify, ci\]/)
   assert.match(release, /needs: \[verify, publish\]/)
 })

@@ -343,12 +343,12 @@ test('v9 PDF pipeline can use only remote PDF inputs, rejecting legacy destinati
       ),
       v9.fetcher,
     ),
-    /not legacy remote attachments or overlays/,
+    /not legacy remote destinations/,
   )
   assert.deepEqual(v9.counts(), { probes: 2, conversions: 1 })
 })
 
-test('v9 PDF pipeline rejects malformed source ZIPs before forwarding, and other PDF tools stay gated', async () => {
+test('v9 PDF tools reject malformed ZIPs before forwarding', async () => {
   const v9 = upstreamFixture('9.0.0', () => {})
   await assert.rejects(
     proxyConversionRequest(
@@ -378,9 +378,9 @@ test('v9 PDF pipeline rejects malformed source ZIPs before forwarding, and other
       ),
       v9.fetcher,
     ),
-    /supported only by Office, the PDF pipeline, and Chromium HTML\/Markdown/,
+    /the ZIP central directory is missing|not a ZIP file/,
   )
-  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 0 })
 })
 
 test('v9 blocks incompatible ZIP entries and generated-file shadows before upstream conversion', async () => {
@@ -443,7 +443,7 @@ test('rejects non-ZIP archive uploads, duplicates and unsupported operations at 
       ),
       v9.fetcher,
     ),
-    /supported only by Office, the PDF pipeline, and Chromium HTML\/Markdown/,
+    /the ZIP central directory is missing|not a ZIP file/,
   )
   await assert.rejects(
     proxyConversionRequest(
@@ -472,9 +472,37 @@ test('rejects non-ZIP archive uploads, duplicates and unsupported operations at 
       ),
       v9.fetcher,
     ),
-    /At most 10 ZIP archives/,
+    /is not a ZIP file/,
   )
-  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+  assert.deepEqual(v9.counts(), { probes: 3, conversions: 0 })
+})
+
+test('v9 accepts more than 10 small asset archives within the total request budget', async () => {
+  const expected = Array.from({ length: 11 }, (_, i) => `style-${i}.css`)
+  const v9 = upstreamFixture('9.1.0', (form) => {
+    assert.deepEqual(
+      form.getAll('archives').map((file) => (file instanceof File ? file.name : '')),
+      expected.map((_, i) => `archive-${i}.zip`),
+    )
+  })
+  assert.equal(
+    (
+      await proxyConversionRequest(
+        requestFor(
+          'html-pdf',
+          {},
+          {},
+          [],
+          [],
+          [],
+          expected.map((name, i) => zipFixture({ [name]: `/* ${i} */` }, `archive-${i}.zip`)),
+        ),
+        v9.fetcher,
+      )
+    ).status,
+    200,
+  )
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 1 })
 })
 
 test('routes migrated PDF tools on v9, and still rejects unsupported majors', async () => {

@@ -11,7 +11,10 @@ const KEYWORDS: Readonly<Record<string, string>> = {
   'html-shot': 'html screen capture image snapshot render',
   'markdown-shot': 'md screen capture image snapshot',
   merge: 'combine join concatenate append assemble pdf documents',
-  split: 'extract separate divide pages ranges intervals',
+  split: 'separate divide pages ranges intervals',
+  'extract-attachments': 'extract embedded attachments export download pdf files zip',
+  'extract-text':
+    'extract text selectable pages utf8 plain txt pdftotext invisible annotations artifacts no ocr',
   pdfa: 'archive archival compliance accessible accessibility pdfua pdf a pdf ua',
   optimize: 'compress reduce shrink smaller filesize file size images',
   rotate: 'turn flip orientation pages',

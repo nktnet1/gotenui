@@ -190,7 +190,7 @@ describe('Markdown files and templates', () => {
     )
     assert.throws(
       () => makePayload('markdown-pdf', { markdownFiles: [{ name: '../evil.md', content: 'Hi' }] }),
-      /simple names/,
+      /paths|control/,
     )
     assert.throws(() => makePayload('markdown-pdf', { markdownName: 'first.html' }), /\.md/)
     assert.throws(
@@ -230,5 +230,26 @@ describe('Markdown files and templates', () => {
         return true
       },
     )
+  })
+
+  test('accepts over 20 Markdown sources and safely quotes punctuation in template actions', async () => {
+    const filename = 'Q4 "Final" & FY26.md'
+    const sources = [
+      { name: filename, content: '# Budget' },
+      ...Array.from({ length: 25 }, (_, index) => ({
+        name: `Chapter ${index + 1} & Notes.md`,
+        content: '# Note',
+      })),
+    ]
+    const form = validateAssets('markdown-pdf', { markdownFiles: sources }, [])
+    const files = form.getAll('files') as File[]
+    assert.equal(files.length, 28)
+    assert.equal(files[2]?.name, filename)
+    const template = await files[0].text()
+    assert.match(template, /Q4 \\"Final\\" & FY26\.md/)
+    assert.deepEqual(markdownTemplateReferences(template), [
+      'document.md',
+      ...sources.map((source) => source.name),
+    ])
   })
 })

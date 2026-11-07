@@ -6,6 +6,7 @@ import { PdfBookmarksEditor, PdfMetadataEditor } from '#/components/pdf-structur
 import { TooltipProvider } from '#/components/ui/tooltip'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import {
+  addBookmarkMapping,
   editBookmarks,
   metadataObject,
   updateMetadata,
@@ -213,15 +214,38 @@ describe('bookmark tree editing and route contract', () => {
     expect(() => editBookmarks(updated, { kind: 'remove', path: [1] })).toThrow(/path/)
   })
 
-  it('bounds nesting and total entries for malicious JSON payloads', () => {
-    let tooDeep: unknown = [{ title: 'Deep', page: 1, children: [] }]
-    for (let i = 0; i < 17; i++) tooDeep = [{ title: 'Deep', page: 1, children: tooDeep }]
-    expect(() => validateBookmarkDocument(JSON.stringify(tooDeep))).toThrow(/nesting/)
-    expect(() =>
-      validateBookmarkDocument(
-        JSON.stringify(Array.from({ length: 301 }, () => ({ title: 'X', page: 1 }))),
+  it('supports large and deeply nested bookmark documents without losing visual editing', () => {
+    let deep: unknown[] = [{ title: 'Leaf', page: 1, children: [] }]
+    for (let i = 0; i < 24; i++) deep = [{ title: `Level ${i}`, page: 1, children: deep }]
+    const bookmarks = [
+      ...Array.from({ length: 320 }, (_, i) => ({ title: `Bookmark ${i}`, page: 1 })),
+      ...deep,
+    ]
+    const raw = JSON.stringify(bookmarks)
+    expect(() => validateBookmarkDocument(raw)).not.toThrow()
+    expect(visualBookmarkList(raw)?.length).toBe(321)
+    expect(() => submittedField('bookmarks-write', 'bookmarks', raw)).not.toThrow()
+    const changed = editBookmarks(JSON.stringify(deep), {
+      kind: 'add',
+      parent: Array.from({ length: 20 }, () => 0),
+    })
+    expect(() => validateBookmarkDocument(changed)).not.toThrow()
+    const html = renderToStaticMarkup(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(PdfBookmarksEditor, { value: JSON.stringify(deep), onChange: vi.fn() }),
       ),
-    ).toThrow(/300/)
+    )
+    expect(html).toContain('Add child')
+    expect(html).not.toContain('tree too deep')
+  })
+
+  it('allows punctuation in per-file bookmark mappings without path traversal', () => {
+    const mapped = addBookmarkMapping('[]', 'Q4 & FY26.pdf')
+    expect(JSON.parse(mapped)).toEqual({ 'Q4 & FY26.pdf': [] })
+    expect(() => addBookmarkMapping(mapped, 'Q4 & FY26.pdf')).toThrow(/already/)
+    expect(() => addBookmarkMapping(mapped, '../evil.pdf')).toThrow(/without a path/)
   })
 
   it('renders a nested, accessible tree with a raw JSON fallback', () => {

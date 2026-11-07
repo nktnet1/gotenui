@@ -38,14 +38,14 @@ const error = (stages: unknown, matches: RegExp) => {
 }
 
 describe('PDF pipeline catalogue and stage contract', () => {
-  it('lists all 26 distinct Gotenberg 9 stages, including explicit option templates', () => {
-    assert.equal(PDF_PIPELINE_STAGES.length, 26)
-    assert.equal(new Set(PDF_PIPELINE_STAGES.map(({ op }) => op)).size, 26)
+  it('lists all 28 distinct Gotenberg 9.1 stages, including explicit option templates', () => {
+    assert.equal(PDF_PIPELINE_STAGES.length, 28)
+    assert.equal(new Set(PDF_PIPELINE_STAGES.map(({ op }) => op)).size, 28)
     for (const stage of PDF_PIPELINE_STAGES) {
       assert.ok(stage.label)
       assert.ok(stage.description)
-      if (['encrypt', 'decrypt', 'timestamp'].includes(stage.op)) {
-        // The template intentionally requires a password instead of supplying one.
+      if (['encrypt', 'timestamp'].includes(stage.op)) {
+        // These templates intentionally require explicit credentials or an authority.
         assert.throws(
           () => parsePdfPipeline(JSON.stringify([{ op: stage.op, ...stage.options }])),
           /password|timestampUrl/,
@@ -110,6 +110,73 @@ describe('PDF pipeline catalogue and stage contract', () => {
     )
     assert.equal(form.has('auxiliary'), false)
   })
+  it('accepts named remote stage assets without treating them as input documents', () => {
+    const { payload, legacy } = input([
+      { op: 'stamp-image', image: 'stamp.png', x: 10, y: 10 },
+      { op: 'attach', file: 'invoice.xml' },
+    ])
+    payload.downloadFrom = [
+      { url: 'https://example.test/signed/stamp', name: 'stamp.png' },
+      { url: 'https://example.test/invoices/837', name: 'invoice.xml' },
+    ]
+    legacy.set(
+      'downloadFrom',
+      JSON.stringify(payload.downloadFrom.map(({ name, ...remote }) => remote)),
+    )
+    const result = adaptPdfPipeline(payload, legacy, [])
+    assert.deepEqual(JSON.parse(String(result.form.get('stages'))), [
+      { op: 'stamp-image', image: 'stamp.png', x: 10, y: 10 },
+      { op: 'attach', file: 'invoice.xml' },
+    ])
+    assert.equal(result.form.getAll('files').length, 1)
+    assert.deepEqual(JSON.parse(String(result.form.get('downloadFrom'))), [
+      { url: 'https://example.test/signed/stamp' },
+      { url: 'https://example.test/invoices/837' },
+    ])
+    assert.throws(
+      () => adaptPdfPipeline(payload, legacy, [new File(['asset'], 'invoice.xml')]),
+      /duplicates another file/,
+    )
+    assert.throws(
+      () =>
+        adaptPdfPipeline(
+          {
+            ...payload,
+            downloadFrom: [
+              ...(payload.downloadFrom ?? []),
+              { url: 'https://example.test/again', name: 'stamp.png' },
+            ],
+          },
+          legacy,
+          [],
+        ),
+      /duplicates another file/,
+    )
+  })
+  it('does not count remote stage assets as PDF source documents', () => {
+    const remoteAsset = {
+      url: 'https://example.test/attachment.pdf',
+      name: 'attachment.pdf',
+    }
+    const stages = '[{"op":"attach","file":"attachment.pdf"}]'
+    const payload: ConversionPayload = {
+      operation: 'pdf-pipeline',
+      fields: { stages },
+      advanced: {},
+      downloadFrom: [remoteAsset],
+    }
+    assert.throws(
+      () => validateFiles(operation, [], [], 1_000_000, payload),
+      /Upload at least 1 input file/,
+    )
+    const source = { url: 'https://example.test/source.pdf' }
+    assert.doesNotThrow(() =>
+      validateFiles(operation, [], [], 1_000_000, {
+        ...payload,
+        downloadFrom: [remoteAsset, source],
+      }),
+    )
+  })
   it('requires named stage uploads and rejects legacy remote destinations and settings', () => {
     assert.throws(
       () => adapted([{ op: 'attach', file: 'missing.txt' }]),
@@ -162,15 +229,57 @@ describe('PDF pipeline catalogue and stage contract', () => {
 describe('PDF pipeline rejects unsafe or invalid sequences', () => {
   it('checks JSON shape, length and unknown operations', () => {
     assert.throws(() => parsePdfPipeline('{'), /valid JSON/)
-    error([], /1 to 30/)
-    error(
-      Array.from({ length: 31 }, () => ({ op: 'optimize' })),
-      /1 to 30/,
+    error([], /at least one/)
+    assert.equal(
+      parsePdfPipeline(JSON.stringify(Array.from({ length: 31 }, () => ({ op: 'optimize' }))))
+        .length,
+      31,
     )
     error([{}], /supported PDF operation/)
     error([{ op: 'hack' }], /supported PDF operation/)
     error([{ op: 'merge', unexpected: true }], /unknown option/)
     error([{ op: 'merge', password: 'secret' }], /unknown option/)
+  })
+  it('accepts upstream page selectors and owner-password-only decryption', () => {
+    const stages = [
+      { op: 'decrypt' },
+      { op: 'split', ranges: ['all', 'last', 'odd,2'] },
+      { op: 'insert', source: 'additional.pdf', at: 0, sourcePages: 'last' },
+      { op: 'rotate', angle: 90, pages: 'all' },
+      { op: 'select', pages: 'last,1' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    assert.deepEqual(parsePdfPipeline('[{"op":"decrypt","password":""}]'), [
+      { op: 'decrypt', password: '' },
+    ])
+    error([{ op: 'decrypt', password: 123 }], /password.*string/)
+    error([{ op: 'select', pages: 'all,1' }], /select pages/)
+    error([{ op: 'split', ranges: ['all,last'] }], /page selectors/)
+    error([{ op: 'delete', pages: '1;echo unsafe' }], /select pages/)
+  })
+  it('allows large form and redaction arrays, but still rejects invalid values', () => {
+    const fields: Record<string, string | string[]> = Object.fromEntries(
+      Array.from({ length: 120 }, (_, index) => [`Input.${index}`, 'Yes']),
+    )
+    fields[`VeryLong.${'name'.repeat(60)}`] = Array.from({ length: 60 }, (_, i) => `item${i}`)
+    const regions = Array.from({ length: 150 }, (_, index) => ({
+      page: 1,
+      x: index,
+      y: 0,
+      width: 1,
+      height: 1,
+    }))
+    assert.deepEqual(parsePdfPipeline(JSON.stringify([{ op: 'set-form', fields }])), [
+      { op: 'set-form', fields },
+    ])
+    assert.deepEqual(
+      parsePdfPipeline(JSON.stringify([{ op: 'redact', regions }]), {
+        acknowledgedRedaction: true,
+      }),
+      [{ op: 'redact', regions }],
+    )
+    error([{ op: 'set-form', fields: { bad: [5] } }], /fields must map/)
+    error([{ op: 'redact', regions: [] }], /at least one rectangle/)
   })
   it('enforces positions and duplicate singleton stages', () => {
     error([{ op: 'merge' }, { op: 'decrypt', password: 'secret' }], /first stage/)
@@ -221,7 +330,14 @@ describe('PDF pipeline rejects unsafe or invalid sequences', () => {
         { op: 'remediate', profile: 'PDF/A-2b' },
         { op: 'encrypt', userPassword: 'pass' },
       ],
-      /PDF\/A documents cannot be encrypted/,
+      /PDF\/A and Factur-X documents cannot be encrypted/,
+    )
+    error(
+      [
+        { op: 'remediate', profile: 'Factur-X' },
+        { op: 'encrypt', userPassword: 'pass' },
+      ],
+      /Factur-X documents cannot be encrypted/,
     )
     error([{ op: 'remediate', profile: ['PDF/A-4', 'PDF/UA-1'] }], /incompatible/)
   })
@@ -243,7 +359,7 @@ describe('PDF pipeline rejects unsafe or invalid sequences', () => {
 })
 
 describe('visual pipeline builder', () => {
-  it('renders all 26 stage choices and accessible stage movement controls', () => {
+  it('renders all 28 stage choices and accessible stage movement controls', () => {
     const markup = renderToStaticMarkup(
       createElement(PdfPipelineBuilder, {
         value: DEFAULT_PDF_PIPELINE,
@@ -263,6 +379,21 @@ describe('visual pipeline builder', () => {
     assert.match(markup, /aria-label="Remove Optimise"/)
     assert.match(markup, /Preview ordered stages/)
   })
+  it('offers both extraction stages without relying on a backend minor version', () => {
+    const markup = renderToStaticMarkup(
+      createElement(PdfPipelineBuilder, {
+        value: DEFAULT_PDF_PIPELINE,
+        onChange: () => {},
+        acknowledgedRedaction: false,
+        onRedactionChange: () => {},
+        error: null,
+      }),
+    )
+    assert.match(markup, /value="extract-attachments"/)
+    assert.match(markup, /value="extract-text"/)
+    assert.match(markup, /value="render"/)
+  })
+
   it('hides decryption in conversion-time pipelines and labels their file uploader', () => {
     const markup = renderToStaticMarkup(
       createElement(PdfPipelineBuilder, {

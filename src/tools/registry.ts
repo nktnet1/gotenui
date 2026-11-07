@@ -13,6 +13,8 @@ import { operation as deletePages } from '#/tools/delete-pages/config'
 import { operation as detach } from '#/tools/detach/config'
 import { operation as embed } from '#/tools/embed/config'
 import { operation as encrypt } from '#/tools/encrypt/config'
+import { operation as extractAttachments } from '#/tools/extract-attachments/config'
+import { operation as extractText } from '#/tools/extract-text/config'
 import { operation as facturX } from '#/tools/factur-x/config'
 import { operation as fillForm } from '#/tools/fill-form/config'
 import { operation as flatten } from '#/tools/flatten/config'
@@ -73,6 +75,8 @@ export const OPERATIONS: readonly Operation[] = [
   pdfInfo,
   pdfValidate,
   pdfAttachments,
+  extractAttachments,
+  extractText,
   pdfForm,
   selectPages,
   deletePages,

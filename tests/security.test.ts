@@ -85,3 +85,44 @@ test('validated request filenames take precedence over untrusted upstream sugges
   assert.match(veryLong, /^attachment; filename="a+\.pdf"$/)
   assert.ok(veryLong.length <= 'attachment; filename=""'.length + 140)
 })
+
+test('preserves international Gotenberg 9.1 attachment filenames with RFC 5987 encoding', () => {
+  const name = 'résumé_日本 2026.xml'
+  const disposition = safeAttachmentDisposition(
+    `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+    'extract-attachments',
+    'application/xml',
+    undefined,
+    true,
+  )
+  assert.match(disposition, /filename\*=UTF-8''/)
+  assert.equal(downloadFilename(disposition, 'fallback.bin'), name)
+  assert.equal(responseExtension('text/plain; charset=utf-8'), 'txt')
+  assert.equal(
+    safeAttachmentDisposition(null, 'extract-text', 'text/plain'),
+    'attachment; filename="extract-text.txt"',
+  )
+})
+
+test('normalizes Unicode, forbidden filename characters and device names for extracted files', () => {
+  assert.equal(downloadFilename('attachment; filename="cafe\u0301.txt"', 'fallback'), 'café.txt')
+  assert.equal(
+    downloadFilename(
+      "attachment; filename*=UTF-8''%2E%2E%2F%2E%2E%2F%E6%97%A5%E6%9C%AC.xml",
+      'fallback',
+    ),
+    '日本.xml',
+  )
+  assert.equal(downloadFilename('attachment; filename="CON.xml"', 'fallback'), 'file-CON.xml')
+  assert.equal(
+    downloadFilename('attachment; filename="invoice\u202Eexe.txt"', 'fallback'),
+    'invoice_exe.txt',
+  )
+  const longName = `${'日'.repeat(220)}.xml`
+  const sanitized = downloadFilename(
+    `attachment; filename*=UTF-8''${encodeURIComponent(longName)}`,
+    'fallback.bin',
+  )
+  assert.ok([...sanitized].length <= 140)
+  assert.ok(sanitized.endsWith('.xml'))
+})

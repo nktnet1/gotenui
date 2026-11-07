@@ -13,6 +13,14 @@ export const operation: Operation = {
   ...pdfFiles,
   fields: [
     {
+      name: 'v9FacturxRepairExisting',
+      label: 'Repair existing embedded invoice XML',
+      kind: 'toggle',
+      supportedGotenbergMajors: [9],
+      description:
+        'Gotenberg 9: repair a PDF already carrying Factur-X or ZUGFeRD XML without uploading new XML. The conformance level and document type below are ignored in repair mode.',
+    },
+    {
       name: 'facturxConformanceLevel',
       label: 'Conformance level',
       kind: 'select',
@@ -46,9 +54,10 @@ export const operation: Operation = {
   auxiliary: {
     name: 'facturxXml',
     label: 'Factur-X invoice XML',
-    description: 'Upload CII-format invoice XML.',
+    description:
+      'Upload CII-format invoice XML to add or replace it. Gotenberg 9 can alternatively repair existing embedded XML using the option above.',
     accept: '.xml',
-    required: true,
+    required: false,
   },
   output: 'pdf',
 }

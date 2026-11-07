@@ -70,6 +70,14 @@ test('Office file picker and proxy validation use the same extended upstream fil
   assert.throws(() => validateFiles(spec, [doc('bad.exe')], [], 1000), /Unsupported Office/)
 })
 
+test('canonical Unicode filename collisions are rejected before Gotenberg handles input files', () => {
+  const pipeline = operation('pdf-pipeline')
+  assert.throws(
+    () => validateFiles(pipeline, [pdf('café.pdf'), pdf('cafe\u0301.pdf')], [], 1_000),
+    /Duplicate filename/,
+  )
+})
+
 test('Office file pickers reflect the exact Gotenberg 8 and 9 extension differences', () => {
   assert.equal(officeAcceptForVersion('8.40.0'), OFFICE_ACCEPT)
   assert.equal(officeAcceptForVersion('9.0.0'), OFFICE_V9_ACCEPT)

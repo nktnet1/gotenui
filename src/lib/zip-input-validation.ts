@@ -9,12 +9,21 @@ import type { Operation } from '#/tools/registry'
  */
 const END_RECORD_BYTES = 22
 const MAX_COMMENT_BYTES = 65_535
-const MAX_DIRECTORY_BYTES = 512_000
-const MAX_ENTRIES = 1_000
+// Keep the in-browser ZIP metadata inspection bounded; Gotenberg enforces
+// the actual extraction quota (10,000 entries by default) and body limit.
+const MAX_DIRECTORY_BYTES = 64 * 1024 * 1024
+const MAX_ENTRIES = 10_000
 const decoder = new TextDecoder('utf-8', { fatal: false })
 
 function invalidArchive(name: string, detail: string): never {
   throw new InputError(`ZIP archive ${name}: ${detail}`)
+}
+
+function safeZip64Integer(value: bigint, archiveName: string): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    invalidArchive(archiveName, 'the ZIP64 index is too large to inspect safely.')
+  }
+  return Number(value)
 }
 
 function basename(name: string): string {
@@ -45,23 +54,64 @@ async function zipEntryNames(archive: File): Promise<string[]> {
   }
   if (end < 0) invalidArchive(archive.name, 'the ZIP central directory is missing.')
   const filesOnDisk = view.getUint16(end + 8, true)
-  const count = view.getUint16(end + 10, true)
-  const length = view.getUint32(end + 12, true)
-  const offset = view.getUint32(end + 16, true)
-  if (
-    view.getUint16(end + 4, true) !== 0 ||
-    view.getUint16(end + 6, true) !== 0 ||
-    filesOnDisk !== count ||
-    count === 0xffff ||
-    length === 0xffffffff ||
-    offset === 0xffffffff
-  ) {
-    invalidArchive(archive.name, 'multi-volume or ZIP64 directories are not supported.')
+  let count = view.getUint16(end + 10, true)
+  let length = view.getUint32(end + 12, true)
+  let offset = view.getUint32(end + 16, true)
+  if (view.getUint16(end + 4, true) !== 0 || view.getUint16(end + 6, true) !== 0) {
+    invalidArchive(archive.name, 'multi-volume ZIP archives are not supported.')
+  }
+  const endOffset = tailStart + end
+  // ZIP64 extends the classic EOCD with a locator and a 64-bit end record.
+  // Read only its fixed header, then the bounded central directory itself.
+  const locatorAt = end - 20
+  const zip64 = locatorAt >= 0 && view.getUint32(locatorAt, true) === 0x07064b50
+  let directoryEnd = endOffset
+  if (zip64) {
+    if (view.getUint32(locatorAt + 4, true) !== 0 || view.getUint32(locatorAt + 16, true) !== 1) {
+      invalidArchive(archive.name, 'multi-volume ZIP64 archives are not supported.')
+    }
+    const zip64Offset = safeZip64Integer(view.getBigUint64(locatorAt + 8, true), archive.name)
+    if (zip64Offset + 56 > endOffset - 20) {
+      invalidArchive(archive.name, 'the ZIP64 end record is invalid.')
+    }
+    const recordBytes = new Uint8Array(
+      await archive.slice(zip64Offset, zip64Offset + 56).arrayBuffer(),
+    )
+    if (recordBytes.length !== 56)
+      invalidArchive(archive.name, 'the ZIP64 end record is incomplete.')
+    const record = new DataView(recordBytes.buffer, recordBytes.byteOffset, recordBytes.byteLength)
+    if (
+      record.getUint32(0, true) !== 0x06064b50 ||
+      record.getBigUint64(4, true) < 44n ||
+      record.getUint32(16, true) !== 0 ||
+      record.getUint32(20, true) !== 0 ||
+      record.getBigUint64(24, true) !== record.getBigUint64(32, true)
+    ) {
+      invalidArchive(archive.name, 'the ZIP64 end record is invalid.')
+    }
+    directoryEnd = zip64Offset
+    const recordSize = safeZip64Integer(record.getBigUint64(4, true), archive.name)
+    if (zip64Offset + 12 + recordSize !== endOffset - 20) {
+      invalidArchive(archive.name, 'the ZIP64 end record length is invalid.')
+    }
+    count = safeZip64Integer(record.getBigUint64(32, true), archive.name)
+    length = safeZip64Integer(record.getBigUint64(40, true), archive.name)
+    offset = safeZip64Integer(record.getBigUint64(48, true), archive.name)
+    if (
+      (filesOnDisk !== 0xffff && filesOnDisk !== count) ||
+      (view.getUint16(end + 10, true) !== 0xffff && view.getUint16(end + 10, true) !== count)
+    ) {
+      invalidArchive(archive.name, 'the ZIP64 entry count disagrees with the ZIP directory.')
+    }
+  } else if (count === 0xffff || length === 0xffffffff || offset === 0xffffffff) {
+    invalidArchive(archive.name, 'the ZIP64 locator is missing.')
+  } else if (filesOnDisk !== count) {
+    invalidArchive(archive.name, 'multi-volume ZIP archives are not supported.')
   }
   if (count > MAX_ENTRIES || length > MAX_DIRECTORY_BYTES) {
     invalidArchive(archive.name, 'the ZIP index has too many entries or is too large.')
   }
-  if (offset + length > tailStart + end) {
+  if (offset + length > directoryEnd || offset + length > archive.size) {
     invalidArchive(archive.name, 'the ZIP central directory is invalid.')
   }
   const bytes = new Uint8Array(await archive.slice(offset, offset + length).arrayBuffer())
@@ -143,8 +193,9 @@ export async function validateZipInputs(
     expected.add('header.html')
     expected.add('footer.html')
     if (operation.input === 'markdown') {
-      expected.add((payload.markdownName ?? DEFAULT_MARKDOWN_NAME).toLowerCase())
-      for (const source of payload.markdownFiles ?? []) expected.add(source.name.toLowerCase())
+      expected.add((payload.markdownName ?? DEFAULT_MARKDOWN_NAME).normalize('NFC').toLowerCase())
+      for (const source of payload.markdownFiles ?? [])
+        expected.add(source.name.normalize('NFC').toLowerCase())
     }
   }
   const extensions = officeExtensionSetForMajor(9)
@@ -159,6 +210,12 @@ export async function validateZipInputs(
           })
         : []
   const stageAssets = new Set(pdfStageAssetNames(stages))
+  const remoteAssets = (payload.downloadFrom ?? []).filter(
+    (remote) => remote.name !== undefined && stageAssets.has(remote.name),
+  )
+  const remoteSources = (payload.downloadFrom ?? []).filter(
+    (remote) => !remote.field && !remote.embedded && !remoteAssets.includes(remote),
+  )
   const extracted: string[] = []
   for (const archive of archives) {
     const prefix = new Uint8Array(await archive.slice(0, 4).arrayBuffer())
@@ -183,10 +240,10 @@ export async function validateZipInputs(
       expected.add(flatName)
       extracted.push(normalizedName)
       const isStageAsset = stageAssets.has(normalizedName)
-      if (operation.id === 'pdf-pipeline' && !flatName.endsWith('.pdf') && !isStageAsset) {
+      if (operation.input === 'pdf' && !flatName.endsWith('.pdf') && !isStageAsset) {
         invalidArchive(
           archive.name,
-          `the PDF pipeline requires PDFs or referenced stage assets (found ${label}).`,
+          `${operation.id === 'pdf-pipeline' ? 'PDF pipeline requires PDFs or referenced stage assets' : 'PDF tools require PDFs or referenced pipeline stage assets'} (found ${label}).`,
         )
       }
       if (operation.id === 'office-pdf') {
@@ -200,20 +257,33 @@ export async function validateZipInputs(
   // Gotenberg treats PDFs/Documents consumed by stages as assets, not source
   // inputs. Catch asset-only archives before forwarding them upstream.
   if (
-    (operation.id === 'pdf-pipeline' || operation.id === 'office-pdf') &&
+    (operation.input === 'pdf' || operation.id === 'office-pdf') &&
     !files.length &&
-    !payload.downloadFrom?.some((remote) => !remote.field && !remote.embedded) &&
+    remoteSources.length === 0 &&
     !extracted.some((name) => {
       if (stageAssets.has(name)) return false
-      if (operation.id === 'pdf-pipeline') return name.toLowerCase().endsWith('.pdf')
+      if (operation.input === 'pdf') return name.toLowerCase().endsWith('.pdf')
       return extensions.has(name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? '')
     })
   ) {
     throw new InputError(
-      operation.id === 'pdf-pipeline'
+      operation.input === 'pdf'
         ? 'The PDF ZIP must contain at least one source PDF not reserved by a pipeline stage, or include a separate PDF input.'
         : 'The Office ZIP must contain at least one source document not reserved by a pipeline stage, or include a separate Office input.',
     )
+  }
+  if (operation.input === 'pdf') {
+    const available =
+      files.length +
+      remoteSources.length +
+      extracted.filter((name) => name.toLowerCase().endsWith('.pdf') && !stageAssets.has(name))
+        .length
+    const required = operation.id === 'merge' ? 2 : 1
+    if (available < required) {
+      throw new InputError(
+        `Upload at least ${required} PDF input${required > 1 ? 's' : ''}, including PDFs inside ZIP archives.`,
+      )
+    }
   }
   return extracted
 }

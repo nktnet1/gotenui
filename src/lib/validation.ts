@@ -6,6 +6,7 @@ import {
   markdownTemplateReferences,
 } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
+import { safeFilename as checkFilename, filenameKey } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
@@ -13,6 +14,7 @@ import {
   parseIgnoredDomains,
   parseStatusCodes,
 } from '#/lib/official-form-fields'
+import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import {
   configuredOverlays,
   countPostProcessFiles,
@@ -28,12 +30,14 @@ import { isFieldVisible, OPERATION_BY_ID, type Operation } from '#/tools/registr
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
 const markdownFileSchema = v.object({
-  name: v.pipe(v.string(), v.minLength(1), v.maxLength(155)),
+  name: v.pipe(v.string(), v.minLength(1)),
   content: v.pipe(v.string(), v.maxLength(300_000)),
 })
 
 const remoteFileSchema = v.object({
   url: v.pipe(v.string(), v.maxLength(2048)),
+  /** Client-side filename hint for v9 named pipeline assets; never sent upstream. */
+  name: v.optional(v.string()),
   field: v.optional(v.picklist(['embedded', 'watermark', 'stamp'])),
   embedded: v.optional(v.boolean()),
   extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
@@ -56,35 +60,30 @@ export const payloadSchema = v.object({
   fields: v.record(v.string(), fieldValue),
   advanced: v.record(v.string(), advancedValue),
   source: v.optional(v.pipe(v.string(), v.maxLength(300_000))),
-  markdownName: v.optional(v.pipe(v.string(), v.maxLength(155))),
-  markdownFiles: v.optional(v.pipe(v.array(markdownFileSchema), v.maxLength(19))),
+  markdownName: v.optional(v.string()),
+  markdownFiles: v.optional(v.array(markdownFileSchema)),
   markdownTemplate: v.optional(v.pipe(v.string(), v.maxLength(150_000))),
   headerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   footerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
   postProcess: v.optional(pdfPostProcessSchema),
-  conversionStages: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(60_000))),
+  conversionStages: v.optional(v.pipe(v.string(), v.minLength(1))),
   acknowledgedConversionRedaction: v.optional(v.boolean()),
   outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
   requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
   traceparent: v.optional(v.pipe(v.string(), v.maxLength(55))),
   tracestate: v.optional(v.pipe(v.string(), v.maxLength(512))),
-  downloadFrom: v.optional(v.pipe(v.array(remoteFileSchema), v.maxLength(20))),
+  downloadFrom: v.optional(v.array(remoteFileSchema)),
   webhook: v.optional(webhookSchema),
 })
 
 export type ConversionPayload = v.InferOutput<typeof payloadSchema>
 
-/** Gotenberg 9 extracts `archives` into its shared input-file workspace.
- * Office and the PDF pipeline use them as documents; Chromium HTML/Markdown
- * uses them as assets. Other PDF and URL tools do not expose archive uploads.
+/** Gotenberg 9 accepts `archives` on every multipart route, extracting files
+ * into its shared workspace before identifying inputs and named stage assets.
+ * The upstream version check refuses archives on Gotenberg 8.
  */
-export function supportsArchiveInputs(operation: Operation): boolean {
-  return (
-    operation.id === 'office-pdf' ||
-    operation.id === 'pdf-pipeline' ||
-    operation.input === 'html' ||
-    operation.input === 'markdown'
-  )
+export function supportsArchiveInputs(_operation: Operation): boolean {
+  return true
 }
 
 export class InputError extends Error {
@@ -98,7 +97,6 @@ export class InputError extends Error {
 }
 
 const extension = /\.[a-z0-9]+$/i
-const filenamePattern = /^[a-zA-Z0-9][a-zA-Z0-9 _.()-]{0,150}$/
 const fieldNamePattern = /^[a-z][a-zA-Z0-9]{0,63}$/
 const forbiddenAdvanced = new Set([
   'files',
@@ -118,10 +116,11 @@ const forbiddenAdvanced = new Set([
 ])
 
 export function safeFilename(name: string): string {
-  if (!filenamePattern.test(name) || name === '.' || name === '..') {
-    throw new InputError('File names must be simple names without paths or special characters.')
+  try {
+    return checkFilename(name)
+  } catch {
+    throw new InputError('File names must not be empty, paths or contain control characters.')
   }
-  return name
 }
 
 function markdownName(name: string): string {
@@ -148,7 +147,7 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
       markdownName(payload.markdownName ?? DEFAULT_MARKDOWN_NAME),
       ...(payload.markdownFiles ?? []).map((file) => markdownName(file.name)),
     ]
-    if (new Set(names.map((name) => name.toLowerCase())).size !== names.length) {
+    if (new Set(names.map(filenameKey)).size !== names.length) {
       throw new InputError('Markdown filenames must be unique (case-insensitive).')
     }
     for (const file of payload.markdownFiles ?? []) {
@@ -219,6 +218,7 @@ function validateHeaderMap(headers: Record<string, string> | undefined): void {
 function validateAsyncInputs(payload: ConversionPayload): void {
   for (const remote of payload.downloadFrom ?? []) {
     requireHttpUrl(remote.url, 'downloadFrom URL')
+    if (remote.name !== undefined) safeFilename(remote.name)
     validateHeaderMap(remote.extraHttpHeaders)
   }
   const webhook = payload.webhook
@@ -542,6 +542,7 @@ export function validateFiles(
     | 'footerHtml'
     | 'postProcess'
     | 'conversionStages'
+    | 'acknowledgedConversionRedaction'
     | 'advanced'
   >,
   postFiles: PostProcessFiles = {},
@@ -550,13 +551,33 @@ export function validateFiles(
   major?: SupportedGotenbergMajor,
 ): void {
   const remote = remoteCounts(payload)
+  if (
+    payload?.downloadFrom?.length &&
+    (operation.id === 'pdf-pipeline' || payload.conversionStages)
+  ) {
+    const rawStages =
+      operation.id === 'pdf-pipeline' ? payload.fields?.stages : payload.conversionStages
+    if (typeof rawStages === 'string' && rawStages) {
+      const stageAssets = new Set(
+        pdfStageAssetNames(
+          parsePdfPipeline(rawStages, {
+            acknowledgedRedaction:
+              operation.id === 'pdf-pipeline'
+                ? payload.fields?.acknowledgedRedaction === true
+                : payload.acknowledgedConversionRedaction,
+          }),
+        ),
+      )
+      remote.input -= payload.downloadFrom.filter(
+        (file) =>
+          !file.field && !file.embedded && file.name !== undefined && stageAssets.has(file.name),
+      ).length
+    }
+  }
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
   if (archives.length && !supportsArchiveInputs(operation)) {
-    throw new InputError(
-      'ZIP archive inputs are supported only by Office, the PDF pipeline, and Chromium HTML/Markdown tools on Gotenberg 9.',
-    )
+    throw new InputError('ZIP archive inputs are not supported for this operation.')
   }
-  if (archives.length > 10) throw new InputError('At most 10 ZIP archives are supported.')
   if (operation.id === 'embed' && payload?.fields.embedsMetadata) {
     const names = validatedAttachmentMetadata(String(payload.fields.embedsMetadata))
     if (!auxiliary.length && !remote.embedded) {
@@ -570,8 +591,10 @@ export function validateFiles(
   }
   if (operation.input === 'pdf' || operation.input === 'office') {
     const documentCount = files.length + remote.input + archives.length
-    if (documentCount < minFiles || documentCount > 20) {
-      throw new InputError(`Upload ${minFiles} to 20 input files.`)
+    // An archive can contain several source documents; validate its actual
+    // directory entries in validateZipInputs after upstream version detection.
+    if (documentCount < minFiles && !archives.length) {
+      throw new InputError(`Upload at least ${minFiles} input file${minFiles > 1 ? 's' : ''}.`)
     }
   } else if (files.length > 0) {
     throw new InputError('This operation takes source text or a URL, not input documents.')
@@ -579,8 +602,6 @@ export function validateFiles(
   if (stageFiles.length && !payload?.conversionStages) {
     throw new InputError('Conversion stage files require a PDF conversion pipeline.')
   }
-  if (stageFiles.length > 20)
-    throw new InputError('At most 20 conversion stage files are supported.')
   if (!operation.auxiliary && auxiliary.length > 0) {
     // HTML/Markdown assets are auxiliary uploads, with a different field name.
     if (operation.input !== 'html' && operation.input !== 'markdown') {
@@ -588,11 +609,9 @@ export function validateFiles(
     }
   }
   const maxAux =
-    operation.input === 'html' || operation.input === 'markdown'
-      ? 20
-      : operation.auxiliary?.multiple
-        ? 20
-        : 1
+    operation.auxiliary?.multiple || operation.input === 'html' || operation.input === 'markdown'
+      ? Number.POSITIVE_INFINITY
+      : 1
   if (auxiliary.length > maxAux) throw new InputError('Too many additional files.')
   const remoteAux =
     operation.id === 'embed'
@@ -609,8 +628,8 @@ export function validateFiles(
   if (operation.input === 'html' || operation.input === 'markdown') {
     for (const name of ['index.html', 'header.html', 'footer.html']) names.add(name)
     if (operation.input === 'markdown') {
-      names.add((payload?.markdownName ?? DEFAULT_MARKDOWN_NAME).toLowerCase())
-      for (const file of payload?.markdownFiles ?? []) names.add(file.name.toLowerCase())
+      names.add(filenameKey(payload?.markdownName ?? DEFAULT_MARKDOWN_NAME))
+      for (const file of payload?.markdownFiles ?? []) names.add(filenameKey(file.name))
     }
   }
   const generatedTemplate =
@@ -647,10 +666,10 @@ export function validateFiles(
     const allowsOrderedDuplicates =
       operation.id === 'merge' ||
       (operation.id === 'office-pdf' && payload?.fields.merge === true && files.includes(file))
-    if (names.has(name.toLowerCase()) && !allowsOrderedDuplicates) {
+    if (names.has(filenameKey(name)) && !allowsOrderedDuplicates) {
       throw new InputError(`Duplicate filename: ${name}`)
     }
-    names.add(name.toLowerCase())
+    names.add(filenameKey(name))
     total += file.size
     if (file.size === 0) throw new InputError(`${name} is empty.`)
     if (total > maxBytes)
@@ -696,7 +715,7 @@ export function validateFiles(
         if (row.source === 'text') continue
         const filename =
           row.expression || (rows.length === 1 && uploads.length === 1 ? uploads[0]?.name : '')
-        if (filename && names.has(filename.toLowerCase())) {
+        if (filename && names.has(filenameKey(filename))) {
           throw new InputError(`Overlay filename collides with an input or asset: ${filename}`)
         }
       }
@@ -1024,7 +1043,10 @@ export function validatePayload(input: unknown): {
       if (typeof value !== 'boolean') throw new InputError(`${field.label} must be true or false.`)
     } else {
       if (typeof value !== 'string') throw new InputError(`${field.label} must be text.`)
-      if (value.length > (operation.id === 'pdf-pipeline' && key === 'stages' ? 60_000 : 10_000))
+      // Structured JSON is bounded by the proxy's total payload/body limits.
+      // Do not impose an unrelated 10 KB field ceiling on large bookmark,
+      // form, redaction or ordered-stage documents.
+      if (field.kind !== 'json' && value.length > 10_000)
         throw new InputError(`${field.label} is too long.`)
       if (field.kind === 'select' && value && !field.options?.includes(value)) {
         throw new InputError(`Invalid option for ${field.label}.`)
@@ -1208,7 +1230,7 @@ export function validatePayload(input: unknown): {
   ) {
     throw new InputError('Unify is supported only in pages mode.')
   }
-  if (payload.outputName && !/^[a-zA-Z0-9][a-zA-Z0-9 _-]{0,99}$/.test(payload.outputName)) {
+  if (payload.outputName && !/^[\p{L}\p{N}][\p{L}\p{N}\p{M} _-]{0,99}$/u.test(payload.outputName)) {
     throw new InputError('Output name contains invalid characters.')
   }
   if (operation.id === 'merge' && payload.advanced.bookmarks !== undefined) {

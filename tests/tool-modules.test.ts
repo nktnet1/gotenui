@@ -53,6 +53,8 @@ const orderedIds = [
   'pdf-info',
   'pdf-validate',
   'pdf-attachments',
+  'extract-attachments',
+  'extract-text',
   'pdf-form',
   'select-pages',
   'delete-pages',

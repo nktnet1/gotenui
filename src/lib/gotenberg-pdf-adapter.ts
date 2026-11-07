@@ -54,12 +54,21 @@ export function adaptPdfForm(
     ) {
       throw new InputError('Gotenberg 9 PDF controls cannot be sent to a Gotenberg 8 connection.')
     }
+    if (
+      (operation.id === 'metadata-read' || operation.id === 'bookmarks-read') &&
+      payload.fields.password
+    ) {
+      throw new InputError('Reading encrypted PDF information requires Gotenberg 9.', 409)
+    }
+    if (operation.id === 'factur-x' && auxiliary.length !== 1) {
+      throw new InputError('Gotenberg 8 Factur-X requires one uploaded invoice XML.')
+    }
     return { path: operation.path, form: legacy }
   }
   if (operation.id === 'pdf-pipeline') {
     return adaptPdfPipeline(payload, legacy, auxiliary, archives, archiveEntryNames)
   }
-  const extra = adaptV9PdfExtra(operation.id, payload, legacy, auxiliary)
+  const extra = adaptV9PdfExtra(operation.id, payload, legacy, auxiliary, archives)
   if (extra) return extra
   if (!v9PdfOperations.has(operation.id) || operation.input !== 'pdf') {
     throw new InputError(
@@ -91,6 +100,7 @@ export function adaptPdfForm(
   }
   const remote = legacy.get('downloadFrom')
   if (typeof remote === 'string') output.set('downloadFrom', remote)
+  for (const archive of archives) output.append('archives', archive, archive.name)
   const stages: Stage[] = []
   const allow = new Set<string>()
   const permitted = (...names: string[]) => {
@@ -314,6 +324,8 @@ export function adaptPdfForm(
     }
     case 'metadata-read':
     case 'bookmarks-read':
+      permitted('password')
+      if (optional('password')) output.set('password', fields.password as string)
       break
     case 'metadata-write': {
       permitted('metadata')
@@ -378,7 +390,14 @@ export function adaptPdfForm(
       break
     }
     case 'factur-x': {
-      permitted('facturxConformanceLevel', 'facturxDocumentType', 'facturxVersion', 'pdfa', 'pdfua')
+      permitted(
+        'facturxConformanceLevel',
+        'facturxDocumentType',
+        'facturxVersion',
+        'pdfa',
+        'pdfua',
+        'v9FacturxRepairExisting',
+      )
       if (optional('facturxVersion'))
         throw new InputError(
           'Gotenberg 9 Factur-X remediation does not support the v8 Factur-X version field.',
@@ -388,17 +407,27 @@ export function adaptPdfForm(
           'Gotenberg 9 Factur-X remediation produces PDF/A-3b. Remove the PDF/A-3a or PDF/A-3u selection to avoid changing the requested compliance profile.',
         )
       }
-      if (auxiliary.length !== 1 || !/\.xml$/i.test(auxiliary[0]?.name ?? '')) {
-        throw new InputError('Upload one Factur-X XML invoice.')
+      const repair = fields.v9FacturxRepairExisting === true
+      if (repair && auxiliary.length) {
+        throw new InputError(
+          'Repairing embedded Factur-X XML does not accept a replacement XML upload.',
+        )
+      }
+      if (!repair && (auxiliary.length !== 1 || !/\.xml$/i.test(auxiliary[0]?.name ?? ''))) {
+        throw new InputError('Upload one Factur-X XML invoice or enable repair of embedded XML.')
+      }
+      if (!repair && !optional('facturxConformanceLevel')) {
+        throw new InputError('Select a Factur-X conformance level when uploading new invoice XML.')
       }
       const xml = auxiliary[0]
-      attachFile(xml)
+      if (xml) attachFile(xml)
       stages.push({
         op: 'remediate',
         profile: fields.pdfua === true ? ['Factur-X', 'PDF/UA-1'] : 'Factur-X',
-        xml: xml.name,
-        level: fields.facturxConformanceLevel,
-        ...(optional('facturxDocumentType') ? { documentType: fields.facturxDocumentType } : {}),
+        ...(xml ? { xml: xml.name, level: fields.facturxConformanceLevel } : {}),
+        ...(xml && optional('facturxDocumentType')
+          ? { documentType: fields.facturxDocumentType }
+          : {}),
       })
       break
     }

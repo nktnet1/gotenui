@@ -1,6 +1,8 @@
 /** Gotenberg 9.0.0 PDF pipeline catalogue and shared client/server validation.
  * Keep this aligned with pkg/modules/pdf/stages.go and stage_types.go.
  */
+
+import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
 
@@ -148,6 +150,20 @@ export const PDF_PIPELINE_STAGES = [
     fields: ['name'],
   },
   {
+    op: 'extract-attachments',
+    label: 'Extract attachments',
+    description: 'Download embedded files. Must be the final stage (Gotenberg 9.1+).',
+    options: {},
+    fields: ['name'],
+  },
+  {
+    op: 'extract-text',
+    label: 'Extract text',
+    description: 'Save text as .txt. Scanned pages need external OCR. Final stage (9.1+).',
+    options: {},
+    fields: ['pages', 'invisible', 'artifacts', 'annotations'],
+  },
+  {
     op: 'optimize',
     label: 'Optimise',
     description: 'Losslessly optimise PDF contents.',
@@ -215,7 +231,6 @@ export const DEFAULT_PDF_PIPELINE = '[{"op":"optimize"}]'
 const pipelineByOp = new Map<string, (typeof PDF_PIPELINE_STAGES)[number]>(
   PDF_PIPELINE_STAGES.map((stage) => [stage.op, stage]),
 )
-const pageRange = /^(?:\d+(?:-\d+)?|odd|even)(?:\s*,\s*(?:\d+(?:-\d+)?|odd|even))*$/i
 const profiles = new Set([
   'PDF/A-1a',
   'PDF/A-1b',
@@ -252,8 +267,8 @@ const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 const optionalPages = (stage: PdfPipelineStage, key: string): void => {
   const value = stage[key]
-  if (value !== undefined && (typeof value !== 'string' || !pageRange.test(value))) {
-    throw new InputError(`${stage.op}: "${key}" must select pages such as 1-3,5 or odd.`)
+  if (value !== undefined && !isPdfPageSelector(value)) {
+    throw new InputError(`${stage.op}: "${key}" must select pages such as 1-3, last or all.`)
   }
 }
 const integer = (value: unknown, min: number, max = Number.MAX_SAFE_INTEGER): boolean =>
@@ -330,6 +345,9 @@ function validateStage(stage: PdfPipelineStage): void {
     }
   }
   for (const key of [
+    'invisible',
+    'artifacts',
+    'annotations',
     'objectStreams',
     'dedup',
     'recompressImages',
@@ -371,7 +389,7 @@ function validateStage(stage: PdfPipelineStage): void {
         stage.ranges !== undefined &&
         (!Array.isArray(stage.ranges) ||
           !stage.ranges.length ||
-          stage.ranges.some((page) => typeof page !== 'string' || !pageRange.test(page)))
+          stage.ranges.some((page) => !isPdfPageSelector(page)))
       )
         throw new InputError('split: ranges must be a non-empty array of page selectors.')
       break
@@ -400,15 +418,12 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('stamp-pdf: upload a PDF.')
       break
     case 'set-bookmarks': {
-      if (
-        !Array.isArray(stage.bookmarks) ||
-        !stage.bookmarks.length ||
-        stage.bookmarks.length > 100
-      )
-        throw new InputError('set-bookmarks: add 1 to 100 bookmarks.')
-      const check = (entries: unknown[], depth: number): void => {
-        if (depth > 8) throw new InputError('set-bookmarks: nesting is too deep.')
-        for (const entry of entries) {
+      if (!Array.isArray(stage.bookmarks) || !stage.bookmarks.length)
+        throw new InputError('set-bookmarks: add at least one bookmark.')
+      const check = (entries: unknown[]): void => {
+        const pending = [...entries]
+        while (pending.length) {
+          const entry = pending.pop()
           if (
             !object(entry) ||
             typeof entry.title !== 'string' ||
@@ -419,29 +434,25 @@ function validateStage(stage: PdfPipelineStage): void {
               'set-bookmarks: every bookmark needs a title and positive pageNumber.',
             )
           if (entry.children !== undefined) {
-            if (!Array.isArray(entry.children) || entry.children.length > 100)
+            if (!Array.isArray(entry.children))
               throw new InputError('set-bookmarks: invalid children.')
-            check(entry.children, depth + 1)
+            pending.push(...entry.children)
           }
         }
       }
-      check(stage.bookmarks, 0)
+      check(stage.bookmarks)
       break
     }
     case 'set-form':
       if (
         !object(stage.fields) ||
         !Object.keys(stage.fields).length ||
-        Object.keys(stage.fields).length > 100 ||
         Object.entries(stage.fields).some(
           ([key, value]) =>
-            !key ||
-            key.length > 200 ||
+            !key.trim() ||
             !(
               typeof value === 'string' ||
-              (Array.isArray(value) &&
-                value.length <= 50 &&
-                value.every((item) => typeof item === 'string'))
+              (Array.isArray(value) && value.every((item) => typeof item === 'string'))
             ),
         )
       )
@@ -452,8 +463,8 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('convert-colors: invalid target.')
       break
     case 'redact':
-      if (!Array.isArray(stage.regions) || !stage.regions.length || stage.regions.length > 100)
-        throw new InputError('redact: provide 1 to 100 rectangles.')
+      if (!Array.isArray(stage.regions) || !stage.regions.length)
+        throw new InputError('redact: provide at least one rectangle.')
       for (const region of stage.regions) {
         if (
           !object(region) ||
@@ -484,6 +495,11 @@ function validateStage(stage: PdfPipelineStage): void {
       break
     case 'detach':
       requiredText(stage, 'name')
+      break
+    case 'extract-attachments':
+      // No name means every attachment. A filename is an exact match, including spaces.
+      if (stage.name !== undefined && !String(stage.name).trim())
+        throw new InputError('extract-attachments: name must be an embedded filename or omitted.')
       break
     case 'encrypt':
       if (!stage.userPassword && !stage.ownerPassword)
@@ -521,7 +537,10 @@ function validateStage(stage: PdfPipelineStage): void {
       break
     }
     case 'decrypt':
-      requiredText(stage, 'password')
+      // Upstream permits an empty/missing password for owner-password-only PDFs.
+      if (stage.password !== undefined && typeof stage.password !== 'string') {
+        throw new InputError('decrypt: "password" must be a string (empty is allowed).')
+      }
       break
     case 'sign': {
       const certificate = requiredText(stage, 'certificate')
@@ -580,15 +599,14 @@ export function parsePdfPipeline(
   raw: string,
   context: PdfPipelineValidation = {},
 ): PdfPipelineStage[] {
-  if (raw.length > 60_000) throw new InputError('The PDF pipeline exceeds 60,000 characters.')
   let decoded: unknown
   try {
     decoded = JSON.parse(raw)
   } catch {
     throw new InputError('The PDF pipeline must be valid JSON.')
   }
-  if (!Array.isArray(decoded) || decoded.length < 1 || decoded.length > 30)
-    throw new InputError('Add 1 to 30 ordered PDF processing stages.')
+  if (!Array.isArray(decoded) || decoded.length < 1)
+    throw new InputError('Add at least one ordered PDF processing stage.')
   const stages: PdfPipelineStage[] = []
   const counts = new Map<string, number>()
   let hasDecryption = false
@@ -610,16 +628,33 @@ export function parsePdfPipeline(
       if (index !== 0) throw new InputError('Decryption must be the first stage.')
       hasDecryption = true
     }
-    if (op === 'render' && index !== decoded.length - 1)
-      throw new InputError('Rendering must be the last stage.')
+    if (
+      ['render', 'extract-attachments', 'extract-text'].includes(op) &&
+      index !== decoded.length - 1
+    )
+      throw new InputError(`${op} must be the last stage.`)
     if (
       seenFinal === 'remediate' &&
-      !['encrypt', 'optimize', 'sign', 'timestamp', 'render'].includes(op)
+      ![
+        'encrypt',
+        'optimize',
+        'sign',
+        'timestamp',
+        'render',
+        'extract-attachments',
+        'extract-text',
+      ].includes(op)
     )
       throw new InputError(`Stage ${index + 1} cannot follow remediation.`)
-    if (seenFinal === 'encrypt' && !['optimize', 'render'].includes(op))
+    if (
+      seenFinal === 'encrypt' &&
+      !['optimize', 'render', 'extract-attachments', 'extract-text'].includes(op)
+    )
       throw new InputError(`Stage ${index + 1} cannot follow encryption.`)
-    if (seenFinal === 'sign' && !['sign', 'timestamp', 'render'].includes(op))
+    if (
+      seenFinal === 'sign' &&
+      !['sign', 'timestamp', 'render', 'extract-attachments', 'extract-text'].includes(op)
+    )
       throw new InputError(`Stage ${index + 1} cannot follow digital signing.`)
     if (op === 'remediate') {
       hasPdfa = true
@@ -657,10 +692,15 @@ export function parsePdfPipeline(
     hasPdfa &&
     hasEncryption &&
     stages.some(
-      (stage) => stage.op === 'remediate' && JSON.stringify(stage.profile).includes('PDF/A'),
+      (stage) =>
+        stage.op === 'remediate' &&
+        (Array.isArray(stage.profile) ? stage.profile : [stage.profile]).some(
+          (profile) =>
+            typeof profile === 'string' && (profile.startsWith('PDF/A') || profile === 'Factur-X'),
+        ),
     )
   )
-    throw new InputError('PDF/A documents cannot be encrypted in the same pipeline.')
+    throw new InputError('PDF/A and Factur-X documents cannot be encrypted in the same pipeline.')
   return stages
 }
 
@@ -669,6 +709,12 @@ export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): read
   const render = stages.at(-1)
   if (render?.op === 'render')
     return [render.format === 'jpeg' ? 'image/jpeg' : 'image/png', 'application/zip']
+  // A sole extraction returns extracted files only; combined stages also return
+  // the processed PDF(s) alongside the extracted files, always as a ZIP.
+  if (render?.op === 'extract-text')
+    return stages.length === 1 ? ['text/plain', 'application/zip'] : ['application/zip']
+  if (render?.op === 'extract-attachments')
+    return stages.length === 1 ? ['*', 'application/zip'] : ['application/zip']
   return ['application/pdf', 'application/zip']
 }
 

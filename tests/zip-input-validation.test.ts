@@ -282,7 +282,45 @@ test('rejects unsafe paths, corrupt directories, encrypted ZIPs, and empty ZIP i
   )
   const zip64 = new Uint8Array(await truncated.arrayBuffer())
   new DataView(zip64.buffer).setUint32(zip64.length - 10, 0xffffffff, true)
-  await assert.rejects(check('pdf-pipeline', [new File([zip64], 'zip64.zip')]), /ZIP64 directories/)
+  await assert.rejects(check('pdf-pipeline', [new File([zip64], 'zip64.zip')]), /ZIP64 locator/)
+})
+
+test('accepts a valid ZIP64 end record and rejects an overlapping central directory', async () => {
+  const original = new Uint8Array(await zipFixture({ 'source.pdf': '%PDF-1.7' }).arrayBuffer())
+  const oldEnd = original.byteLength - 22
+  const classic = new DataView(original.buffer, oldEnd)
+  const total = classic.getUint16(10, true)
+  const directorySize = classic.getUint32(12, true)
+  const directoryOffset = classic.getUint32(16, true)
+  const bytes = new Uint8Array(original.length + 56 + 20)
+  bytes.set(original.subarray(0, oldEnd))
+  bytes.set(original.subarray(oldEnd), oldEnd + 76)
+  const zip64 = new DataView(bytes.buffer, oldEnd, 56)
+  zip64.setUint32(0, 0x06064b50, true)
+  zip64.setBigUint64(4, 44n, true)
+  zip64.setUint16(12, 45, true)
+  zip64.setUint16(14, 45, true)
+  zip64.setBigUint64(24, BigInt(total), true)
+  zip64.setBigUint64(32, BigInt(total), true)
+  zip64.setBigUint64(40, BigInt(directorySize), true)
+  zip64.setBigUint64(48, BigInt(directoryOffset), true)
+  const locator = new DataView(bytes.buffer, oldEnd + 56, 20)
+  locator.setUint32(0, 0x07064b50, true)
+  locator.setBigUint64(8, BigInt(oldEnd), true)
+  locator.setUint32(16, 1, true)
+  const end = new DataView(bytes.buffer, oldEnd + 76, 22)
+  end.setUint16(8, 0xffff, true)
+  end.setUint16(10, 0xffff, true)
+  end.setUint32(12, 0xffffffff, true)
+  end.setUint32(16, 0xffffffff, true)
+  assert.deepEqual(await check('pdf-pipeline', [new File([bytes], 'valid.zip')]), ['source.pdf'])
+
+  // A directory cannot overlap the ZIP64 EOCD, even when it finishes before the locator.
+  zip64.setBigUint64(40, BigInt(directorySize + 4), true)
+  await assert.rejects(
+    check('pdf-pipeline', [new File([bytes], 'overlap.zip')]),
+    /ZIP central directory is invalid/,
+  )
 })
 
 test('limits central-directory memory and never reads or unpacks entry contents', async () => {
@@ -299,9 +337,9 @@ test('limits central-directory memory and never reads or unpacks entry contents'
   assert.ok(readSizes.reduce((sum, size) => sum + size, 0) < 70_000)
 })
 
-test('bounds the number of ZIP entries before requesting upstream extraction', async () => {
+test('matches the default upstream ZIP entry limit before requesting extraction', async () => {
   const many = Object.fromEntries(
-    Array.from({ length: 1_001 }, (_, index) => [`file-${index}.pdf`, 'x']),
+    Array.from({ length: 10_001 }, (_, index) => [`file-${index}.pdf`, 'x']),
   )
   await assert.rejects(
     check('pdf-pipeline', [zipFixture(many)]),

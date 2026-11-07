@@ -117,7 +117,7 @@ test('v9 pipeline remote editor only offers PDF input URLs, with no legacy desti
   const pipeline = renderToStaticMarkup(
     createElement(RemoteInputsEditor, { ...props, pdfInputOnly: true }),
   )
-  assert.match(pipeline, /Remote PDF inputs/)
+  assert.match(pipeline, /Remote PDFs and stage assets/)
   assert.match(pipeline, /Remote ZIP files are not extracted/)
   assert.match(pipeline, /https:\/\/example\.com\/file\.pdf/)
   assert.doesNotMatch(pipeline, /Destination field|Regular conversion input \/ HTML asset/)

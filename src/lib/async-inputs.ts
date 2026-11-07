@@ -5,6 +5,7 @@ export type ExtraHeaderRow = { id: number; name: string; value: string }
 export type RemoteInputRow = {
   id: number
   url: string
+  filename?: string
   field: '' | 'embedded' | 'watermark' | 'stamp'
   headers: ExtraHeaderRow[]
 }
@@ -60,11 +61,11 @@ export function remoteInputsPayload(rows: RemoteInputRow[], json: string): unkno
     return legacyJson(json, 'Remote files')
   }
   if (rows.length === 0) return undefined
-  if (rows.length > 20) throw new InputError('At most 20 remote files are supported.')
   return rows.map((row): RemoteFile => {
     const headers = headerMap(row.headers)
     return {
       url: row.url.trim(),
+      ...(row.filename?.trim() ? { name: row.filename.trim() } : {}),
       ...(row.field ? { field: row.field } : {}),
       ...(headers ? { extraHttpHeaders: headers } : {}),
     }

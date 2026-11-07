@@ -1,9 +1,9 @@
 /** Strict request mapping for the Gotenberg 9-only PDF workflows. */
+
+import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
-
-const pageSelector = /^(?:\d+(?:-\d+)?|odd|even)(?:\s*,\s*(?:\d+(?:-\d+)?|odd|even))*$/i
 
 function jsonValue(raw: string, label: string): unknown {
   try {
@@ -15,8 +15,8 @@ function jsonValue(raw: string, label: string): unknown {
 
 function namedPages(value: string, label: string): string {
   const normalized = value.trim()
-  if (!pageSelector.test(normalized)) {
-    throw new InputError(`${label} must use page numbers, ranges, odd or even.`)
+  if (!isPdfPageSelector(normalized)) {
+    throw new InputError(`${label} must use page numbers, ranges, odd, even, last or all.`)
   }
   return normalized
 }
@@ -69,6 +69,7 @@ export function adaptV9PdfExtra(
   payload: ConversionPayload,
   legacy: FormData,
   auxiliary: readonly File[],
+  archives: readonly File[] = [],
 ): { path: string; form: FormData } | null {
   if (!V9_PDF_IDS.has(operationId)) return null
   const fields = payload.fields
@@ -79,6 +80,7 @@ export function adaptV9PdfExtra(
   }
   const downloadFrom = legacy.get('downloadFrom')
   if (typeof downloadFrom === 'string') form.set('downloadFrom', downloadFrom)
+  for (const archive of archives) form.append('archives', archive, archive.name)
   const stages: Record<string, unknown>[] = []
   const value = (name: string): string =>
     typeof fields[name] === 'string' ? fields[name].trim() : ''
@@ -99,6 +101,19 @@ export function adaptV9PdfExtra(
   const requirePages = (name: string) => namedPages(value(name), name)
 
   switch (operationId) {
+    case 'extract-attachments':
+      allow('name')
+      onlyPdfInputs()
+      if (typeof fields.name === 'string' && fields.name) form.set('name', fields.name)
+      return { path: '/forms/pdf/extract-attachments', form }
+    case 'extract-text':
+      allow('pages', 'invisible', 'artifacts', 'annotations')
+      onlyPdfInputs()
+      if (value('pages')) form.set('pages', requirePages('pages'))
+      for (const name of ['invisible', 'artifacts', 'annotations'] as const) {
+        if (fields[name] === true) form.set(name, 'true')
+      }
+      return { path: '/forms/pdf/extract-text', form }
     case 'pdf-info':
     case 'pdf-attachments':
       allow('password')
@@ -162,20 +177,16 @@ export function adaptV9PdfExtra(
         !data ||
         typeof data !== 'object' ||
         Array.isArray(data) ||
-        Object.keys(data).length < 1 ||
-        Object.keys(data).length > 100
+        Object.keys(data).length < 1
       ) {
-        throw new InputError('Form values must be an object with 1 to 100 named fields.')
+        throw new InputError('Form values must be an object with at least one named field.')
       }
       for (const [key, field] of Object.entries(data)) {
         if (
           !key.trim() ||
-          key.length > 200 ||
           !(
             typeof field === 'string' ||
-            (Array.isArray(field) &&
-              field.length <= 50 &&
-              field.every((entry) => typeof entry === 'string'))
+            (Array.isArray(field) && field.every((entry) => typeof entry === 'string'))
           )
         ) {
           throw new InputError(
@@ -206,8 +217,8 @@ export function adaptV9PdfExtra(
       if (fields.confirmRedaction !== true)
         throw new InputError('Confirm permanent redaction before submitting.')
       const regions = jsonValue(value('regions'), 'Redaction regions')
-      if (!Array.isArray(regions) || regions.length < 1 || regions.length > 100) {
-        throw new InputError('Provide 1 to 100 redaction rectangles.')
+      if (!Array.isArray(regions) || regions.length < 1) {
+        throw new InputError('Provide at least one redaction rectangle.')
       }
       for (const region of regions) {
         if (
@@ -242,8 +253,10 @@ export function adaptV9PdfExtra(
     case 'decrypt':
       allow('password')
       onlyPdfInputs()
-      if (!value('password')) throw new InputError('Enter the password to decrypt this PDF.')
-      stages.push({ op: 'decrypt', password: fields.password })
+      stages.push({
+        op: 'decrypt',
+        password: typeof fields.password === 'string' ? fields.password : '',
+      })
       break
     case 'sign': {
       allow(
@@ -308,8 +321,8 @@ export function adaptV9PdfExtra(
       if (value('pages')) stage.pages = requirePages('pages')
       if (value('dpi')) {
         const dpi = decimal(fields.dpi, 'Render DPI')
-        if (!Number.isSafeInteger(dpi) || dpi < 1 || dpi > 600)
-          throw new InputError('DPI must be a whole number from 1 to 600.')
+        if (!Number.isSafeInteger(dpi) || dpi < 1)
+          throw new InputError('DPI must be a positive whole number.')
         stage.dpi = dpi
       }
       if (value('quality')) {

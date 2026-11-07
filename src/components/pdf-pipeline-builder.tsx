@@ -61,9 +61,9 @@ export function PdfPipelineBuilder({
   const [selected, setSelected] = useState<PdfPipelineOp>('select')
   const nextId = useRef(Math.max(...initialStages(value).map(({ id }) => id)) + 1)
   const [editorError, setEditorError] = useState<string | null>(null)
-  const availableStages = conversionMode
-    ? PDF_PIPELINE_STAGES.filter(({ op }) => op !== 'decrypt')
-    : PDF_PIPELINE_STAGES
+  const availableStages = PDF_PIPELINE_STAGES.filter(
+    ({ op }) => !(conversionMode && op === 'decrypt'),
+  )
 
   const update = (next: EditorStage[]) => {
     setStages(next)
@@ -78,7 +78,6 @@ export function PdfPipelineBuilder({
     }
   }
   const add = () => {
-    if (stages.length >= 30) return
     const definition = availableStages.find(({ op }) => op === selected)
     if (!definition) return
     update([
@@ -113,8 +112,8 @@ export function PdfPipelineBuilder({
         </p>
         <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">
           Stages run from top to bottom. Use the arrows to change their order; the final stage
-          determines whether Gotenberg returns PDFs or rendered images. Each stage accepts the exact
-          Gotenberg 9 option names as JSON.
+          determines whether Gotenberg returns PDFs, rendered images, text or attachments. Each
+          stage accepts the exact Gotenberg 9 option names as JSON.
         </p>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="min-w-52 flex-1 space-y-1">
@@ -132,7 +131,7 @@ export function PdfPipelineBuilder({
               ))}
             </select>
           </div>
-          <Button type="button" variant="outline" onClick={add} disabled={stages.length >= 30}>
+          <Button type="button" variant="outline" onClick={add}>
             <Plus className="size-4" /> Add stage
           </Button>
         </div>
