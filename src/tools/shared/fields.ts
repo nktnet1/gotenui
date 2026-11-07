@@ -312,7 +312,8 @@ export const chromiumReliability: FieldDefinition[] = [
     section: 'reliability',
     placeholder: 'e.g. analytics.example.com, cdn.example.com',
     when: { name: 'failOnResourceHttpStatusCodes', equals: '' },
-    description: 'Comma-separated hostnames excluded from asset HTTP status checks.',
+    description:
+      'Comma-separated hostnames, optional ports, or URLs excluded from asset HTTP status checks.',
   },
   {
     name: 'failOnResourceLoadingFailed',

@@ -668,3 +668,23 @@ test('Gotenberg 9 LibreOffice retains native JPEG and downsampling settings', ()
   assert.equal(old.get('reduceImageResolution'), 'true')
   assert.equal(old.get('maxImageResolution'), '150')
 })
+
+test('v9 Chromium forwards extended media feature maps without prototype collisions', () => {
+  const features = Array.from({ length: 20 }, (_, i) => ({
+    name: `extended-css-feature-${i}`,
+    value: `value-${'long'.repeat(40)}`,
+  }))
+  features.push({ name: '__proto__', value: 'allowed-by-upstream' })
+  const form = adapt(
+    'url-shot',
+    {
+      fields: { url: 'https://example.test' },
+      advanced: { emulatedMediaFeatures: JSON.stringify(features) },
+    },
+    9,
+  )
+  assert.deepEqual(
+    JSON.parse(String(form.get('emulatedMediaFeatures'))),
+    Object.fromEntries(features.map(({ name, value }) => [name, value])),
+  )
+})

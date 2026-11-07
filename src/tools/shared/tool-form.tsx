@@ -1014,7 +1014,6 @@ export function Workbench({
                 value={outputName}
                 onChange={(event) => setOutputName(event.target.value)}
                 placeholder={`e.g. ${operation.id}-result (without extension)`}
-                maxLength={100}
               />
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {operation.output === 'json'

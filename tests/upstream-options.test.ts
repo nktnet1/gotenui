@@ -408,10 +408,11 @@ test('Chromium reliability controls convert friendly strings to upstream JSON ar
     )
   }
   for (const invalid of [
-    'https://evil.test/path',
-    'example.test/anything',
-    'example.test:443',
-    '.com',
+    'https://',
+    'example.test:invalid-port',
+    'https://user:password@example.test',
+    'example.test,',
+    'example.test\r\nX-Header: malicious',
   ]) {
     assert.throws(
       () =>
@@ -469,4 +470,34 @@ test('Gotenberg backend capability checks reject unknown versions without guessi
   assert.equal(versionAtLeast('v8.36.0', 36), true)
   assert.equal(versionAtLeast('8.35.1', 36), false)
   assert.equal(versionAtLeast('9.0.0', 36), null)
+})
+
+test('resource exclusions match Gotenberg 9 URL/port forms and unlimited status-code lists', () => {
+  const domains = [
+    'Example.com:443',
+    'https://Example.com/ignored/path',
+    'example.com/other/path',
+    '*.example.com',
+    '.example.com',
+    ...Array.from({ length: 35 }, (_, i) => `cdn${i}.example.com`),
+  ]
+  const statuses = Array.from({ length: 40 }, (_, i) => String(i + 400))
+  const spec = operation('url-shot')
+  const { payload } = validatePayload(
+    request('url-shot', {
+      failOnResourceHttpStatusCodes: statuses.join(', '),
+      ignoreResourceHttpStatusDomains: domains.join(', '),
+    }),
+  )
+  const form = createGotenbergForm(spec, payload, [], [])
+  assert.deepEqual(
+    JSON.parse(String(form.get('failOnResourceHttpStatusCodes'))),
+    statuses.map(Number),
+  )
+  assert.deepEqual(
+    JSON.parse(String(form.get('ignoreResourceHttpStatusDomains'))),
+    domains.map((domain) => domain.toLowerCase()),
+  )
+  assert.deepEqual(parseIgnoredDomains('Example.com, example.com'), ['example.com'])
+  assert.deepEqual(parseStatusCodes('404, 499, 404'), [404, 499])
 })

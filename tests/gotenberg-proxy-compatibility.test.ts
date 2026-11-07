@@ -914,3 +914,32 @@ test('does not acknowledge a webhook if Gotenberg upgrades after its version pro
     },
   )
 })
+
+test('v9 proxy forwards large PDF pipeline JSON below the configured byte budget', async () => {
+  const longStamp = 'X'.repeat(410_000)
+  const stages = JSON.stringify([{ op: 'stamp-text', text: longStamp }])
+  const fixture = upstreamFixture('9.1.0', (form) => {
+    const received = JSON.parse(String(form.get('stages')))
+    assert.deepEqual(received, [{ op: 'stamp-text', text: longStamp }])
+  })
+  const result = await proxyConversionRequest(
+    requestFor('pdf-pipeline', { stages }, {}, [new File(['%PDF-1.7'], 'document.pdf')]),
+    fixture.fetcher,
+  )
+  assert.equal(result.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
+test('v9 proxy forwards punctuation in the Gotenberg output filename header', async () => {
+  const name = 'Q4 & FY26 (approved)'
+  const fixture = upstreamFixture('9.1.0', (_form, headers) => {
+    assert.equal(headers.get('Gotenberg-Output-Filename'), name)
+  })
+  const result = await proxyConversionRequest(
+    requestFor('html-pdf', {}, { outputName: name }),
+    fixture.fetcher,
+  )
+  assert.equal(result.status, 200)
+  assert.match(result.headers.get('content-disposition') ?? '', /Q4 & FY26 \(approved\)\.pdf/)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})

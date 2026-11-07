@@ -36,23 +36,40 @@ export function updateConsoleMessageTypes(
 
 export function parseStatusCodes(input: string): number[] {
   const parts = input.split(',').map((value) => value.trim())
-  if (parts.length > 30 || parts.some((value) => !/^[1-5]\d\d$/.test(value))) {
-    throw new Error('Enter up to 30 HTTP status codes (100–599) separated by commas.')
+  if (parts.some((value) => !/^[1-5]\d\d$/.test(value))) {
+    throw new Error('Enter HTTP status codes (100–599) separated by commas.')
   }
   return [...new Set(parts.map(Number))]
 }
 
 export function parseIgnoredDomains(input: string): string[] {
   const parts = input.split(',').map((value) => value.trim())
-  if (
-    parts.length > 30 ||
-    parts.some(
-      (value) =>
-        value.length > 253 ||
-        !/^(?:\*\.|\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(value),
-    )
-  ) {
-    throw new Error('Enter up to 30 domain names separated by commas, without URLs or paths.')
+  for (const value of parts) {
+    // Gotenberg 9 normalises full URLs, ports, paths and wildcard prefixes to
+    // hostnames. Retain the original spelling for Gotenberg to normalise.
+    if (
+      !value ||
+      [...value].some((char) => {
+        const code = char.codePointAt(0) ?? 0
+        return code < 32 || code === 127
+      })
+    ) {
+      throw new Error('Enter comma-separated asset exclusion domains or URLs.')
+    }
+    const candidate = value.replace(/^\*\./u, '').replace(/^\./u, '')
+    const url = candidate.startsWith('//')
+      ? `https:${candidate}`
+      : /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)
+        ? candidate
+        : `https://${candidate}`
+    try {
+      const parsed = new URL(url)
+      if (!parsed.hostname || parsed.username || parsed.password) {
+        throw new Error('Invalid asset exclusion hostname.')
+      }
+    } catch {
+      throw new Error('Enter comma-separated asset exclusion domains or URLs.')
+    }
   }
   return [...new Set(parts.map((value) => value.toLowerCase()))]
 }

@@ -60,7 +60,7 @@ function v9MediaFeatures(form: FormData): void {
   if (!Array.isArray(rows)) {
     throw new InputError('Chromium media features must contain name/value pairs.')
   }
-  const features: Record<string, string> = {}
+  const features: Record<string, string> = Object.create(null)
   for (const item of rows) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       throw new InputError('Invalid Chromium media feature.')

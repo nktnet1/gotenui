@@ -300,3 +300,16 @@ describe('read existing PDF structure into visual writers', () => {
     )
   })
 })
+
+it('native LibreOffice watermarks accept long upstream-supported text', () => {
+  const longWatermark = 'Confidential – '.repeat(80)
+  for (const name of ['nativeWatermarkText', 'nativeTiledWatermarkText']) {
+    const { payload, operation } = validatePayload({
+      operation: 'office-pdf',
+      fields: { [name]: longWatermark },
+      advanced: {},
+    })
+    const form = createGotenbergForm(operation, payload, [office], [])
+    assert.equal(form.get(name), longWatermark)
+  }
+})

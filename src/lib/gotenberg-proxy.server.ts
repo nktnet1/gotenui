@@ -488,7 +488,7 @@ export async function proxyConversionRequest(
   const postFiles: PostProcessFiles = {}
   let payloadCount = 0
   for (const [key, value] of fields) {
-    if (key === 'payload' && typeof value === 'string' && value.length <= 400_000) {
+    if (key === 'payload' && typeof value === 'string') {
       payloadCount++
       try {
         candidate = JSON.parse(value)

@@ -68,7 +68,7 @@ export const payloadSchema = v.object({
   postProcess: v.optional(pdfPostProcessSchema),
   conversionStages: v.optional(v.pipe(v.string(), v.minLength(1))),
   acknowledgedConversionRedaction: v.optional(v.boolean()),
-  outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
+  outputName: v.optional(v.string()),
   requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
   traceparent: v.optional(v.pipe(v.string(), v.maxLength(55))),
   tracestate: v.optional(v.pipe(v.string(), v.maxLength(512))),
@@ -1001,15 +1001,20 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     ) {
       throw new InputError('Custom PDF zoom requires Custom zoom magnification.')
     }
-    for (const name of [
-      'nativeWatermarkText',
-      'nativeTiledWatermarkText',
-      'nativeWatermarkFontName',
-    ]) {
+    for (const name of ['nativeWatermarkText', 'nativeTiledWatermarkText']) {
       const value = payload.fields[name]
-      if (typeof value === 'string' && (value.length > 500 || /[\r\n]/.test(value))) {
-        throw new InputError(`Invalid ${name}: use a single line of at most 500 characters.`)
+      if (typeof value === 'string' && /[\r\n]/.test(value)) {
+        throw new InputError(`Invalid ${name}: use a single line of text.`)
       }
+    }
+    const watermarkFont = payload.fields.nativeWatermarkFontName
+    if (
+      typeof watermarkFont === 'string' &&
+      (watermarkFont.length > 500 || /[\r\n]/.test(watermarkFont))
+    ) {
+      throw new InputError(
+        'Invalid nativeWatermarkFontName: use a single line of at most 500 characters.',
+      )
     }
     if (typeof payload.fields.password === 'string' && payload.fields.password.length > 1024) {
       throw new InputError('Source document password is too long.')
@@ -1230,8 +1235,8 @@ export function validatePayload(input: unknown): {
   ) {
     throw new InputError('Unify is supported only in pages mode.')
   }
-  if (payload.outputName && !/^[\p{L}\p{N}][\p{L}\p{N}\p{M} _-]{0,99}$/u.test(payload.outputName)) {
-    throw new InputError('Output name contains invalid characters.')
+  if (payload.outputName) {
+    safeFilename(payload.outputName)
   }
   if (operation.id === 'merge' && payload.advanced.bookmarks !== undefined) {
     try {

@@ -50,3 +50,13 @@ test('rejects newline injection, path-like filenames, malformed trace context, a
     assert.throws(() => validatePayload(payload(metadata)), InputError, JSON.stringify(metadata))
   }
 })
+
+test('accepts Gotenberg output filenames with punctuation, Unicode and longer names', () => {
+  for (const name of ['Q4 & FY26', 'R&D (final)', '日本語 & résumé', 'a'.repeat(160)]) {
+    assert.equal(validatePayload(payload({ outputName: name })).payload.outputName, name)
+  }
+  for (const name of ['', '  ', '..', '../other', 'folder\\name', 'bad\u0000name']) {
+    if (name === '') continue // Omitting the optional field is allowed.
+    assert.throws(() => validatePayload(payload({ outputName: name })), InputError, name)
+  }
+})
