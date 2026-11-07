@@ -162,23 +162,8 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
   if (!pdf && (payload.headerHtml !== undefined || payload.footerHtml !== undefined)) {
     throw new InputError('Custom headers and footers are supported only for Chromium PDF output.')
   }
-  for (const [name, html] of [
-    ['Header', payload.headerHtml],
-    ['Footer', payload.footerHtml],
-  ] as const) {
-    if (html === undefined) continue
-    if (
-      !html.trim() ||
-      !/<html\b[^>]*>/i.test(html) ||
-      !/<\/html\s*>/i.test(html) ||
-      !/<head\b[^>]*>/i.test(html) ||
-      !/<\/head\s*>/i.test(html) ||
-      !/<body\b[^>]*>/i.test(html) ||
-      !/<\/body\s*>/i.test(html)
-    ) {
-      throw new InputError(`${name} must be a complete HTML document with html, head and body.`)
-    }
-  }
+  // Gotenberg reads header.html and footer.html verbatim as Chromium print
+  // templates. HTML fragments are valid; Chrome provides their document context.
 }
 
 /** Validate outbound URL and per-request header metadata without fetching remote content here. */
@@ -371,7 +356,7 @@ function validatePostProcessFiles(
   const embeddedNames = new Set<string>()
   for (const file of postFiles) {
     const name = safeFilename(file.name)
-    if (!file.size) throw new InputError(`${name} is empty.`)
+    if (!file.size && !embedded.includes(file)) throw new InputError(`${name} is empty.`)
     total += file.size
     if (total > maxBytes)
       throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
@@ -684,8 +669,9 @@ export function validateFiles(
     if (
       file.size === 0 &&
       !(
-        (auxiliary.includes(file) || stageFiles.includes(file)) &&
-        emptyAttachmentNames.has(name.normalize('NFC'))
+        (operation.id === 'embed' && auxiliary.includes(file)) ||
+        ((auxiliary.includes(file) || stageFiles.includes(file)) &&
+          emptyAttachmentNames.has(name.normalize('NFC')))
       )
     ) {
       throw new InputError(`${name} is empty.`)
@@ -1073,13 +1059,6 @@ export function validatePayload(input: unknown): {
       }
       if (field.kind === 'color' && value && !/^#[0-9a-f]{6}$/i.test(value)) {
         throw new InputError(`${field.label} must be a six-digit hex colour.`)
-      }
-      if (
-        field.name === 'nativeWatermarkRotateAngle' &&
-        value &&
-        Math.abs(Number(value) * 10 - Math.round(Number(value) * 10)) > 1e-7
-      ) {
-        throw new InputError('Native watermark rotation supports one decimal place.')
       }
       if (field.kind === 'json' && value) {
         try {

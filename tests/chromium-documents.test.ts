@@ -78,10 +78,24 @@ describe('Chromium PDF headers and footers', () => {
     },
   )
 
-  test.each(['', '<div>Partial HTML</div>', '<html><body>Missing head</body></html>'])(
-    'rejects incomplete header markup',
-    (invalid) => {
-      assert.throws(() => makePayload('url-pdf', { headerHtml: invalid }), /complete HTML/)
+  test.each([
+    '',
+    '<div>Page <span class="pageNumber"></span></div>',
+    '<html><body>Missing head</body></html>',
+  ])(
+    'accepts header/footer HTML fragments without requiring an HTML document skeleton',
+    async (html) => {
+      const { operation, payload } = makePayload('url-pdf', { headerHtml: html, footerHtml: html })
+      validateFiles(operation, [], [], 4_000_000, payload)
+      const form = createGotenbergForm(operation, payload, [], [])
+      const templates = (form.getAll('files') as File[]).filter((file) =>
+        ['header.html', 'footer.html'].includes(file.name),
+      )
+      assert.deepEqual(
+        templates.map((file) => file.name),
+        ['header.html', 'footer.html'],
+      )
+      assert.deepEqual(await Promise.all(templates.map((file) => file.text())), [html, html])
     },
   )
 

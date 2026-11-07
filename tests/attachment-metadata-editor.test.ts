@@ -137,6 +137,48 @@ describe('native PDF/A attachment metadata editor', () => {
     }
   })
 
+  test('accepts empty embedded attachments in standalone and conversion requests', () => {
+    const empty = new File([], 'empty.txt', { type: 'text/plain' })
+    const standalone = validatePayload({
+      operation: 'embed',
+      fields: { embedsMetadata: '{"empty.txt":{"relationship":"Data"}}' },
+      advanced: {},
+    })
+    validateFiles(standalone.operation, [pdf], [empty], 4_000_000, standalone.payload)
+    const embedForm = createGotenbergForm(standalone.operation, standalone.payload, [pdf], [empty])
+    const embedFile = embedForm.get('embeds') as File
+    assert.equal(embedFile.name, 'empty.txt')
+    assert.equal(embedFile.size, 0)
+
+    const conversion = validatePayload({
+      operation: 'url-pdf',
+      fields: { url: 'https://example.test' },
+      advanced: {},
+      postProcess: { embedsMetadata: '{"empty.txt":{"relationship":"Data"}}' },
+    })
+    const postFiles = { embeds: [empty] }
+    validateFiles(conversion.operation, [], [], 4_000_000, conversion.payload, postFiles)
+    const converted = createGotenbergForm(
+      conversion.operation,
+      conversion.payload,
+      [],
+      [],
+      4_000_000,
+      postFiles,
+    )
+    assert.equal((converted.get('embeds') as File).size, 0)
+    assert.equal(converted.get('embedsMetadata'), '{"empty.txt":{"relationship":"Data"}}')
+
+    const emptySource = new File([], 'source.pdf', { type: 'application/pdf' })
+    expect(() =>
+      validateFiles(standalone.operation, [emptySource], [empty], 4_000_000, standalone.payload),
+    ).toThrow(/empty/)
+    const invalidPostFiles = { embeds: [empty], facturxXml: new File([], 'invoice.xml') }
+    expect(() =>
+      validateFiles(conversion.operation, [], [], 4_000_000, conversion.payload, invalidPostFiles),
+    ).toThrow(/empty/)
+  })
+
   test('renders uploaded and remote attachment controls as native inputs', () => {
     const html = renderToStaticMarkup(
       createElement(AttachmentMetadataEditor, {

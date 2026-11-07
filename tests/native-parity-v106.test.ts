@@ -127,14 +127,47 @@ describe('v1.0.6 official native fields', () => {
         /colour/,
       )
     }
+    const fractional = validated('office-pdf', {
+      nativeWatermarkText: 'DRAFT',
+      nativeWatermarkRotateAngle: '12.34',
+    })
+    const v9Form = createGotenbergForm(
+      fractional.operation,
+      fractional.payload,
+      [office],
+      [],
+      4_000_000,
+      {},
+      [],
+      9,
+    )
+    assert.equal(v9Form.get('nativeWatermarkRotateAngle'), '12.34')
     assert.throws(
-      () =>
-        validated('office-pdf', {
-          nativeWatermarkText: 'DRAFT',
-          nativeWatermarkRotateAngle: '12.34',
-        }),
+      () => createGotenbergForm(fractional.operation, fractional.payload, [office], []),
       /one decimal/,
     )
+    const multipleTurns = validated('office-pdf', {
+      nativeWatermarkText: 'DRAFT',
+      nativeWatermarkRotateAngle: '-720.125',
+      nativeWatermarkFontHeight: '1200',
+      zoom: '1500',
+      magnification: '4',
+      initialPage: '100001',
+    })
+    const v9MultipleTurns = createGotenbergForm(
+      multipleTurns.operation,
+      multipleTurns.payload,
+      [office],
+      [],
+      4_000_000,
+      {},
+      [],
+      9,
+    )
+    assert.equal(v9MultipleTurns.get('nativeWatermarkRotateAngle'), '-720.125')
+    assert.equal(v9MultipleTurns.get('nativeWatermarkFontHeight'), '1200')
+    assert.equal(v9MultipleTurns.get('zoom'), '1500')
+    assert.equal(v9MultipleTurns.get('initialPage'), '100001')
     assert.throws(
       () => validated('office-pdf', { nativeWatermarkText: 'bad\nnewline' }),
       /single line/,

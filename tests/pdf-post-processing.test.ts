@@ -331,12 +331,15 @@ describe('Single-request PDF post-processing', () => {
     )
   })
 
-  test('rejects duplicate, oversized, empty, or wrongly typed upload files', () => {
+  test('rejects duplicate and oversized files while permitting empty embedded attachments', () => {
     assert.throws(
       () => form('url-pdf', {}, { embeds: [first, new File(['other'], 'FIRST.TXT')] }),
       /Duplicate PDF attachment/,
     )
-    assert.throws(() => form('url-pdf', {}, { embeds: [new File([], 'empty.txt')] }), /empty/)
+    assert.equal(
+      (form('url-pdf', {}, { embeds: [new File([], 'empty.txt')] }).get('embeds') as File).size,
+      0,
+    )
     const parsed = validatePayload(candidate('url-pdf'))
     assert.throws(
       () =>

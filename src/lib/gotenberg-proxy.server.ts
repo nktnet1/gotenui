@@ -608,6 +608,7 @@ export async function proxyConversionRequest(
     maxBytes,
     postFiles,
     archives,
+    major,
   )
   const { path, form } =
     operation.input === 'pdf'

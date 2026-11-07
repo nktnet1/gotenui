@@ -2,6 +2,7 @@ import { toast } from 'sonner'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Textarea } from '#/components/ui/textarea'
+import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
 
 type Props = {
   headerHtml: string
@@ -10,16 +11,14 @@ type Props = {
   onFooterChange: (value: string) => void
 }
 
-const fileLimit = 50_000
-
 async function loadHtml(file: File | undefined, label: string, onChange: (value: string) => void) {
   if (!file) return
   if (!/\.html?$/i.test(file.name)) {
     toast.error(`Choose an HTML file for the ${label.toLowerCase()}.`)
     return
   }
-  if (file.size > fileLimit) {
-    toast.error(`${label} HTML must be 50 KB or smaller.`)
+  if (file.size > MAX_UPLOAD_BYTES) {
+    toast.error(`${label} HTML exceeds the configured upload limit.`)
     return
   }
   try {
@@ -42,10 +41,10 @@ export function ChromiumPdfAssets({
           Custom PDF header and footer
         </h3>
         <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-          Optional complete HTML documents, sent as header.html and footer.html. Gotenberg renders
-          them in a separate Chromium context: inline CSS and base64-encoded images only. External
-          resources and JavaScript do not work. Allow enough top/bottom page margin to avoid
-          clipping.
+          Optional HTML fragments or full documents, sent as header.html and footer.html. Gotenberg
+          renders them in a separate Chromium context: inline CSS and base64-encoded images only.
+          External resources and JavaScript do not work. Allow enough top/bottom page margin to
+          avoid clipping.
         </p>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">

@@ -3,6 +3,7 @@ import { normalizeBackendUrl } from '#/lib/backend-url'
 import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { CHROMIUM_MEDIA_OPTIONS, encodeChromiumMediaFeatures } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
+import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
 import {
@@ -173,6 +174,7 @@ export function createGotenbergForm(
   maxBytes = MAX_UPLOAD_BYTES,
   postFiles: PostProcessFiles = {},
   archives: readonly File[] = [],
+  major?: SupportedGotenbergMajor,
 ): FormData {
   validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, [], archives)
   const form = new FormData()
@@ -190,12 +192,16 @@ export function createGotenbergForm(
             files.map((file) => file.name),
           )
         : String(value)
+    // The legacy LibreOffice encoder expects tenths of a degree, whereas
+    // Gotenberg 9 parses arbitrary finite degree values itself.
     form.set(
       key,
-      encodeOfficialField(
-        operation.fields.find((field) => field.name === key),
-        encoded,
-      ),
+      major === 9 && key === 'nativeWatermarkRotateAngle'
+        ? encoded
+        : encodeOfficialField(
+            operation.fields.find((field) => field.name === key),
+            encoded,
+          ),
     )
   }
   if (isChromium) {

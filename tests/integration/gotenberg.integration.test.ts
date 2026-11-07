@@ -501,6 +501,24 @@ test.skipIf(!isV9)(
 )
 
 test.skipIf(!isV9)(
+  'Gotenberg 9 embeds zero-byte attachments without rejecting their uploaded files',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'embed')
+    if (!operation) throw new Error('Missing PDF embed operation')
+    const response = await proxyConversionRequest(
+      request(operation, {}, [pdfFile()], [new File([], 'empty.txt', { type: 'text/plain' })]),
+    )
+    if (!response.ok) {
+      throw new Error(`Empty attachment: ${response.status} ${await response.text()}`)
+    }
+    expect(
+      JSON.stringify(await inspectV9Pdf('attachments', await response.arrayBuffer())),
+    ).toContain('empty.txt')
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
   'Gotenberg 9 extracts named PDF stage assets while skipping macOS ZIP metadata',
   async () => {
     const pipeline = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
@@ -1535,6 +1553,30 @@ test.each(['url-pdf', 'html-pdf', 'markdown-pdf'])(
   120_000,
 )
 
+test.skipIf(!isV9)(
+  'Gotenberg 9 accepts Chromium header and footer fragments without document wrappers',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!operation) throw new Error('Missing HTML conversion')
+    const response = await proxyConversionRequest(
+      request(operation, {
+        source: '<html><body><h1>Header fragments</h1></body></html>',
+        headerHtml: '<div>Page <span class="pageNumber"></span></div>',
+        footerHtml: '<div>Footer</div>',
+        fields: { marginTop: '0.8', marginBottom: '0.8' },
+      }),
+    )
+    if (!response.ok) {
+      throw new Error(`Fragment header: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(
+      new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+    ).toBe('%PDF-')
+  },
+  120_000,
+)
+
 test.each(['markdown-pdf', 'markdown-shot'])(
   'Gotenberg renders %s with a custom template, two Markdown files and a local stylesheet',
   async (id) => {
@@ -1808,6 +1850,26 @@ test('LibreOffice applies documented PDF viewer preferences to a real source fil
     new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
   ).toBe('%PDF-')
 }, 120_000)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 accepts fractional LibreOffice watermark rotation in degrees',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!operation) throw new Error('Missing Office conversion')
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        { fields: { nativeWatermarkText: 'DRAFT', nativeWatermarkRotateAngle: '12.34' } },
+        [new File(['Sample document'], 'watermark.txt', { type: 'text/plain' })],
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(`Fractional rotation: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+  },
+  120_000,
+)
 
 const officeCompressionCases: {
   description: string
