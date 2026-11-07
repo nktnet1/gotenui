@@ -211,7 +211,7 @@ export async function validateZipInputs(
         : []
   const stageAssets = new Set(pdfStageAssetNames(stages))
   const remoteAssets = (payload.downloadFrom ?? []).filter(
-    (remote) => remote.name !== undefined && stageAssets.has(remote.name),
+    (remote) => remote.name !== undefined && stageAssets.has(remote.name.normalize('NFC')),
   )
   const remoteSources = (payload.downloadFrom ?? []).filter(
     (remote) => !remote.field && !remote.embedded && !remoteAssets.includes(remote),

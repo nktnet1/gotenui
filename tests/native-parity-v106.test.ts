@@ -268,6 +268,23 @@ describe('read existing PDF structure into visual writers', () => {
     )
   })
 
+  it('imports NFC-keyed metadata and bookmarks for decomposed Unicode upload names', () => {
+    const localName = 're\u0301sume\u0301.pdf'
+    const responseName = localName.normalize('NFC')
+    assert.deepEqual(
+      JSON.parse(importReadableMetadata({ [responseName]: { Title: 'Updated' } }, localName)),
+      { Title: 'Updated' },
+    )
+    assert.deepEqual(
+      JSON.parse(
+        importReadableBookmarks({ [responseName]: [{ title: 'Part 1', pageNumber: 1 }] }, [
+          localName,
+        ]),
+      ),
+      [{ title: 'Part 1', page: 1 }],
+    )
+  })
+
   it('imports large metadata and bookmark documents without the old 10 KB editor cap', () => {
     const title = 'Annual report '.repeat(1_000)
     const metadata = importReadableMetadata({ 'report.pdf': { Title: title } }, 'report.pdf')

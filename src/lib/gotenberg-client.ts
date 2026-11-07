@@ -212,8 +212,8 @@ export function createGotenbergForm(
   }
   if (operation.input === 'html' || operation.input === 'markdown') {
     const markdownNames = [
-      payload.markdownName ?? DEFAULT_MARKDOWN_NAME,
-      ...(payload.markdownFiles ?? []).map((file) => file.name),
+      (payload.markdownName ?? DEFAULT_MARKDOWN_NAME).normalize('NFC'),
+      ...(payload.markdownFiles ?? []).map((file) => file.name.normalize('NFC')),
     ]
     const html =
       operation.input === 'html'
@@ -226,7 +226,10 @@ export function createGotenbergForm(
         new File([payload.source ?? ''], markdownNames[0], { type: 'text/markdown' }),
       )
       for (const file of payload.markdownFiles ?? []) {
-        form.append('files', new File([file.content], file.name, { type: 'text/markdown' }))
+        form.append(
+          'files',
+          new File([file.content], file.name.normalize('NFC'), { type: 'text/markdown' }),
+        )
       }
     }
     for (const file of auxiliary) form.append('files', file, file.name)

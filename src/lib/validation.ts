@@ -4,11 +4,7 @@ import {
   isAttachmentMimeType,
   parseAttachmentMetadata,
 } from '#/lib/attachment-metadata'
-import {
-  DEFAULT_MARKDOWN_NAME,
-  defaultMarkdownTemplate,
-  markdownTemplateReferences,
-} from '#/lib/chromium-documents'
+import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
 import { safeFilename as checkFilename, filenameKey } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
@@ -148,30 +144,17 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
   }
   if (isMarkdown) {
     const names = [
-      markdownName(payload.markdownName ?? DEFAULT_MARKDOWN_NAME),
-      ...(payload.markdownFiles ?? []).map((file) => markdownName(file.name)),
+      markdownName(payload.markdownName ?? DEFAULT_MARKDOWN_NAME).normalize('NFC'),
+      ...(payload.markdownFiles ?? []).map((file) => markdownName(file.name).normalize('NFC')),
     ]
     if (new Set(names.map(filenameKey)).size !== names.length) {
       throw new InputError('Markdown filenames must be unique (case-insensitive).')
     }
-    for (const file of payload.markdownFiles ?? []) {
-      if (!file.content.trim()) throw new InputError(`${file.name} has no Markdown content.`)
-    }
     const template = payload.markdownTemplate ?? defaultMarkdownTemplate(names)
     if (!template.trim()) throw new InputError('The Markdown template must not be empty.')
-    const references = markdownTemplateReferences(template)
-    if (!references.length) {
-      throw new InputError('The Markdown template must contain {{ toHTML "file.md" }} calls.')
-    }
-    const included = new Set(references)
-    for (const reference of references) {
-      if (!names.includes(reference)) {
-        throw new InputError(`Markdown template references missing file: ${reference}`)
-      }
-    }
-    for (const name of names) {
-      if (!included.has(name)) throw new InputError(`Markdown template does not render ${name}.`)
-    }
+    // Go html/template permits static, dynamic and conditional toHTML calls.
+    // Unused or conditionally missing files are valid; Gotenberg resolves
+    // actual references when executing the template.
   }
 
   const pdf =
@@ -572,7 +555,10 @@ export function validateFiles(
       )
       remote.input -= payload.downloadFrom.filter(
         (file) =>
-          !file.field && !file.embedded && file.name !== undefined && stageAssets.has(file.name),
+          !file.field &&
+          !file.embedded &&
+          file.name !== undefined &&
+          stageAssets.has(file.name.normalize('NFC')),
       ).length
     }
   }
@@ -697,7 +683,10 @@ export function validateFiles(
     total += file.size
     if (
       file.size === 0 &&
-      !((auxiliary.includes(file) || stageFiles.includes(file)) && emptyAttachmentNames.has(name))
+      !(
+        (auxiliary.includes(file) || stageFiles.includes(file)) &&
+        emptyAttachmentNames.has(name.normalize('NFC'))
+      )
     ) {
       throw new InputError(`${name} is empty.`)
     }
@@ -1213,7 +1202,7 @@ export function validatePayload(input: unknown): {
     if (typeof value === 'number' && !Number.isFinite(value))
       throw new InputError('Advanced values must be finite.')
   }
-  if ((operation.input === 'html' || operation.input === 'markdown') && !payload.source?.trim()) {
+  if (operation.input === 'html' && !payload.source?.trim()) {
     throw new InputError('Enter some source content first.')
   }
   validateChromiumDocuments(operation, payload)

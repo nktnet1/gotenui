@@ -174,6 +174,14 @@ describe('Gotenberg 9 PDF stages', () => {
     )
   })
 
+  it('uses Gotenberg NFC filenames for standalone insertion stages', () => {
+    const decomposed = 're\u0301sume\u0301.pdf'
+    const extra = new File(['%PDF-1.7\n'], decomposed)
+    const result = adapted('insert-pages', { at: '1' }, [extra])
+    assert.deepEqual(result.stages, [{ op: 'insert', source: decomposed.normalize('NFC'), at: 1 }])
+    assert.equal((result.form.getAll('files')[1] as File).name, decomposed)
+  })
+
   it('fills interactive fields only from a name-to-values JSON object', () => {
     const values = JSON.stringify({ 'Address.City': 'Sydney', 'Choices.List': ['one', 'two'] })
     assert.deepEqual(adapted('fill-form', { formValues: values }).stages, [

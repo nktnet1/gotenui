@@ -477,6 +477,18 @@ test('v9 attaches named stage uploads to PDF conversions, without changing the s
   assert.equal(adapted.get('stages'), '[{"op":"attach","file":"receipt.txt"}]')
 })
 
+test('v9 conversion-time assets match NFC filenames, including original Unicode upload names', () => {
+  const decomposed = 're\u0301sume\u0301.txt'
+  const normalized = decomposed.normalize('NFC')
+  const { operation, payload, form } = fixture('html-pdf', {
+    conversionStages: JSON.stringify([{ op: 'attach', file: decomposed }]),
+  })
+  const attachment = new File(['receipt'], decomposed)
+  const adapted = adaptConversionForm(operation, payload, form, 9, [attachment])
+  assert.deepEqual(JSON.parse(String(adapted.get('stages'))), [{ op: 'attach', file: normalized }])
+  assert.equal((adapted.getAll('files').at(-1) as File).name, decomposed)
+})
+
 test('v8 rejects conversion-time stages rather than silently ignoring them', () => {
   const { operation, payload, form } = fixture('html-pdf', {
     source: '<html><body>Test</body></html>',

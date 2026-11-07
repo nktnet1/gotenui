@@ -52,10 +52,8 @@ export function MarkdownAssetsEditor({
     try {
       for (const file of selected) {
         safeFilename(file.name)
-        if (!/\.md$/i.test(file.name) || !file.size || file.size > MAX_UPLOAD_BYTES) {
-          throw new Error(
-            `Choose a non-empty .md file within the configured upload limit: ${file.name}`,
-          )
+        if (!/\.md$/i.test(file.name) || file.size > MAX_UPLOAD_BYTES) {
+          throw new Error(`Choose a .md file within the configured upload limit: ${file.name}`)
         }
         if (seen.has(file.name.toLowerCase())) {
           throw new Error(`Duplicate Markdown filename: ${file.name}`)

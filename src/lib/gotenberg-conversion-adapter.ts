@@ -1,5 +1,5 @@
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
-import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import { normalizePdfStageAssets, parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError, supportsArchiveInputs } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
@@ -322,7 +322,7 @@ export function adaptConversionForm(
       ),
     )
     for (const file of stageFiles) {
-      if (!referenced.has(file.name)) {
+      if (!referenced.has(file.name.normalize('NFC'))) {
         throw new InputError(`Unused conversion stage file: ${file.name}.`)
       }
     }
@@ -343,7 +343,7 @@ export function adaptConversionForm(
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
         acknowledgedRedaction: payload.acknowledgedConversionRedaction,
       })
-      form.set('stages', JSON.stringify(stages))
+      form.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))
     }
     for (const file of stageFiles) form.append('files', file, file.name)
   } else if (payload.conversionStages || stageFiles.length) {

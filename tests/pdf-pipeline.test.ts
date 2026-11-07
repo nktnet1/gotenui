@@ -211,6 +211,44 @@ describe('PDF pipeline catalogue and stage contract', () => {
     )
     assert.equal(form.has('auxiliary'), false)
   })
+  it('normalises Unicode asset references without altering embedded attachment names', () => {
+    const original = 'cafe\u0301.txt'
+    const canonical = original.normalize('NFC')
+    const displayed = 'Re\u0301sume\u0301.txt'
+    const stages = [{ op: 'attach', file: original, name: displayed }]
+    const expected = [{ op: 'attach', file: canonical, name: displayed }]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages), { assetNames: [original] }), expected)
+    const attachment = new File(['evidence'], original)
+    const { payload, legacy } = input(stages, [attachment])
+    assert.doesNotThrow(() =>
+      validateFiles(
+        operation,
+        [new File(['%PDF-1.7'], 'input.pdf')],
+        [attachment],
+        4_000_000,
+        payload,
+      ),
+    )
+    const { form } = adaptPdfPipeline(payload, legacy, [attachment])
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), expected)
+    assert.equal((form.getAll('files')[1] as File).name, original)
+  })
+
+  it('matches decomposed Unicode remote asset hints to canonical pipeline references', () => {
+    const decomposed = 'cafe\u0301.png'
+    const canonical = decomposed.normalize('NFC')
+    const stages = [{ op: 'stamp-image', image: decomposed, x: 10, y: 20 }]
+    const { payload, legacy } = input(stages)
+    payload.downloadFrom = [{ url: 'https://example.test/assets/stamp', name: decomposed }]
+    legacy.set('downloadFrom', JSON.stringify([{ url: payload.downloadFrom[0]?.url }]))
+    assert.doesNotThrow(() =>
+      validateFiles(operation, [new File(['%PDF-1.7'], 'input.pdf')], [], 4_000_000, payload),
+    )
+    assert.deepEqual(JSON.parse(String(adaptPdfPipeline(payload, legacy, []).form.get('stages'))), [
+      { op: 'stamp-image', image: canonical, x: 10, y: 20 },
+    ])
+  })
+
   it('accepts remote input PDFs and PDF ZIPs without treating remote files as stage assets', () => {
     const { payload, legacy } = input([{ op: 'optimize' }])
     payload.downloadFrom = [

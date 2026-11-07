@@ -9,7 +9,7 @@ export function remoteStageAssets(
   references: readonly string[],
   localNames: readonly string[] = [],
 ): string[] {
-  const referenced = new Set(references)
+  const referenced = new Set(references.map((name) => name.normalize('NFC')))
   const known = new Set(localNames.map((name) => name.normalize('NFC').toLowerCase()))
   const assets: string[] = []
   for (const remote of remotes) {
@@ -22,7 +22,7 @@ export function remoteStageAssets(
       )
     }
     known.add(key)
-    if (referenced.has(remote.name)) assets.push(remote.name)
+    if (referenced.has(remote.name.normalize('NFC'))) assets.push(remote.name.normalize('NFC'))
   }
   return assets
 }

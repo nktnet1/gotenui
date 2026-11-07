@@ -184,26 +184,73 @@ describe('Markdown files and templates', () => {
     ])
   })
 
-  test('rejects missing and unrendered Markdown template references', () => {
-    assert.throws(
-      () => makePayload('markdown-pdf', { markdownTemplate: '<html>No toHTML action</html>' }),
-      /must contain/,
+  test('allows static, conditional, and dynamic Go templates with unused Markdown files', async () => {
+    const templates = [
+      '<html><body>No toHTML action</body></html>',
+      '{{ $file := "document.md" }}<html><body>{{ toHTML $file }}</body></html>',
+      '{{ if false }}{{ toHTML "missing.md" }}{{ end }}<html>Static content</html>',
+    ]
+    for (const markdownTemplate of templates) {
+      for (const operationId of ['markdown-pdf', 'markdown-shot']) {
+        const form = validateAssets(
+          operationId,
+          {
+            markdownTemplate,
+            markdownFiles: [{ name: 'unused.md', content: '# Not referenced' }],
+          },
+          [],
+        )
+        assert.equal(await (form.get('files') as File).text(), markdownTemplate)
+        assert.deepEqual(
+          (form.getAll('files') as File[]).map((file) => file.name),
+          ['index.html', 'document.md', 'unused.md'],
+        )
+      }
+    }
+  })
+
+  test('accepts empty primary and extra Markdown files when the HTML template is valid', async () => {
+    const { operation, payload } = makePayload('markdown-pdf', {
+      source: '',
+      markdownFiles: [{ name: 'empty.md', content: '' }],
+    })
+    validateFiles(operation, [], [], 4_000_000, payload)
+    const files = createGotenbergForm(operation, payload, [], []).getAll('files') as File[]
+    assert.deepEqual(
+      files.map((file) => file.size === 0),
+      [false, true, true],
     )
-    assert.throws(
-      () => makePayload('markdown-pdf', { markdownTemplate: '{{ toHTML "missing.md" }}' }),
-      /missing file: missing.md/,
+    assert.deepEqual(await Promise.all(files.slice(1).map((file) => file.text())), ['', ''])
+    assert.throws(() => makePayload('html-pdf', { source: '' }), /source content/)
+  })
+
+  test('NFC-normalises Markdown filenames and generated template references', async () => {
+    const decomposed = 'cafe\u0301.md'
+    const composed = decomposed.normalize('NFC')
+    const { operation, payload } = makePayload('markdown-pdf', {
+      markdownName: decomposed,
+      markdownFiles: [{ name: 're\u0301sume\u0301.md', content: '# Notes' }],
+    })
+    const files = createGotenbergForm(operation, payload, [], []).getAll('files') as File[]
+    assert.deepEqual(
+      files.map((file) => file.name),
+      ['index.html', composed, 're\u0301sume\u0301.md'.normalize('NFC')],
+    )
+    assert.deepEqual(
+      markdownTemplateReferences(await files[0].text()),
+      files.slice(1).map((f) => f.name),
     )
     assert.throws(
       () =>
         makePayload('markdown-pdf', {
-          markdownFiles: [{ name: 'second.md', content: '# Second' }],
-          markdownTemplate: '{{ toHTML "document.md" }}',
+          markdownName: decomposed,
+          markdownFiles: [{ name: composed, content: 'collision' }],
         }),
-      /does not render second.md/,
+      /unique/,
     )
   })
 
-  test('rejects filename collisions, empty Markdown, missing content and invalid filenames', () => {
+  test('rejects filename collisions and unsafe or invalid Markdown filenames', () => {
     const invalid = [
       { markdownFiles: [{ name: 'DOCUMENT.MD', content: 'Duplicate' }] },
       { markdownFiles: [{ name: 'document.md', content: 'Duplicate' }] },
@@ -211,10 +258,6 @@ describe('Markdown files and templates', () => {
     for (const extras of invalid) {
       assert.throws(() => makePayload('markdown-pdf', extras), /unique/)
     }
-    assert.throws(
-      () => makePayload('markdown-pdf', { markdownFiles: [{ name: 'empty.md', content: '' }] }),
-      /no Markdown content/,
-    )
     assert.throws(
       () => makePayload('markdown-pdf', { markdownFiles: [{ name: '../evil.md', content: 'Hi' }] }),
       /paths|control/,

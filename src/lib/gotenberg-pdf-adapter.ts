@@ -1,6 +1,7 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { metadataObject } from '#/lib/pdf-structure-editors'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -440,7 +441,8 @@ export function adaptPdfForm(
     if (value === undefined || value === '' || value === false) continue
     throw new InputError(`Gotenberg 9 does not support the '${name}' field on ${operation.title}.`)
   }
-  if (!readRoutes[operation.id]) output.set('stages', JSON.stringify(stages))
+  if (!readRoutes[operation.id])
+    output.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))
   return { path: readRoutes[operation.id] ?? '/forms/pdf/pipe', form: output }
 }
 

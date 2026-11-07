@@ -571,6 +571,20 @@ function validateStage(stage: PdfPipelineStage): void {
 
 const PDF_STAGE_FILE_FIELDS = ['source', 'image', 'file', 'certificate', 'key', 'xml'] as const
 
+/** Gotenberg NFC-normalises uploaded/archived filenames before resolving stages.
+ * Canonicalise only file references, never user-facing text or embedded names.
+ */
+export function normalizePdfStageAssets<T extends object>(stages: readonly T[]): T[] {
+  return stages.map((stage) => {
+    const normalized = { ...stage } as Record<string, unknown>
+    for (const key of PDF_STAGE_FILE_FIELDS) {
+      const name = normalized[key]
+      if (typeof name === 'string') normalized[key] = name.normalize('NFC')
+    }
+    return normalized as T
+  })
+}
+
 /** Files resolved by Gotenberg, whether uploaded individually or extracted from archives. */
 export function pdfStageAssetNames(stages: readonly PdfPipelineStage[]): string[] {
   return [
@@ -612,7 +626,7 @@ export function parsePdfPipeline(
   for (const [index, value] of decoded.entries()) {
     if (!object(value) || typeof value.op !== 'string' || !pipelineByOp.has(value.op))
       throw new InputError(`Stage ${index + 1} must select a supported PDF operation.`)
-    const stage = value as PdfPipelineStage
+    const stage = normalizePdfStageAssets([value as PdfPipelineStage])[0] as PdfPipelineStage
     validateStage(stage)
     const op = stage.op
     const previous = counts.get(op) ?? 0
@@ -664,7 +678,7 @@ export function parsePdfPipeline(
       if (seenFinal !== 'sign') seenFinal = 'sign'
     }
     if (context.assetNames) {
-      const assetNames = new Set(context.assetNames)
+      const assetNames = new Set(context.assetNames.map((name) => name.normalize('NFC')))
       for (const key of PDF_STAGE_FILE_FIELDS) {
         if (typeof stage[key] === 'string' && !assetNames.has(stage[key])) {
           throw new InputError(

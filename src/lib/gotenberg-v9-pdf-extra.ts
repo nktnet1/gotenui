@@ -1,6 +1,7 @@
 /** Strict request mapping for the Gotenberg 9-only PDF workflows. */
 
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
+import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
@@ -335,6 +336,6 @@ export function adaptV9PdfExtra(
     if (value('password')) form.set('password', fields.password as string)
     return { path: route, form }
   }
-  form.set('stages', JSON.stringify(stages))
+  form.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))
   return { path: '/forms/pdf/pipe', form }
 }
