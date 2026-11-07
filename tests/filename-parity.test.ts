@@ -123,7 +123,7 @@ test('preserves case-distinct asset filenames in standalone PDF requests and edi
   })
 })
 
-test('forwards duplicate source document filenames without rewriting or dropping inputs', async () => {
+test('preserves duplicate source contents while numbering pipeline merges only', async () => {
   const pipeline = OPERATION_BY_ID.get('pdf-pipeline')
   const info = OPERATION_BY_ID.get('pdf-info')
   const office = OPERATION_BY_ID.get('office-pdf')
@@ -144,7 +144,9 @@ test('forwards duplicate source document filenames without rewriting or dropping
     const sent = adapted.form.getAll('files') as File[]
     assert.deepEqual(
       sent.map((file) => file.name),
-      ['invoice.pdf', 'invoice.pdf'],
+      operation.id === 'pdf-pipeline'
+        ? ['01_invoice.pdf', '02_invoice.pdf']
+        : ['invoice.pdf', 'invoice.pdf'],
     )
     assert.deepEqual(await Promise.all(sent.map((file) => file.text())), [
       '%PDF-1.7 first',

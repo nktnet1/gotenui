@@ -247,6 +247,40 @@ describe('PDF pipeline catalogue and stage contract', () => {
     )
     assert.equal(form.has('auxiliary'), false)
   })
+
+  it('numbers only local input PDFs when a pipeline merges, preserving uploaded order and assets', async () => {
+    const stages = [
+      { op: 'set-metadata', title: 'Merge in upload order' },
+      { op: 'merge' },
+      { op: 'insert', source: '01_z-last.pdf', at: 0 },
+    ]
+    const { payload } = input(stages)
+    const legacy = new FormData()
+    const sources = [
+      new File(['first'], 'z-last.pdf'),
+      new File(['second'], '2-first.pdf'),
+      new File(['third'], '2-first.pdf'),
+    ]
+    for (const file of sources) legacy.append('files', file, file.name)
+    const asset = new File(['attachment'], '01_z-last.pdf')
+    const { form } = adaptPdfPipeline(payload, legacy, [asset])
+    assert.deepEqual(
+      (form.getAll('files') as File[]).map(({ name }) => name),
+      ['01__z-last.pdf', '02_2-first.pdf', '03_2-first.pdf', '01_z-last.pdf'],
+    )
+    assert.deepEqual(
+      await Promise.all((form.getAll('files') as File[]).map((file) => file.text())),
+      ['first', 'second', 'third', 'attachment'],
+    )
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
+
+    const noMerge = input([{ op: 'optimize' }]).payload
+    const unmerged = adaptPdfPipeline(noMerge, legacy, [])
+    assert.deepEqual(
+      (unmerged.form.getAll('files') as File[]).map(({ name }) => name),
+      ['z-last.pdf', '2-first.pdf', '2-first.pdf'],
+    )
+  })
   it('normalises Unicode asset references without altering embedded attachment names', () => {
     const original = 'cafe\u0301.txt'
     const canonical = original.normalize('NFC')
@@ -464,7 +498,7 @@ describe('PDF pipeline catalogue and stage contract', () => {
       /Duplicate filename/,
     )
   })
-  it('accepts PDF and ZIP output or final stage image output without allowing HTML', () => {
+  it('matches Gotenberg output types for PDF edits followed by rendering', () => {
     assert.deepEqual(pipelineResponseTypes(parsePdfPipeline('[{"op":"split","every":1}]')), [
       'application/pdf',
       'application/zip',
@@ -473,6 +507,12 @@ describe('PDF pipeline catalogue and stage contract', () => {
       'image/jpeg',
       'application/zip',
     ])
+    assert.deepEqual(
+      pipelineResponseTypes(
+        parsePdfPipeline('[{"op":"rotate","angle":90},{"op":"render","format":"png"}]'),
+      ),
+      ['application/zip'],
+    )
     assert.deepEqual(pipelineResponseTypes(parsePdfPipeline(DEFAULT_PDF_PIPELINE)), [
       'application/pdf',
       'application/zip',

@@ -723,7 +723,9 @@ export function parsePdfPipeline(
 export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): readonly string[] {
   const render = stages.at(-1)
   if (render?.op === 'render')
-    return [render.format === 'jpeg' ? 'image/jpeg' : 'image/png', 'application/zip']
+    return stages.length === 1
+      ? [render.format === 'jpeg' ? 'image/jpeg' : 'image/png', 'application/zip']
+      : ['application/zip']
   // A sole extraction returns extracted files only; combined stages also return
   // the processed PDF(s) alongside the extracted files, always as a ZIP.
   if (render?.op === 'extract-text')

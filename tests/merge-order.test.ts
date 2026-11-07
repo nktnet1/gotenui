@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
-import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
+import { mergeBookmarks, mergeUploadFilename, mergeUploadFilenames } from '#/lib/merge-order'
 import { OPERATION_BY_ID } from '#/lib/operations'
 import { validateFiles, validatePayload } from '#/lib/validation'
 
@@ -33,6 +33,17 @@ test('prefixes merge filenames numerically while preserving original names and c
     'first duplicate',
     'second duplicate',
   ])
+})
+
+test('keeps pipeline merge numbering stable even when a stage asset has a generated name', () => {
+  assert.deepEqual(
+    mergeUploadFilenames(
+      ['z-last.pdf', 'first.pdf', 'first.pdf'],
+      ['01_z-last.pdf', '01__z-last.pdf', '02_first.pdf'],
+    ),
+    ['01___z-last.pdf', '02__first.pdf', '03_first.pdf'],
+  )
+  assert.deepEqual(mergeUploadFilenames(['same.pdf', 'same.pdf']), ['01_same.pdf', '02_same.pdf'])
 })
 
 test('retains filename-keyed merge bookmarks including duplicate filenames and remote entries', () => {

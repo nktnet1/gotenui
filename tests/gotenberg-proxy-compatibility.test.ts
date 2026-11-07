@@ -716,10 +716,7 @@ test('routes an ordered v9 PDF pipeline with named auxiliary uploads through the
 
 test('accepts signed PNG output from a final v9 render stage and rejects MIME spoofing', async () => {
   const source = new File(['%PDF-1.7\n'], 'original.pdf', { type: 'application/pdf' })
-  const stages = JSON.stringify([
-    { op: 'rotate', angle: 90 },
-    { op: 'render', pages: '1', format: 'png' },
-  ])
+  const stages = JSON.stringify([{ op: 'render', pages: '1', format: 'png' }])
   const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0])
   let routes = 0
   const fetcher: typeof fetch = async (input, options) => {
@@ -745,6 +742,62 @@ test('accepts signed PNG output from a final v9 render stage and rejects MIME sp
   await assert.rejects(
     proxyConversionRequest(requestFor('pdf-pipeline', { stages }, {}, [source]), spoofed),
     /does not match its declared file type/,
+  )
+})
+
+test('PDF pipeline merges local documents in selection order despite upstream filename sorting', async () => {
+  const sources = [
+    new File(['%PDF-1.7\nthird'], 'z-last.pdf'),
+    new File(['%PDF-1.7\nfirst'], 'a-first.pdf'),
+  ]
+  const fixture = upstreamFixture('9.1.0', (form) => {
+    assert.deepEqual(
+      (form.getAll('files') as File[]).map(({ name }) => name),
+      ['01_z-last.pdf', '02_a-first.pdf'],
+    )
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [{ op: 'merge' }])
+  })
+  const response = await proxyConversionRequest(
+    requestFor('pdf-pipeline', { stages: '[{"op":"merge"}]' }, {}, sources),
+    fixture.fetcher,
+  )
+  assert.equal(response.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
+test('multi-stage PDF rendering requires ZIP and rejects a successful single-image response', async () => {
+  const source = new File(['%PDF-1.7\n'], 'source.pdf', { type: 'application/pdf' })
+  const stages = '[{"op":"rotate","angle":90},{"op":"render","format":"png"}]'
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0])
+  const archive = zipFixture({ 'source.pdf': '%PDF-1.7\n', 'source_1.png': png })
+  let conversions = 0
+  const fetcher: typeof fetch = async (input, options) => {
+    if (String(input) === `${upstream}/version`) return new Response('9.1.0')
+    conversions++
+    assert.ok(options?.body instanceof FormData)
+    assert.deepEqual(JSON.parse(String(options.body.get('stages'))), JSON.parse(stages))
+    return new Response(await archive.arrayBuffer(), {
+      headers: { 'Content-Type': 'application/zip' },
+    })
+  }
+  const response = await proxyConversionRequest(
+    requestFor('pdf-pipeline', { stages }, {}, [source]),
+    fetcher,
+  )
+  assert.equal(response.headers.get('content-type'), 'application/zip')
+  assert.deepEqual(
+    Buffer.from(await response.arrayBuffer()),
+    Buffer.from(await archive.arrayBuffer()),
+  )
+  assert.equal(conversions, 1)
+
+  const badFetcher: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.1.0')
+      : new Response(png, { headers: { 'Content-Type': 'image/png' } })
+  await assert.rejects(
+    proxyConversionRequest(requestFor('pdf-pipeline', { stages }, {}, [source]), badFetcher),
+    /unexpected conversion response/,
   )
 })
 
