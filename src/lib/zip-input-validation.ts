@@ -52,7 +52,8 @@ async function zipEntryNames(archive: File): Promise<string[]> {
       break
     }
   }
-  if (end < 0) invalidArchive(archive.name, 'the ZIP central directory is missing.')
+  if (end < 0)
+    invalidArchive(archive.name, 'is not a ZIP file: the ZIP central directory is missing.')
   const filesOnDisk = view.getUint16(end + 8, true)
   let count = view.getUint16(end + 10, true)
   let length = view.getUint32(end + 12, true)
@@ -70,15 +71,27 @@ async function zipEntryNames(archive: File): Promise<string[]> {
     if (view.getUint32(locatorAt + 4, true) !== 0 || view.getUint32(locatorAt + 16, true) !== 1) {
       invalidArchive(archive.name, 'multi-volume ZIP64 archives are not supported.')
     }
-    const zip64Offset = safeZip64Integer(view.getBigUint64(locatorAt + 8, true), archive.name)
-    if (zip64Offset + 56 > endOffset - 20) {
-      invalidArchive(archive.name, 'the ZIP64 end record is invalid.')
-    }
-    const recordBytes = new Uint8Array(
+    // ZIP64 locator offsets may be relative to an executable preamble, just
+    // like the ordinary central-directory offset. For the standard fixed-size
+    // end record, its physical location is immediately before the locator.
+    const declaredOffset = safeZip64Integer(view.getBigUint64(locatorAt + 8, true), archive.name)
+    const beforeLocator = endOffset - 20
+    let zip64Offset = declaredOffset
+    let recordBytes = new Uint8Array(
       await archive.slice(zip64Offset, zip64Offset + 56).arrayBuffer(),
     )
-    if (recordBytes.length !== 56)
-      invalidArchive(archive.name, 'the ZIP64 end record is incomplete.')
+    if (
+      (recordBytes.length !== 56 ||
+        new DataView(recordBytes.buffer).getUint32(0, true) !== 0x06064b50) &&
+      beforeLocator >= 56 &&
+      declaredOffset !== beforeLocator - 56
+    ) {
+      zip64Offset = beforeLocator - 56
+      recordBytes = new Uint8Array(await archive.slice(zip64Offset, zip64Offset + 56).arrayBuffer())
+    }
+    if (recordBytes.length !== 56 || zip64Offset + 56 > beforeLocator) {
+      invalidArchive(archive.name, 'the ZIP64 end record is invalid.')
+    }
     const record = new DataView(recordBytes.buffer, recordBytes.byteOffset, recordBytes.byteLength)
     if (
       record.getUint32(0, true) !== 0x06064b50 ||
@@ -111,10 +124,18 @@ async function zipEntryNames(archive: File): Promise<string[]> {
   if (count > MAX_ENTRIES || length > MAX_DIRECTORY_BYTES) {
     invalidArchive(archive.name, 'the ZIP index has too many entries or is too large.')
   }
-  if (offset + length > directoryEnd || offset + length > archive.size) {
+  // Go's archive/zip supports a ZIP appended to another file (e.g. an SFX
+  // archive). Its directory offsets can be relative to that prefix. Compute
+  // the same nonnegative base offset rather than assuming the archive starts
+  // with PK at byte zero. Still reject overlaps and out-of-bounds indexes.
+  const baseOffset = directoryEnd - offset - length
+  if (baseOffset < 0 || directoryEnd > archive.size || directoryEnd < length) {
     invalidArchive(archive.name, 'the ZIP central directory is invalid.')
   }
-  const bytes = new Uint8Array(await archive.slice(offset, offset + length).arrayBuffer())
+  const directoryOffset = offset + baseOffset
+  const bytes = new Uint8Array(
+    await archive.slice(directoryOffset, directoryOffset + length).arrayBuffer(),
+  )
   if (bytes.byteLength !== length) invalidArchive(archive.name, 'the ZIP index is incomplete.')
   const directory = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const names: string[] = []
@@ -218,15 +239,6 @@ export async function validateZipInputs(
   )
   const extracted: string[] = []
   for (const archive of archives) {
-    const prefix = new Uint8Array(await archive.slice(0, 4).arrayBuffer())
-    if (
-      prefix.length !== 4 ||
-      prefix[0] !== 0x50 ||
-      prefix[1] !== 0x4b ||
-      !((prefix[2] === 0x03 && prefix[3] === 0x04) || (prefix[2] === 0x05 && prefix[3] === 0x06))
-    ) {
-      throw new InputError(`Archive ${archive.name} is not a ZIP file.`)
-    }
     for (const name of await zipEntryNames(archive)) {
       // Gotenberg strips the path and NFC-normalises the filename it registers.
       const normalizedName = basename(name).normalize('NFC')

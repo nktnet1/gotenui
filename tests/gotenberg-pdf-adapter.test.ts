@@ -43,7 +43,7 @@ function requestFor(
 }
 
 function fixture(
-  version: '8.40.0' | '9.0.0',
+  version: '8.40.0' | '9.0.0' | '9.1.0',
   callback: (form: FormData, path: string) => void,
   response?: Response,
 ) {
@@ -220,6 +220,41 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
       assert.equal(legacy.count(), 0)
     },
   )
+
+  it('preserves whitespace-only PDF passwords in actual Gotenberg 9 multipart requests', async () => {
+    for (const id of ['metadata-read', 'bookmarks-read'] as const) {
+      const remote = fixture(
+        '9.1.0',
+        (form, path) => {
+          assert.equal(
+            path,
+            id === 'metadata-read' ? '/forms/pdf/metadata' : '/forms/pdf/bookmarks',
+          )
+          assert.equal(form.get('password'), '   ')
+        },
+        new Response('"{}"', { headers: { 'content-type': 'application/json' } }),
+      )
+      const result = await proxyConversionRequest(
+        requestFor(id, { password: '   ' }),
+        remote.fetcher,
+      )
+      assert.equal(result.status, 200)
+      assert.equal(remote.count(), 1)
+    }
+    const remote = fixture('9.1.0', (form, path) => {
+      assert.equal(path, '/forms/pdf/pipe')
+      const stage = JSON.parse(String(form.get('stages')))[0]
+      assert.equal(stage.op, 'encrypt')
+      assert.equal(stage.userPassword, '  ')
+      assert.equal(stage.ownerPassword, '  owner  ')
+    })
+    const result = await proxyConversionRequest(
+      requestFor('encrypt', { userPassword: '  ', ownerPassword: '  owner  ' }),
+      remote.fetcher,
+    )
+    assert.equal(result.status, 200)
+    assert.equal(remote.count(), 1)
+  })
 
   it('relabels attachment uploads as files and emits one attach stage per file', async () => {
     const remote = fixture('9.0.0', (form, path) => {

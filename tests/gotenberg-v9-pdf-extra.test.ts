@@ -84,6 +84,17 @@ describe('Gotenberg 9 read endpoints', () => {
     assert.equal(adapted('extract-text', { pages: 'last' }).form.get('pages'), 'last')
   })
 
+  it('preserves exact read passwords, including all-whitespace values', () => {
+    for (const id of ['pdf-info', 'pdf-attachments', 'pdf-form', 'pdf-validate']) {
+      const result = adapted(id, { password: '   ' })
+      assert.equal(result.form.get('password'), '   ', id)
+    }
+    for (const id of ['pdf-info', 'pdf-attachments', 'pdf-form', 'pdf-validate']) {
+      const result = adapted(id, { password: '  private  ' })
+      assert.equal(result.form.get('password'), '  private  ', id)
+    }
+  })
+
   it('encodes validation profiles as repeated multipart fields', () => {
     const result = adapted('pdf-validate', {
       profile: 'PDF/A-4f',
@@ -282,6 +293,11 @@ describe('Gotenberg 9 PDF stages', () => {
     assert.throws(
       () => adapted('sign', {}, [cert, key, new File(['extra'], 'extra.pem')]),
       /PKCS#12|PEM certificate/,
+    )
+    assert.deepEqual(
+      adapted('sign', { certificatePassword: '   ' }, [new File(['certificate'], 'signer.p12')])
+        .stages,
+      [{ op: 'sign', certificate: 'signer.p12', certificatePassword: '   ' }],
     )
     const pkcs12 = adapted('sign', { certificatePassword: 'secret' }, [
       new File(['certificate'], 'signer.p12'),

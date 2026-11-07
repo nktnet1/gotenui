@@ -111,6 +111,11 @@ export function adaptPdfForm(
     const value = fields[name]
     return typeof value === 'string' && value.trim() ? value.trim() : undefined
   }
+  // Secrets are exact byte strings: even an all-whitespace password is valid.
+  const optionalPassword = (name: 'password' | 'userPassword' | 'ownerPassword') => {
+    const value = fields[name]
+    return typeof value === 'string' && value !== '' ? value : undefined
+  }
   const pdfaStage = (): void => {
     permitted('pdfa', 'pdfua')
     const pdfa = optional('pdfa')
@@ -243,8 +248,8 @@ export function adaptPdfForm(
       }
       stages.push({
         op: 'encrypt',
-        ...(optional('userPassword') ? { userPassword: fields.userPassword } : {}),
-        ...(optional('ownerPassword') ? { ownerPassword: fields.ownerPassword } : {}),
+        ...(optionalPassword('userPassword') ? { userPassword: fields.userPassword } : {}),
+        ...(optionalPassword('ownerPassword') ? { ownerPassword: fields.ownerPassword } : {}),
         ...(Object.keys(permissions).length ? { permissions } : {}),
       })
       break
@@ -327,10 +332,12 @@ export function adaptPdfForm(
       break
     }
     case 'metadata-read':
-    case 'bookmarks-read':
+    case 'bookmarks-read': {
       permitted('password')
-      if (optional('password')) output.set('password', fields.password as string)
+      const password = optionalPassword('password')
+      if (password !== undefined) output.set('password', password)
       break
+    }
     case 'metadata-write': {
       permitted('metadata')
       const raw = optional('metadata')

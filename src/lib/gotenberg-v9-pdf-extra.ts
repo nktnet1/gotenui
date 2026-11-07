@@ -85,6 +85,11 @@ export function adaptV9PdfExtra(
   const stages: Record<string, unknown>[] = []
   const value = (name: string): string =>
     typeof fields[name] === 'string' ? fields[name].trim() : ''
+  // Passwords are opaque strings. Never trim or treat whitespace as absent.
+  const password = (name: 'password' | 'certificatePassword'): string | undefined => {
+    const text = fields[name]
+    return typeof text === 'string' && text !== '' ? text : undefined
+  }
   const allow = (...names: string[]) => validateFields(payload, names)
   const onlyPdfInputs = () => {
     if (auxiliary.length) throw new InputError('This PDF tool does not accept additional files.')
@@ -284,13 +289,12 @@ export function adaptV9PdfExtra(
       const certificate = auxiliary.find((file) => file !== key)
       if (!certificate) throw new InputError('Choose a signing certificate.')
       for (const file of auxiliary) addAsset(file)
+      const certificatePassword = password('certificatePassword')
       stages.push({
         op: 'sign',
         certificate: certificate.name,
         ...(key ? { key: key.name } : {}),
-        ...(value('certificatePassword')
-          ? { certificatePassword: fields.certificatePassword }
-          : {}),
+        ...(certificatePassword !== undefined ? { certificatePassword } : {}),
         ...(value('reason') ? { reason: fields.reason } : {}),
         ...(value('location') ? { location: fields.location } : {}),
         ...(value('contactInfo') ? { contactInfo: fields.contactInfo } : {}),
@@ -338,7 +342,8 @@ export function adaptV9PdfExtra(
   }
   const route = V9_PDF_READ_ROUTES.get(operationId)
   if (route) {
-    if (value('password')) form.set('password', fields.password as string)
+    const openPassword = password('password')
+    if (openPassword !== undefined) form.set('password', openPassword)
     return { path: route, form }
   }
   form.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))

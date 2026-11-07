@@ -33,6 +33,13 @@ async function check(
   )
 }
 
+test('accepts self-extracting ZIPs with a prefixed stub and relative directory offsets', async () => {
+  const original = zipFixture({ 'document.pdf': '%PDF-1.7' })
+  const stub = new TextEncoder().encode('MZ\x90\x00valid stub prefix')
+  const archive = new File([stub, original], 'self-extracting.zip')
+  assert.deepEqual(await check('pdf-pipeline', [archive]), ['document.pdf'])
+})
+
 test('accepts PDF-only pipeline ZIPs, known Office files, and Chromium assets', async () => {
   await check('pdf-pipeline', [
     zipFixture({ 'one.pdf': '%PDF-1.7', 'invoices/two.PDF': '%PDF-1.7' }),
@@ -314,6 +321,12 @@ test('accepts a valid ZIP64 end record and rejects an overlapping central direct
   end.setUint32(12, 0xffffffff, true)
   end.setUint32(16, 0xffffffff, true)
   assert.deepEqual(await check('pdf-pipeline', [new File([bytes], 'valid.zip')]), ['source.pdf'])
+  assert.deepEqual(
+    await check('pdf-pipeline', [
+      new File([new TextEncoder().encode('MZstub'), bytes], 'sfx64.zip'),
+    ]),
+    ['source.pdf'],
+  )
 
   // A directory cannot overlap the ZIP64 EOCD, even when it finishes before the locator.
   zip64.setBigUint64(40, BigInt(directorySize + 4), true)
@@ -332,7 +345,7 @@ test('limits central-directory memory and never reads or unpacks entry contents'
     return slice(start, end, type)
   }
   await check('pdf-pipeline', [archive])
-  assert.deepEqual(readSizes.length, 3)
+  assert.deepEqual(readSizes.length, 2)
   assert.ok(readSizes.every((size) => size <= 65_557))
   assert.ok(readSizes.reduce((sum, size) => sum + size, 0) < 70_000)
 })
