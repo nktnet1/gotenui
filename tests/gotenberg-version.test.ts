@@ -66,6 +66,18 @@ describe('per-operation API compatibility', () => {
     }
   })
 
+  it('gates 9.1-only PDF extraction routes without blocking other v9 tools', () => {
+    for (const id of ['extract-text', 'extract-attachments']) {
+      assert.match(unavailableOperationReason(status('9.0.0'), operation(id)) ?? '', /9\.1/)
+      assert.match(unavailableOperationReason(status('9.0.9'), operation(id)) ?? '', /9\.1/)
+      assert.equal(unavailableOperationReason(status('9.1.0'), operation(id)), null)
+      assert.equal(unavailableOperationReason(status('9.2.0'), operation(id)), null)
+    }
+    for (const id of ['pdf-pipeline', 'pdf-info', 'html-pdf']) {
+      assert.equal(unavailableOperationReason(status('9.0.0'), operation(id)), null)
+    }
+  })
+
   it('gates v8 PDF/A and Factur-X on LibreOffice but not the v9 PDF engine', () => {
     for (const toolId of ['pdfa', 'factur-x']) {
       assert.match(

@@ -306,6 +306,7 @@ export function Workbench({
           localAssetNames: auxFiles.map(({ name }) => name),
           archivesPresent: archives.length > 0,
           acknowledgedRedaction: fields.acknowledgedRedaction === true,
+          backendVersion,
         })
       : null
   const conversionPipelineError = conversionStages
@@ -314,6 +315,7 @@ export function Workbench({
         localAssetNames: conversionStageFiles.map(({ name }) => name),
         archivesPresent: archives.length > 0,
         acknowledgedRedaction: acknowledgedConversionRedaction,
+        backendVersion,
       })
     : null
   const docsUrl =

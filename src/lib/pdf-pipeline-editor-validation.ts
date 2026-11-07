@@ -1,4 +1,5 @@
 import { type RemoteInputRow, remoteInputsPayload } from '#/lib/async-inputs'
+import { parseGotenbergVersion, requiresGotenberg91ForExtraction } from '#/lib/gotenberg-version'
 import { parsePdfPipeline } from '#/lib/pdf-pipeline'
 
 /** Preflight the same asset names as the request adapter, including remote
@@ -12,12 +13,14 @@ export function pdfPipelineEditorError(
     remoteRows,
     remoteJson,
     acknowledgedRedaction,
+    backendVersion,
   }: {
     localAssetNames: readonly string[]
     archivesPresent: boolean
     remoteRows: readonly RemoteInputRow[]
     remoteJson: string
     acknowledgedRedaction: boolean
+    backendVersion?: string
   },
 ): string | null {
   try {
@@ -33,7 +36,17 @@ export function pdfPipelineEditorError(
         : []
       assetNames = [...localAssetNames, ...remoteAssetNames]
     }
-    parsePdfPipeline(stages, { assetNames, acknowledgedRedaction })
+    const parsed = parsePdfPipeline(stages, { assetNames, acknowledgedRedaction })
+    const version = parseGotenbergVersion(backendVersion)
+    if (
+      version &&
+      requiresGotenberg91ForExtraction(
+        version,
+        parsed.map(({ op }) => op),
+      )
+    ) {
+      return 'PDF text and attachment extraction require Gotenberg 9.1 or newer.'
+    }
     return null
   } catch (error) {
     return error instanceof Error ? error.message : 'Invalid PDF pipeline.'

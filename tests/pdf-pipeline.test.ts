@@ -12,6 +12,7 @@ import {
   safePipelinePreview,
 } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
+import { pdfPipelineEditorError } from '#/lib/pdf-pipeline-editor-validation'
 import { type ConversionPayload, validateFiles, validatePayload } from '#/lib/validation'
 import { OPERATION_BY_ID } from '#/tools/registry'
 
@@ -60,6 +61,30 @@ describe('PDF pipeline catalogue and stage contract', () => {
       }
     }
   })
+  it('preflights final extraction stages against the selected Gotenberg minor version', () => {
+    const base = {
+      localAssetNames: [],
+      archivesPresent: false,
+      remoteRows: [],
+      remoteJson: '',
+      acknowledgedRedaction: false,
+    }
+    for (const op of ['extract-text', 'extract-attachments']) {
+      const stages = JSON.stringify([{ op }])
+      assert.match(
+        pdfPipelineEditorError(stages, { ...base, backendVersion: '9.0.0' }) ?? '',
+        /9\.1 or newer/,
+      )
+      assert.equal(pdfPipelineEditorError(stages, { ...base, backendVersion: '9.1.0' }), null)
+      assert.equal(pdfPipelineEditorError(stages, { ...base, backendVersion: '9.2.0' }), null)
+      assert.equal(pdfPipelineEditorError(stages, base), null)
+    }
+    assert.equal(
+      pdfPipelineEditorError('[{"op":"optimize"}]', { ...base, backendVersion: '9.0.0' }),
+      null,
+    )
+  })
+
   it('includes the builder in the tool catalogue but gates it to v9', () => {
     assert.deepEqual(operation.supportedGotenbergMajors, [9])
     assert.equal(operation.path, '/forms/pdf/pipe')
