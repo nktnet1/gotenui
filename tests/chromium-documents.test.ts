@@ -235,7 +235,18 @@ describe('Markdown files and templates', () => {
       [false, true, true],
     )
     assert.deepEqual(await Promise.all(files.slice(1).map((file) => file.text())), ['', ''])
-    assert.throws(() => makePayload('html-pdf', { source: '' }), /source content/)
+    for (const html of ['', '  ', '\n']) {
+      for (const id of ['html-pdf', 'html-shot']) {
+        const { operation, payload } = makePayload(id, { source: html })
+        validateFiles(operation, [], [], 4_000_000, payload)
+        const form = createGotenbergForm(operation, payload, [], [])
+        assert.equal(await (form.get('files') as File).text(), html)
+      }
+    }
+    assert.throws(
+      () => makePayload('html-pdf', { source: undefined }),
+      /Provide HTML source content/,
+    )
   })
 
   test('NFC-normalises Markdown filenames and generated template references', async () => {

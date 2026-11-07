@@ -5,6 +5,7 @@ import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Textarea } from '#/components/ui/textarea'
 import { defaultMarkdownTemplate } from '#/lib/chromium-documents'
+import { filenameKey } from '#/lib/file-names'
 import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
 import { safeFilename } from '#/lib/validation'
 
@@ -42,12 +43,12 @@ export function MarkdownAssetsEditor({
   }
   const add = () => {
     let number = 2
-    while (names.some((name) => name.toLowerCase() === `chapter-${number}.md`)) number++
+    while (names.some((name) => filenameKey(name) === `chapter-${number}.md`)) number++
     onSourcesChange([...sources, { id: nextId(), name: `chapter-${number}.md`, content: '' }])
   }
   const importFiles = async (selected: File[]) => {
     if (!selected.length) return
-    const seen = new Set(names.map((name) => name.toLowerCase()))
+    const seen = new Set(names.map(filenameKey))
     const added: MarkdownSource[] = []
     try {
       for (const file of selected) {
@@ -55,10 +56,10 @@ export function MarkdownAssetsEditor({
         if (!/\.md$/i.test(file.name) || file.size > MAX_UPLOAD_BYTES) {
           throw new Error(`Choose a .md file within the configured upload limit: ${file.name}`)
         }
-        if (seen.has(file.name.toLowerCase())) {
+        if (seen.has(filenameKey(file.name))) {
           throw new Error(`Duplicate Markdown filename: ${file.name}`)
         }
-        seen.add(file.name.toLowerCase())
+        seen.add(filenameKey(file.name))
         added.push({ id: nextId(), name: file.name, content: await file.text() })
       }
       onSourcesChange([...sources, ...added])

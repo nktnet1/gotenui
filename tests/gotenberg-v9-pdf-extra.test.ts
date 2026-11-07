@@ -212,6 +212,11 @@ describe('Gotenberg 9 PDF stages', () => {
     for (const input of ['{}', '[]', '{"empty":4}', '{"null":null}', '{"items":[5]}']) {
       assert.throws(() => adapted('fill-form', { formValues: input }), /Form (field names|values)/)
     }
+    // Gotenberg's set-form parser uses exact field-name keys, including
+    // whitespace-only names when a PDF form defines them.
+    assert.deepEqual(adapted('fill-form', { formValues: '{" ":"Yes"}' }).stages, [
+      { op: 'set-form', fields: { ' ': 'Yes' } },
+    ])
     const manyFields: Record<string, string | string[]> = Object.fromEntries(
       Array.from({ length: 125 }, (_, index) => [`Form.Field.${index}`, 'signed']),
     )

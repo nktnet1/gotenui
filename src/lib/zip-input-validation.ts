@@ -208,18 +208,25 @@ export async function validateZipInputs(
   archives: readonly File[],
 ): Promise<string[]> {
   if (!archives.length) return []
-  const expected = new Set<string>([
-    ...files.map(({ name }) => filenameKey(name)),
+  const localSources = new Set(files.map(({ name }) => filenameKey(name)))
+  const protectedNames = new Set<string>([
     ...auxiliary.map(({ name }) => filenameKey(name)),
     ...stageFiles.map(({ name }) => filenameKey(name)),
   ])
+  const expected = new Set<string>([...localSources, ...protectedNames])
   if (operation.input === 'html' || operation.input === 'markdown') {
-    expected.add('index.html')
-    expected.add('header.html')
-    expected.add('footer.html')
+    for (const name of ['index.html', 'header.html', 'footer.html']) {
+      expected.add(name)
+      protectedNames.add(name)
+    }
     if (operation.input === 'markdown') {
-      expected.add(filenameKey(payload.markdownName ?? DEFAULT_MARKDOWN_NAME))
-      for (const source of payload.markdownFiles ?? []) expected.add(filenameKey(source.name))
+      for (const name of [
+        payload.markdownName ?? DEFAULT_MARKDOWN_NAME,
+        ...(payload.markdownFiles ?? []).map((source) => source.name),
+      ]) {
+        expected.add(filenameKey(name))
+        protectedNames.add(filenameKey(name))
+      }
     }
   }
   const extensions = officeExtensionSetForMajor(9)
@@ -241,6 +248,8 @@ export async function validateZipInputs(
     (remote) => !remote.field && !remote.embedded && !remoteAssets.includes(remote),
   )
   const extracted: string[] = []
+  const archiveSources = new Set<string>()
+  const archiveExtras = new Set<string>()
   for (const archive of archives) {
     for (const name of await zipEntryNames(archive)) {
       // Gotenberg strips the path and NFC-normalises the filename it registers.
@@ -249,24 +258,37 @@ export async function validateZipInputs(
       const label = normalizedName.slice(0, 120)
       // Gotenberg resolves entries as named input files; compare basenames
       // by exact NFC spelling, including across separate archives and uploads.
-      if (expected.has(flatName)) {
+      const isStageAsset = stageAssets.has(normalizedName)
+      const suffix = flatName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? ''
+      const isSourceDocument =
+        !isStageAsset &&
+        ((operation.input === 'pdf' && suffix === '.pdf') ||
+          (operation.id === 'office-pdf' && extensions.has(suffix)))
+      // Gotenberg's uniqueFilename registers colliding source documents as
+      // "name (2).pdf", "name (3).pdf", etc. The same applies inside ZIPs.
+      // Do not accept ambiguous collisions involving named stage assets or
+      // generated Chromium documents, since those are referenced by name.
+      const duplicateSource =
+        isSourceDocument &&
+        !protectedNames.has(flatName) &&
+        (localSources.has(flatName) || archiveSources.has(flatName))
+      // Unrelated archive files are also auto-renamed upstream. Repeated
+      // resources must not displace explicitly named pipeline assets.
+      const duplicateExtra =
+        !isSourceDocument &&
+        !isStageAsset &&
+        !protectedNames.has(flatName) &&
+        archiveExtras.has(flatName)
+      if (expected.has(flatName) && !duplicateSource && !duplicateExtra) {
         invalidArchive(archive.name, `duplicate or reserved filename: ${label}.`)
       }
       expected.add(flatName)
       extracted.push(normalizedName)
-      const isStageAsset = stageAssets.has(normalizedName)
-      if (operation.input === 'pdf' && !flatName.toLowerCase().endsWith('.pdf') && !isStageAsset) {
-        invalidArchive(
-          archive.name,
-          `${operation.id === 'pdf-pipeline' ? 'PDF pipeline requires PDFs or referenced stage assets' : 'PDF tools require PDFs or referenced pipeline stage assets'} (found ${label}).`,
-        )
-      }
-      if (operation.id === 'office-pdf') {
-        const suffix = flatName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? ''
-        if (!extensions.has(suffix) && !isStageAsset) {
-          invalidArchive(archive.name, `unsupported Gotenberg 9 Office entry: ${label}.`)
-        }
-      }
+      if (isSourceDocument) archiveSources.add(flatName)
+      else if (!isStageAsset) archiveExtras.add(flatName)
+      // Non-source entries are allowed. Gotenberg extracts them but only
+      // selects documents of the appropriate type for conversion; other files
+      // may still be referenced by an explicit pipeline stage.
     }
   }
   // Gotenberg treats PDFs/Documents consumed by stages as assets, not source

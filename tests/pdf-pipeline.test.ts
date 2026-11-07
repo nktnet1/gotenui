@@ -514,6 +514,9 @@ describe('PDF pipeline rejects unsafe or invalid sequences', () => {
       }),
       [{ op: 'redact', regions }],
     )
+    assert.deepEqual(parsePdfPipeline('[{"op":"set-form","fields":{" ":"Yes"}}]'), [
+      { op: 'set-form', fields: { ' ': 'Yes' } },
+    ])
     error([{ op: 'set-form', fields: { bad: [5] } }], /fields must map/)
     error([{ op: 'redact', regions: [] }], /at least one rectangle/)
   })

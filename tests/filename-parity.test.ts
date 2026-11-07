@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { addRemoteAttachmentMetadata } from '#/lib/attachment-metadata'
-import { filenameKey } from '#/lib/file-names'
+import { combineUploadSelection, filenameKey } from '#/lib/file-names'
 import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
 import { addBookmarkMapping } from '#/lib/pdf-structure-editors'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
@@ -63,15 +63,15 @@ test('matches Gotenberg filenames case-sensitively after NFC normalisation', () 
       { fields: { stages: '[{"op":"merge"}]' }, advanced: {} },
     ),
   )
-  assert.throws(
-    () =>
-      validateFiles(
-        pipeline,
-        [new File(['%PDF-1.7'], 'café.pdf'), new File(['%PDF-1.7'], 'cafe\u0301.pdf')],
-        [],
-        1_000_000,
-      ),
-    /Duplicate filename/,
+  // Gotenberg NFC-normalises both names, then suffixes the second uploaded
+  // PDF to preserve both files. Reads and pipelines accept these duplicates.
+  assert.doesNotThrow(() =>
+    validateFiles(
+      pipeline,
+      [new File(['%PDF-1.7'], 'café.pdf'), new File(['%PDF-1.7'], 'cafe\u0301.pdf')],
+      [],
+      1_000_000,
+    ),
   )
 
   assert.deepEqual(
@@ -121,4 +121,73 @@ test('preserves case-distinct asset filenames in standalone PDF requests and edi
     'Notes.txt': {},
     'notes.txt': { relationship: 'Unspecified' },
   })
+})
+
+test('forwards duplicate source document filenames without rewriting or dropping inputs', async () => {
+  const pipeline = OPERATION_BY_ID.get('pdf-pipeline')
+  const info = OPERATION_BY_ID.get('pdf-info')
+  const office = OPERATION_BY_ID.get('office-pdf')
+  assert.ok(pipeline && info && office)
+
+  const originals = [
+    new File(['%PDF-1.7 first'], 'invoice.pdf'),
+    new File(['%PDF-1.7 second'], 'invoice.pdf'),
+  ]
+  for (const operation of [pipeline, info]) {
+    const fields: Record<string, string | boolean> =
+      operation.id === 'pdf-pipeline' ? { stages: '[{"op":"merge"}]' } : {}
+    const payload = { operation: operation.id, fields, advanced: {} }
+    validateFiles(operation, originals, [], 1_000_000, payload)
+    const legacy = new FormData()
+    for (const file of originals) legacy.append('files', file, file.name)
+    const adapted = adaptPdfForm(operation, payload, legacy, 9, [])
+    const sent = adapted.form.getAll('files') as File[]
+    assert.deepEqual(
+      sent.map((file) => file.name),
+      ['invoice.pdf', 'invoice.pdf'],
+    )
+    assert.deepEqual(await Promise.all(sent.map((file) => file.text())), [
+      '%PDF-1.7 first',
+      '%PDF-1.7 second',
+    ])
+  }
+  const officeSources = [new File(['one'], 'report.docx'), new File(['two'], 'report.docx')]
+  assert.doesNotThrow(() =>
+    validateFiles(office, officeSources, [], 1_000_000, { fields: {}, advanced: {} }),
+  )
+  assert.throws(
+    () => validateFiles(pipeline, originals, [new File(['asset'], 'invoice.pdf')], 1_000_000),
+    /Duplicate filename/,
+  )
+})
+
+test('browser upload selection preserves case-distinct names and ordered duplicate sources', () => {
+  const first = new File(['first'], 'report.pdf')
+  const second = new File(['second'], 'report.pdf')
+  const caps = new File(['caps'], 'Report.pdf')
+  const equivalent = new File(['NFC'], 'café.pdf')
+  const decomposed = new File(['NFD'], 'cafe\u0301.pdf')
+  const incoming = [first, second, caps, equivalent, decomposed]
+  assert.deepEqual(combineUploadSelection([], incoming, { multiple: true }), [
+    first,
+    caps,
+    equivalent,
+  ])
+  assert.deepEqual(
+    combineUploadSelection([], incoming, { multiple: true, allowDuplicateNames: true }),
+    incoming,
+  )
+  assert.deepEqual(combineUploadSelection([first], [second, caps], { multiple: true }), [
+    first,
+    caps,
+  ])
+  assert.deepEqual(
+    combineUploadSelection([first], [second, caps], {
+      multiple: true,
+      allowDuplicateNames: true,
+      maxFiles: 2,
+    }),
+    [first, second],
+  )
+  assert.deepEqual(combineUploadSelection([first], [caps]), [caps])
 })

@@ -665,6 +665,7 @@ export function Workbench({
                   (operation.id === 'office-pdf' && fields.merge === true)
                 }
                 allowDuplicateNames={
+                  (isV9 && (operation.input === 'pdf' || operation.input === 'office')) ||
                   operation.id === 'merge' ||
                   (operation.id === 'office-pdf' && fields.merge === true)
                 }

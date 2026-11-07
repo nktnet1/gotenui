@@ -70,11 +70,10 @@ test('Office file picker and proxy validation use the same extended upstream fil
   assert.throws(() => validateFiles(spec, [doc('bad.exe')], [], 1000), /Unsupported Office/)
 })
 
-test('canonical Unicode filename collisions are rejected before Gotenberg handles input files', () => {
+test('canonical Unicode duplicate source names are accepted for upstream auto-renaming', () => {
   const pipeline = operation('pdf-pipeline')
-  assert.throws(
-    () => validateFiles(pipeline, [pdf('café.pdf'), pdf('cafe\u0301.pdf')], [], 1_000),
-    /Duplicate filename/,
+  assert.doesNotThrow(() =>
+    validateFiles(pipeline, [pdf('café.pdf'), pdf('cafe\u0301.pdf')], [], 1_000),
   )
 })
 
@@ -309,7 +308,7 @@ test('Office compression has separate controls from post-conversion image optimi
   assert.equal(isFieldVisible(quality, {}), true)
 })
 
-test('Office merging preserves ordered uploads and permits repeated local filenames only when enabled', async () => {
+test('Office merging preserves ordered uploads and repeated local filenames', async () => {
   const spec = operation('office-pdf')
   const docs = [doc('z.docx', 'first'), doc('same.docx', 'second'), doc('same.docx', 'third')]
   const { payload } = validatePayload(request('office-pdf', { merge: true }))
@@ -326,7 +325,7 @@ test('Office merging preserves ordered uploads and permits repeated local filena
     'second',
     'third',
   ])
-  assert.throws(() => validateFiles(spec, docs, [], 1000), /Duplicate filename/)
+  assert.doesNotThrow(() => validateFiles(spec, docs, [], 1000))
   assert.doesNotThrow(() => validateFiles(spec, docs.slice(0, 1), [], 1000, payload))
 })
 

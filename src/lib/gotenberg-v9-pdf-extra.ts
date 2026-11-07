@@ -188,17 +188,14 @@ export function adaptV9PdfExtra(
       ) {
         throw new InputError('Form values must be an object with at least one named field.')
       }
-      for (const [key, field] of Object.entries(data)) {
+      for (const field of Object.values(data)) {
         if (
-          !key.trim() ||
           !(
             typeof field === 'string' ||
             (Array.isArray(field) && field.every((entry) => typeof entry === 'string'))
           )
         ) {
-          throw new InputError(
-            'Form field names must be non-empty; values must be strings or arrays of strings.',
-          )
+          throw new InputError('Form values must be strings or arrays of strings.')
         }
       }
       stages.push({ op: 'set-form', fields: data })

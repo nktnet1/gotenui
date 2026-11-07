@@ -383,7 +383,7 @@ test('v9 PDF tools reject malformed ZIPs before forwarding', async () => {
   assert.deepEqual(v9.counts(), { probes: 2, conversions: 0 })
 })
 
-test('v9 blocks incompatible ZIP entries and generated-file shadows before upstream conversion', async () => {
+test('v9 blocks unsupported ZIP sources and generated-file shadows before upstream conversion', async () => {
   const cases: {
     operation: string
     fields: Record<string, string | boolean>
@@ -391,16 +391,10 @@ test('v9 blocks incompatible ZIP entries and generated-file shadows before upstr
     error: RegExp
   }[] = [
     {
-      operation: 'pdf-pipeline',
-      fields: { stages: '[{"op":"merge"}]' },
-      archive: zipFixture({ 'source.pdf': '%PDF', 'readme.txt': 'not a PDF' }),
-      error: /PDF pipeline requires PDFs or referenced stage assets/,
-    },
-    {
       operation: 'office-pdf',
       fields: {},
       archive: zipFixture({ 'book.epub': 'unsupported on v9' }),
-      error: /unsupported Gotenberg 9 Office entry/,
+      error: /at least one source document/,
     },
     {
       operation: 'html-pdf',
@@ -419,6 +413,27 @@ test('v9 blocks incompatible ZIP entries and generated-file shadows before upstr
     )
   }
   assert.deepEqual(v9.counts(), { probes: cases.length, conversions: 0 })
+})
+
+test('v9 forwards ZIP documents with unrelated resources without rejecting the archive', async () => {
+  const v9 = upstreamFixture('9.1.0', (form) => {
+    assert.equal(form.getAll('archives').length, 1)
+  })
+  for (const [operation, fields, archive] of [
+    [
+      'pdf-pipeline',
+      { stages: '[{"op":"merge"}]' },
+      zipFixture({ 'source.pdf': '%PDF', 'second.pdf': '%PDF', 'readme.txt': 'notes' }),
+    ],
+    ['office-pdf', {}, zipFixture({ 'report.docx': 'document', 'obsolete.epub': 'notes' })],
+  ] as const) {
+    const response = await proxyConversionRequest(
+      requestFor(operation, fields, {}, [], [], [], [archive]),
+      v9.fetcher,
+    )
+    assert.equal(response.status, 200)
+  }
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 2 })
 })
 
 test('rejects non-ZIP archive uploads, duplicates and unsupported operations at the proxy', async () => {
@@ -599,7 +614,7 @@ test('forwards ZIP-based PDF pipeline assets only when their stage names match',
       ),
       v9.fetcher,
     ),
-    /PDF pipeline requires PDFs or referenced stage assets/,
+    /upload an additional file named "receipt.txt"/,
   )
   assert.deepEqual(v9.counts(), { probes: 2, conversions: 1 })
 })

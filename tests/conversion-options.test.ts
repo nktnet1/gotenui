@@ -299,6 +299,26 @@ test('accepts Chromium resource headers to Gotenberg 9 limits and delegates rege
   assert.doesNotThrow(() => validatePayload(request('url-pdf', { extraHttpHeaders: '{}' })))
 })
 
+test('preserves valid HTTP token header names and empty Chromium resource header values', () => {
+  const headers = {
+    X_Trace_ID: 'trace-123',
+    'X-Empty': '',
+    Authorization: 'scope=^https://portal\\.example\\.test/',
+  }
+  const raw = JSON.stringify(headers)
+  for (const operationId of ['url-pdf', 'html-shot']) {
+    const { operation, payload } = validatePayload(request(operationId, { extraHttpHeaders: raw }))
+    assert.equal(createGotenbergForm(operation, payload, [], []).get('extraHttpHeaders'), raw)
+  }
+  assert.doesNotThrow(() =>
+    validatePayload(
+      request('url-pdf', {
+        extraHttpHeaders: JSON.stringify({ [`X-${'a'.repeat(120)}`]: 'value' }),
+      }),
+    ),
+  )
+})
+
 test('supports large Chromium cookie lists without an unrelated 20-cookie cap', () => {
   const cookies = Array.from({ length: 64 }, (_, index) => ({
     ...cookie,

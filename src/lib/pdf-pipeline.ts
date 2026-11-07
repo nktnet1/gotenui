@@ -456,8 +456,7 @@ function validateStage(stage: PdfPipelineStage): void {
         !object(stage.fields) ||
         !Object.keys(stage.fields).length ||
         Object.entries(stage.fields).some(
-          ([key, value]) =>
-            !key.trim() ||
+          ([_key, value]) =>
             !(
               typeof value === 'string' ||
               (Array.isArray(value) && value.every((item) => typeof item === 'string'))

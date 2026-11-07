@@ -650,17 +650,20 @@ export function validateFiles(
       }
     }
   }
-  for (const file of [...files, ...auxiliary, ...stageFiles, ...archives]) {
+  for (const [index, file] of [...files, ...auxiliary, ...stageFiles, ...archives].entries()) {
     const name = safeFilename(file.name)
     if (operation.input === 'markdown' && auxiliary.includes(file) && /\.md$/i.test(name)) {
       throw new InputError(
         'Add Markdown documents through the Markdown sources editor, not assets.',
       )
     }
-    const allowsOrderedDuplicates =
-      operation.id === 'merge' ||
-      (operation.id === 'office-pdf' && payload?.fields.merge === true && files.includes(file))
-    if (names.has(filenameKey(name)) && !allowsOrderedDuplicates) {
+    // Gotenberg assigns a distinct " (2)" suffix to colliding document
+    // uploads. This works for reads, individual conversions and pipelines,
+    // not only the merge endpoint. Keep auxiliary and generated files unique:
+    // stage references must identify a single asset by its exact name.
+    const isSourceDocument =
+      index < files.length && (operation.input === 'pdf' || operation.input === 'office')
+    if (names.has(filenameKey(name)) && !isSourceDocument) {
       throw new InputError(`Duplicate filename: ${name}`)
     }
     names.add(filenameKey(name))
@@ -681,11 +684,11 @@ export function validateFiles(
     if (archives.includes(file) && ext !== '.zip') {
       throw new InputError('Archive inputs must use the .zip extension.')
     }
-    if (files.includes(file) && operation.input === 'pdf' && ext !== '.pdf') {
+    if (index < files.length && operation.input === 'pdf' && ext !== '.pdf') {
       throw new InputError('PDF tools only accept .pdf input documents.')
     }
     if (
-      files.includes(file) &&
+      index < files.length &&
       operation.input === 'office' &&
       !officeExtensionSetForMajor(major).has(ext ?? '')
     ) {
@@ -808,7 +811,10 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
   for (const [key, headerValue] of entries) {
     const lower = key.toLowerCase()
     if (
-      !/^[A-Za-z][A-Za-z0-9-]{0,79}$/.test(key) ||
+      // HTTP token names may contain underscores and other token punctuation.
+      // Keep disallowed transport headers blocked below, rather than
+      // restricting valid application header names or their length.
+      !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) ||
       names.has(lower) ||
       [
         'host',
@@ -826,7 +832,7 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       throw new InputError('Invalid or unsafe Chromium resource header name.')
     }
     names.add(lower)
-    if (typeof headerValue !== 'string' || !headerValue || /[\r\n]/.test(headerValue)) {
+    if (typeof headerValue !== 'string' || /[\r\n]/.test(headerValue)) {
       throw new InputError('Invalid Chromium resource header value.')
     }
     // Gotenberg splits header values at semicolons and accepts case-insensitive
@@ -851,7 +857,9 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       }
       continue
     }
-    if (!tokens[0]?.trim() || !scope || new TextEncoder().encode(scope).length > 1024) {
+    // A scope-only header is valid upstream: it sends an empty header value
+    // to matching URLs. Do not require a non-empty first value token.
+    if (!scope || new TextEncoder().encode(scope).length > 1024) {
       throw new InputError(
         'Chromium resource header scope must be a non-empty regex (max 1,024 UTF-8 bytes).',
       )
@@ -1180,8 +1188,10 @@ export function validatePayload(input: unknown): {
     if (typeof value === 'number' && !Number.isFinite(value))
       throw new InputError('Advanced values must be finite.')
   }
-  if (operation.input === 'html' && !payload.source?.trim()) {
-    throw new InputError('Enter some source content first.')
+  // Chromium accepts an empty index.html and renders a blank document.
+  // Require an explicit source value, but do not treat blank HTML as missing.
+  if (operation.input === 'html' && payload.source === undefined) {
+    throw new InputError('Provide HTML source content (an empty document is valid).')
   }
   validateChromiumDocuments(operation, payload)
   validateConversionOptions(operation, payload)
