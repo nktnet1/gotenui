@@ -90,6 +90,44 @@ describe('PDF pipeline catalogue and stage contract', () => {
     error([{ op: 'stamp-text', text: '', x: 12, y: 12 }], /non-empty/)
   })
 
+  it('accepts default insert position, negative redaction offsets, and extensionless signing assets', () => {
+    const pipeline = [
+      { op: 'insert', source: 'source.pdf' },
+      { op: 'redact', regions: [{ page: 1, x: -12.5, y: -4, width: 40, height: 20 }] },
+      { op: 'sign', certificate: 'cert.data', key: 'private.data' },
+    ]
+    assert.deepEqual(
+      parsePdfPipeline(JSON.stringify(pipeline), { acknowledgedRedaction: true }),
+      pipeline,
+    )
+    assert.deepEqual(
+      JSON.parse(
+        String(
+          adapted(
+            pipeline,
+            [
+              new File(['pdf'], 'source.pdf'),
+              new File(['cert'], 'cert.data'),
+              new File(['key'], 'private.data'),
+            ],
+            true,
+          ).form.get('stages'),
+        ),
+      ),
+      pipeline,
+    )
+    error([{ op: 'insert', source: 'source.pdf', at: -1 }], /valid integer/)
+  })
+
+  it('supports parameterised MIME types on attachment stages', () => {
+    const pipeline = [
+      { op: 'attach', file: 'invoice.xml', mimeType: 'application/xml; charset=UTF-8' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(pipeline)), pipeline)
+    assert.equal(adapted(pipeline, [new File(['<xml/>'], 'invoice.xml')]).path, '/forms/pdf/pipe')
+    error([{ op: 'attach', file: 'invoice.xml', mimeType: 'text' }], /invalid MIME type/)
+  })
+
   it('preserves order and named auxiliary inputs on the v9 form', () => {
     const auxiliary = [new File(['asset'], 'receipt.txt')]
     const stages = [

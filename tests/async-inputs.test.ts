@@ -63,6 +63,52 @@ test('structured remote inputs serialize without changing the upstream form cont
   assert.equal(form.getAll('files').length, 0)
 })
 
+test('remote downloads and webhooks accept large URLs and more than 20 headers', () => {
+  const longUrl = `https://files.example.test/${'a'.repeat(2500)}`
+  const headers = Array.from({ length: 28 }, (_, index) => ({
+    id: index + 1,
+    name: `X-Key-${index}`,
+    value: `secret${index}`,
+  }))
+  headers.push({ id: 30, name: 'X_Trace.Token', value: 'trace'.repeat(750) })
+  const remote = remoteInputsPayload([remoteRow({ url: longUrl, headers })], '')
+  const { payload } = validated('office-pdf', { downloadFrom: remote })
+  assert.equal(payload.downloadFrom?.[0]?.url, longUrl)
+  assert.equal(Object.keys(payload.downloadFrom?.[0]?.extraHttpHeaders ?? {}).length, 29)
+  const webhook = webhookPayload(
+    {
+      ...emptyWebhook,
+      enabled: true,
+      url: longUrl,
+      eventsUrl: longUrl,
+      headers,
+    },
+    '',
+  )
+  assert.deepEqual(
+    validated('url-pdf', { fields: { url: longUrl }, webhook }).payload.webhook,
+    webhook,
+  )
+  const html = renderToStaticMarkup(
+    createElement(RemoteInputsEditor, {
+      isV9: true,
+      rows: [remoteRow({ headers })],
+      onChange: () => {},
+      legacy: '',
+      onLegacyChange: () => {},
+      newId: () => 99,
+    }),
+  )
+  assert.match(html, /Optional outbound headers \(29\)/)
+  assert.doesNotMatch(html, /29\/20/)
+  const addHeaderLabel = html.indexOf('Add header')
+  assert.ok(addHeaderLabel > 0)
+  assert.doesNotMatch(
+    html.slice(html.lastIndexOf('<button', addHeaderLabel), addHeaderLabel),
+    /disabled=/,
+  )
+})
+
 test('legacy downloadFrom JSON remains supported but cannot override structured rows', () => {
   const legacy = '[{"url":"https://files.example.test/legacy.docx","embedded":false}]'
   assert.deepEqual(remoteInputsPayload([], legacy), JSON.parse(legacy))
@@ -89,6 +135,15 @@ test('outbound header editing rejects incomplete and case-insensitive duplicate 
         '',
       ),
     }),
+  )
+  const safe = remoteInputsPayload(
+    [remoteRow({ headers: [{ id: 1, name: '__proto__', value: 'safe' }] })],
+    '',
+  ) as Array<{ extraHttpHeaders?: Record<string, string> }>
+  assert.equal(Object.getPrototypeOf(safe[0]?.extraHttpHeaders), Object.prototype)
+  assert.equal(
+    Object.getOwnPropertyDescriptor(safe[0]?.extraHttpHeaders, '__proto__')?.value,
+    'safe',
   )
   assert.throws(() =>
     validated('office-pdf', {

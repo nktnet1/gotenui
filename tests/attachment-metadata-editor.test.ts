@@ -62,8 +62,33 @@ describe('native PDF/A attachment metadata editor', () => {
     expect(() => addRemoteAttachmentMetadata(remote, 'INVOICE.XML')).toThrow(/already/)
     expect(() => addRemoteAttachmentMetadata('', '../secret.xml')).toThrow(/filename/)
     expect(() => addRemoteAttachmentMetadata('', 'folder/invoice.xml')).toThrow(/filename/)
-    expect(() => addRemoteAttachmentMetadata('', ' invoice.xml')).toThrow(/filename/)
+    expect(JSON.parse(addRemoteAttachmentMetadata('', ' invoice.xml'))).toEqual({
+      ' invoice.xml': { relationship: 'Unspecified' },
+    })
     expect(() => addRemoteAttachmentMetadata('{', 'invoice.xml')).toThrow(/Fix/)
+  })
+
+  test('allows punctuation, Unicode, long filenames, and parameterised MIME types', () => {
+    const name = `Résumé & invoices (Q4) - ${'x'.repeat(155)}.xml`
+    const raw = setAttachmentMetadata('', name, 'mimeType', 'application/xml; charset=UTF-8')
+    expect(JSON.parse(raw)).toEqual({
+      [name]: { mimeType: 'application/xml; charset=UTF-8' },
+    })
+    expect(() => addRemoteAttachmentMetadata(raw, name.normalize('NFD'))).toThrow(/already/)
+    expect(() => addRemoteAttachmentMetadata('', 'file\u0000.xml')).toThrow(/filename/)
+    expect(() =>
+      setAttachmentMetadata('', 'invoice.xml', 'mimeType', 'text/plain\r\nInjected: yes'),
+    ).toThrow(/MIME/)
+  })
+
+  test('preserves special filename keys without mutating object prototypes', () => {
+    const value = setAttachmentMetadata('', '__proto__', 'mimeType', 'text/plain')
+    expect(JSON.parse(value)).toEqual({ ['__proto__']: { mimeType: 'text/plain' } })
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype)
+    const updated = setAttachmentMetadata(value, '__proto__', 'relationship', 'Data')
+    expect(JSON.parse(updated)).toEqual({
+      ['__proto__']: { mimeType: 'text/plain', relationship: 'Data' },
+    })
   })
 
   test('refuses invalid MIME, relationship, or malformed metadata JSON', () => {

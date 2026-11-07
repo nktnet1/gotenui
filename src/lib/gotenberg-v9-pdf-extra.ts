@@ -156,7 +156,7 @@ export function adaptV9PdfExtra(
       if (auxiliary.length !== 1 || !/\.pdf$/i.test(auxiliary[0]?.name ?? '')) {
         throw new InputError('Upload exactly one additional PDF containing pages to insert.')
       }
-      const at = decimal(fields.at, 'Insert position')
+      const at = value('at') ? decimal(fields.at, 'Insert position') : 0
       if (!Number.isSafeInteger(at) || at < 0)
         throw new InputError('Insert position must be zero or a positive whole number.')
       const asset = auxiliary[0]
@@ -231,13 +231,11 @@ export function adaptV9PdfExtra(
           !['x', 'y', 'width', 'height'].every(
             (key) => typeof region[key] === 'number' && Number.isFinite(region[key]),
           ) ||
-          region.x < 0 ||
-          region.y < 0 ||
           region.width <= 0 ||
           region.height <= 0
         ) {
           throw new InputError(
-            'Each redaction region needs a positive page number and finite, non-negative coordinates with positive width and height.',
+            'Each redaction region needs a positive page number, finite coordinates and positive width and height.',
           )
         }
       }
@@ -270,26 +268,20 @@ export function adaptV9PdfExtra(
       )
       if (auxiliary.length < 1 || auxiliary.length > 2)
         throw new InputError('Upload a PKCS#12 certificate or a PEM certificate and key.')
-      const certificates = auxiliary.filter((file) => /\.(p12|pfx|pem|crt|cer)$/i.test(file.name))
-      const privateKeys = auxiliary.filter((file) => /\.key$/i.test(file.name))
-      if (
-        certificates.length !== 1 ||
-        (auxiliary.length === 2 &&
-          (privateKeys.length !== 1 || /\.(p12|pfx)$/i.test(certificates[0].name))) ||
-        (auxiliary.length === 1 && !/\.(p12|pfx)$/i.test(certificates[0].name))
-      ) {
-        throw new InputError('Use one .p12/.pfx file, or one PEM certificate plus one .key file.')
-      }
-      if (privateKeys.length && value('certificatePassword')) {
-        throw new InputError(
-          'The certificate password applies only to PKCS#12 signing credentials.',
-        )
-      }
+      // One file is a PKCS#12 store; two files are a PEM certificate and key.
+      // Gotenberg selects PEM when a key is supplied, otherwise PKCS#12.
+      // Neither format requires a particular filename extension.
+      // Prefer an explicit .key suffix when present; otherwise use upload order.
+      const namedKey =
+        auxiliary.length === 2 ? auxiliary.find((file) => /\.key$/i.test(file.name)) : undefined
+      const key = auxiliary.length === 2 ? (namedKey ?? auxiliary[1]) : undefined
+      const certificate = auxiliary.find((file) => file !== key)
+      if (!certificate) throw new InputError('Choose a signing certificate.')
       for (const file of auxiliary) addAsset(file)
       stages.push({
         op: 'sign',
-        certificate: certificates[0].name,
-        ...(privateKeys.length ? { key: privateKeys[0].name } : {}),
+        certificate: certificate.name,
+        ...(key ? { key: key.name } : {}),
         ...(value('certificatePassword')
           ? { certificatePassword: fields.certificatePassword }
           : {}),

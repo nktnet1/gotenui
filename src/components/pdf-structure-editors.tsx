@@ -125,7 +125,6 @@ export function PdfMetadataEditor({ value, onChange }: EditorProps) {
                 <Input
                   id={`${id}-${name}`}
                   value={visualMetadataValue(metadata ?? {}, name) ?? ''}
-                  maxLength={500}
                   placeholder={placeholder}
                   onChange={(event) => onChange(updateMetadata(value, name, event.target.value))}
                 />
@@ -136,7 +135,6 @@ export function PdfMetadataEditor({ value, onChange }: EditorProps) {
               <Input
                 id={`${id}-keywords`}
                 value={keywordDraft ?? visualMetadataValue(metadata ?? {}, 'Keywords') ?? ''}
-                maxLength={1200}
                 placeholder="invoice, accounts, 2026"
                 onChange={(event) => {
                   setKeywordDraft(event.target.value)

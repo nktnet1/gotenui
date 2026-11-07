@@ -31,8 +31,7 @@ export const emptyWebhook: WebhookEditorState = {
 
 function headerMap(rows: ExtraHeaderRow[]): Record<string, string> | undefined {
   if (rows.length === 0) return undefined
-  if (rows.length > 20) throw new InputError('At most 20 extra HTTP headers are supported.')
-  const entries: Record<string, string> = {}
+  const entries: Array<[string, string]> = []
   const seen = new Set<string>()
   for (const row of rows) {
     const name = row.name.trim()
@@ -41,9 +40,9 @@ function headerMap(rows: ExtraHeaderRow[]): Record<string, string> | undefined {
       throw new InputError(`Duplicate HTTP header name: ${name}`)
     }
     seen.add(name.toLowerCase())
-    entries[name] = row.value
+    entries.push([name, row.value])
   }
-  return entries
+  return Object.fromEntries(entries)
 }
 
 function legacyJson(text: string, label: string): unknown {

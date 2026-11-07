@@ -1,5 +1,9 @@
 import * as v from 'valibot'
-import { ATTACHMENT_RELATIONSHIPS, parseAttachmentMetadata } from '#/lib/attachment-metadata'
+import {
+  ATTACHMENT_RELATIONSHIPS,
+  isAttachmentMimeType,
+  parseAttachmentMetadata,
+} from '#/lib/attachment-metadata'
 import {
   DEFAULT_MARKDOWN_NAME,
   defaultMarkdownTemplate,
@@ -35,7 +39,7 @@ const markdownFileSchema = v.object({
 })
 
 const remoteFileSchema = v.object({
-  url: v.pipe(v.string(), v.maxLength(2048)),
+  url: v.string(),
   /** Client-side filename hint for v9 named pipeline assets; never sent upstream. */
   name: v.optional(v.string()),
   field: v.optional(v.picklist(['embedded', 'watermark', 'stamp'])),
@@ -44,11 +48,11 @@ const remoteFileSchema = v.object({
 })
 
 const webhookSchema = v.object({
-  url: v.pipe(v.string(), v.maxLength(2048)),
+  url: v.string(),
   method: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
-  errorUrl: v.optional(v.pipe(v.string(), v.maxLength(2048))),
+  errorUrl: v.optional(v.string()),
   errorMethod: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
-  eventsUrl: v.optional(v.pipe(v.string(), v.maxLength(2048))),
+  eventsUrl: v.optional(v.string()),
   extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
 })
 
@@ -202,13 +206,14 @@ function requireHttpUrl(url: string, label: string): void {
 function validateHeaderMap(headers: Record<string, string> | undefined): void {
   if (!headers) return
   const entries = Object.entries(headers)
-  if (entries.length > 20) throw new InputError('At most 20 extra HTTP headers are supported.')
   for (const [name, value] of entries) {
     if (
-      !/^[A-Za-z][A-Za-z0-9-]{0,79}$/.test(name) ||
+      !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
       !value ||
-      value.length > 2000 ||
-      /[\r\n]/.test(value)
+      [...value].some((character) => {
+        const code = character.charCodeAt(0)
+        return (code < 32 && code !== 9) || code === 127
+      })
     ) {
       throw new InputError('Invalid extra HTTP header name or value.')
     }
@@ -238,7 +243,7 @@ function validatedAttachmentMetadata(raw: string): string[] {
   for (const [filename, details] of Object.entries(metadata)) {
     safeFilename(filename)
     if (
-      (details.mimeType !== undefined && !/^[\w.+-]+\/[\w.+-]+$/.test(details.mimeType)) ||
+      (details.mimeType !== undefined && !isAttachmentMimeType(details.mimeType)) ||
       (details.relationship !== undefined &&
         !ATTACHMENT_RELATIONSHIPS.includes(details.relationship))
     ) {
@@ -370,9 +375,6 @@ function validatePostProcessFiles(
   }
   const remote = remoteCounts(payload)
   const embedded = files.embeds ?? []
-  if (countPostProcessFiles(files) > 20 || embedded.length + remote.embedded > 20) {
-    throw new InputError('At most 20 post-processing files or attachments are supported.')
-  }
   if (standalone && (embedded.length || files.facturxXml)) {
     throw new InputError('Standalone overlays cannot embed files or add Factur-X XML.')
   }
@@ -974,7 +976,6 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       if (
         typeof value === 'string' &&
         (value.trim().length === 0 ||
-          value.length > (name === 'waitForExpression' ? 5000 : 500) ||
           (['userAgent', 'waitWindowStatus'].includes(name) && /[\r\n]/.test(value)))
       ) {
         throw new InputError(`Invalid Chromium ${name} value.`)
@@ -1008,16 +1009,8 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       }
     }
     const watermarkFont = payload.fields.nativeWatermarkFontName
-    if (
-      typeof watermarkFont === 'string' &&
-      (watermarkFont.length > 500 || /[\r\n]/.test(watermarkFont))
-    ) {
-      throw new InputError(
-        'Invalid nativeWatermarkFontName: use a single line of at most 500 characters.',
-      )
-    }
-    if (typeof payload.fields.password === 'string' && payload.fields.password.length > 1024) {
-      throw new InputError('Source document password is too long.')
+    if (typeof watermarkFont === 'string' && /[\r\n]/.test(watermarkFont)) {
+      throw new InputError('Invalid nativeWatermarkFontName: use a single line of text.')
     }
   }
 }
@@ -1043,9 +1036,6 @@ export function validatePayload(input: unknown): {
   }
 
   const definitions = new Map(operation.fields.map((field) => [field.name, field]))
-  if (Object.keys(payload.fields).length > 75 || Object.keys(payload.advanced).length > 40) {
-    throw new InputError('Too many form fields.')
-  }
   for (const [key, value] of Object.entries(payload.fields)) {
     const field = definitions.get(key)
     if (!field) throw new InputError(`Unsupported field: ${key}`)

@@ -2,6 +2,7 @@
  * Keep this aligned with pkg/modules/pdf/stages.go and stage_types.go.
  */
 
+import { isAttachmentMimeType } from '#/lib/attachment-metadata'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
@@ -397,7 +398,8 @@ function validateStage(stage: PdfPipelineStage): void {
     case 'insert':
       if (!/\.pdf$/i.test(requiredText(stage, 'source')))
         throw new InputError('insert: upload a PDF.')
-      if (!integer(stage.at, 0)) throw new InputError('insert: at must be a non-negative integer.')
+      if (stage.at !== undefined && !integer(stage.at, 0))
+        throw new InputError('insert: at must be a non-negative integer.')
       break
     case 'rotate':
       if (!Number.isSafeInteger(stage.angle) || (stage.angle as number) % 90 !== 0)
@@ -470,8 +472,6 @@ function validateStage(stage: PdfPipelineStage): void {
           !['x', 'y', 'width', 'height'].every(
             (key) => typeof region[key] === 'number' && Number.isFinite(region[key]),
           ) ||
-          (region.x as number) < 0 ||
-          (region.y as number) < 0 ||
           (region.width as number) <= 0 ||
           (region.height as number) <= 0
         )
@@ -487,7 +487,11 @@ function validateStage(stage: PdfPipelineStage): void {
         )
       )
         throw new InputError('attach: unsupported attachment relationship.')
-      if (stage.mimeType !== undefined && !/^[\w.+-]+\/[\w.+-]+$/.test(String(stage.mimeType)))
+      if (
+        stage.mimeType !== undefined &&
+        stage.mimeType !== '' &&
+        !isAttachmentMimeType(String(stage.mimeType))
+      )
         throw new InputError('attach: invalid MIME type.')
       break
     case 'detach':
@@ -540,15 +544,8 @@ function validateStage(stage: PdfPipelineStage): void {
       }
       break
     case 'sign': {
-      const certificate = requiredText(stage, 'certificate')
-      if (!/\.(p12|pfx|pem|crt|cer)$/i.test(certificate))
-        throw new InputError('sign: upload a PKCS#12 or PEM certificate.')
-      if (stage.key && !/\.key$/i.test(requiredText(stage, 'key')))
-        throw new InputError('sign: private key must be a .key file.')
-      if (/\.(p12|pfx)$/i.test(certificate) && stage.key)
-        throw new InputError('sign: PKCS#12 certificates must not specify a separate key.')
-      if (!/\.(p12|pfx)$/i.test(certificate) && !stage.key)
-        throw new InputError('sign: PEM certificates require a .key upload.')
+      requiredText(stage, 'certificate')
+      if (stage.key !== undefined) requiredText(stage, 'key')
       break
     }
     case 'timestamp':
