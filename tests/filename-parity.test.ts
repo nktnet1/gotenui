@@ -93,6 +93,24 @@ test('matches Gotenberg filenames case-sensitively after NFC normalisation', () 
   )
 })
 
+test('allows duplicate remote source document names while reserving named stage assets', () => {
+  const report = { name: 'report.pdf', url: 'https://example.test/report.pdf' }
+  assert.deepEqual(remoteStageAssets([report], ['stamp.png'], ['report.pdf']), [])
+  assert.deepEqual(
+    remoteStageAssets(
+      [report, { name: 'report.pdf', url: 'https://example.test/report-2.pdf' }],
+      [],
+      ['report.pdf'],
+    ),
+    [],
+  )
+
+  const stamp = { name: 'stamp.png', url: 'https://example.test/stamp.png' }
+  assert.deepEqual(remoteStageAssets([report, stamp], ['stamp.png'], ['report.pdf']), ['stamp.png'])
+  assert.throws(() => remoteStageAssets([stamp], ['stamp.png'], ['stamp.png']), /duplicates/)
+  assert.throws(() => remoteStageAssets([stamp, stamp], ['stamp.png']), /duplicates/)
+})
+
 test('preserves case-distinct asset filenames in standalone PDF requests and editors', () => {
   const insert = OPERATION_BY_ID.get('insert-pages')
   assert.ok(insert)

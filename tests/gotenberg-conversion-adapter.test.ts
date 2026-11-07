@@ -42,6 +42,24 @@ test('v9 conversion stages omit empty optional PDF file references', () => {
   assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
 })
 
+test('v9 Office conversion stages permit duplicate local and remote source names', () => {
+  const url = 'https://example.test/document.txt'
+  const form = adapt(
+    'office-pdf',
+    {
+      downloadFrom: [{ url, name: 'document.txt' }],
+      conversionStages: '[{"op":"rotate","angle":90}]',
+    },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), [{ url }])
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [{ op: 'rotate', angle: 90 }])
+  assert.deepEqual(
+    (form.getAll('files') as File[]).map((file) => file.name),
+    ['document.txt'],
+  )
+})
+
 test('v8 Chromium retains legacy fields, array media features and PDF post-processing', () => {
   const form = adapt(
     'html-pdf',

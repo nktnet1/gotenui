@@ -59,6 +59,31 @@ function upstreamFixture(version: string, onConvert: (form: FormData, headers: H
 beforeEach(() => vi.stubEnv('GOTENBERG_ALLOWED_URLS', upstream))
 afterEach(() => vi.unstubAllEnvs())
 
+test('v9 PDF pipeline accepts duplicate source names across local and remote documents', async () => {
+  const remote = 'https://example.test/another-report.pdf'
+  const fixture = upstreamFixture('9.1.0', (form) => {
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [{ op: 'merge' }])
+    assert.deepEqual(
+      (form.getAll('files') as File[]).map((file) => file.name),
+      ['report.pdf'],
+    )
+    // The name is only a preflight hint: Gotenberg derives it from the remote
+    // response and auto-numbers repeated source filenames itself.
+    assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), [{ url: remote }])
+  })
+  const result = await proxyConversionRequest(
+    requestFor(
+      'pdf-pipeline',
+      { stages: '[{"op":"merge"}]' },
+      { downloadFrom: [{ url: remote, name: 'report.pdf' }] },
+      [new File(['%PDF-1.7\n'], 'report.pdf', { type: 'application/pdf' })],
+    ),
+    fixture.fetcher,
+  )
+  assert.equal(result.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
 test('probes /version for each request and changes form encoding after an upstream upgrade', async () => {
   let version = '8.40.0'
   const calls: FormData[] = []
