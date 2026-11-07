@@ -17,6 +17,7 @@ test('accepts Gotenberg filename punctuation and Unicode without silently rewrit
     'résumé (review).pdf',
     'Report "quoted".pdf',
     'hidden-name.pdf',
+    '   ', // Gotenberg treats whitespace-only filenames as exact names.
   ]) {
     assert.equal(safeFilename(name), name)
   }
@@ -24,7 +25,6 @@ test('accepts Gotenberg filename punctuation and Unicode without silently rewrit
     '',
     '.',
     '..',
-    '  ',
     '../secret.pdf',
     'a\\b.pdf',
     'bad\u0000.pdf',

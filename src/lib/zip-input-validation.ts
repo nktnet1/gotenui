@@ -47,7 +47,9 @@ async function zipEntryNames(archive: File): Promise<string[]> {
   for (let offset = tail.length - END_RECORD_BYTES; offset >= 0; offset--) {
     if (
       view.getUint32(offset, true) === 0x06054b50 &&
-      offset + END_RECORD_BYTES + view.getUint16(offset + 20, true) === tail.length
+      // Like Go's archive/zip, allow bytes after the ZIP comment. The
+      // directory itself must still be complete and within the archive.
+      offset + END_RECORD_BYTES + view.getUint16(offset + 20, true) <= tail.length
     ) {
       end = offset
       break
@@ -188,7 +190,8 @@ async function zipEntryNames(archive: File): Promise<string[]> {
     cursor = next
   }
   if (cursor !== length) invalidArchive(archive.name, 'the ZIP index has trailing data.')
-  if (!names.length) invalidArchive(archive.name, 'include at least one file in the ZIP.')
+  // An empty archive (or one containing only skipped directory/metadata
+  // entries) is valid in Gotenberg when other request inputs are provided.
   return names
 }
 

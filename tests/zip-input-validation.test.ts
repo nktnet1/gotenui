@@ -33,6 +33,39 @@ async function check(
   )
 }
 
+test('accepts ZIPs with a trailing stub after the end record or ZIP comment', async () => {
+  const original = zipFixture({ 'input.pdf': '%PDF-1.7' })
+  const trailer = new TextEncoder().encode('extra bytes after the end record')
+  assert.deepEqual(await check('pdf-pipeline', [new File([original, trailer], 'appended.zip')]), [
+    'input.pdf',
+  ])
+  const raw = new Uint8Array(await original.arrayBuffer())
+  const comment = new TextEncoder().encode('some comment')
+  const modified = new Uint8Array(raw.length + comment.length + trailer.length)
+  modified.set(raw)
+  new DataView(modified.buffer).setUint16(raw.length - 2, comment.length, true)
+  modified.set(comment, raw.length)
+  modified.set(trailer, raw.length + comment.length)
+  assert.deepEqual(await check('pdf-pipeline', [new File([modified], 'comment.zip')]), [
+    'input.pdf',
+  ])
+})
+
+test('accepts empty ZIPs when other source inputs are available', async () => {
+  const empty = zipFixture({})
+  const input = new File(['%PDF-1.7'], 'original.pdf')
+  assert.deepEqual(await check('pdf-pipeline', [empty], { files: [input] }), [])
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'docs/': '', '__MACOSX/._input.pdf': 'metadata' })], {
+      files: [input],
+    }),
+    [],
+  )
+  assert.deepEqual(await check('html-pdf', [empty]), [])
+  await assert.rejects(check('pdf-pipeline', [empty]), /at least one source PDF/)
+  await assert.rejects(check('office-pdf', [empty]), /at least one source document/)
+})
+
 test('accepts self-extracting ZIPs with a prefixed stub and relative directory offsets', async () => {
   const original = zipFixture({ 'document.pdf': '%PDF-1.7' })
   const stub = new TextEncoder().encode('MZ\x90\x00valid stub prefix')
@@ -60,7 +93,7 @@ test('ignores macOS metadata, directory entries and Unix symlinks like Gotenberg
   assert.deepEqual(await check('pdf-pipeline', [archive]), ['input.pdf'])
   await assert.rejects(
     check('pdf-pipeline', [zipFixture({ '__MACOSX/._input.pdf': 'metadata' })]),
-    /include at least one file/,
+    /at least one source PDF/,
   )
 
   const symlink = new Uint8Array(
@@ -259,7 +292,7 @@ test('rejects archive assets that could shadow generated HTML or Markdown source
   )
 })
 
-test('rejects unsafe paths, corrupt directories, encrypted ZIPs, and empty ZIP inputs', async () => {
+test('rejects unsafe paths, corrupt directories, encrypted ZIPs, and archives without sources', async () => {
   for (const name of ['../secrets.pdf', '/etc/secrets.pdf', 'C:\\secrets.pdf']) {
     await assert.rejects(check('pdf-pipeline', [zipFixture({ [name]: '%PDF' })]), /paths/)
   }
@@ -285,7 +318,7 @@ test('rejects unsafe paths, corrupt directories, encrypted ZIPs, and empty ZIP i
   new DataView(empty.buffer).setUint32(0, 0x06054b50, true)
   await assert.rejects(
     check('office-pdf', [new File([empty], 'no-files.zip')]),
-    /include at least one file/,
+    /at least one source document/,
   )
   const zip64 = new Uint8Array(await truncated.arrayBuffer())
   new DataView(zip64.buffer).setUint32(zip64.length - 10, 0xffffffff, true)

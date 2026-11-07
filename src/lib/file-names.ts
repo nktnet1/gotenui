@@ -3,7 +3,7 @@
  */
 export function safeFilename(name: string): string {
   if (
-    !name.trim() ||
+    name === '' ||
     name === '.' ||
     name === '..' ||
     /[/\\]/u.test(name) ||

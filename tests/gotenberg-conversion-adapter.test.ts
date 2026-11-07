@@ -29,6 +29,19 @@ function adapt(id: string, overrides: Partial<ConversionPayload>, major: 8 | 9) 
   return adaptConversionForm(operation, payload, form, major)
 }
 
+test('v9 conversion stages omit empty optional PDF file references', () => {
+  const stages = [{ op: 'remediate', profile: 'Factur-X', xml: '' }]
+  const form = adapt(
+    'html-pdf',
+    {
+      source: '<html><body>Invoice</body></html>',
+      conversionStages: JSON.stringify(stages),
+    },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
+})
+
 test('v8 Chromium retains legacy fields, array media features and PDF post-processing', () => {
   const form = adapt(
     'html-pdf',

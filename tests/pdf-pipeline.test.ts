@@ -260,6 +260,72 @@ describe('PDF pipeline catalogue and stage contract', () => {
     ])
   })
 
+  it('supports upstream empty defaults without inventing missing PDF stage assets', () => {
+    const stages = [
+      { op: 'remediate', profile: 'Factur-X', xml: '' },
+      { op: 'sign', certificate: 'signing.p12', key: '' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const signingFile = new File(['certificate'], 'signing.p12')
+    const { form } = adapted(stages, [signingFile])
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
+    assert.deepEqual(
+      form.getAll('files').map((file) => (file instanceof File ? file.name : '')),
+      ['input.pdf', 'signing.p12'],
+    )
+    // With no assets, an explicitly empty XML reference is not a missing file.
+    assert.deepEqual(JSON.parse(String(adapted([stages[0]]).form.get('stages'))), [stages[0]])
+    assert.throws(
+      () =>
+        adapted([{ op: 'sign', certificate: 'signing.p12', key: 'missing.pem' }], [signingFile]),
+      /upload an additional file/,
+    )
+  })
+
+  it('allows empty defaults and range combinations accepted by the upstream stage parser', () => {
+    for (const stages of [
+      [{ op: 'split', every: 2, ranges: [] }],
+      [{ op: 'split', every: 2, ranges: null }],
+      [{ op: 'encrypt', userPassword: 'secret', algorithm: '' }],
+      [{ op: 'render', format: '' }],
+    ]) {
+      assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+      assert.deepEqual(JSON.parse(String(adapted(stages).form.get('stages'))), stages)
+    }
+    assert.deepEqual(pipelineResponseTypes([{ op: 'render', format: '' }]), [
+      'image/png',
+      'application/zip',
+    ])
+    error([{ op: 'split', ranges: [] }], /either every or ranges/)
+    error([{ op: 'split', every: 2, ranges: ['1-2'] }], /either every or ranges/)
+    error([{ op: 'stamp-text' }], /text must be non-empty/)
+  })
+
+  it('preserves whitespace-only embedded names and stage file references', () => {
+    const attachment = new File(['data'], '   ')
+    const stages = [
+      { op: 'attach', file: '   ', name: '  ' },
+      { op: 'detach', name: '  ' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const { payload, legacy } = input(stages, [attachment])
+    assert.doesNotThrow(() =>
+      validateFiles(
+        operation,
+        [new File(['%PDF-1.7'], 'input.pdf')],
+        [attachment],
+        4_000_000,
+        payload,
+      ),
+    )
+    assert.deepEqual(
+      JSON.parse(String(adaptPdfPipeline(payload, legacy, [attachment]).form.get('stages'))),
+      stages,
+    )
+    error([{ op: 'attach', file: '' }], /non-empty/)
+    error([{ op: 'select', pages: '  ' }], /non-empty/)
+  })
+
   it('accepts remote input PDFs and PDF ZIPs without treating remote files as stage assets', () => {
     const { payload, legacy } = input([{ op: 'optimize' }])
     payload.downloadFrom = [
