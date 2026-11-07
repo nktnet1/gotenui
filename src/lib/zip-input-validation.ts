@@ -1,4 +1,5 @@
 import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
+import { filenameKey } from '#/lib/file-names'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -46,13 +47,16 @@ async function zipEntryNames(archive: File): Promise<string[]> {
   for (let offset = tail.length - END_RECORD_BYTES; offset >= 0; offset--) {
     if (
       view.getUint32(offset, true) === 0x06054b50 &&
-      offset + END_RECORD_BYTES + view.getUint16(offset + 20, true) === tail.length
+      // Like Go's archive/zip, allow bytes after the ZIP comment. The
+      // directory itself must still be complete and within the archive.
+      offset + END_RECORD_BYTES + view.getUint16(offset + 20, true) <= tail.length
     ) {
       end = offset
       break
     }
   }
-  if (end < 0) invalidArchive(archive.name, 'the ZIP central directory is missing.')
+  if (end < 0)
+    invalidArchive(archive.name, 'is not a ZIP file: the ZIP central directory is missing.')
   const filesOnDisk = view.getUint16(end + 8, true)
   let count = view.getUint16(end + 10, true)
   let length = view.getUint32(end + 12, true)
@@ -70,15 +74,27 @@ async function zipEntryNames(archive: File): Promise<string[]> {
     if (view.getUint32(locatorAt + 4, true) !== 0 || view.getUint32(locatorAt + 16, true) !== 1) {
       invalidArchive(archive.name, 'multi-volume ZIP64 archives are not supported.')
     }
-    const zip64Offset = safeZip64Integer(view.getBigUint64(locatorAt + 8, true), archive.name)
-    if (zip64Offset + 56 > endOffset - 20) {
-      invalidArchive(archive.name, 'the ZIP64 end record is invalid.')
-    }
-    const recordBytes = new Uint8Array(
+    // ZIP64 locator offsets may be relative to an executable preamble, just
+    // like the ordinary central-directory offset. For the standard fixed-size
+    // end record, its physical location is immediately before the locator.
+    const declaredOffset = safeZip64Integer(view.getBigUint64(locatorAt + 8, true), archive.name)
+    const beforeLocator = endOffset - 20
+    let zip64Offset = declaredOffset
+    let recordBytes = new Uint8Array(
       await archive.slice(zip64Offset, zip64Offset + 56).arrayBuffer(),
     )
-    if (recordBytes.length !== 56)
-      invalidArchive(archive.name, 'the ZIP64 end record is incomplete.')
+    if (
+      (recordBytes.length !== 56 ||
+        new DataView(recordBytes.buffer).getUint32(0, true) !== 0x06064b50) &&
+      beforeLocator >= 56 &&
+      declaredOffset !== beforeLocator - 56
+    ) {
+      zip64Offset = beforeLocator - 56
+      recordBytes = new Uint8Array(await archive.slice(zip64Offset, zip64Offset + 56).arrayBuffer())
+    }
+    if (recordBytes.length !== 56 || zip64Offset + 56 > beforeLocator) {
+      invalidArchive(archive.name, 'the ZIP64 end record is invalid.')
+    }
     const record = new DataView(recordBytes.buffer, recordBytes.byteOffset, recordBytes.byteLength)
     if (
       record.getUint32(0, true) !== 0x06064b50 ||
@@ -111,10 +127,18 @@ async function zipEntryNames(archive: File): Promise<string[]> {
   if (count > MAX_ENTRIES || length > MAX_DIRECTORY_BYTES) {
     invalidArchive(archive.name, 'the ZIP index has too many entries or is too large.')
   }
-  if (offset + length > directoryEnd || offset + length > archive.size) {
+  // Go's archive/zip supports a ZIP appended to another file (e.g. an SFX
+  // archive). Its directory offsets can be relative to that prefix. Compute
+  // the same nonnegative base offset rather than assuming the archive starts
+  // with PK at byte zero. Still reject overlaps and out-of-bounds indexes.
+  const baseOffset = directoryEnd - offset - length
+  if (baseOffset < 0 || directoryEnd > archive.size || directoryEnd < length) {
     invalidArchive(archive.name, 'the ZIP central directory is invalid.')
   }
-  const bytes = new Uint8Array(await archive.slice(offset, offset + length).arrayBuffer())
+  const directoryOffset = offset + baseOffset
+  const bytes = new Uint8Array(
+    await archive.slice(directoryOffset, directoryOffset + length).arrayBuffer(),
+  )
   if (bytes.byteLength !== length) invalidArchive(archive.name, 'the ZIP index is incomplete.')
   const directory = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const names: string[] = []
@@ -166,7 +190,8 @@ async function zipEntryNames(archive: File): Promise<string[]> {
     cursor = next
   }
   if (cursor !== length) invalidArchive(archive.name, 'the ZIP index has trailing data.')
-  if (!names.length) invalidArchive(archive.name, 'include at least one file in the ZIP.')
+  // An empty archive (or one containing only skipped directory/metadata
+  // entries) is valid in Gotenberg when other request inputs are provided.
   return names
 }
 
@@ -183,19 +208,25 @@ export async function validateZipInputs(
   archives: readonly File[],
 ): Promise<string[]> {
   if (!archives.length) return []
-  const expected = new Set<string>([
-    ...files.map(({ name }) => name.normalize('NFC').toLowerCase()),
-    ...auxiliary.map(({ name }) => name.normalize('NFC').toLowerCase()),
-    ...stageFiles.map(({ name }) => name.normalize('NFC').toLowerCase()),
+  const localSources = new Set(files.map(({ name }) => filenameKey(name)))
+  const protectedNames = new Set<string>([
+    ...auxiliary.map(({ name }) => filenameKey(name)),
+    ...stageFiles.map(({ name }) => filenameKey(name)),
   ])
+  const expected = new Set<string>([...localSources, ...protectedNames])
   if (operation.input === 'html' || operation.input === 'markdown') {
-    expected.add('index.html')
-    expected.add('header.html')
-    expected.add('footer.html')
+    for (const name of ['index.html', 'header.html', 'footer.html']) {
+      expected.add(name)
+      protectedNames.add(name)
+    }
     if (operation.input === 'markdown') {
-      expected.add((payload.markdownName ?? DEFAULT_MARKDOWN_NAME).normalize('NFC').toLowerCase())
-      for (const source of payload.markdownFiles ?? [])
-        expected.add(source.name.normalize('NFC').toLowerCase())
+      for (const name of [
+        payload.markdownName ?? DEFAULT_MARKDOWN_NAME,
+        ...(payload.markdownFiles ?? []).map((source) => source.name),
+      ]) {
+        expected.add(filenameKey(name))
+        protectedNames.add(filenameKey(name))
+      }
     }
   }
   const extensions = officeExtensionSetForMajor(9)
@@ -211,47 +242,53 @@ export async function validateZipInputs(
         : []
   const stageAssets = new Set(pdfStageAssetNames(stages))
   const remoteAssets = (payload.downloadFrom ?? []).filter(
-    (remote) => remote.name !== undefined && stageAssets.has(remote.name),
+    (remote) => remote.name !== undefined && stageAssets.has(remote.name.normalize('NFC')),
   )
   const remoteSources = (payload.downloadFrom ?? []).filter(
     (remote) => !remote.field && !remote.embedded && !remoteAssets.includes(remote),
   )
   const extracted: string[] = []
+  const archiveSources = new Set<string>()
+  const archiveExtras = new Set<string>()
   for (const archive of archives) {
-    const prefix = new Uint8Array(await archive.slice(0, 4).arrayBuffer())
-    if (
-      prefix.length !== 4 ||
-      prefix[0] !== 0x50 ||
-      prefix[1] !== 0x4b ||
-      !((prefix[2] === 0x03 && prefix[3] === 0x04) || (prefix[2] === 0x05 && prefix[3] === 0x06))
-    ) {
-      throw new InputError(`Archive ${archive.name} is not a ZIP file.`)
-    }
     for (const name of await zipEntryNames(archive)) {
       // Gotenberg strips the path and NFC-normalises the filename it registers.
       const normalizedName = basename(name).normalize('NFC')
-      const flatName = normalizedName.toLowerCase()
-      const label = flatName.slice(0, 120)
+      const flatName = filenameKey(normalizedName)
+      const label = normalizedName.slice(0, 120)
       // Gotenberg resolves entries as named input files; compare basenames
-      // case-insensitively, including across separate archives and uploads.
-      if (expected.has(flatName)) {
+      // by exact NFC spelling, including across separate archives and uploads.
+      const isStageAsset = stageAssets.has(normalizedName)
+      const suffix = flatName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? ''
+      const isSourceDocument =
+        !isStageAsset &&
+        ((operation.input === 'pdf' && suffix === '.pdf') ||
+          (operation.id === 'office-pdf' && extensions.has(suffix)))
+      // Gotenberg's uniqueFilename registers colliding source documents as
+      // "name (2).pdf", "name (3).pdf", etc. The same applies inside ZIPs.
+      // Do not accept ambiguous collisions involving named stage assets or
+      // generated Chromium documents, since those are referenced by name.
+      const duplicateSource =
+        isSourceDocument &&
+        !protectedNames.has(flatName) &&
+        (localSources.has(flatName) || archiveSources.has(flatName))
+      // Unrelated archive files are also auto-renamed upstream. Repeated
+      // resources must not displace explicitly named pipeline assets.
+      const duplicateExtra =
+        !isSourceDocument &&
+        !isStageAsset &&
+        !protectedNames.has(flatName) &&
+        archiveExtras.has(flatName)
+      if (expected.has(flatName) && !duplicateSource && !duplicateExtra) {
         invalidArchive(archive.name, `duplicate or reserved filename: ${label}.`)
       }
       expected.add(flatName)
       extracted.push(normalizedName)
-      const isStageAsset = stageAssets.has(normalizedName)
-      if (operation.input === 'pdf' && !flatName.endsWith('.pdf') && !isStageAsset) {
-        invalidArchive(
-          archive.name,
-          `${operation.id === 'pdf-pipeline' ? 'PDF pipeline requires PDFs or referenced stage assets' : 'PDF tools require PDFs or referenced pipeline stage assets'} (found ${label}).`,
-        )
-      }
-      if (operation.id === 'office-pdf') {
-        const suffix = flatName.match(/\.[a-z0-9]+$/)?.[0] ?? ''
-        if (!extensions.has(suffix) && !isStageAsset) {
-          invalidArchive(archive.name, `unsupported Gotenberg 9 Office entry: ${label}.`)
-        }
-      }
+      if (isSourceDocument) archiveSources.add(flatName)
+      else if (!isStageAsset) archiveExtras.add(flatName)
+      // Non-source entries are allowed. Gotenberg extracts them but only
+      // selects documents of the appropriate type for conversion; other files
+      // may still be referenced by an explicit pipeline stage.
     }
   }
   // Gotenberg treats PDFs/Documents consumed by stages as assets, not source

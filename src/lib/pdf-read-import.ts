@@ -6,10 +6,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 /** The read endpoint includes non-writable Exif/PDF information: never submit it wholesale. */
 export function importReadableMetadata(result: unknown, filename: string): string {
-  if (!isObject(result) || !isObject(result[filename])) {
+  // Read-route result keys use the NFC filename registered by Gotenberg.
+  const source = isObject(result) ? (result[filename] ?? result[filename.normalize('NFC')]) : null
+  if (!isObject(source)) {
     throw new Error(`Gotenberg did not return metadata for ${filename}.`)
   }
-  const source = result[filename]
   const metadata: Record<string, string | string[]> = {}
   for (const { name } of METADATA_TEXT_FIELDS) {
     const value = source[name] ?? source[name.charAt(0).toLowerCase() + name.slice(1)]
@@ -25,7 +26,6 @@ export function importReadableMetadata(result: unknown, filename: string): strin
       .filter(Boolean)
   }
   const editable = JSON.stringify(metadata)
-  if (editable.length > 10_000) throw new Error('Metadata is too large to import into the editor.')
   return editable
 }
 
@@ -34,7 +34,7 @@ export function importReadableBookmarks(result: unknown, filenames: string[]): s
   if (!isObject(result) || !filenames.length) throw new Error('Invalid bookmark read response.')
   const mapped: Record<string, unknown> = Object.create(null)
   for (const filename of filenames) {
-    const items = result[filename]
+    const items = result[filename] ?? result[filename.normalize('NFC')]
     if (!Array.isArray(items))
       throw new Error(`Gotenberg did not return bookmarks for ${filename}.`)
     mapped[filename] = items.map(normalizeReadBookmark)
@@ -42,7 +42,6 @@ export function importReadableBookmarks(result: unknown, filenames: string[]): s
   const value =
     filenames.length === 1 ? JSON.stringify(mapped[filenames[0] as string]) : JSON.stringify(mapped)
   validateBookmarkDocument(value)
-  if (value.length > 10_000) throw new Error('Bookmarks are too large to import into the editor.')
   return value
 }
 

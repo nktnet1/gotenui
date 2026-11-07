@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'vitest'
 import { defaultMarkdownTemplate, markdownTemplateReferences } from '#/lib/chromium-documents'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
+import { readHtmlSource } from '#/lib/html-source-import'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
 import { InputError, validateFiles, validatePayload } from '#/lib/validation'
 
@@ -35,6 +36,19 @@ function validateAssets(operationId: string, extras: Record<string, unknown>, as
 }
 
 describe('Chromium PDF headers and footers', () => {
+  test('accepts complete HTML headers/footers above prior field caps within upload budget', () => {
+    const largeHtml = `<html><head></head><body>${'x'.repeat(80_000)}</body></html>`
+    const { operation, payload } = makePayload('html-pdf', {
+      source: `<html><head></head><body>${'main'.repeat(100_000)}</body></html>`,
+      headerHtml: largeHtml,
+      footerHtml: largeHtml,
+    })
+    validateFiles(operation, [], [], 1_000_000, payload)
+    assert.equal(payload.headerHtml, largeHtml)
+    assert.equal(payload.footerHtml, largeHtml)
+    assert.throws(() => validateFiles(operation, [], [], 200_000, payload), /configured size limit/)
+  })
+
   test.each(['url-pdf', 'html-pdf', 'markdown-pdf'])(
     '%s sends optional named HTML files through the files field',
     async (id) => {
@@ -65,15 +79,29 @@ describe('Chromium PDF headers and footers', () => {
     },
   )
 
-  test.each(['', '<div>Partial HTML</div>', '<html><body>Missing head</body></html>'])(
-    'rejects incomplete header markup',
-    (invalid) => {
-      assert.throws(() => makePayload('url-pdf', { headerHtml: invalid }), /complete HTML/)
+  test.each([
+    '',
+    '<div>Page <span class="pageNumber"></span></div>',
+    '<html><body>Missing head</body></html>',
+  ])(
+    'accepts header/footer HTML fragments without requiring an HTML document skeleton',
+    async (html) => {
+      const { operation, payload } = makePayload('url-pdf', { headerHtml: html, footerHtml: html })
+      validateFiles(operation, [], [], 4_000_000, payload)
+      const form = createGotenbergForm(operation, payload, [], [])
+      const templates = (form.getAll('files') as File[]).filter((file) =>
+        ['header.html', 'footer.html'].includes(file.name),
+      )
+      assert.deepEqual(
+        templates.map((file) => file.name),
+        ['header.html', 'footer.html'],
+      )
+      assert.deepEqual(await Promise.all(templates.map((file) => file.text())), [html, html])
     },
   )
 
   test('rejects reserved header/footer asset names even if the HTML fields were not supplied', () => {
-    for (const fileName of ['header.html', 'HEADER.HTML', 'footer.html', 'index.html']) {
+    for (const fileName of ['header.html', 'footer.html', 'index.html']) {
       assert.throws(
         () => validateAssets('html-pdf', {}, [new File(['file content'], fileName)]),
         /Duplicate filename/,
@@ -90,6 +118,20 @@ describe('Chromium PDF headers and footers', () => {
 })
 
 describe('Markdown files and templates', () => {
+  test('accepts Markdown sources and templates above the old independent character limits', () => {
+    const additional = '# Secondary\n'.repeat(30_000)
+    const longTemplate = `<!doctype html><html><body>${' '.repeat(151_000)}{{ toHTML "document.md" }}{{ toHTML "extra.md" }}</body></html>`
+    const { operation, payload } = makePayload('markdown-pdf', {
+      source: '# Primary\n'.repeat(31_000),
+      markdownFiles: [{ name: 'extra.md', content: additional }],
+      markdownTemplate: longTemplate,
+    })
+    validateFiles(operation, [], [], 1_000_000, payload)
+    assert.equal(payload.markdownFiles?.[0]?.content, additional)
+    assert.equal(payload.markdownTemplate, longTemplate)
+    assert.throws(() => validateFiles(operation, [], [], 50_000, payload), /configured size limit/)
+  })
+
   test('retains the original one-file generated-template contract', async () => {
     const form = validateAssets('markdown-pdf', {}, [])
     const files = form.getAll('files') as File[]
@@ -157,37 +199,120 @@ describe('Markdown files and templates', () => {
     ])
   })
 
-  test('rejects missing and unrendered Markdown template references', () => {
-    assert.throws(
-      () => makePayload('markdown-pdf', { markdownTemplate: '<html>No toHTML action</html>' }),
-      /must contain/,
+  test('allows static, conditional, and dynamic Go templates with unused Markdown files', async () => {
+    const templates = [
+      '<html><body>No toHTML action</body></html>',
+      '{{ $file := "document.md" }}<html><body>{{ toHTML $file }}</body></html>',
+      '{{ if false }}{{ toHTML "missing.md" }}{{ end }}<html>Static content</html>',
+    ]
+    for (const markdownTemplate of templates) {
+      for (const operationId of ['markdown-pdf', 'markdown-shot']) {
+        const form = validateAssets(
+          operationId,
+          {
+            markdownTemplate,
+            markdownFiles: [{ name: 'unused.md', content: '# Not referenced' }],
+          },
+          [],
+        )
+        assert.equal(await (form.get('files') as File).text(), markdownTemplate)
+        assert.deepEqual(
+          (form.getAll('files') as File[]).map((file) => file.name),
+          ['index.html', 'document.md', 'unused.md'],
+        )
+      }
+    }
+  })
+
+  test('allows blank or whitespace-only custom Markdown HTML templates', async () => {
+    for (const markdownTemplate of ['', '  \n\t ']) {
+      const imported = await readHtmlSource(new File([markdownTemplate], 'index.html'))
+      for (const operationId of ['markdown-pdf', 'markdown-shot']) {
+        const { operation, payload } = makePayload(operationId, {
+          markdownTemplate: imported,
+          source: '',
+        })
+        validateFiles(operation, [], [], 4_000_000, payload)
+        const form = createGotenbergForm(operation, payload, [], [])
+        const files = form.getAll('files') as File[]
+        assert.equal(files[0]?.name, 'index.html')
+        assert.equal(files[0]?.size, new TextEncoder().encode(markdownTemplate).length)
+        assert.equal(await files[0]?.text(), markdownTemplate)
+        assert.equal(files[1]?.name, 'document.md')
+      }
+    }
+  })
+
+  test('accepts empty primary and extra Markdown files when the HTML template is valid', async () => {
+    const { operation, payload } = makePayload('markdown-pdf', {
+      source: '',
+      markdownFiles: [{ name: 'empty.md', content: '' }],
+    })
+    validateFiles(operation, [], [], 4_000_000, payload)
+    const files = createGotenbergForm(operation, payload, [], []).getAll('files') as File[]
+    assert.deepEqual(
+      files.map((file) => file.size === 0),
+      [false, true, true],
     )
+    assert.deepEqual(await Promise.all(files.slice(1).map((file) => file.text())), ['', ''])
+    for (const html of ['', '  ', '\n']) {
+      for (const id of ['html-pdf', 'html-shot']) {
+        const { operation, payload } = makePayload(id, { source: html })
+        validateFiles(operation, [], [], 4_000_000, payload)
+        const form = createGotenbergForm(operation, payload, [], [])
+        assert.equal(await (form.get('files') as File).text(), html)
+      }
+    }
     assert.throws(
-      () => makePayload('markdown-pdf', { markdownTemplate: '{{ toHTML "missing.md" }}' }),
-      /missing file: missing.md/,
+      () => makePayload('html-pdf', { source: undefined }),
+      /Provide HTML source content/,
+    )
+  })
+
+  test('NFC-normalises Markdown filenames and generated template references', async () => {
+    const decomposed = 'cafe\u0301.md'
+    const composed = decomposed.normalize('NFC')
+    const { operation, payload } = makePayload('markdown-pdf', {
+      markdownName: decomposed,
+      markdownFiles: [{ name: 're\u0301sume\u0301.md', content: '# Notes' }],
+    })
+    const files = createGotenbergForm(operation, payload, [], []).getAll('files') as File[]
+    assert.deepEqual(
+      files.map((file) => file.name),
+      ['index.html', composed, 're\u0301sume\u0301.md'.normalize('NFC')],
+    )
+    assert.deepEqual(
+      markdownTemplateReferences(await files[0].text()),
+      files.slice(1).map((f) => f.name),
     )
     assert.throws(
       () =>
         makePayload('markdown-pdf', {
-          markdownFiles: [{ name: 'second.md', content: '# Second' }],
-          markdownTemplate: '{{ toHTML "document.md" }}',
+          markdownName: decomposed,
+          markdownFiles: [{ name: composed, content: 'collision' }],
         }),
-      /does not render second.md/,
+      /unique/,
     )
   })
 
-  test('rejects filename collisions, empty Markdown, missing content and invalid filenames', () => {
-    const invalid = [
-      { markdownFiles: [{ name: 'DOCUMENT.MD', content: 'Duplicate' }] },
-      { markdownFiles: [{ name: 'document.md', content: 'Duplicate' }] },
-    ]
+  test('allows Markdown filenames differing only by case', () => {
+    const { operation, payload } = makePayload('markdown-pdf', {
+      markdownName: 'document.md',
+      markdownFiles: [{ name: 'DOCUMENT.MD', content: '# Separate' }],
+    })
+    validateFiles(operation, [], [], 4_000_000, payload)
+    const form = createGotenbergForm(operation, payload, [], [])
+    assert.deepEqual(
+      (form.getAll('files') as File[]).map((file) => file.name),
+      ['index.html', 'document.md', 'DOCUMENT.MD'],
+    )
+  })
+
+  test('rejects filename collisions and unsafe or invalid Markdown filenames', () => {
+    const invalid = [{ markdownFiles: [{ name: 'document.md', content: 'Duplicate' }] }]
     for (const extras of invalid) {
       assert.throws(() => makePayload('markdown-pdf', extras), /unique/)
     }
-    assert.throws(
-      () => makePayload('markdown-pdf', { markdownFiles: [{ name: 'empty.md', content: '' }] }),
-      /no Markdown content/,
-    )
     assert.throws(
       () => makePayload('markdown-pdf', { markdownFiles: [{ name: '../evil.md', content: 'Hi' }] }),
       /paths|control/,

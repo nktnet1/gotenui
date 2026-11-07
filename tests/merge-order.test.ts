@@ -52,12 +52,11 @@ test('retains filename-keyed merge bookmarks including duplicate filenames and r
   )
 })
 
-test('rejects colliding names for other PDF routes and invalid merge bookmark JSON', () => {
+test('allows colliding source documents on other PDF routes and rejects invalid merge bookmark JSON', () => {
   const operation = OPERATION_BY_ID.get('split')
   assert.ok(operation)
-  assert.throws(
-    () => validateFiles(operation, [pdf('same.pdf', 'one'), pdf('same.pdf', 'two')], [], 1000),
-    /Duplicate filename/,
+  assert.doesNotThrow(() =>
+    validateFiles(operation, [pdf('same.pdf', 'one'), pdf('same.pdf', 'two')], [], 1000),
   )
   assert.throws(
     () => validatePayload({ operation: 'merge', fields: {}, advanced: { bookmarks: '{' } }),

@@ -3,7 +3,7 @@
  */
 export function safeFilename(name: string): string {
   if (
-    !name.trim() ||
+    name === '' ||
     name === '.' ||
     name === '..' ||
     /[/\\]/u.test(name) ||
@@ -17,5 +17,25 @@ export function safeFilename(name: string): string {
   return name
 }
 
-/** Gotenberg NFC-normalises filenames; reject collisions using that spelling. */
-export const filenameKey = (name: string): string => name.normalize('NFC').toLowerCase()
+/** Gotenberg NFC-normalises filenames, but resolves them case-sensitively. */
+export const filenameKey = (name: string): string => name.normalize('NFC')
+
+/** Preserve upload arrival order. Gotenberg compares NFC-normalised filenames
+ * case-sensitively and auto-renames repeated source documents in major 9.
+ */
+export function combineUploadSelection(
+  existing: readonly File[],
+  incoming: readonly File[],
+  options: { multiple?: boolean; allowDuplicateNames?: boolean; maxFiles?: number } = {},
+): File[] {
+  const names = new Set<string>()
+  return [...(options.multiple ? existing : []), ...incoming]
+    .filter((file) => {
+      if (options.allowDuplicateNames) return true
+      const name = filenameKey(file.name)
+      if (names.has(name)) return false
+      names.add(name)
+      return true
+    })
+    .slice(0, options.maxFiles ?? Number.POSITIVE_INFINITY)
+}

@@ -7,6 +7,7 @@ import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
 import {
   type GotenbergVersion,
   parseGotenbergVersion,
+  requiresGotenberg91ForExtraction,
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import {
@@ -488,7 +489,7 @@ export async function proxyConversionRequest(
   const postFiles: PostProcessFiles = {}
   let payloadCount = 0
   for (const [key, value] of fields) {
-    if (key === 'payload' && typeof value === 'string' && value.length <= 400_000) {
+    if (key === 'payload' && typeof value === 'string') {
       payloadCount++
       try {
         candidate = JSON.parse(value)
@@ -543,10 +544,12 @@ export async function proxyConversionRequest(
       409,
     )
   }
-  // Validate the actual stages. Gotenberg exposes /version but not a reliable
-  // feature-discovery API, so v9 tools share the v9 major-version gate.
+  // These extraction routes and stages were introduced in Gotenberg 9.1.
+  if (requiresGotenberg91ForExtraction(version, [operation.id])) {
+    throw new InputError('PDF text and attachment extraction require Gotenberg 9.1 or newer.', 409)
+  }
   if (major === 9 && (operation.id === 'pdf-pipeline' || payload.conversionStages)) {
-    parsePdfPipeline(
+    const stages = parsePdfPipeline(
       operation.id === 'pdf-pipeline'
         ? String(payload.fields.stages ?? '')
         : (payload.conversionStages ?? ''),
@@ -557,6 +560,17 @@ export async function proxyConversionRequest(
             : payload.acknowledgedConversionRedaction,
       },
     )
+    if (
+      requiresGotenberg91ForExtraction(
+        version,
+        stages.map(({ op }) => op),
+      )
+    ) {
+      throw new InputError(
+        'PDF text and attachment extraction require Gotenberg 9.1 or newer.',
+        409,
+      )
+    }
   }
   // The initial validation accepts the union of both Office extension sets.
   // Recheck after authenticating /version so neither version receives an unsupported format.
@@ -608,6 +622,7 @@ export async function proxyConversionRequest(
     maxBytes,
     postFiles,
     archives,
+    major,
   )
   const { path, form } =
     operation.input === 'pdf'

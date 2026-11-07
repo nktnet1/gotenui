@@ -12,6 +12,7 @@ import {
   safePipelinePreview,
 } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
+import { pdfPipelineEditorError } from '#/lib/pdf-pipeline-editor-validation'
 import { type ConversionPayload, validateFiles, validatePayload } from '#/lib/validation'
 import { OPERATION_BY_ID } from '#/tools/registry'
 
@@ -60,6 +61,30 @@ describe('PDF pipeline catalogue and stage contract', () => {
       }
     }
   })
+  it('preflights final extraction stages against the selected Gotenberg minor version', () => {
+    const base = {
+      localAssetNames: [],
+      archivesPresent: false,
+      remoteRows: [],
+      remoteJson: '',
+      acknowledgedRedaction: false,
+    }
+    for (const op of ['extract-text', 'extract-attachments']) {
+      const stages = JSON.stringify([{ op }])
+      assert.match(
+        pdfPipelineEditorError(stages, { ...base, backendVersion: '9.0.0' }) ?? '',
+        /9\.1 or newer/,
+      )
+      assert.equal(pdfPipelineEditorError(stages, { ...base, backendVersion: '9.1.0' }), null)
+      assert.equal(pdfPipelineEditorError(stages, { ...base, backendVersion: '9.2.0' }), null)
+      assert.equal(pdfPipelineEditorError(stages, base), null)
+    }
+    assert.equal(
+      pdfPipelineEditorError('[{"op":"optimize"}]', { ...base, backendVersion: '9.0.0' }),
+      null,
+    )
+  })
+
   it('includes the builder in the tool catalogue but gates it to v9', () => {
     assert.deepEqual(operation.supportedGotenbergMajors, [9])
     assert.equal(operation.path, '/forms/pdf/pipe')
@@ -74,6 +99,138 @@ describe('PDF pipeline catalogue and stage contract', () => {
     const { payload, legacy } = input([{ op: 'merge' }])
     assert.throws(() => adaptPdfForm(operation, payload, legacy, 8, []), { status: 409 })
   })
+  it('accepts large stamp text and metadata fields within the configured request budget', () => {
+    const longText = 'Confidential report '.repeat(900)
+    const stages = [
+      { op: 'stamp-text', text: longText, x: 12, y: 12 },
+      { op: 'set-metadata', title: longText },
+    ]
+    assert.ok(longText.length > 10_000)
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const { payload, legacy } = input(stages)
+    assert.doesNotThrow(() => validatePayload(payload))
+    const output = adaptPdfPipeline(payload, legacy, [])
+    assert.deepEqual(JSON.parse(String(output.form.get('stages'))), stages)
+    // Keep type/shape validation even when string length is unrestricted.
+    error([{ op: 'stamp-text', text: '', x: 12, y: 12 }], /non-empty/)
+  })
+
+  it('preserves a whitespace-only text stamp exactly as Gotenberg accepts it', () => {
+    const stages = [{ op: 'stamp-text', text: '  \t  ', x: 12, y: 24 }]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const { payload, legacy } = input(stages)
+    assert.doesNotThrow(() => validatePayload(payload))
+    assert.deepEqual(
+      JSON.parse(String(adaptPdfPipeline(payload, legacy, []).form.get('stages'))),
+      stages,
+    )
+  })
+
+  it('accepts default insert position, negative redaction offsets, and extensionless signing assets', () => {
+    const pipeline = [
+      { op: 'insert', source: 'source.pdf' },
+      { op: 'redact', regions: [{ page: 1, x: -12.5, y: -4, width: 40, height: 20 }] },
+      { op: 'sign', certificate: 'cert.data', key: 'private.data' },
+    ]
+    assert.deepEqual(
+      parsePdfPipeline(JSON.stringify(pipeline), { acknowledgedRedaction: true }),
+      pipeline,
+    )
+    assert.deepEqual(
+      JSON.parse(
+        String(
+          adapted(
+            pipeline,
+            [
+              new File(['pdf'], 'source.pdf'),
+              new File(['cert'], 'cert.data'),
+              new File(['key'], 'private.data'),
+            ],
+            true,
+          ).form.get('stages'),
+        ),
+      ),
+      pipeline,
+    )
+    error([{ op: 'insert', source: 'source.pdf', at: -1 }], /valid integer/)
+  })
+
+  it('accepts explicit empty optional page selectors and attachment names, as upstream does', () => {
+    const stages = [
+      { op: 'insert', source: 'extra.pdf', sourcePages: '' },
+      { op: 'rotate', angle: 90, pages: '' },
+      { op: 'stamp-text', text: 'TEST', pages: '  ' },
+      { op: 'extract-text', pages: '' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const { form } = adapted(stages, [new File(['%PDF-1.7'], 'extra.pdf')])
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
+    assert.deepEqual(parsePdfPipeline('[{"op":"extract-attachments","name":""}]'), [
+      { op: 'extract-attachments', name: '' },
+    ])
+    assert.deepEqual(parsePdfPipeline('[{"op":"extract-attachments","name":"  "}]'), [
+      { op: 'extract-attachments', name: '  ' },
+    ])
+    error([{ op: 'select', pages: '' }], /non-empty/)
+    error([{ op: 'delete', pages: '   ' }], /non-empty/)
+    error([{ op: 'rotate', angle: 90, pages: 'all,1' }], /select pages/)
+  })
+
+  it('allows zero-byte attachment assets but not zero-byte source PDFs or other stage files', () => {
+    const emptyAttachment = new File([], 'empty.txt')
+    const stages = [{ op: 'attach', file: 'empty.txt' }]
+    const { payload, legacy } = input(stages, [emptyAttachment])
+    const source = new File(['%PDF-1.7\n'], 'input.pdf')
+    assert.doesNotThrow(() =>
+      validateFiles(operation, [source], [emptyAttachment], 4_000_000, payload),
+    )
+    const result = adaptPdfPipeline(payload, legacy, [emptyAttachment])
+    assert.equal((result.form.getAll('files')[1] as File).size, 0)
+    assert.throws(
+      () =>
+        validateFiles(
+          operation,
+          [new File([], 'input.pdf')],
+          [emptyAttachment],
+          4_000_000,
+          payload,
+        ),
+      /input\.pdf is empty/,
+    )
+    assert.throws(
+      () =>
+        validateFiles(operation, [source], [new File([], 'unreferenced.txt')], 4_000_000, payload),
+      /unreferenced\.txt is empty/,
+    )
+    const stamped = input([{ op: 'stamp-image', image: 'logo.png' }])
+    assert.throws(
+      () =>
+        validateFiles(operation, [source], [new File([], 'logo.png')], 4_000_000, stamped.payload),
+      /logo\.png is empty/,
+    )
+    const office = OPERATION_BY_ID.get('html-pdf')
+    assert.ok(office)
+    const conversion = {
+      operation: office.id,
+      fields: {},
+      advanced: {},
+      source: '<html><body>Invoice</body></html>',
+      conversionStages: JSON.stringify(stages),
+    }
+    assert.doesNotThrow(() =>
+      validateFiles(office, [], [], 4_000_000, conversion, {}, [emptyAttachment]),
+    )
+  })
+
+  it('supports parameterised MIME types on attachment stages', () => {
+    const pipeline = [
+      { op: 'attach', file: 'invoice.xml', mimeType: 'application/xml; charset=UTF-8' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(pipeline)), pipeline)
+    assert.equal(adapted(pipeline, [new File(['<xml/>'], 'invoice.xml')]).path, '/forms/pdf/pipe')
+    error([{ op: 'attach', file: 'invoice.xml', mimeType: 'text' }], /invalid MIME type/)
+  })
+
   it('preserves order and named auxiliary inputs on the v9 form', () => {
     const auxiliary = [new File(['asset'], 'receipt.txt')]
     const stages = [
@@ -90,6 +247,110 @@ describe('PDF pipeline catalogue and stage contract', () => {
     )
     assert.equal(form.has('auxiliary'), false)
   })
+  it('normalises Unicode asset references without altering embedded attachment names', () => {
+    const original = 'cafe\u0301.txt'
+    const canonical = original.normalize('NFC')
+    const displayed = 'Re\u0301sume\u0301.txt'
+    const stages = [{ op: 'attach', file: original, name: displayed }]
+    const expected = [{ op: 'attach', file: canonical, name: displayed }]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages), { assetNames: [original] }), expected)
+    const attachment = new File(['evidence'], original)
+    const { payload, legacy } = input(stages, [attachment])
+    assert.doesNotThrow(() =>
+      validateFiles(
+        operation,
+        [new File(['%PDF-1.7'], 'input.pdf')],
+        [attachment],
+        4_000_000,
+        payload,
+      ),
+    )
+    const { form } = adaptPdfPipeline(payload, legacy, [attachment])
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), expected)
+    assert.equal((form.getAll('files')[1] as File).name, original)
+  })
+
+  it('matches decomposed Unicode remote asset hints to canonical pipeline references', () => {
+    const decomposed = 'cafe\u0301.png'
+    const canonical = decomposed.normalize('NFC')
+    const stages = [{ op: 'stamp-image', image: decomposed, x: 10, y: 20 }]
+    const { payload, legacy } = input(stages)
+    payload.downloadFrom = [{ url: 'https://example.test/assets/stamp', name: decomposed }]
+    legacy.set('downloadFrom', JSON.stringify([{ url: payload.downloadFrom[0]?.url }]))
+    assert.doesNotThrow(() =>
+      validateFiles(operation, [new File(['%PDF-1.7'], 'input.pdf')], [], 4_000_000, payload),
+    )
+    assert.deepEqual(JSON.parse(String(adaptPdfPipeline(payload, legacy, []).form.get('stages'))), [
+      { op: 'stamp-image', image: canonical, x: 10, y: 20 },
+    ])
+  })
+
+  it('supports upstream empty defaults without inventing missing PDF stage assets', () => {
+    const stages = [
+      { op: 'remediate', profile: 'Factur-X', xml: '' },
+      { op: 'sign', certificate: 'signing.p12', key: '' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const signingFile = new File(['certificate'], 'signing.p12')
+    const { form } = adapted(stages, [signingFile])
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
+    assert.deepEqual(
+      form.getAll('files').map((file) => (file instanceof File ? file.name : '')),
+      ['input.pdf', 'signing.p12'],
+    )
+    // With no assets, an explicitly empty XML reference is not a missing file.
+    assert.deepEqual(JSON.parse(String(adapted([stages[0]]).form.get('stages'))), [stages[0]])
+    assert.throws(
+      () =>
+        adapted([{ op: 'sign', certificate: 'signing.p12', key: 'missing.pem' }], [signingFile]),
+      /upload an additional file/,
+    )
+  })
+
+  it('allows empty defaults and range combinations accepted by the upstream stage parser', () => {
+    for (const stages of [
+      [{ op: 'split', every: 2, ranges: [] }],
+      [{ op: 'split', every: 2, ranges: null }],
+      [{ op: 'encrypt', userPassword: 'secret', algorithm: '' }],
+      [{ op: 'render', format: '' }],
+    ]) {
+      assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+      assert.deepEqual(JSON.parse(String(adapted(stages).form.get('stages'))), stages)
+    }
+    assert.deepEqual(pipelineResponseTypes([{ op: 'render', format: '' }]), [
+      'image/png',
+      'application/zip',
+    ])
+    error([{ op: 'split', ranges: [] }], /either every or ranges/)
+    error([{ op: 'split', every: 2, ranges: ['1-2'] }], /either every or ranges/)
+    error([{ op: 'stamp-text' }], /text must be non-empty/)
+  })
+
+  it('preserves whitespace-only embedded names and stage file references', () => {
+    const attachment = new File(['data'], '   ')
+    const stages = [
+      { op: 'attach', file: '   ', name: '  ' },
+      { op: 'detach', name: '  ' },
+    ]
+    assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    const { payload, legacy } = input(stages, [attachment])
+    assert.doesNotThrow(() =>
+      validateFiles(
+        operation,
+        [new File(['%PDF-1.7'], 'input.pdf')],
+        [attachment],
+        4_000_000,
+        payload,
+      ),
+    )
+    assert.deepEqual(
+      JSON.parse(String(adaptPdfPipeline(payload, legacy, [attachment]).form.get('stages'))),
+      stages,
+    )
+    error([{ op: 'attach', file: '' }], /non-empty/)
+    error([{ op: 'select', pages: '  ' }], /non-empty/)
+  })
+
   it('accepts remote input PDFs and PDF ZIPs without treating remote files as stage assets', () => {
     const { payload, legacy } = input([{ op: 'optimize' }])
     payload.downloadFrom = [
@@ -278,6 +539,9 @@ describe('PDF pipeline rejects unsafe or invalid sequences', () => {
       }),
       [{ op: 'redact', regions }],
     )
+    assert.deepEqual(parsePdfPipeline('[{"op":"set-form","fields":{" ":"Yes"}}]'), [
+      { op: 'set-form', fields: { ' ': 'Yes' } },
+    ])
     error([{ op: 'set-form', fields: { bad: [5] } }], /fields must map/)
     error([{ op: 'redact', regions: [] }], /at least one rectangle/)
   })

@@ -59,11 +59,39 @@ describe('native PDF/A attachment metadata editor', () => {
   test('adds an exact remote filename with a safe default relationship', () => {
     const remote = addRemoteAttachmentMetadata('', 'invoice.xml')
     expect(JSON.parse(remote)).toEqual({ 'invoice.xml': { relationship: 'Unspecified' } })
-    expect(() => addRemoteAttachmentMetadata(remote, 'INVOICE.XML')).toThrow(/already/)
+    expect(JSON.parse(addRemoteAttachmentMetadata(remote, 'INVOICE.XML'))).toEqual({
+      'invoice.xml': { relationship: 'Unspecified' },
+      'INVOICE.XML': { relationship: 'Unspecified' },
+    })
     expect(() => addRemoteAttachmentMetadata('', '../secret.xml')).toThrow(/filename/)
     expect(() => addRemoteAttachmentMetadata('', 'folder/invoice.xml')).toThrow(/filename/)
-    expect(() => addRemoteAttachmentMetadata('', ' invoice.xml')).toThrow(/filename/)
+    expect(JSON.parse(addRemoteAttachmentMetadata('', ' invoice.xml'))).toEqual({
+      ' invoice.xml': { relationship: 'Unspecified' },
+    })
     expect(() => addRemoteAttachmentMetadata('{', 'invoice.xml')).toThrow(/Fix/)
+  })
+
+  test('allows punctuation, Unicode, long filenames, and parameterised MIME types', () => {
+    const name = `Résumé & invoices (Q4) - ${'x'.repeat(155)}.xml`
+    const raw = setAttachmentMetadata('', name, 'mimeType', 'application/xml; charset=UTF-8')
+    expect(JSON.parse(raw)).toEqual({
+      [name]: { mimeType: 'application/xml; charset=UTF-8' },
+    })
+    expect(() => addRemoteAttachmentMetadata(raw, name.normalize('NFD'))).toThrow(/already/)
+    expect(() => addRemoteAttachmentMetadata('', 'file\u0000.xml')).toThrow(/filename/)
+    expect(() =>
+      setAttachmentMetadata('', 'invoice.xml', 'mimeType', 'text/plain\r\nInjected: yes'),
+    ).toThrow(/MIME/)
+  })
+
+  test('preserves special filename keys without mutating object prototypes', () => {
+    const value = setAttachmentMetadata('', '__proto__', 'mimeType', 'text/plain')
+    expect(JSON.parse(value)).toEqual({ ['__proto__']: { mimeType: 'text/plain' } })
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype)
+    const updated = setAttachmentMetadata(value, '__proto__', 'relationship', 'Data')
+    expect(JSON.parse(updated)).toEqual({
+      ['__proto__']: { mimeType: 'text/plain', relationship: 'Data' },
+    })
   })
 
   test('refuses invalid MIME, relationship, or malformed metadata JSON', () => {
@@ -110,6 +138,48 @@ describe('native PDF/A attachment metadata editor', () => {
       )
       expect(() => result(id, '["not-an-object"]')).toThrow(/Attachment metadata/)
     }
+  })
+
+  test('accepts empty embedded attachments in standalone and conversion requests', () => {
+    const empty = new File([], 'empty.txt', { type: 'text/plain' })
+    const standalone = validatePayload({
+      operation: 'embed',
+      fields: { embedsMetadata: '{"empty.txt":{"relationship":"Data"}}' },
+      advanced: {},
+    })
+    validateFiles(standalone.operation, [pdf], [empty], 4_000_000, standalone.payload)
+    const embedForm = createGotenbergForm(standalone.operation, standalone.payload, [pdf], [empty])
+    const embedFile = embedForm.get('embeds') as File
+    assert.equal(embedFile.name, 'empty.txt')
+    assert.equal(embedFile.size, 0)
+
+    const conversion = validatePayload({
+      operation: 'url-pdf',
+      fields: { url: 'https://example.test' },
+      advanced: {},
+      postProcess: { embedsMetadata: '{"empty.txt":{"relationship":"Data"}}' },
+    })
+    const postFiles = { embeds: [empty] }
+    validateFiles(conversion.operation, [], [], 4_000_000, conversion.payload, postFiles)
+    const converted = createGotenbergForm(
+      conversion.operation,
+      conversion.payload,
+      [],
+      [],
+      4_000_000,
+      postFiles,
+    )
+    assert.equal((converted.get('embeds') as File).size, 0)
+    assert.equal(converted.get('embedsMetadata'), '{"empty.txt":{"relationship":"Data"}}')
+
+    const emptySource = new File([], 'source.pdf', { type: 'application/pdf' })
+    expect(() =>
+      validateFiles(standalone.operation, [emptySource], [empty], 4_000_000, standalone.payload),
+    ).toThrow(/empty/)
+    const invalidPostFiles = { embeds: [empty], facturxXml: new File([], 'invoice.xml') }
+    expect(() =>
+      validateFiles(conversion.operation, [], [], 4_000_000, conversion.payload, invalidPostFiles),
+    ).toThrow(/empty/)
   })
 
   test('renders uploaded and remote attachment controls as native inputs', () => {

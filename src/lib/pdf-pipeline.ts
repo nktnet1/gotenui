@@ -1,7 +1,8 @@
-/** Gotenberg 9.0.0 PDF pipeline catalogue and shared client/server validation.
+/** Gotenberg 9 PDF pipeline catalogue and shared client/server validation.
  * Keep this aligned with pkg/modules/pdf/stages.go and stage_types.go.
  */
 
+import { isAttachmentMimeType } from '#/lib/attachment-metadata'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
@@ -258,7 +259,9 @@ const permissions = new Set([
 ])
 const requiredText = (stage: PdfPipelineStage, key: string): string => {
   const value = stage[key]
-  if (typeof value !== 'string' || !value.trim() || value.length > 10_000) {
+  // Uploaded asset and embedded attachment names are exact. In particular,
+  // Gotenberg does not trim names consisting entirely of spaces.
+  if (typeof value !== 'string' || value === '') {
     throw new InputError(`${stage.op}: "${key}" must be a non-empty string.`)
   }
   return value
@@ -267,7 +270,12 @@ const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 const optionalPages = (stage: PdfPipelineStage, key: string): void => {
   const value = stage[key]
-  if (value !== undefined && !isPdfPageSelector(value)) {
+  // Litho interprets an omitted, empty, or whitespace-only optional page range as all pages.
+  if (
+    value !== undefined &&
+    !(typeof value === 'string' && !value.trim()) &&
+    !isPdfPageSelector(value)
+  ) {
     throw new InputError(`${stage.op}: "${key}" must select pages such as 1-3, last or all.`)
   }
 }
@@ -278,12 +286,9 @@ function validateStage(stage: PdfPipelineStage): void {
   const name = stage.op
   const known = pipelineByOp.get(name)
   if (!known) throw new InputError(`Unknown PDF stage: ${name}.`)
-  for (const [key, value] of Object.entries(stage)) {
+  for (const key of Object.keys(stage)) {
     if (key !== 'op' && !(known.fields as readonly string[]).includes(key)) {
       throw new InputError(`${name}: unknown option "${key}".`)
-    }
-    if (typeof value === 'string' && value.length > 10_000) {
-      throw new InputError(`${name}: "${key}" is too long.`)
     }
   }
   const stringOptions = new Set([
@@ -369,8 +374,6 @@ function validateStage(stage: PdfPipelineStage): void {
     throw new InputError(`${name}: scale must be positive.`)
   if (stage.fontSize !== undefined && (stage.fontSize as number) <= 0)
     throw new InputError(`${name}: font size must be positive.`)
-  if (stage.pages !== undefined && typeof stage.pages === 'string' && stage.pages === '')
-    throw new InputError(`${name}: pages cannot be empty.`)
   if (stage.permissions !== undefined) {
     if (
       !object(stage.permissions) ||
@@ -382,32 +385,37 @@ function validateStage(stage: PdfPipelineStage): void {
     }
   }
   switch (name) {
-    case 'split':
-      if ((stage.every === undefined) === (stage.ranges === undefined))
+    case 'split': {
+      // Go decides whether ranges are supplied by their length, not merely
+      // whether the JSON property exists. [] is valid alongside "every".
+      if (stage.ranges !== undefined && stage.ranges !== null && !Array.isArray(stage.ranges))
+        throw new InputError('split: ranges must be an array of page selectors.')
+      const ranges = (stage.ranges ?? []) as unknown[]
+      if ((stage.every === undefined) === (ranges.length === 0))
         throw new InputError('split: choose either every or ranges.')
-      if (
-        stage.ranges !== undefined &&
-        (!Array.isArray(stage.ranges) ||
-          !stage.ranges.length ||
-          stage.ranges.some((page) => !isPdfPageSelector(page)))
-      )
+      if (ranges.some((page) => !isPdfPageSelector(page)))
         throw new InputError('split: ranges must be a non-empty array of page selectors.')
       break
+    }
     case 'select':
     case 'delete':
-      requiredText(stage, 'pages')
+      if (!requiredText(stage, 'pages').trim())
+        throw new InputError(`${name}: "pages" must be a non-empty string.`)
       break
     case 'insert':
       if (!/\.pdf$/i.test(requiredText(stage, 'source')))
         throw new InputError('insert: upload a PDF.')
-      if (!integer(stage.at, 0)) throw new InputError('insert: at must be a non-negative integer.')
+      if (stage.at !== undefined && !integer(stage.at, 0))
+        throw new InputError('insert: at must be a non-negative integer.')
       break
     case 'rotate':
       if (!Number.isSafeInteger(stage.angle) || (stage.angle as number) % 90 !== 0)
         throw new InputError('rotate: angle must be a multiple of 90.')
       break
     case 'stamp-text':
-      requiredText(stage, 'text')
+      // Litho rejects only the empty string; whitespace is valid stamp content.
+      if (stage.text === '' || stage.text === undefined)
+        throw new InputError('stamp-text: text must be non-empty.')
       break
     case 'stamp-image':
       if (!/\.(png|jpe?g)$/i.test(requiredText(stage, 'image')))
@@ -448,8 +456,7 @@ function validateStage(stage: PdfPipelineStage): void {
         !object(stage.fields) ||
         !Object.keys(stage.fields).length ||
         Object.entries(stage.fields).some(
-          ([key, value]) =>
-            !key.trim() ||
+          ([_key, value]) =>
             !(
               typeof value === 'string' ||
               (Array.isArray(value) && value.every((item) => typeof item === 'string'))
@@ -473,8 +480,6 @@ function validateStage(stage: PdfPipelineStage): void {
           !['x', 'y', 'width', 'height'].every(
             (key) => typeof region[key] === 'number' && Number.isFinite(region[key]),
           ) ||
-          (region.x as number) < 0 ||
-          (region.y as number) < 0 ||
           (region.width as number) <= 0 ||
           (region.height as number) <= 0
         )
@@ -490,23 +495,25 @@ function validateStage(stage: PdfPipelineStage): void {
         )
       )
         throw new InputError('attach: unsupported attachment relationship.')
-      if (stage.mimeType !== undefined && !/^[\w.+-]+\/[\w.+-]+$/.test(String(stage.mimeType)))
+      if (
+        stage.mimeType !== undefined &&
+        stage.mimeType !== '' &&
+        !isAttachmentMimeType(String(stage.mimeType))
+      )
         throw new InputError('attach: invalid MIME type.')
       break
     case 'detach':
       requiredText(stage, 'name')
       break
     case 'extract-attachments':
-      // No name means every attachment. A filename is an exact match, including spaces.
-      if (stage.name !== undefined && !String(stage.name).trim())
-        throw new InputError('extract-attachments: name must be an embedded filename or omitted.')
+      // A missing or empty name extracts every attachment; non-empty names match exactly.
       break
     case 'encrypt':
       if (!stage.userPassword && !stage.ownerPassword)
         throw new InputError('encrypt: enter a user or owner password.')
       if (
         stage.algorithm !== undefined &&
-        !['aes256', 'aes128', 'rc4-128', 'rc4-40'].includes(String(stage.algorithm))
+        !['', 'aes256', 'aes128', 'rc4-128', 'rc4-40'].includes(String(stage.algorithm))
       )
         throw new InputError('encrypt: unsupported algorithm.')
       break
@@ -543,22 +550,16 @@ function validateStage(stage: PdfPipelineStage): void {
       }
       break
     case 'sign': {
-      const certificate = requiredText(stage, 'certificate')
-      if (!/\.(p12|pfx|pem|crt|cer)$/i.test(certificate))
-        throw new InputError('sign: upload a PKCS#12 or PEM certificate.')
-      if (stage.key && !/\.key$/i.test(requiredText(stage, 'key')))
-        throw new InputError('sign: private key must be a .key file.')
-      if (/\.(p12|pfx)$/i.test(certificate) && stage.key)
-        throw new InputError('sign: PKCS#12 certificates must not specify a separate key.')
-      if (!/\.(p12|pfx)$/i.test(certificate) && !stage.key)
-        throw new InputError('sign: PEM certificates require a .key upload.')
+      requiredText(stage, 'certificate')
+      // Empty key requests PKCS#12 signing, just like an omitted key.
+      if (stage.key !== undefined && stage.key !== '') requiredText(stage, 'key')
       break
     }
     case 'timestamp':
       requiredText(stage, 'timestampUrl')
       break
     case 'render':
-      if (stage.format !== undefined && !['png', 'jpeg'].includes(String(stage.format)))
+      if (stage.format !== undefined && !['', 'png', 'jpeg'].includes(String(stage.format)))
         throw new InputError('render: format must be png or jpeg.')
       if (
         stage.quality !== undefined &&
@@ -576,13 +577,27 @@ function validateStage(stage: PdfPipelineStage): void {
 
 const PDF_STAGE_FILE_FIELDS = ['source', 'image', 'file', 'certificate', 'key', 'xml'] as const
 
+/** Gotenberg NFC-normalises uploaded/archived filenames before resolving stages.
+ * Canonicalise only file references, never user-facing text or embedded names.
+ */
+export function normalizePdfStageAssets<T extends object>(stages: readonly T[]): T[] {
+  return stages.map((stage) => {
+    const normalized = { ...stage } as Record<string, unknown>
+    for (const key of PDF_STAGE_FILE_FIELDS) {
+      const name = normalized[key]
+      if (typeof name === 'string') normalized[key] = name.normalize('NFC')
+    }
+    return normalized as T
+  })
+}
+
 /** Files resolved by Gotenberg, whether uploaded individually or extracted from archives. */
 export function pdfStageAssetNames(stages: readonly PdfPipelineStage[]): string[] {
   return [
     ...new Set(
       stages.flatMap((stage) =>
         PDF_STAGE_FILE_FIELDS.map((key) => stage[key]).filter(
-          (value): value is string => typeof value === 'string',
+          (value): value is string => typeof value === 'string' && value !== '',
         ),
       ),
     ),
@@ -617,7 +632,7 @@ export function parsePdfPipeline(
   for (const [index, value] of decoded.entries()) {
     if (!object(value) || typeof value.op !== 'string' || !pipelineByOp.has(value.op))
       throw new InputError(`Stage ${index + 1} must select a supported PDF operation.`)
-    const stage = value as PdfPipelineStage
+    const stage = normalizePdfStageAssets([value as PdfPipelineStage])[0] as PdfPipelineStage
     validateStage(stage)
     const op = stage.op
     const previous = counts.get(op) ?? 0
@@ -669,9 +684,9 @@ export function parsePdfPipeline(
       if (seenFinal !== 'sign') seenFinal = 'sign'
     }
     if (context.assetNames) {
-      const assetNames = new Set(context.assetNames)
+      const assetNames = new Set(context.assetNames.map((name) => name.normalize('NFC')))
       for (const key of PDF_STAGE_FILE_FIELDS) {
-        if (typeof stage[key] === 'string' && !assetNames.has(stage[key])) {
+        if (typeof stage[key] === 'string' && stage[key] !== '' && !assetNames.has(stage[key])) {
           throw new InputError(
             `${op}: upload an additional file named "${stage[key]}" for "${key}".`,
           )

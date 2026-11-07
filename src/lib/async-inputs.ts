@@ -31,19 +31,19 @@ export const emptyWebhook: WebhookEditorState = {
 
 function headerMap(rows: ExtraHeaderRow[]): Record<string, string> | undefined {
   if (rows.length === 0) return undefined
-  if (rows.length > 20) throw new InputError('At most 20 extra HTTP headers are supported.')
-  const entries: Record<string, string> = {}
+  const entries: Array<[string, string]> = []
   const seen = new Set<string>()
   for (const row of rows) {
     const name = row.name.trim()
-    if (!name || !row.value) throw new InputError('Complete every HTTP header name and value.')
+    // An empty HTTP header value is legal; only the name is required.
+    if (!name) throw new InputError('Complete every HTTP header name.')
     if (seen.has(name.toLowerCase())) {
       throw new InputError(`Duplicate HTTP header name: ${name}`)
     }
     seen.add(name.toLowerCase())
-    entries[name] = row.value
+    entries.push([name, row.value])
   }
-  return entries
+  return Object.fromEntries(entries)
 }
 
 function legacyJson(text: string, label: string): unknown {
@@ -55,7 +55,7 @@ function legacyJson(text: string, label: string): unknown {
 }
 
 /** Build the existing validated API payload; do not let raw JSON silently override editor rows. */
-export function remoteInputsPayload(rows: RemoteInputRow[], json: string): unknown {
+export function remoteInputsPayload(rows: readonly RemoteInputRow[], json: string): unknown {
   if (json.trim()) {
     if (rows.length) throw new InputError('Use remote-file rows or legacy JSON, not both.')
     return legacyJson(json, 'Remote files')

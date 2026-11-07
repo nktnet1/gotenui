@@ -75,6 +75,46 @@ test.each(['extract-attachments', 'extract-text'])(
 )
 
 test.each(['extract-attachments', 'extract-text'])(
+  'rejects the Gotenberg 9.1-only %s route on Gotenberg 9.0 before forwarding',
+  async (id) => {
+    const upstream = fixture('9.0.6', () => assert.fail('Do not forward a missing v9.0 route'))
+    await assert.rejects(proxyConversionRequest(requestFor(id), upstream.fetcher), {
+      status: 409,
+      message: /9\.1 or newer/,
+    })
+    assert.equal(upstream.calls(), 0)
+  },
+)
+
+test.each(['pdf-pipeline', 'html-pdf'])(
+  'gates Gotenberg 9.1-only final extraction stages in %s before forwarding',
+  async (id) => {
+    for (const op of ['extract-text', 'extract-attachments']) {
+      const stages = JSON.stringify([{ op }])
+      const request =
+        id === 'pdf-pipeline'
+          ? requestFor(id, {}, { stages })
+          : requestFor(id, {}, { files: [], conversionStages: stages })
+      const oldUpstream = fixture('9.0.9', () => assert.fail('Do not forward a v9.1 stage'))
+      await assert.rejects(proxyConversionRequest(request, oldUpstream.fetcher), {
+        status: 409,
+        message: /9\.1 or newer/,
+      })
+      assert.equal(oldUpstream.calls(), 0)
+
+      const currentUpstream = fixture('9.1.0', () => new Response('Not found', { status: 404 }))
+      const currentRequest =
+        id === 'pdf-pipeline'
+          ? requestFor(id, {}, { stages })
+          : requestFor(id, {}, { files: [], conversionStages: stages })
+      const response = await proxyConversionRequest(currentRequest, currentUpstream.fetcher)
+      assert.equal(response.status, 404)
+      assert.equal(currentUpstream.calls(), 1)
+    }
+  },
+)
+
+test.each(['extract-attachments', 'extract-text'])(
   'explains missing %s routes without guessing capabilities from /version',
   async (id) => {
     const upstream = fixture('9.1.0', () => new Response('404 Not Found', { status: 404 }))

@@ -1,3 +1,4 @@
+import { filenameKey } from '#/lib/file-names'
 import type { RemoteFile } from '#/lib/validation'
 import { InputError } from '#/lib/validation'
 
@@ -9,20 +10,20 @@ export function remoteStageAssets(
   references: readonly string[],
   localNames: readonly string[] = [],
 ): string[] {
-  const referenced = new Set(references)
-  const known = new Set(localNames.map((name) => name.normalize('NFC').toLowerCase()))
+  const referenced = new Set(references.map((name) => name.normalize('NFC')))
+  const known = new Set(localNames.map(filenameKey))
   const assets: string[] = []
   for (const remote of remotes) {
     if (remote.field || remote.embedded) continue // Legacy v8 destinations are handled elsewhere.
     if (!remote.name) continue
-    const key = remote.name.normalize('NFC').toLowerCase()
+    const key = filenameKey(remote.name)
     if (known.has(key)) {
       throw new InputError(
         `Remote filename "${remote.name}" duplicates another file or expected download.`,
       )
     }
     known.add(key)
-    if (referenced.has(remote.name)) assets.push(remote.name)
+    if (referenced.has(remote.name.normalize('NFC'))) assets.push(remote.name.normalize('NFC'))
   }
   return assets
 }

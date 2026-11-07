@@ -1,5 +1,5 @@
 /** Definition for the factur-x Gotenberg operation. */
-import { pdfa, pdfFiles, pdfua } from '#/tools/shared/fields'
+import { pdfa, pdfFiles, pdfua, v9RemediationFields } from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
@@ -50,6 +50,7 @@ export const operation: Operation = {
         'Gotenberg 8 supports three PDF/A-3 variants here. Gotenberg 9 Factur-X remediation produces PDF/A-3b only.',
     },
     pdfua,
+    ...v9RemediationFields,
   ],
   auxiliary: {
     name: 'facturxXml',

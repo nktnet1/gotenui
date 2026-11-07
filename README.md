@@ -28,5 +28,3 @@ Gotenui doesn't keep uploaded documents or completed conversions on its server. 
 - [Using Gotenui](docs/USAGE.md) — connections, batch processing and advanced tools
 - [Deployment](docs/DEPLOYMENT.md) — self-hosting, environment variables and authentication
 - [Development](docs/DEVELOPMENT.md) — local setup, architecture and tests
-
-Gotenui supports Gotenberg 8.x and major version 9. All 28 Gotenberg 9.1 PDF pipeline operations are available in the ordered editor, including standalone PDF text/attachment extraction. ZIP inputs are supported on Gotenberg 9 conversion routes, and embedded attachments retain their extension and Unicode name. Gotenui checks the selected instance's authenticated `/version` for major-version compatibility; Gotenberg does not expose a dedicated capabilities endpoint, so it cannot pre-disable individual 9.1 additions on an older 9.x server. Use the latest Gotenberg 9 release for full coverage; unavailable extraction routes produce a clear upstream error. See the [compatibility roadmap](docs/ROADMAP.md) for route coverage, legacy differences, and test status.

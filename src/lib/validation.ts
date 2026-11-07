@@ -1,10 +1,10 @@
 import * as v from 'valibot'
-import { ATTACHMENT_RELATIONSHIPS, parseAttachmentMetadata } from '#/lib/attachment-metadata'
 import {
-  DEFAULT_MARKDOWN_NAME,
-  defaultMarkdownTemplate,
-  markdownTemplateReferences,
-} from '#/lib/chromium-documents'
+  ATTACHMENT_RELATIONSHIPS,
+  isAttachmentMimeType,
+  parseAttachmentMetadata,
+} from '#/lib/attachment-metadata'
+import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
 import { safeFilename as checkFilename, filenameKey } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
@@ -31,11 +31,11 @@ const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
 const markdownFileSchema = v.object({
   name: v.pipe(v.string(), v.minLength(1)),
-  content: v.pipe(v.string(), v.maxLength(300_000)),
+  content: v.string(),
 })
 
 const remoteFileSchema = v.object({
-  url: v.pipe(v.string(), v.maxLength(2048)),
+  url: v.string(),
   /** Client-side filename hint for v9 named pipeline assets; never sent upstream. */
   name: v.optional(v.string()),
   field: v.optional(v.picklist(['embedded', 'watermark', 'stamp'])),
@@ -44,11 +44,11 @@ const remoteFileSchema = v.object({
 })
 
 const webhookSchema = v.object({
-  url: v.pipe(v.string(), v.maxLength(2048)),
+  url: v.string(),
   method: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
-  errorUrl: v.optional(v.pipe(v.string(), v.maxLength(2048))),
+  errorUrl: v.optional(v.string()),
   errorMethod: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
-  eventsUrl: v.optional(v.pipe(v.string(), v.maxLength(2048))),
+  eventsUrl: v.optional(v.string()),
   extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
 })
 
@@ -59,16 +59,16 @@ export const payloadSchema = v.object({
   operation: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   fields: v.record(v.string(), fieldValue),
   advanced: v.record(v.string(), advancedValue),
-  source: v.optional(v.pipe(v.string(), v.maxLength(300_000))),
+  source: v.optional(v.string()),
   markdownName: v.optional(v.string()),
   markdownFiles: v.optional(v.array(markdownFileSchema)),
-  markdownTemplate: v.optional(v.pipe(v.string(), v.maxLength(150_000))),
-  headerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
-  footerHtml: v.optional(v.pipe(v.string(), v.maxLength(50_000))),
+  markdownTemplate: v.optional(v.string()),
+  headerHtml: v.optional(v.string()),
+  footerHtml: v.optional(v.string()),
   postProcess: v.optional(pdfPostProcessSchema),
   conversionStages: v.optional(v.pipe(v.string(), v.minLength(1))),
   acknowledgedConversionRedaction: v.optional(v.boolean()),
-  outputName: v.optional(v.pipe(v.string(), v.maxLength(100))),
+  outputName: v.optional(v.string()),
   requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
   traceparent: v.optional(v.pipe(v.string(), v.maxLength(55))),
   tracestate: v.optional(v.pipe(v.string(), v.maxLength(512))),
@@ -144,30 +144,15 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
   }
   if (isMarkdown) {
     const names = [
-      markdownName(payload.markdownName ?? DEFAULT_MARKDOWN_NAME),
-      ...(payload.markdownFiles ?? []).map((file) => markdownName(file.name)),
+      markdownName(payload.markdownName ?? DEFAULT_MARKDOWN_NAME).normalize('NFC'),
+      ...(payload.markdownFiles ?? []).map((file) => markdownName(file.name).normalize('NFC')),
     ]
     if (new Set(names.map(filenameKey)).size !== names.length) {
-      throw new InputError('Markdown filenames must be unique (case-insensitive).')
+      throw new InputError('Markdown filenames must be unique after Unicode normalisation.')
     }
-    for (const file of payload.markdownFiles ?? []) {
-      if (!file.content.trim()) throw new InputError(`${file.name} has no Markdown content.`)
-    }
-    const template = payload.markdownTemplate ?? defaultMarkdownTemplate(names)
-    if (!template.trim()) throw new InputError('The Markdown template must not be empty.')
-    const references = markdownTemplateReferences(template)
-    if (!references.length) {
-      throw new InputError('The Markdown template must contain {{ toHTML "file.md" }} calls.')
-    }
-    const included = new Set(references)
-    for (const reference of references) {
-      if (!names.includes(reference)) {
-        throw new InputError(`Markdown template references missing file: ${reference}`)
-      }
-    }
-    for (const name of names) {
-      if (!included.has(name)) throw new InputError(`Markdown template does not render ${name}.`)
-    }
+    // Go html/template permits even empty, static, dynamic and conditional templates.
+    // Unused or conditionally missing files are valid; Gotenberg resolves
+    // actual references when executing the template.
   }
 
   const pdf =
@@ -175,23 +160,8 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
   if (!pdf && (payload.headerHtml !== undefined || payload.footerHtml !== undefined)) {
     throw new InputError('Custom headers and footers are supported only for Chromium PDF output.')
   }
-  for (const [name, html] of [
-    ['Header', payload.headerHtml],
-    ['Footer', payload.footerHtml],
-  ] as const) {
-    if (html === undefined) continue
-    if (
-      !html.trim() ||
-      !/<html\b[^>]*>/i.test(html) ||
-      !/<\/html\s*>/i.test(html) ||
-      !/<head\b[^>]*>/i.test(html) ||
-      !/<\/head\s*>/i.test(html) ||
-      !/<body\b[^>]*>/i.test(html) ||
-      !/<\/body\s*>/i.test(html)
-    ) {
-      throw new InputError(`${name} must be a complete HTML document with html, head and body.`)
-    }
-  }
+  // Gotenberg reads header.html and footer.html verbatim as Chromium print
+  // templates. HTML fragments are valid; Chrome provides their document context.
 }
 
 /** Validate outbound URL and per-request header metadata without fetching remote content here. */
@@ -202,13 +172,13 @@ function requireHttpUrl(url: string, label: string): void {
 function validateHeaderMap(headers: Record<string, string> | undefined): void {
   if (!headers) return
   const entries = Object.entries(headers)
-  if (entries.length > 20) throw new InputError('At most 20 extra HTTP headers are supported.')
   for (const [name, value] of entries) {
     if (
-      !/^[A-Za-z][A-Za-z0-9-]{0,79}$/.test(name) ||
-      !value ||
-      value.length > 2000 ||
-      /[\r\n]/.test(value)
+      !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
+      [...value].some((character) => {
+        const code = character.charCodeAt(0)
+        return (code < 32 && code !== 9) || code === 127
+      })
     ) {
       throw new InputError('Invalid extra HTTP header name or value.')
     }
@@ -238,7 +208,7 @@ function validatedAttachmentMetadata(raw: string): string[] {
   for (const [filename, details] of Object.entries(metadata)) {
     safeFilename(filename)
     if (
-      (details.mimeType !== undefined && !/^[\w.+-]+\/[\w.+-]+$/.test(details.mimeType)) ||
+      (details.mimeType !== undefined && !isAttachmentMimeType(details.mimeType)) ||
       (details.relationship !== undefined &&
         !ATTACHMENT_RELATIONSHIPS.includes(details.relationship))
     ) {
@@ -370,9 +340,6 @@ function validatePostProcessFiles(
   }
   const remote = remoteCounts(payload)
   const embedded = files.embeds ?? []
-  if (countPostProcessFiles(files) > 20 || embedded.length + remote.embedded > 20) {
-    throw new InputError('At most 20 post-processing files or attachments are supported.')
-  }
   if (standalone && (embedded.length || files.facturxXml)) {
     throw new InputError('Standalone overlays cannot embed files or add Factur-X XML.')
   }
@@ -386,16 +353,16 @@ function validatePostProcessFiles(
   const embeddedNames = new Set<string>()
   for (const file of postFiles) {
     const name = safeFilename(file.name)
-    if (!file.size) throw new InputError(`${name} is empty.`)
+    if (!file.size && !embedded.includes(file)) throw new InputError(`${name} is empty.`)
     total += file.size
     if (total > maxBytes)
       throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
   }
   for (const file of embedded) {
-    const lower = file.name.toLowerCase()
-    if (embeddedNames.has(lower))
+    const key = filenameKey(file.name)
+    if (embeddedNames.has(key))
       throw new InputError(`Duplicate PDF attachment filename: ${file.name}`)
-    embeddedNames.add(lower)
+    embeddedNames.add(key)
   }
   if (settings?.embedsMetadata) {
     if (!embedded.length && !remote.embedded)
@@ -439,12 +406,12 @@ function validatePostProcessFiles(
       )
     }
     const localByName = new Map<string, File>()
-    const localCaseFolded = new Set<string>()
+    const localNames = new Set<string>()
     for (const file of uploads) {
-      const key = file.name.toLowerCase()
-      if (localCaseFolded.has(key))
+      const key = filenameKey(file.name)
+      if (localNames.has(key))
         throw new InputError(`Duplicate ${kind} upload filename: ${file.name}`)
-      localCaseFolded.add(key)
+      localNames.add(key)
       localByName.set(file.name, file)
     }
     const usedLocal = new Set<string>()
@@ -462,7 +429,7 @@ function validatePostProcessFiles(
         )
       }
       safeFilename(expression)
-      const key = expression.toLowerCase()
+      const key = filenameKey(expression)
       if (allNames.has(key)) throw new InputError(`Duplicate overlay filename: ${expression}`)
       allNames.add(key)
       const ext = expression.match(extension)?.[0]?.toLowerCase()
@@ -570,7 +537,10 @@ export function validateFiles(
       )
       remote.input -= payload.downloadFrom.filter(
         (file) =>
-          !file.field && !file.embedded && file.name !== undefined && stageAssets.has(file.name),
+          !file.field &&
+          !file.embedded &&
+          file.name !== undefined &&
+          stageAssets.has(file.name.normalize('NFC')),
       ).length
     }
   }
@@ -656,33 +626,67 @@ export function validateFiles(
   if (total > maxBytes) {
     throw new InputError('Combined document content exceeds the configured size limit.', 413)
   }
-  for (const file of [...files, ...auxiliary, ...stageFiles, ...archives]) {
+  // Gotenberg can embed a zero-byte attachment. Keep rejecting empty input
+  // documents and other assets; only an explicit `attach` stage can consume an
+  // empty uploaded file as meaningful output.
+  const stageJson =
+    operation.id === 'pdf-pipeline' ? payload?.fields?.stages : payload?.conversionStages
+  const emptyAttachmentNames = new Set<string>()
+  if (
+    typeof stageJson === 'string' &&
+    stageJson &&
+    [...auxiliary, ...stageFiles].some((file) => file.size === 0)
+  ) {
+    for (const stage of parsePdfPipeline(stageJson, {
+      acknowledgedRedaction:
+        operation.id === 'pdf-pipeline'
+          ? payload?.fields?.acknowledgedRedaction === true
+          : payload?.acknowledgedConversionRedaction,
+    })) {
+      if (stage.op === 'attach' && typeof stage.file === 'string') {
+        emptyAttachmentNames.add(stage.file)
+      }
+    }
+  }
+  for (const [index, file] of [...files, ...auxiliary, ...stageFiles, ...archives].entries()) {
     const name = safeFilename(file.name)
     if (operation.input === 'markdown' && auxiliary.includes(file) && /\.md$/i.test(name)) {
       throw new InputError(
         'Add Markdown documents through the Markdown sources editor, not assets.',
       )
     }
-    const allowsOrderedDuplicates =
-      operation.id === 'merge' ||
-      (operation.id === 'office-pdf' && payload?.fields.merge === true && files.includes(file))
-    if (names.has(filenameKey(name)) && !allowsOrderedDuplicates) {
+    // Gotenberg assigns a distinct " (2)" suffix to colliding document
+    // uploads. This works for reads, individual conversions and pipelines,
+    // not only the merge endpoint. Keep auxiliary and generated files unique:
+    // stage references must identify a single asset by its exact name.
+    const isSourceDocument =
+      index < files.length && (operation.input === 'pdf' || operation.input === 'office')
+    if (names.has(filenameKey(name)) && !isSourceDocument) {
       throw new InputError(`Duplicate filename: ${name}`)
     }
     names.add(filenameKey(name))
     total += file.size
-    if (file.size === 0) throw new InputError(`${name} is empty.`)
+    if (
+      file.size === 0 &&
+      !(
+        (operation.id === 'embed' && auxiliary.includes(file)) ||
+        ((auxiliary.includes(file) || stageFiles.includes(file)) &&
+          emptyAttachmentNames.has(name.normalize('NFC')))
+      )
+    ) {
+      throw new InputError(`${name} is empty.`)
+    }
     if (total > maxBytes)
       throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
     const ext = name.match(extension)?.[0]?.toLowerCase()
     if (archives.includes(file) && ext !== '.zip') {
       throw new InputError('Archive inputs must use the .zip extension.')
     }
-    if (files.includes(file) && operation.input === 'pdf' && ext !== '.pdf') {
+    if (index < files.length && operation.input === 'pdf' && ext !== '.pdf') {
       throw new InputError('PDF tools only accept .pdf input documents.')
     }
     if (
-      files.includes(file) &&
+      index < files.length &&
       operation.input === 'office' &&
       !officeExtensionSetForMajor(major).has(ext ?? '')
     ) {
@@ -746,8 +750,8 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     throw new InputError(`Chromium ${name} must be valid JSON.`)
   }
   if (name === 'cookies') {
-    if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 20) {
-      throw new InputError('Chromium cookies must be a JSON array of 1 to 20 entries.')
+    if (!Array.isArray(parsed)) {
+      throw new InputError('Chromium cookies must be a JSON array.')
     }
     for (const cookie of parsed) {
       if (!cookie || typeof cookie !== 'object' || Array.isArray(cookie)) {
@@ -764,9 +768,9 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       }
       if (
         typeof entry.name !== 'string' ||
-        !/^[a-z0-9!#$%&'*+.^_`|~-]{1,128}$/i.test(entry.name) ||
+        !/^[a-z0-9!#$%&'*+.^_`|~-]+$/i.test(entry.name) ||
         typeof entry.value !== 'string' ||
-        entry.value.length > 2048 ||
+        !entry.value.trim() ||
         [...entry.value].some(
           (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === ';',
         ) ||
@@ -778,18 +782,17 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
         (entry.path !== undefined &&
           (typeof entry.path !== 'string' ||
             !entry.path.startsWith('/') ||
-            entry.path.length > 512 ||
             /[\r\n]/.test(entry.path))) ||
         (entry.secure !== undefined && typeof entry.secure !== 'boolean') ||
         (entry.httpOnly !== undefined && typeof entry.httpOnly !== 'boolean') ||
         (entry.sameSite !== undefined &&
-          !['Strict', 'Lax', 'None'].includes(String(entry.sameSite)))
+          !['strict', 'lax', 'none'].includes(String(entry.sameSite).toLowerCase()))
       ) {
         throw new InputError(
           'Chromium cookie requires a valid name, value, domain and optional attributes.',
         )
       }
-      if (entry.sameSite === 'None' && entry.secure !== true) {
+      if (String(entry.sameSite).toLowerCase() === 'none' && entry.secure !== true) {
         throw new InputError('SameSite=None cookies require the HTTPS-only (secure) flag.')
       }
     }
@@ -799,14 +802,17 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     throw new InputError('Chromium resource headers must be a JSON object.')
   }
   const entries = Object.entries(parsed)
-  if (entries.length < 1 || entries.length > 20) {
-    throw new InputError('Chromium resource headers must contain 1 to 20 entries.')
+  if (entries.length > 64) {
+    throw new InputError('Chromium resource headers must contain at most 64 entries.')
   }
   const names = new Set<string>()
   for (const [key, headerValue] of entries) {
     const lower = key.toLowerCase()
     if (
-      !/^[A-Za-z][A-Za-z0-9-]{0,79}$/.test(key) ||
+      // HTTP token names may contain underscores and other token punctuation.
+      // Keep disallowed transport headers blocked below, rather than
+      // restricting valid application header names or their length.
+      !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) ||
       names.has(lower) ||
       [
         'host',
@@ -824,19 +830,24 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       throw new InputError('Invalid or unsafe Chromium resource header name.')
     }
     names.add(lower)
-    if (
-      typeof headerValue !== 'string' ||
-      !headerValue ||
-      headerValue.length > 2000 ||
-      /[\r\n]/.test(headerValue)
-    ) {
+    if (typeof headerValue !== 'string' || /[\r\n]/.test(headerValue)) {
       throw new InputError('Invalid Chromium resource header value.')
     }
-    const index = headerValue.indexOf(';scope=')
-    if (index !== headerValue.lastIndexOf(';scope=')) {
+    // Gotenberg splits header values at semicolons and accepts case-insensitive
+    // `scope=` tokens. It uses .NET regexp2, not JavaScript's RegExp engine:
+    // syntax validity must be checked upstream so valid .NET patterns survive.
+    const tokens = headerValue.split(';')
+    const scopes = tokens.flatMap((token) => {
+      const separator = token.indexOf('=')
+      return separator >= 0 && token.slice(0, separator).trim().toLowerCase() === 'scope'
+        ? [token.slice(separator + 1).replace(/\s+/g, '')]
+        : []
+    })
+    if (scopes.length > 1) {
       throw new InputError('Chromium resource header must contain at most one URL scope.')
     }
-    if (index < 0) {
+    const scope = scopes[0]
+    if (scope === undefined) {
       if (/authorization|token|secret|key|credential|auth/i.test(key)) {
         throw new InputError(
           'Authentication headers require an explicit URL scope to avoid credential disclosure.',
@@ -844,17 +855,14 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       }
       continue
     }
-    const scope = headerValue.slice(index + ';scope='.length)
-    if (!headerValue.slice(0, index) || !scope || scope.length > 256 || scope.trim() !== scope) {
+    // A scope-only header is valid upstream: it sends an empty header value
+    // to matching URLs. Do not require a non-empty first value token.
+    if (!scope || new TextEncoder().encode(scope).length > 1024) {
       throw new InputError(
-        'Chromium resource header scope must be a non-empty regex (max 256 characters).',
+        'Chromium resource header scope must be a non-empty regex (max 1,024 UTF-8 bytes).',
       )
     }
-    try {
-      new RegExp(scope)
-    } catch {
-      throw new InputError('Invalid Chromium resource header scope regular expression.')
-    }
+    // The upstream regexp2 parser checks the pattern before any header is applied.
   }
 }
 
@@ -969,7 +977,6 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       if (
         typeof value === 'string' &&
         (value.trim().length === 0 ||
-          value.length > (name === 'waitForExpression' ? 5000 : 500) ||
           (['userAgent', 'waitWindowStatus'].includes(name) && /[\r\n]/.test(value)))
       ) {
         throw new InputError(`Invalid Chromium ${name} value.`)
@@ -996,18 +1003,15 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     ) {
       throw new InputError('Custom PDF zoom requires Custom zoom magnification.')
     }
-    for (const name of [
-      'nativeWatermarkText',
-      'nativeTiledWatermarkText',
-      'nativeWatermarkFontName',
-    ]) {
+    for (const name of ['nativeWatermarkText', 'nativeTiledWatermarkText']) {
       const value = payload.fields[name]
-      if (typeof value === 'string' && (value.length > 500 || /[\r\n]/.test(value))) {
-        throw new InputError(`Invalid ${name}: use a single line of at most 500 characters.`)
+      if (typeof value === 'string' && /[\r\n]/.test(value)) {
+        throw new InputError(`Invalid ${name}: use a single line of text.`)
       }
     }
-    if (typeof payload.fields.password === 'string' && payload.fields.password.length > 1024) {
-      throw new InputError('Source document password is too long.')
+    const watermarkFont = payload.fields.nativeWatermarkFontName
+    if (typeof watermarkFont === 'string' && /[\r\n]/.test(watermarkFont)) {
+      throw new InputError('Invalid nativeWatermarkFontName: use a single line of text.')
     }
   }
 }
@@ -1033,9 +1037,6 @@ export function validatePayload(input: unknown): {
   }
 
   const definitions = new Map(operation.fields.map((field) => [field.name, field]))
-  if (Object.keys(payload.fields).length > 75 || Object.keys(payload.advanced).length > 40) {
-    throw new InputError('Too many form fields.')
-  }
   for (const [key, value] of Object.entries(payload.fields)) {
     const field = definitions.get(key)
     if (!field) throw new InputError(`Unsupported field: ${key}`)
@@ -1043,11 +1044,7 @@ export function validatePayload(input: unknown): {
       if (typeof value !== 'boolean') throw new InputError(`${field.label} must be true or false.`)
     } else {
       if (typeof value !== 'string') throw new InputError(`${field.label} must be text.`)
-      // Structured JSON is bounded by the proxy's total payload/body limits.
-      // Do not impose an unrelated 10 KB field ceiling on large bookmark,
-      // form, redaction or ordered-stage documents.
-      if (field.kind !== 'json' && value.length > 10_000)
-        throw new InputError(`${field.label} is too long.`)
+      // The proxy's byte limit covers large values, including non-JSON stage text.
       if (field.kind === 'select' && value && !field.options?.includes(value)) {
         throw new InputError(`Invalid option for ${field.label}.`)
       }
@@ -1067,13 +1064,6 @@ export function validatePayload(input: unknown): {
       }
       if (field.kind === 'color' && value && !/^#[0-9a-f]{6}$/i.test(value)) {
         throw new InputError(`${field.label} must be a six-digit hex colour.`)
-      }
-      if (
-        field.name === 'nativeWatermarkRotateAngle' &&
-        value &&
-        Math.abs(Number(value) * 10 - Math.round(Number(value) * 10)) > 1e-7
-      ) {
-        throw new InputError('Native watermark rotation supports one decimal place.')
       }
       if (field.kind === 'json' && value) {
         try {
@@ -1195,32 +1185,33 @@ export function validatePayload(input: unknown): {
     }
     if (typeof value === 'number' && !Number.isFinite(value))
       throw new InputError('Advanced values must be finite.')
-    if (String(value).length > 10000) throw new InputError(`Advanced field ${name} is too long.`)
   }
-  if ((operation.input === 'html' || operation.input === 'markdown') && !payload.source?.trim()) {
-    throw new InputError('Enter some source content first.')
+  // Chromium accepts an empty index.html and renders a blank document.
+  // Require an explicit source value, but do not treat blank HTML as missing.
+  if (operation.input === 'html' && payload.source === undefined) {
+    throw new InputError('Provide HTML source content (an empty document is valid).')
   }
   validateChromiumDocuments(operation, payload)
   validateConversionOptions(operation, payload)
   validatePostProcessSettings(operation, payload)
   if (definitions.has('pdfa')) {
     const pdfa = payload.fields.pdfa ?? payload.advanced.pdfa
-    const pdfua = payload.fields.pdfua ?? payload.advanced.pdfua
     const userPassword = payload.postProcess?.userPassword ?? payload.advanced.userPassword
     const ownerPassword = payload.postProcess?.ownerPassword ?? payload.advanced.ownerPassword
     if (pdfa && (userPassword || ownerPassword)) {
       throw new InputError('PDF/A and PDF encryption cannot be combined.')
     }
-    if (pdfa === 'PDF/A-1b' && pdfua === true) {
-      throw new InputError(
-        'PDF/UA is not supported with PDF/A-1b. Use PDF/A-2b, PDF/A-3b or PDF/A-4.',
-      )
-    }
   }
   if (operation.id === 'encrypt' && !payload.fields.userPassword && !payload.fields.ownerPassword) {
     throw new InputError('Enter an open password or owner password.')
   }
-  if (operation.id === 'pdfa' && !payload.fields.pdfa && !payload.fields.pdfua) {
+  if (
+    operation.id === 'pdfa' &&
+    !payload.fields.pdfa &&
+    !payload.fields.pdfua &&
+    !payload.fields.pdfaProfile &&
+    !payload.fields.pdfuaProfile
+  ) {
     throw new InputError('Choose a PDF/A standard or enable PDF/UA.')
   }
   if (
@@ -1230,8 +1221,8 @@ export function validatePayload(input: unknown): {
   ) {
     throw new InputError('Unify is supported only in pages mode.')
   }
-  if (payload.outputName && !/^[\p{L}\p{N}][\p{L}\p{N}\p{M} _-]{0,99}$/u.test(payload.outputName)) {
-    throw new InputError('Output name contains invalid characters.')
+  if (payload.outputName) {
+    safeFilename(payload.outputName)
   }
   if (operation.id === 'merge' && payload.advanced.bookmarks !== undefined) {
     try {

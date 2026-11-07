@@ -39,8 +39,9 @@ export function HtmlSourceImport({ onImport }: { onImport: (source: string) => v
         }}
       />
       <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-        Load a UTF-8 .html or .htm file (up to 300 KB). This replaces the current editor text, which
-        Gotenberg receives as index.html. Optional assets remain separate.
+        Load a UTF-8 .html or .htm file (within the configured upload limit). This replaces the
+        current editor text, which Gotenberg receives as index.html. Optional assets remain
+        separate.
       </p>
     </div>
   )

@@ -127,14 +127,47 @@ describe('v1.0.6 official native fields', () => {
         /colour/,
       )
     }
+    const fractional = validated('office-pdf', {
+      nativeWatermarkText: 'DRAFT',
+      nativeWatermarkRotateAngle: '12.34',
+    })
+    const v9Form = createGotenbergForm(
+      fractional.operation,
+      fractional.payload,
+      [office],
+      [],
+      4_000_000,
+      {},
+      [],
+      9,
+    )
+    assert.equal(v9Form.get('nativeWatermarkRotateAngle'), '12.34')
     assert.throws(
-      () =>
-        validated('office-pdf', {
-          nativeWatermarkText: 'DRAFT',
-          nativeWatermarkRotateAngle: '12.34',
-        }),
+      () => createGotenbergForm(fractional.operation, fractional.payload, [office], []),
       /one decimal/,
     )
+    const multipleTurns = validated('office-pdf', {
+      nativeWatermarkText: 'DRAFT',
+      nativeWatermarkRotateAngle: '-720.125',
+      nativeWatermarkFontHeight: '1200',
+      zoom: '1500',
+      magnification: '4',
+      initialPage: '100001',
+    })
+    const v9MultipleTurns = createGotenbergForm(
+      multipleTurns.operation,
+      multipleTurns.payload,
+      [office],
+      [],
+      4_000_000,
+      {},
+      [],
+      9,
+    )
+    assert.equal(v9MultipleTurns.get('nativeWatermarkRotateAngle'), '-720.125')
+    assert.equal(v9MultipleTurns.get('nativeWatermarkFontHeight'), '1200')
+    assert.equal(v9MultipleTurns.get('zoom'), '1500')
+    assert.equal(v9MultipleTurns.get('initialPage'), '100001')
     assert.throws(
       () => validated('office-pdf', { nativeWatermarkText: 'bad\nnewline' }),
       /single line/,
@@ -268,6 +301,39 @@ describe('read existing PDF structure into visual writers', () => {
     )
   })
 
+  it('imports NFC-keyed metadata and bookmarks for decomposed Unicode upload names', () => {
+    const localName = 're\u0301sume\u0301.pdf'
+    const responseName = localName.normalize('NFC')
+    assert.deepEqual(
+      JSON.parse(importReadableMetadata({ [responseName]: { Title: 'Updated' } }, localName)),
+      { Title: 'Updated' },
+    )
+    assert.deepEqual(
+      JSON.parse(
+        importReadableBookmarks({ [responseName]: [{ title: 'Part 1', pageNumber: 1 }] }, [
+          localName,
+        ]),
+      ),
+      [{ title: 'Part 1', page: 1 }],
+    )
+  })
+
+  it('imports large metadata and bookmark documents without the old 10 KB editor cap', () => {
+    const title = 'Annual report '.repeat(1_000)
+    const metadata = importReadableMetadata({ 'report.pdf': { Title: title } }, 'report.pdf')
+    assert.deepEqual(JSON.parse(metadata), { Title: title })
+    assert.ok(metadata.length > 10_000)
+
+    const original = Array.from({ length: 600 }, (_, index) => ({
+      title: `Bookmark ${index} - ${'Section'.repeat(5)}`,
+      pageNumber: index + 1,
+    }))
+    const bookmarks = importReadableBookmarks({ 'report.pdf': original }, ['report.pdf'])
+    assert.ok(bookmarks.length > 10_000)
+    assert.equal(JSON.parse(bookmarks).length, 600)
+    assert.doesNotThrow(() => validateBookmarkDocument(bookmarks))
+  })
+
   it('imports one bookmark tree as a list, multiple as a filename-keyed map', () => {
     const first = [{ title: 'Intro', page: 1, children: [] }]
     const second = [{ title: 'Appendix', page: 2, children: [] }]
@@ -283,4 +349,17 @@ describe('read existing PDF structure into visual writers', () => {
       /page/,
     )
   })
+})
+
+it('native LibreOffice watermarks accept long upstream-supported text', () => {
+  const longWatermark = 'Confidential – '.repeat(80)
+  for (const name of ['nativeWatermarkText', 'nativeTiledWatermarkText']) {
+    const { payload, operation } = validatePayload({
+      operation: 'office-pdf',
+      fields: { [name]: longWatermark },
+      advanced: {},
+    })
+    const form = createGotenbergForm(operation, payload, [office], [])
+    assert.equal(form.get(name), longWatermark)
+  }
 })

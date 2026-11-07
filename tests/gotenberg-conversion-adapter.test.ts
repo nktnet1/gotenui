@@ -29,6 +29,19 @@ function adapt(id: string, overrides: Partial<ConversionPayload>, major: 8 | 9) 
   return adaptConversionForm(operation, payload, form, major)
 }
 
+test('v9 conversion stages omit empty optional PDF file references', () => {
+  const stages = [{ op: 'remediate', profile: 'Factur-X', xml: '' }]
+  const form = adapt(
+    'html-pdf',
+    {
+      source: '<html><body>Invoice</body></html>',
+      conversionStages: JSON.stringify(stages),
+    },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
+})
+
 test('v8 Chromium retains legacy fields, array media features and PDF post-processing', () => {
   const form = adapt(
     'html-pdf',
@@ -105,6 +118,15 @@ test('v9 Chromium exposes extended PDF/A and PDF/UA remediation profiles', () =>
   ])
   assert.equal(form.has('pdfaProfile'), false)
   assert.equal(form.has('pdfuaProfile'), false)
+})
+
+test('v9 Chromium permits PDF/A-1b with PDF/UA-1, while v8 keeps the legacy restriction', () => {
+  const options = { fields: { pdfa: 'PDF/A-1b', pdfua: true } }
+  const v9 = adapt('html-pdf', options, 9)
+  assert.deepEqual(JSON.parse(String(v9.get('stages'))), [
+    { op: 'remediate', profile: ['PDF/A-1b', 'PDF/UA-1'] },
+  ])
+  assert.throws(() => adapt('html-pdf', options, 8), /cannot combine/)
 })
 
 test('v9 rejects incompatible PDF/A and PDF/UA profiles rather than silently changing the target', () => {
@@ -209,9 +231,12 @@ test('version-specific PDF profiles are visible only for the intended version an
     assert.equal(fieldSupportsBackend(modern, '9.0.0'), true)
   }
   const existing = standalone.fields.find(({ name }) => name === 'pdfa')
-  assert.ok(existing)
+  const modern = standalone.fields.find(({ name }) => name === 'pdfaProfile')
+  assert.ok(existing && modern)
   assert.equal(fieldSupportsBackend(existing, '8.40.0'), true)
-  assert.equal(fieldSupportsBackend(existing, '9.0.0'), true)
+  assert.equal(fieldSupportsBackend(existing, '9.1.0'), false)
+  assert.equal(fieldSupportsBackend(modern, '8.40.0'), false)
+  assert.equal(fieldSupportsBackend(modern, '9.1.0'), true)
 })
 
 test('v9 screenshots also convert emulated media features to the new JSON object', () => {
@@ -464,6 +489,70 @@ test('v9 Office conversion merges first, then runs custom stages and remediates 
   ])
 })
 
+test('v9 conversion places conformance remediation before PDF signing and timestamps', () => {
+  const { operation, payload, form } = fixture('html-pdf', {
+    fields: { pdfaProfile: 'PDF/A-2b' },
+    conversionStages: JSON.stringify([
+      { op: 'set-metadata', title: 'Final statement' },
+      { op: 'sign', certificate: 'signer.p12', pades: true },
+      { op: 'timestamp', timestampUrl: 'https://tsa.example.test' },
+    ]),
+  })
+  const certificate = new File(['pkcs12'], 'signer.p12')
+  const adapted = adaptConversionForm(operation, payload, form, 9, [certificate])
+  assert.deepEqual(JSON.parse(String(adapted.get('stages'))), [
+    { op: 'set-metadata', title: 'Final statement' },
+    { op: 'remediate', profile: 'PDF/A-2b' },
+    { op: 'sign', certificate: 'signer.p12', pades: true },
+    { op: 'timestamp', timestampUrl: 'https://tsa.example.test/' },
+  ])
+})
+
+test('v9 remediation precedes PDF/UA encryption, while PDF/A encryption remains forbidden', () => {
+  const encrypt = '[{"op":"encrypt","userPassword":"secret"},{"op":"optimize"}]'
+  const valid = adapt(
+    'office-pdf',
+    {
+      fields: { pdfuaProfile: 'PDF/UA-1' },
+      conversionStages: encrypt,
+    },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(valid.get('stages'))), [
+    { op: 'remediate', profile: 'PDF/UA-1' },
+    { op: 'encrypt', userPassword: 'secret' },
+    { op: 'optimize' },
+  ])
+  assert.throws(
+    () =>
+      adapt(
+        'office-pdf',
+        {
+          fields: { pdfaProfile: 'PDF/A-2b' },
+          conversionStages: encrypt,
+        },
+        9,
+      ),
+    /cannot be encrypted/,
+  )
+})
+
+test('v9 remediation precedes a final rendered output without moving earlier edits', () => {
+  const form = adapt(
+    'html-pdf',
+    {
+      fields: { pdfaProfile: 'PDF/A-4' },
+      conversionStages: '[{"op":"rotate","angle":90},{"op":"render","format":"jpeg"}]',
+    },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+    { op: 'rotate', angle: 90 },
+    { op: 'remediate', profile: 'PDF/A-4' },
+    { op: 'render', format: 'jpeg' },
+  ])
+})
+
 test('v9 attaches named stage uploads to PDF conversions, without changing the source document', () => {
   const { operation, payload, form } = fixture('office-pdf', {
     conversionStages: '[{"op":"attach","file":"receipt.txt"}]',
@@ -475,6 +564,18 @@ test('v9 attaches named stage uploads to PDF conversions, without changing the s
     ['document.txt', 'receipt.txt'],
   )
   assert.equal(adapted.get('stages'), '[{"op":"attach","file":"receipt.txt"}]')
+})
+
+test('v9 conversion-time assets match NFC filenames, including original Unicode upload names', () => {
+  const decomposed = 're\u0301sume\u0301.txt'
+  const normalized = decomposed.normalize('NFC')
+  const { operation, payload, form } = fixture('html-pdf', {
+    conversionStages: JSON.stringify([{ op: 'attach', file: decomposed }]),
+  })
+  const attachment = new File(['receipt'], decomposed)
+  const adapted = adaptConversionForm(operation, payload, form, 9, [attachment])
+  assert.deepEqual(JSON.parse(String(adapted.get('stages'))), [{ op: 'attach', file: normalized }])
+  assert.equal((adapted.getAll('files').at(-1) as File).name, decomposed)
 })
 
 test('v8 rejects conversion-time stages rather than silently ignoring them', () => {
@@ -667,4 +768,91 @@ test('Gotenberg 9 LibreOffice retains native JPEG and downsampling settings', ()
   assert.equal(old.get('quality'), '84')
   assert.equal(old.get('reduceImageResolution'), 'true')
   assert.equal(old.get('maxImageResolution'), '150')
+})
+
+test('v9 Chromium forwards extended media feature maps without prototype collisions', () => {
+  const features = Array.from({ length: 20 }, (_, i) => ({
+    name: `extended-css-feature-${i}`,
+    value: `value-${'long'.repeat(40)}`,
+  }))
+  features.push({ name: '__proto__', value: 'allowed-by-upstream' })
+  const form = adapt(
+    'url-shot',
+    {
+      fields: { url: 'https://example.test' },
+      advanced: { emulatedMediaFeatures: JSON.stringify(features) },
+    },
+    9,
+  )
+  assert.deepEqual(
+    JSON.parse(String(form.get('emulatedMediaFeatures'))),
+    Object.fromEntries(features.map(({ name, value }) => [name, value])),
+  )
+})
+
+test('v9 Chromium conversion forwards optional PDF remediation settings without leaking form fields', () => {
+  const form = adapt(
+    'html-pdf',
+    {
+      fields: {
+        pdfaProfile: 'PDF/A-4f',
+        pdfuaProfile: 'PDF/UA-2',
+        v9Language: '  en-AU  ',
+        v9Aggressive: true,
+        v9FigureAltText: '  Figure description  ',
+      },
+    },
+    9,
+  )
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+    {
+      op: 'remediate',
+      profile: ['PDF/A-4f', 'PDF/UA-2'],
+      language: 'en-AU',
+      aggressive: true,
+      figureAltText: '  Figure description  ',
+    },
+  ])
+  for (const key of ['v9Language', 'v9Aggressive', 'v9FigureAltText']) {
+    assert.equal(form.has(key), false)
+  }
+})
+
+test('v9 Office switches from native export to remediation when remediation settings are requested', () => {
+  const options = {
+    fields: {
+      pdfaProfile: 'PDF/A-2b',
+      v9Language: 'en-AU',
+      v9FigureAltText: 'Missing alt text',
+    },
+  }
+  const auto = adapt('office-pdf', options, 9)
+  assert.equal(auto.get('nativePdfa'), null)
+  assert.deepEqual(JSON.parse(String(auto.get('stages'))), [
+    {
+      op: 'remediate',
+      profile: 'PDF/A-2b',
+      language: 'en-AU',
+      figureAltText: 'Missing alt text',
+    },
+  ])
+  assert.throws(
+    () => adapt('office-pdf', { fields: { ...options.fields, pdfaMethod: 'native' } }, 9),
+    /requires PDF remediation/,
+  )
+  assert.throws(
+    () => adapt('office-pdf', { fields: { v9Aggressive: true } }, 9),
+    /Choose PDF\/A or PDF\/UA/,
+  )
+  assert.throws(
+    () => adapt('url-pdf', { fields: { v9Language: 'en-AU' } }, 9),
+    /Choose PDF\/A or PDF\/UA/,
+  )
+})
+
+test('v8 conversion rejects Gotenberg 9 remediation stage options', () => {
+  assert.throws(
+    () => adapt('office-pdf', { fields: { pdfa: 'PDF/A-2b', v9Language: 'en-AU' } }, 8),
+    /require Gotenberg 9|Unsupported|Advanced/,
+  )
 })

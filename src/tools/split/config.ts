@@ -1,5 +1,13 @@
 /** Definition for the split Gotenberg operation. */
-import { optimizeImages, pdfa, pdfFiles, pdfua } from '#/tools/shared/fields'
+import {
+  optimizeImages,
+  pdfa,
+  pdfFiles,
+  pdfua,
+  v9PdfaProfile,
+  v9PdfuaProfile,
+  v9RemediationFields,
+} from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
@@ -36,6 +44,9 @@ export const operation: Operation = {
     ...optimizeImages,
     pdfa,
     pdfua,
+    v9PdfaProfile,
+    v9PdfuaProfile,
+    ...v9RemediationFields,
   ],
   output: 'zip',
 }

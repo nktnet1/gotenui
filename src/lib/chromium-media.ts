@@ -58,21 +58,17 @@ export function validateAdvancedMediaFeatures(value: string): void {
   if (
     !Array.isArray(rows) ||
     rows.length === 0 ||
-    rows.length > 16 ||
     rows.some((row: unknown) => {
       if (!row || typeof row !== 'object' || Array.isArray(row)) return true
       const feature = row as Record<string, unknown>
       return (
         Object.keys(feature).length !== 2 ||
         typeof feature.name !== 'string' ||
-        !/^[a-z][a-z0-9-]{0,63}$/.test(feature.name) ||
-        typeof feature.value !== 'string' ||
-        !feature.value ||
-        feature.value.length > 128 ||
-        /[\r\n]/.test(feature.value)
+        !feature.name ||
+        typeof feature.value !== 'string'
       )
     })
   ) {
-    throw new Error('emulatedMediaFeatures must contain up to 16 name/value pairs.')
+    throw new Error('emulatedMediaFeatures must contain name/value pairs.')
   }
 }

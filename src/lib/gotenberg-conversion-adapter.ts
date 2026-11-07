@@ -1,5 +1,6 @@
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
-import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import { normalizePdfStageAssets, parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError, supportsArchiveInputs } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
@@ -60,7 +61,7 @@ function v9MediaFeatures(form: FormData): void {
   if (!Array.isArray(rows)) {
     throw new InputError('Chromium media features must contain name/value pairs.')
   }
-  const features: Record<string, string> = {}
+  const features: Record<string, string> = Object.create(null)
   for (const item of rows) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       throw new InputError('Invalid Chromium media feature.')
@@ -82,8 +83,15 @@ function take(form: FormData, name: string): string | null {
   return typeof value === 'string' ? value : null
 }
 
-function v9PdfStages(form: FormData, operation: Operation, postProcessing: boolean): Stage[] {
+function v9PdfStages(
+  form: FormData,
+  operation: Operation,
+  postProcessing: boolean,
+  fields: ConversionPayload['fields'],
+): Stage[] {
   const stages: Stage[] = []
+  const remediationOptions = v9RemediationOptions(fields)
+  for (const name of V9_REMEDIATION_FIELD_NAMES) form.delete(name)
   if (form.has('stages')) {
     throw new InputError('Advanced stages require the Gotenberg 9 PDF pipeline editor.')
   }
@@ -120,6 +128,9 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
   const pdfa = selectedPdfa || legacyPdfa
   const pdfua =
     selectedPdfua || (legacyPdfua ? (pdfa?.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1') : null)
+  if (Object.keys(remediationOptions).length && !pdfa && !pdfua) {
+    throw new InputError('Choose PDF/A or PDF/UA before setting remediation options.')
+  }
   if (pdfa && pdfua && pdfua !== (pdfa.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1')) {
     throw new InputError('This PDF/A profile cannot be combined with the selected PDF/UA profile.')
   }
@@ -132,6 +143,7 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
     operation.id === 'office-pdf' &&
     !postProcessing &&
     !hasBuiltInStages &&
+    !Object.keys(remediationOptions).length &&
     (!pdfa || nativePdfaProfiles.has(pdfa)) &&
     (!pdfua || pdfua === 'PDF/UA-1') &&
     !(pdfa === 'PDF/A-4' && pdfua)
@@ -145,7 +157,11 @@ function v9PdfStages(form: FormData, operation: Operation, postProcessing: boole
     if (pdfua) form.set('nativePdfua', pdfua)
   } else if (pdfa || pdfua) {
     const profiles = [pdfa, pdfua].filter((profile): profile is string => Boolean(profile))
-    stages.push({ op: 'remediate', profile: profiles.length === 1 ? profiles[0] : profiles })
+    stages.push({
+      op: 'remediate',
+      profile: profiles.length === 1 ? profiles[0] : profiles,
+      ...remediationOptions,
+    })
   }
   const optimize = take(form, 'optimizeImages')
   const imageQuality = take(form, 'imageQuality')
@@ -230,12 +246,23 @@ export function adaptConversionForm(
   archiveEntryNames: readonly string[] = [],
 ): FormData {
   if (version === 8) {
+    if (
+      (payload.fields.pdfa ?? payload.advanced.pdfa) === 'PDF/A-1b' &&
+      (payload.fields.pdfua ?? payload.advanced.pdfua) === true
+    ) {
+      throw new InputError(
+        'Gotenberg 8 cannot combine PDF/A-1b and PDF/UA. Select another PDF/A profile.',
+      )
+    }
     if (payload.conversionStages || stageFiles.length) {
       throw new InputError('Conversion-time PDF pipeline stages require Gotenberg 9.')
     }
     if (archives.length) throw new InputError('ZIP archive inputs require Gotenberg 9.')
     if (form.has('pdfaProfile') || form.has('pdfuaProfile') || form.has('pdfaMethod')) {
       throw new InputError('Advanced PDF conformance profiles require Gotenberg 9.')
+    }
+    if (V9_REMEDIATION_FIELD_NAMES.some((name) => form.has(name))) {
+      throw new InputError('Advanced PDF remediation options require Gotenberg 9.')
     }
     if (form.has('paperSize')) {
       throw new InputError('Named paper sizes require Gotenberg 9.')
@@ -284,7 +311,12 @@ export function adaptConversionForm(
     v9MediaFeatures(form)
   }
   if (operation.output === 'pdf') {
-    const generated = v9PdfStages(form, operation, Boolean(payload.conversionStages))
+    const generated = v9PdfStages(
+      form,
+      operation,
+      Boolean(payload.conversionStages),
+      payload.fields,
+    )
     const remoteNames = payload.conversionStages
       ? remoteStageAssets(
           payload.downloadFrom,
@@ -322,28 +354,34 @@ export function adaptConversionForm(
       ),
     )
     for (const file of stageFiles) {
-      if (!referenced.has(file.name)) {
+      if (!referenced.has(file.name.normalize('NFC'))) {
         throw new InputError(`Unused conversion stage file: ${file.name}.`)
       }
     }
-    // Final read stages (render or extraction) must come after any generated
-    // remediation: their results are added alongside the converted PDF(s).
+    // Remediation must follow page/content edits but precede encryption,
+    // signing, document timestamps and final readers. Placing it after a
+    // signature would rewrite signed bytes; placing it after encryption would
+    // violate Gotenberg's stage ordering even for PDF/UA-only remediation.
     const remediation = generated.filter((stage) => stage.op === 'remediate')
     const setup = generated.filter((stage) => stage.op !== 'remediate')
-    const finalStage = userStages.at(-1)
-    const isFinalRead = ['render', 'extract-attachments', 'extract-text'].includes(
-      finalStage?.op ?? '',
+    const firstFinalizingStage = userStages.findIndex((stage) =>
+      ['encrypt', 'sign', 'timestamp', 'render', 'extract-attachments', 'extract-text'].includes(
+        stage.op,
+      ),
     )
-    const stages =
-      isFinalRead && finalStage
-        ? [...setup, ...userStages.slice(0, -1), ...remediation, finalStage]
-        : [...setup, ...userStages, ...remediation]
+    const remediationAt = firstFinalizingStage === -1 ? userStages.length : firstFinalizingStage
+    const stages = [
+      ...setup,
+      ...userStages.slice(0, remediationAt),
+      ...remediation,
+      ...userStages.slice(remediationAt),
+    ]
     if (stages.length) {
       parsePdfPipeline(JSON.stringify(stages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
         acknowledgedRedaction: payload.acknowledgedConversionRedaction,
       })
-      form.set('stages', JSON.stringify(stages))
+      form.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))
     }
     for (const file of stageFiles) form.append('files', file, file.name)
   } else if (payload.conversionStages || stageFiles.length) {
