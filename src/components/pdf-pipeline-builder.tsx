@@ -78,7 +78,6 @@ export function PdfPipelineBuilder({
     }
   }
   const add = () => {
-    if (stages.length >= 30) return
     const definition = availableStages.find(({ op }) => op === selected)
     if (!definition) return
     update([
@@ -132,7 +131,7 @@ export function PdfPipelineBuilder({
               ))}
             </select>
           </div>
-          <Button type="button" variant="outline" onClick={add} disabled={stages.length >= 30}>
+          <Button type="button" variant="outline" onClick={add}>
             <Plus className="size-4" /> Add stage
           </Button>
         </div>

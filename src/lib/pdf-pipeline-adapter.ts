@@ -1,4 +1,5 @@
-import { parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 
 /** Convert the UI's ordered stages and named asset uploads to a v9 PDF request. */
@@ -16,7 +17,7 @@ export function adaptPdfPipeline(
   }
   if (payload.downloadFrom?.some((file) => file.field || file.embedded)) {
     throw new InputError(
-      'The PDF pipeline accepts remote input PDFs, not legacy remote attachments or overlays. Use a named upload or an archive for stage assets.',
+      'The PDF pipeline accepts remote PDF inputs and named stage assets, not legacy remote destinations.',
     )
   }
   if (
@@ -26,8 +27,21 @@ export function adaptPdfPipeline(
   }
   const raw = payload.fields.stages
   if (typeof raw !== 'string') throw new InputError('Choose at least one PDF pipeline stage.')
+  const references = pdfStageAssetNames(
+    parsePdfPipeline(raw, {
+      acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
+    }),
+  )
+  const remoteNames = remoteStageAssets(payload.downloadFrom, references, [
+    ...auxiliary.map(({ name }) => name),
+    ...archiveEntryNames,
+    ...legacy
+      .getAll('files')
+      .filter((file): file is File => file instanceof File)
+      .map(({ name }) => name),
+  ])
   const stages = parsePdfPipeline(raw, {
-    assetNames: [...auxiliary.map(({ name }) => name), ...archiveEntryNames],
+    assetNames: [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
     acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
   })
   const form = new FormData()

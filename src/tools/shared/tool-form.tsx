@@ -690,7 +690,6 @@ export function Workbench({
                 onChange={setArchives}
                 accept=".zip,application/zip"
                 multiple
-                maxFiles={10}
               />
             )}
             {operation.input === 'url' && (
@@ -918,7 +917,6 @@ export function Workbench({
                       files={conversionStageFiles}
                       onChange={setConversionStageFiles}
                       multiple
-                      maxFiles={20}
                     />
                   </div>
                 )}

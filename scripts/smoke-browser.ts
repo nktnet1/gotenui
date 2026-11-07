@@ -16,6 +16,12 @@ import {
   navigateChromeHistory,
   waitForBrowserCondition,
 } from '#scripts/chrome-devtools'
+import {
+  chromeSmokeArguments,
+  chromeSmokeEnvironment,
+  chromeSmokeTransports,
+} from '#scripts/chrome-launch'
+import { connectChromeSocket } from '#scripts/chrome-socket'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = resolve(root, '.output/server/index.mjs')
@@ -33,17 +39,19 @@ const chromium = [
 class BrowserPage {
   private sessionId?: string
   private readonly devtools: ChromeDevToolsPipe
+  private readonly closeSocket?: () => void
   lastCheck = 'Chrome bootstrap'
 
-  private constructor(devtools: ChromeDevToolsPipe) {
+  private constructor(devtools: ChromeDevToolsPipe, closeSocket?: () => void) {
     this.devtools = devtools
+    this.closeSocket = closeSocket
   }
 
-  static async connect(browser: ChildProcess): Promise<BrowserPage> {
-    const input = browser.stdio[3]
-    const output = browser.stdio[4]
-    assert.ok(input instanceof Writable && output instanceof Readable)
-    const page = new BrowserPage(new ChromeDevToolsPipe(input, output))
+  static async connect(
+    devtools: ChromeDevToolsPipe,
+    closeSocket?: () => void,
+  ): Promise<BrowserPage> {
+    const page = new BrowserPage(devtools, closeSocket)
     try {
       page.sessionId = await attachToChromePage(page.devtools)
       return page
@@ -136,6 +144,7 @@ class BrowserPage {
 
   close() {
     this.devtools.close()
+    this.closeSocket?.()
   }
 }
 
@@ -188,47 +197,57 @@ async function launchBrowser(
   binary: string,
 ): Promise<{ browser: ChildProcess; profile: string; page: BrowserPage }> {
   const failures: string[] = []
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  // Chromium on Linux CI runners can accept --remote-debugging-pipe without
+  // answering Browser.getVersion. Prefer an ephemeral loopback WebSocket,
+  // falling back across transports with a fresh profile for each attempt.
+  for (const [index, transport] of chromeSmokeTransports.entries()) {
+    const attempt = index + 1
     const profile = await mkdtemp(resolve(tmpdir(), 'gotenui-browser-'))
-    const browser = spawn(
-      binary,
-      [
-        '--headless=new',
-        '--no-sandbox',
-        '--disable-gpu',
-        '--disable-dev-shm-usage',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-background-networking',
-        `--user-data-dir=${profile}`,
-        '--remote-debugging-pipe',
-      ],
-      { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] },
-    )
+    const browser = spawn(binary, chromeSmokeArguments(profile, transport), {
+      env: chromeSmokeEnvironment(process.env),
+      stdio:
+        transport === 'pipe'
+          ? ['ignore', 'ignore', 'pipe', 'pipe', 'pipe']
+          : ['ignore', 'ignore', 'pipe'],
+    })
     let chromeLogs = ''
     browser.stderr?.on('data', (data: Buffer) => {
       chromeLogs = `${chromeLogs}${data.toString()}`.slice(-4_000)
     })
-    // Avoid an unhandled 'error' event if Chrome cannot be spawned.
     let spawnError: Error | undefined
     browser.on('error', (error: Error) => {
       spawnError = error
     })
+    let closeSocket: (() => void) | undefined
     try {
-      const page = await BrowserPage.connect(browser)
+      let devtools: ChromeDevToolsPipe
+      if (transport === 'pipe') {
+        const input = browser.stdio[3]
+        const output = browser.stdio[4]
+        assert.ok(input instanceof Writable && output instanceof Readable)
+        devtools = new ChromeDevToolsPipe(input, output)
+      } else {
+        const connected = await connectChromeSocket(profile, browser)
+        devtools = connected.devtools
+        closeSocket = connected.close
+      }
+      const page = await BrowserPage.connect(devtools, closeSocket)
       return { browser, profile, page }
     } catch (error) {
+      closeSocket?.()
       const detail = error instanceof Error ? error.message : String(error)
       await terminate(browser)
       const exit =
         spawnError?.message ?? `exit=${browser.exitCode ?? '-'} signal=${browser.signalCode ?? '-'}`
       failures.push(
-        `attempt ${attempt}: ${detail} (${exit}); stderr: ${chromeLogs.trim() || '(none)'}`,
+        `attempt ${attempt} (${transport}): ${detail} (${exit}); stderr: ${chromeLogs.trim() || '(none)'}`,
       )
       await removeChromeProfile(profile)
       if (spawnError) break
-      if (attempt < 2) {
-        console.warn('Browser smoke: Chrome startup stalled; retrying with a fresh profile.')
+      if (attempt < chromeSmokeTransports.length) {
+        console.warn(
+          `Browser smoke: Chrome ${transport} bootstrap failed; retrying with a fresh profile.`,
+        )
         await sleep(250)
       }
     }

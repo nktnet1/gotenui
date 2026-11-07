@@ -418,15 +418,12 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('stamp-pdf: upload a PDF.')
       break
     case 'set-bookmarks': {
-      if (
-        !Array.isArray(stage.bookmarks) ||
-        !stage.bookmarks.length ||
-        stage.bookmarks.length > 100
-      )
-        throw new InputError('set-bookmarks: add 1 to 100 bookmarks.')
-      const check = (entries: unknown[], depth: number): void => {
-        if (depth > 8) throw new InputError('set-bookmarks: nesting is too deep.')
-        for (const entry of entries) {
+      if (!Array.isArray(stage.bookmarks) || !stage.bookmarks.length)
+        throw new InputError('set-bookmarks: add at least one bookmark.')
+      const check = (entries: unknown[]): void => {
+        const pending = [...entries]
+        while (pending.length) {
+          const entry = pending.pop()
           if (
             !object(entry) ||
             typeof entry.title !== 'string' ||
@@ -437,13 +434,13 @@ function validateStage(stage: PdfPipelineStage): void {
               'set-bookmarks: every bookmark needs a title and positive pageNumber.',
             )
           if (entry.children !== undefined) {
-            if (!Array.isArray(entry.children) || entry.children.length > 100)
+            if (!Array.isArray(entry.children))
               throw new InputError('set-bookmarks: invalid children.')
-            check(entry.children, depth + 1)
+            pending.push(...entry.children)
           }
         }
       }
-      check(stage.bookmarks, 0)
+      check(stage.bookmarks)
       break
     }
     case 'set-form':
@@ -610,8 +607,8 @@ export function parsePdfPipeline(
   } catch {
     throw new InputError('The PDF pipeline must be valid JSON.')
   }
-  if (!Array.isArray(decoded) || decoded.length < 1 || decoded.length > 30)
-    throw new InputError('Add 1 to 30 ordered PDF processing stages.')
+  if (!Array.isArray(decoded) || decoded.length < 1)
+    throw new InputError('Add at least one ordered PDF processing stage.')
   const stages: PdfPipelineStage[] = []
   const counts = new Map<string, number>()
   let hasDecryption = false
@@ -697,10 +694,15 @@ export function parsePdfPipeline(
     hasPdfa &&
     hasEncryption &&
     stages.some(
-      (stage) => stage.op === 'remediate' && JSON.stringify(stage.profile).includes('PDF/A'),
+      (stage) =>
+        stage.op === 'remediate' &&
+        (Array.isArray(stage.profile) ? stage.profile : [stage.profile]).some(
+          (profile) =>
+            typeof profile === 'string' && (profile.startsWith('PDF/A') || profile === 'Factur-X'),
+        ),
     )
   )
-    throw new InputError('PDF/A documents cannot be encrypted in the same pipeline.')
+    throw new InputError('PDF/A and Factur-X documents cannot be encrypted in the same pipeline.')
   return stages
 }
 

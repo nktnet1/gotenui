@@ -189,6 +189,38 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
     assert.deepEqual(await result.json(), { 'report.pdf': {} })
   })
 
+  it.each(['metadata-read', 'bookmarks-read'])(
+    'forwards %s PDF opening password on v9 only',
+    async (id) => {
+      const remote = fixture(
+        '9.0.0',
+        (form) => {
+          assert.equal(form.get('password'), 'private-password')
+          assert.equal(form.get('stages'), null)
+        },
+        new Response('{"report.pdf":{}}', { headers: { 'content-type': 'application/json' } }),
+      )
+      assert.equal(
+        (
+          await proxyConversionRequest(
+            requestFor(id, { password: 'private-password' }),
+            remote.fetcher,
+          )
+        ).status,
+        200,
+      )
+      const legacy = fixture('8.40.0', () => {
+        throw new Error('v8 must not receive v9 PDF password')
+      })
+      await assert.rejects(
+        () =>
+          proxyConversionRequest(requestFor(id, { password: 'private-password' }), legacy.fetcher),
+        { status: 409 },
+      )
+      assert.equal(legacy.count(), 0)
+    },
+  )
+
   it('relabels attachment uploads as files and emits one attach stage per file', async () => {
     const remote = fixture('9.0.0', (form, path) => {
       assert.equal(path, '/forms/pdf/pipe')
@@ -235,6 +267,28 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
       ).status,
       200,
     )
+  })
+
+  it('repairs existing Factur-X XML without an additional invoice upload', async () => {
+    const remote = fixture('9.0.0', (form, path) => {
+      assert.equal(path, '/forms/pdf/pipe')
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+        { op: 'remediate', profile: 'Factur-X' },
+      ])
+      assert.equal(form.getAll('files').length, 1)
+    })
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor('factur-x', {
+            v9FacturxRepairExisting: true,
+          }),
+          remote.fetcher,
+        )
+      ).status,
+      200,
+    )
+    assert.equal(remote.count(), 1)
   })
 
   it('converts legacy opacity to inverse litho opacity without assuming equal defaults', async () => {

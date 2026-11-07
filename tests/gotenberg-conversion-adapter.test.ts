@@ -169,6 +169,31 @@ test('v9 Office uploads ZIP archives using the archives field, never the files f
   )
 })
 
+test('v9 conversion stages resolve named remote stamp and attachment assets', () => {
+  const { operation, payload, form } = fixture('html-pdf', {
+    downloadFrom: [
+      { url: 'https://example.test/assets/stamp', name: 'badge.png' },
+      { url: 'https://example.test/receipts/123', name: 'receipt.xml' },
+    ],
+    conversionStages: JSON.stringify([
+      { op: 'stamp-image', image: 'badge.png', x: 10, y: 20 },
+      { op: 'attach', file: 'receipt.xml' },
+    ]),
+  })
+  const adapted = adaptConversionForm(operation, payload, form, 9)
+  assert.equal(JSON.parse(String(adapted.get('stages'))).length, 2)
+  assert.deepEqual(JSON.parse(String(adapted.get('downloadFrom'))), [
+    { url: 'https://example.test/assets/stamp' },
+    { url: 'https://example.test/receipts/123' },
+  ])
+  const conflicting = new File(['replacement'], 'badge.png')
+  assert.throws(
+    () =>
+      adaptConversionForm(operation, payload, fixture('html-pdf', payload).form, 9, [conflicting]),
+    /duplicates another file/,
+  )
+})
+
 test('version-specific PDF profiles are visible only for the intended version and tool', () => {
   const office = OPERATION_BY_ID.get('office-pdf')
   const chromium = OPERATION_BY_ID.get('html-pdf')

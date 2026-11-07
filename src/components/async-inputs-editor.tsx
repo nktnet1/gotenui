@@ -118,7 +118,7 @@ export function RemoteInputsEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-            {pdfInputOnly ? 'Remote PDF inputs' : 'Remote file inputs'}
+            {pdfInputOnly ? 'Remote PDFs and stage assets' : 'Remote file inputs'}
           </h3>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             {pdfInputOnly
@@ -130,7 +130,7 @@ export function RemoteInputsEditor({
           type="button"
           variant="outline"
           size="sm"
-          disabled={rows.length >= 20 || !!legacy.trim()}
+          disabled={!!legacy.trim()}
           onClick={() => onChange([...rows, { id: newId(), url: '', field: '', headers: [] }])}
         >
           <Plus className="size-3.5" /> Add remote file
@@ -188,6 +188,22 @@ export function RemoteInputsEditor({
               maxLength={2048}
             />
           </div>
+          {isV9 && (
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-remote-name-${row.id}`}>Expected filename (optional)</Label>
+              <Input
+                id={`${id}-remote-name-${row.id}`}
+                value={row.filename ?? ''}
+                onChange={(event) => update(index, { filename: event.target.value })}
+                placeholder="stamp.png"
+                maxLength={155}
+              />
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Required to reference this file by name in a PDF stage. It must match the filename
+                in the remote server's Content-Disposition header exactly.
+              </p>
+            </div>
+          )}
           {!pdfInputOnly && (
             <div className="space-y-1">
               <Label htmlFor={`${id}-remote-field-${row.id}`}>Destination field</Label>
@@ -237,8 +253,10 @@ export function RemoteInputsEditor({
         a valid Content-Type. Gotenberg must be able to reach the URL and allow it through its
         outbound filtering.{' '}
         {pdfInputOnly
-          ? 'Remote ZIP files are not extracted; upload ZIPs through PDF ZIP archives instead. Stage assets require separate named uploads.'
-          : 'Watermark/stamp filenames must match their editor expressions; remote overlays precede local overlays of that type. Remote merge files are sorted by filename by Gotenberg.'}
+          ? 'Remote ZIP files are not extracted; upload ZIPs through PDF ZIP archives instead. For remote pipeline assets, enter the expected filename and reference it in the stage editor.'
+          : isV9
+            ? 'Remote inputs and pipeline assets share the same files workspace. Stage references must exactly match the filename provided by the remote server.'
+            : 'Watermark/stamp filenames must match their editor expressions; remote overlays precede local overlays of that type. Remote merge files are sorted by filename by Gotenberg.'}
       </p>
       <details className="text-xs text-slate-600 dark:text-slate-300">
         <summary className="cursor-pointer font-semibold">

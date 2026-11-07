@@ -25,7 +25,7 @@ export function UploadZone({
   multiple = false,
   reorder = false,
   allowDuplicateNames = false,
-  maxFiles = 20,
+  maxFiles,
 }: UploadZoneProps) {
   const id = useId()
   const ref = useRef<HTMLInputElement>(null)
@@ -55,7 +55,7 @@ export function UploadZone({
               (candidate) => candidate.name.toLowerCase() === file.name.toLowerCase(),
             ) === index,
         )
-        .slice(0, maxFiles),
+        .slice(0, maxFiles ?? Number.POSITIVE_INFINITY),
     )
     if (ref.current) ref.current.value = ''
   }
@@ -112,7 +112,8 @@ export function UploadZone({
           </button>
         </p>
         <p className="mt-1 text-xs text-slate-400">
-          {multiple ? `Up to ${maxFiles} files` : 'One file'} · Drag and drop supported
+          {multiple ? (maxFiles ? `Up to ${maxFiles} files` : 'Multiple files') : 'One file'} · Drag
+          and drop supported
         </p>
         <input
           id={id}

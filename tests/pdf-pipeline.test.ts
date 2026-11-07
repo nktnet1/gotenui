@@ -110,6 +110,73 @@ describe('PDF pipeline catalogue and stage contract', () => {
     )
     assert.equal(form.has('auxiliary'), false)
   })
+  it('accepts named remote stage assets without treating them as input documents', () => {
+    const { payload, legacy } = input([
+      { op: 'stamp-image', image: 'stamp.png', x: 10, y: 10 },
+      { op: 'attach', file: 'invoice.xml' },
+    ])
+    payload.downloadFrom = [
+      { url: 'https://example.test/signed/stamp', name: 'stamp.png' },
+      { url: 'https://example.test/invoices/837', name: 'invoice.xml' },
+    ]
+    legacy.set(
+      'downloadFrom',
+      JSON.stringify(payload.downloadFrom.map(({ name, ...remote }) => remote)),
+    )
+    const result = adaptPdfPipeline(payload, legacy, [])
+    assert.deepEqual(JSON.parse(String(result.form.get('stages'))), [
+      { op: 'stamp-image', image: 'stamp.png', x: 10, y: 10 },
+      { op: 'attach', file: 'invoice.xml' },
+    ])
+    assert.equal(result.form.getAll('files').length, 1)
+    assert.deepEqual(JSON.parse(String(result.form.get('downloadFrom'))), [
+      { url: 'https://example.test/signed/stamp' },
+      { url: 'https://example.test/invoices/837' },
+    ])
+    assert.throws(
+      () => adaptPdfPipeline(payload, legacy, [new File(['asset'], 'invoice.xml')]),
+      /duplicates another file/,
+    )
+    assert.throws(
+      () =>
+        adaptPdfPipeline(
+          {
+            ...payload,
+            downloadFrom: [
+              ...(payload.downloadFrom ?? []),
+              { url: 'https://example.test/again', name: 'stamp.png' },
+            ],
+          },
+          legacy,
+          [],
+        ),
+      /duplicates another file/,
+    )
+  })
+  it('does not count remote stage assets as PDF source documents', () => {
+    const remoteAsset = {
+      url: 'https://example.test/attachment.pdf',
+      name: 'attachment.pdf',
+    }
+    const stages = '[{"op":"attach","file":"attachment.pdf"}]'
+    const payload: ConversionPayload = {
+      operation: 'pdf-pipeline',
+      fields: { stages },
+      advanced: {},
+      downloadFrom: [remoteAsset],
+    }
+    assert.throws(
+      () => validateFiles(operation, [], [], 1_000_000, payload),
+      /Upload at least 1 input file/,
+    )
+    const source = { url: 'https://example.test/source.pdf' }
+    assert.doesNotThrow(() =>
+      validateFiles(operation, [], [], 1_000_000, {
+        ...payload,
+        downloadFrom: [remoteAsset, source],
+      }),
+    )
+  })
   it('requires named stage uploads and rejects legacy remote destinations and settings', () => {
     assert.throws(
       () => adapted([{ op: 'attach', file: 'missing.txt' }]),
@@ -162,10 +229,11 @@ describe('PDF pipeline catalogue and stage contract', () => {
 describe('PDF pipeline rejects unsafe or invalid sequences', () => {
   it('checks JSON shape, length and unknown operations', () => {
     assert.throws(() => parsePdfPipeline('{'), /valid JSON/)
-    error([], /1 to 30/)
-    error(
-      Array.from({ length: 31 }, () => ({ op: 'optimize' })),
-      /1 to 30/,
+    error([], /at least one/)
+    assert.equal(
+      parsePdfPipeline(JSON.stringify(Array.from({ length: 31 }, () => ({ op: 'optimize' }))))
+        .length,
+      31,
     )
     error([{}], /supported PDF operation/)
     error([{ op: 'hack' }], /supported PDF operation/)
@@ -221,7 +289,14 @@ describe('PDF pipeline rejects unsafe or invalid sequences', () => {
         { op: 'remediate', profile: 'PDF/A-2b' },
         { op: 'encrypt', userPassword: 'pass' },
       ],
-      /PDF\/A documents cannot be encrypted/,
+      /PDF\/A and Factur-X documents cannot be encrypted/,
+    )
+    error(
+      [
+        { op: 'remediate', profile: 'Factur-X' },
+        { op: 'encrypt', userPassword: 'pass' },
+      ],
+      /Factur-X documents cannot be encrypted/,
     )
     error([{ op: 'remediate', profile: ['PDF/A-4', 'PDF/UA-1'] }], /incompatible/)
   })

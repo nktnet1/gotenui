@@ -1,5 +1,6 @@
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
-import { parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError, supportsArchiveInputs } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
 
@@ -284,9 +285,27 @@ export function adaptConversionForm(
   }
   if (operation.output === 'pdf') {
     const generated = v9PdfStages(form, operation, Boolean(payload.conversionStages))
+    const remoteNames = payload.conversionStages
+      ? remoteStageAssets(
+          payload.downloadFrom,
+          pdfStageAssetNames(
+            parsePdfPipeline(payload.conversionStages, {
+              acknowledgedRedaction: payload.acknowledgedConversionRedaction,
+            }),
+          ),
+          [
+            ...stageFiles.map(({ name }) => name),
+            ...archiveEntryNames,
+            ...form
+              .getAll('files')
+              .filter((file): file is File => file instanceof File)
+              .map(({ name }) => name),
+          ],
+        )
+      : []
     const userStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {
-          assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames],
+          assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
@@ -321,7 +340,7 @@ export function adaptConversionForm(
         : [...setup, ...userStages, ...remediation]
     if (stages.length) {
       parsePdfPipeline(JSON.stringify(stages), {
-        assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames],
+        assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
         acknowledgedRedaction: payload.acknowledgedConversionRedaction,
       })
       form.set('stages', JSON.stringify(stages))

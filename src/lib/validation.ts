@@ -13,6 +13,7 @@ import {
   parseIgnoredDomains,
   parseStatusCodes,
 } from '#/lib/official-form-fields'
+import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import {
   configuredOverlays,
   countPostProcessFiles,
@@ -34,6 +35,8 @@ const markdownFileSchema = v.object({
 
 const remoteFileSchema = v.object({
   url: v.pipe(v.string(), v.maxLength(2048)),
+  /** Client-side filename hint for v9 named pipeline assets; never sent upstream. */
+  name: v.optional(v.pipe(v.string(), v.maxLength(155))),
   field: v.optional(v.picklist(['embedded', 'watermark', 'stamp'])),
   embedded: v.optional(v.boolean()),
   extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
@@ -68,7 +71,7 @@ export const payloadSchema = v.object({
   requestTrace: v.optional(v.pipe(v.string(), v.maxLength(128))),
   traceparent: v.optional(v.pipe(v.string(), v.maxLength(55))),
   tracestate: v.optional(v.pipe(v.string(), v.maxLength(512))),
-  downloadFrom: v.optional(v.pipe(v.array(remoteFileSchema), v.maxLength(20))),
+  downloadFrom: v.optional(v.array(remoteFileSchema)),
   webhook: v.optional(webhookSchema),
 })
 
@@ -217,6 +220,7 @@ function validateHeaderMap(headers: Record<string, string> | undefined): void {
 function validateAsyncInputs(payload: ConversionPayload): void {
   for (const remote of payload.downloadFrom ?? []) {
     requireHttpUrl(remote.url, 'downloadFrom URL')
+    if (remote.name !== undefined) safeFilename(remote.name)
     validateHeaderMap(remote.extraHttpHeaders)
   }
   const webhook = payload.webhook
@@ -540,6 +544,7 @@ export function validateFiles(
     | 'footerHtml'
     | 'postProcess'
     | 'conversionStages'
+    | 'acknowledgedConversionRedaction'
     | 'advanced'
   >,
   postFiles: PostProcessFiles = {},
@@ -548,11 +553,33 @@ export function validateFiles(
   major?: SupportedGotenbergMajor,
 ): void {
   const remote = remoteCounts(payload)
+  if (
+    payload?.downloadFrom?.length &&
+    (operation.id === 'pdf-pipeline' || payload.conversionStages)
+  ) {
+    const rawStages =
+      operation.id === 'pdf-pipeline' ? payload.fields?.stages : payload.conversionStages
+    if (typeof rawStages === 'string' && rawStages) {
+      const stageAssets = new Set(
+        pdfStageAssetNames(
+          parsePdfPipeline(rawStages, {
+            acknowledgedRedaction:
+              operation.id === 'pdf-pipeline'
+                ? payload.fields?.acknowledgedRedaction === true
+                : payload.acknowledgedConversionRedaction,
+          }),
+        ),
+      )
+      remote.input -= payload.downloadFrom.filter(
+        (file) =>
+          !file.field && !file.embedded && file.name !== undefined && stageAssets.has(file.name),
+      ).length
+    }
+  }
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
   if (archives.length && !supportsArchiveInputs(operation)) {
     throw new InputError('ZIP archive inputs are not supported for this operation.')
   }
-  if (archives.length > 10) throw new InputError('At most 10 ZIP archives are supported.')
   if (operation.id === 'embed' && payload?.fields.embedsMetadata) {
     const names = validatedAttachmentMetadata(String(payload.fields.embedsMetadata))
     if (!auxiliary.length && !remote.embedded) {
@@ -568,8 +595,8 @@ export function validateFiles(
     const documentCount = files.length + remote.input + archives.length
     // An archive can contain several source documents; validate its actual
     // directory entries in validateZipInputs after upstream version detection.
-    if ((documentCount < minFiles && !archives.length) || documentCount > 20) {
-      throw new InputError(`Upload ${minFiles} to 20 input files.`)
+    if (documentCount < minFiles && !archives.length) {
+      throw new InputError(`Upload at least ${minFiles} input file${minFiles > 1 ? 's' : ''}.`)
     }
   } else if (files.length > 0) {
     throw new InputError('This operation takes source text or a URL, not input documents.')
@@ -577,8 +604,6 @@ export function validateFiles(
   if (stageFiles.length && !payload?.conversionStages) {
     throw new InputError('Conversion stage files require a PDF conversion pipeline.')
   }
-  if (stageFiles.length > 20)
-    throw new InputError('At most 20 conversion stage files are supported.')
   if (!operation.auxiliary && auxiliary.length > 0) {
     // HTML/Markdown assets are auxiliary uploads, with a different field name.
     if (operation.input !== 'html' && operation.input !== 'markdown') {
@@ -586,11 +611,9 @@ export function validateFiles(
     }
   }
   const maxAux =
-    operation.input === 'html' || operation.input === 'markdown'
-      ? 20
-      : operation.auxiliary?.multiple
-        ? 20
-        : 1
+    operation.auxiliary?.multiple || operation.input === 'html' || operation.input === 'markdown'
+      ? Number.POSITIVE_INFINITY
+      : 1
   if (auxiliary.length > maxAux) throw new InputError('Too many additional files.')
   const remoteAux =
     operation.id === 'embed'
