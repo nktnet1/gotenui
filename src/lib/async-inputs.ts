@@ -55,7 +55,7 @@ function legacyJson(text: string, label: string): unknown {
 }
 
 /** Build the existing validated API payload; do not let raw JSON silently override editor rows. */
-export function remoteInputsPayload(rows: RemoteInputRow[], json: string): unknown {
+export function remoteInputsPayload(rows: readonly RemoteInputRow[], json: string): unknown {
   if (json.trim()) {
     if (rows.length) throw new InputError('Use remote-file rows or legacy JSON, not both.')
     return legacyJson(json, 'Remote files')
