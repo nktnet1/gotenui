@@ -338,6 +338,9 @@ export function adaptConversionForm(
     const userStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {
           assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
+          allowUnresolvedAssets: payload.downloadFrom?.some(
+            (remote) => !remote.name && !remote.field && !remote.embedded,
+          ),
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
@@ -379,6 +382,9 @@ export function adaptConversionForm(
     if (stages.length) {
       parsePdfPipeline(JSON.stringify(stages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
+        allowUnresolvedAssets: payload.downloadFrom?.some(
+          (remote) => !remote.name && !remote.field && !remote.embedded,
+        ),
         acknowledgedRedaction: payload.acknowledgedConversionRedaction,
       })
       form.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))

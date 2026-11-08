@@ -403,8 +403,9 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError(`${name}: "pages" must be a non-empty string.`)
       break
     case 'insert':
-      if (!/\.pdf$/i.test(requiredText(stage, 'source')))
-        throw new InputError('insert: upload a PDF.')
+      // Gotenberg resolves this named asset and opens its PDF contents;
+      // unlike a source document, its filename need not end in .pdf.
+      requiredText(stage, 'source')
       if (stage.at !== undefined && !integer(stage.at, 0))
         throw new InputError('insert: at must be a non-negative integer.')
       break
@@ -422,8 +423,7 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('stamp-image: upload PNG or JPEG.')
       break
     case 'stamp-pdf':
-      if (!/\.pdf$/i.test(requiredText(stage, 'source')))
-        throw new InputError('stamp-pdf: upload a PDF.')
+      requiredText(stage, 'source')
       break
     case 'set-bookmarks': {
       if (!Array.isArray(stage.bookmarks) || !stage.bookmarks.length)
@@ -535,8 +535,9 @@ function validateStage(stage: PdfPipelineStage): void {
         if (!a || !ua || ua !== (a.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1'))
           throw new InputError('remediate: incompatible PDF/A and PDF/UA profiles.')
       }
-      if (stage.xml && !/\.xml$/i.test(requiredText(stage, 'xml')))
-        throw new InputError('remediate: upload an XML invoice.')
+      // Gotenberg resolves the named asset and reads its XML contents. Unlike
+      // input PDFs, invoice assets do not need a particular filename suffix.
+      if (stage.xml) requiredText(stage, 'xml')
       if ((stage.xml || stage.level || stage.documentType) && !values.includes('Factur-X'))
         throw new InputError('remediate: Factur-X options need a Factur-X profile.')
       if ((stage.level || stage.documentType) && !stage.xml)
@@ -606,6 +607,8 @@ export function pdfStageAssetNames(stages: readonly PdfPipelineStage[]): string[
 
 export type PdfPipelineValidation = {
   assetNames?: readonly string[]
+  /** An unnamed remote download may supply a stage asset; Gotenberg checks its actual filename. */
+  allowUnresolvedAssets?: boolean
   acknowledgedRedaction?: boolean
 }
 
@@ -686,7 +689,12 @@ export function parsePdfPipeline(
     if (context.assetNames) {
       const assetNames = new Set(context.assetNames.map((name) => name.normalize('NFC')))
       for (const key of PDF_STAGE_FILE_FIELDS) {
-        if (typeof stage[key] === 'string' && stage[key] !== '' && !assetNames.has(stage[key])) {
+        if (
+          typeof stage[key] === 'string' &&
+          stage[key] !== '' &&
+          !assetNames.has(stage[key]) &&
+          !context.allowUnresolvedAssets
+        ) {
           throw new InputError(
             `${op}: upload an additional file named "${stage[key]}" for "${key}".`,
           )

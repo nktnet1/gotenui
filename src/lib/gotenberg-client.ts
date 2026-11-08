@@ -176,7 +176,7 @@ export function createGotenbergForm(
   archives: readonly File[] = [],
   major?: SupportedGotenbergMajor,
 ): FormData {
-  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, [], archives)
+  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, [], archives, major)
   const form = new FormData()
   const isChromium = operation.path.startsWith('/forms/chromium/')
   const mediaFieldNames = new Set<string>(CHROMIUM_MEDIA_OPTIONS.map((feature) => feature.name))

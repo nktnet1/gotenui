@@ -160,7 +160,7 @@ export function adaptV9PdfExtra(
       break
     case 'insert-pages': {
       allow('at', 'sourcePages')
-      if (auxiliary.length !== 1 || !/\.pdf$/i.test(auxiliary[0]?.name ?? '')) {
+      if (auxiliary.length !== 1) {
         throw new InputError('Upload exactly one additional PDF containing pages to insert.')
       }
       const at = value('at') ? decimal(fields.at, 'Insert position') : 0

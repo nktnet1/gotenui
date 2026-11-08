@@ -575,21 +575,20 @@ export async function proxyConversionRequest(
       )
     }
   }
-  // The initial validation accepts the union of both Office extension sets.
-  // Recheck after authenticating /version so neither version receives an unsupported format.
-  if (operation.input === 'office') {
-    validateFiles(
-      operation,
-      files,
-      auxiliary,
-      maxBytes,
-      payload,
-      postFiles,
-      stageFiles,
-      archives,
-      major,
-    )
-  }
+  // The first preflight permits version-dependent inputs (Office formats,
+  // single-PDF merges, named XML/PDF assets). Recheck all file contracts once
+  // the authenticated server's actual major version is known.
+  validateFiles(
+    operation,
+    files,
+    auxiliary,
+    maxBytes,
+    payload,
+    postFiles,
+    stageFiles,
+    archives,
+    major,
+  )
   if (archives.length && major !== 9) {
     throw new InputError('ZIP archive inputs require Gotenberg 9.')
   }

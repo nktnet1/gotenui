@@ -43,6 +43,9 @@ export function adaptPdfPipeline(
   ])
   const stages = parsePdfPipeline(raw, {
     assetNames: [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
+    allowUnresolvedAssets: payload.downloadFrom?.some(
+      (remote) => !remote.name && !remote.field && !remote.embedded,
+    ),
     acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
   })
   const form = new FormData()

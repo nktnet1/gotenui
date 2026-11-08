@@ -544,7 +544,9 @@ export function validateFiles(
       ).length
     }
   }
-  const minFiles = operation.input === 'pdf' && operation.id === 'merge' ? 2 : 1
+  // Gotenberg 9's merge stage reads (and returns) a single input PDF too.
+  // Gotenberg 8 retains its two-input merge requirement.
+  const minFiles = operation.input === 'pdf' && operation.id === 'merge' && major === 8 ? 2 : 1
   if (archives.length && !supportsArchiveInputs(operation)) {
     throw new InputError('ZIP archive inputs are not supported for this operation.')
   }
@@ -679,9 +681,8 @@ export function validateFiles(
     if (total > maxBytes)
       throw new InputError('Combined uploaded files exceed the configured size limit.', 413)
     const ext = name.match(extension)?.[0]?.toLowerCase()
-    if (archives.includes(file) && ext !== '.zip') {
-      throw new InputError('Archive inputs must use the .zip extension.')
-    }
+    // Gotenberg 9 passes archive bytes to zip.NewReader; the uploaded archive
+    // filename can have any suffix. validateZipInputs checks its contents.
     if (index < files.length && operation.input === 'pdf' && ext !== '.pdf') {
       throw new InputError('PDF tools only accept .pdf input documents.')
     }
@@ -692,12 +693,13 @@ export function validateFiles(
     ) {
       throw new InputError(`Unsupported Office conversion input: ${name}`)
     }
-    if (auxiliary.includes(file) && operation.id === 'factur-x' && ext !== '.xml') {
+    if (major === 8 && auxiliary.includes(file) && operation.id === 'factur-x' && ext !== '.xml') {
       throw new InputError('Factur-X needs an XML invoice.')
     }
     if (
       auxiliary.includes(file) &&
       ['watermark', 'stamp'].includes(operation.id) &&
+      !(major !== 8 && payload?.fields[`${operation.id}Source`] === 'pdf') &&
       !new Set(['.pdf', '.png', '.jpeg', '.jpg', '.gif', '.webp', '.tiff']).has(ext ?? '')
     ) {
       throw new InputError('Stamp and watermark files must be images or PDFs.')

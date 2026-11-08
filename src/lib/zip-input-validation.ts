@@ -315,7 +315,8 @@ export async function validateZipInputs(
       remoteSources.length +
       extracted.filter((name) => name.toLowerCase().endsWith('.pdf') && !stageAssets.has(name))
         .length
-    const required = operation.id === 'merge' ? 2 : 1
+    // Gotenberg 9 can merge a single valid PDF without rewriting its bytes.
+    const required = 1
     if (available < required) {
       throw new InputError(
         `Upload at least ${required} PDF input${required > 1 ? 's' : ''}, including PDFs inside ZIP archives.`,

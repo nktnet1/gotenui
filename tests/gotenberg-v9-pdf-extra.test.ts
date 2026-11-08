@@ -190,9 +190,11 @@ describe('Gotenberg 9 PDF stages', () => {
       { op: 'insert', source: 'insert.pdf', at: 0 },
     ])
     assert.throws(() => adapted('insert-pages', { at: '-1' }, [extra]), /Insert position/)
-    assert.throws(
-      () => adapted('insert-pages', {}, [new File(['nope'], 'insert.txt')]),
-      /additional PDF/,
+    // Gotenberg reads the named asset as PDF; unlike input documents its
+    // filename does not need the .pdf suffix.
+    assert.deepEqual(
+      adapted('insert-pages', {}, [new File(['%PDF-1.7\n'], 'insert.data')]).stages,
+      [{ op: 'insert', source: 'insert.data', at: 0 }],
     )
   })
 

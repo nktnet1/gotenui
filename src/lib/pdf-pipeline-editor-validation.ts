@@ -25,18 +25,27 @@ export function pdfPipelineEditorError(
 ): string | null {
   try {
     let assetNames: string[] | undefined
+    let allowUnresolvedAssets = false
     if (!archivesPresent) {
       const remotes = remoteInputsPayload(remoteRows, remoteJson)
       const remoteAssetNames = Array.isArray(remotes)
         ? remotes.flatMap((remote: unknown) => {
             if (!remote || typeof remote !== 'object' || Array.isArray(remote)) return []
             const { name, field, embedded } = remote as Record<string, unknown>
-            return typeof name === 'string' && name !== '' && !field && !embedded ? [name] : []
+            if (field || embedded) return []
+            if (typeof name === 'string' && name !== '') return [name]
+            // Without a hint, Gotenberg resolves Content-Disposition at download time.
+            allowUnresolvedAssets = true
+            return []
           })
         : []
       assetNames = [...localAssetNames, ...remoteAssetNames]
     }
-    const parsed = parsePdfPipeline(stages, { assetNames, acknowledgedRedaction })
+    const parsed = parsePdfPipeline(stages, {
+      assetNames,
+      allowUnresolvedAssets,
+      acknowledgedRedaction,
+    })
     const version = parseGotenbergVersion(backendVersion)
     if (
       version &&

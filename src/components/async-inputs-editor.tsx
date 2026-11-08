@@ -194,8 +194,9 @@ export function RemoteInputsEditor({
                 placeholder="stamp.png"
               />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Required to reference this file by name in a PDF stage. It must match the filename
-                in the remote server's Content-Disposition header exactly.
+                Optional preflight hint. If omitted, Gotenberg resolves the filename from the remote
+                server's Content-Disposition header at request time. A PDF stage must still
+                reference that exact filename.
               </p>
             </div>
           )}

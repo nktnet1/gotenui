@@ -368,9 +368,7 @@ export function adaptPdfForm(
         if (source === 'image' && !/\.(png|jpe?g)$/i.test(asset.name)) {
           throw new InputError('Gotenberg 9 PDF image stamps accept only PNG or JPEG assets.')
         }
-        if (source === 'pdf' && !/\.pdf$/i.test(asset.name)) {
-          throw new InputError('A PDF overlay requires an uploaded PDF.')
-        }
+        // The stamp-pdf stage opens the asset as a PDF regardless of suffix.
         attachFile(asset)
         stages.push(
           source === 'image'
@@ -490,7 +488,7 @@ export function adaptPdfForm(
           'Repairing embedded Factur-X XML does not accept a replacement XML upload.',
         )
       }
-      if (!repair && (auxiliary.length !== 1 || !/\.xml$/i.test(auxiliary[0]?.name ?? ''))) {
+      if (!repair && auxiliary.length !== 1) {
         throw new InputError('Upload one Factur-X XML invoice or enable repair of embedded XML.')
       }
       if (!repair && !optional('facturxConformanceLevel')) {

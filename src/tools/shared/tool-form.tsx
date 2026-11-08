@@ -639,7 +639,9 @@ export function Workbench({
                 }
                 description={
                   operation.id === 'merge'
-                    ? 'Select at least two PDFs. Gotenui prefixes uploaded filenames to preserve the order shown below.'
+                    ? isV9
+                      ? 'Select one or more PDFs. Gotenberg 9 also accepts a single PDF. Gotenui prefixes filenames to preserve the selected order when merging multiple files.'
+                      : 'Select at least two PDFs. Gotenui prefixes uploaded filenames to preserve the order shown below.'
                     : operation.input === 'pdf'
                       ? 'Select PDF files to process. Multiple files may produce a ZIP archive.'
                       : 'Documents, slides, spreadsheets, drawings and images supported by Gotenberg.'
@@ -684,7 +686,6 @@ export function Workbench({
                 }
                 files={archives}
                 onChange={setArchives}
-                accept=".zip,application/zip"
                 multiple
               />
             )}
@@ -747,7 +748,12 @@ export function Workbench({
                 files={auxFiles}
                 onChange={updateAux}
                 multiple={operation.auxiliary.multiple}
-                accept={operation.auxiliary.accept}
+                accept={
+                  (isV9 && operation.id === 'factur-x') ||
+                  (isV9 && standaloneKind && fields[`${standaloneKind}Source`] === 'pdf')
+                    ? undefined
+                    : operation.auxiliary.accept
+                }
               />
             )}
           </CardContent>
@@ -1037,7 +1043,9 @@ export function Workbench({
                         field={
                           isV9 && operation.id === 'factur-x' && field.name === 'pdfa'
                             ? { ...field, options: ['PDF/A-3b'] }
-                            : field
+                            : isV9 && operation.output === 'image' && field.name === 'quality'
+                              ? { ...field, min: 1 }
+                              : field
                         }
                         value={fields[field.name]}
                         onChange={(value) => updateField(field.name, value)}

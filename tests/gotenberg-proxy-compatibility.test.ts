@@ -461,14 +461,14 @@ test('v9 forwards ZIP documents with unrelated resources without rejecting the a
   assert.deepEqual(v9.counts(), { probes: 2, conversions: 2 })
 })
 
-test('rejects non-ZIP archive uploads, duplicates and unsupported operations at the proxy', async () => {
+test('rejects malformed ZIP archives, duplicates and unsupported operations at the proxy', async () => {
   const v9 = upstreamFixture('9.0.0', () => {})
   await assert.rejects(
     proxyConversionRequest(
       requestFor('office-pdf', {}, {}, [], [], [], [new File(['text'], 'wrong.txt')]),
       v9.fetcher,
     ),
-    /must use the .zip extension/,
+    /the ZIP central directory is missing|not a ZIP file/,
   )
   await assert.rejects(
     proxyConversionRequest(
@@ -514,7 +514,7 @@ test('rejects non-ZIP archive uploads, duplicates and unsupported operations at 
     ),
     /is not a ZIP file/,
   )
-  assert.deepEqual(v9.counts(), { probes: 3, conversions: 0 })
+  assert.deepEqual(v9.counts(), { probes: 4, conversions: 0 })
 })
 
 test('v9 accepts more than 10 small asset archives within the total request budget', async () => {

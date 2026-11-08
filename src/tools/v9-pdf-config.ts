@@ -177,8 +177,7 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
         name: 'source',
         label: 'PDF containing pages to insert',
         description:
-          'Exactly one additional PDF; its filename must differ from all input documents.',
-        accept: '.pdf',
+          'Exactly one additional PDF; Gotenberg reads PDF contents even if the filename lacks a .pdf extension. The filename must differ from all input documents.',
         required: true,
       },
     },
