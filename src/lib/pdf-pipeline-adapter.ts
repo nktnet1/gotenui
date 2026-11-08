@@ -52,11 +52,27 @@ export function adaptPdfPipeline(
   const inputs = legacy.getAll('files')
   // Gotenberg 9 sorts PDFs by their received filenames, regardless of the
   // multipart upload order. Number local inputs when merging, as the standalone
-  // merge tool does, without renaming referenced stage assets.
+  // merge tool does. A compose before the merge needs the original PDF names;
+  // a compose after it instead refers to the merged document's new filename.
+  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
+  const firstCompose = stages.findIndex(({ op }) => op === 'compose')
+  const mergeBeforeCompose = firstMerge !== -1 && firstCompose > firstMerge
+  const hasOtherPdfSources =
+    archiveEntryNames.some((name) => /\.pdf$/i.test(name) && !references.includes(name)) ||
+    (payload.downloadFrom ?? []).some(({ filename, name, field, embedded }) => {
+      if (field || embedded) return false
+      const actualName = filename ?? name
+      return !actualName || (/\.pdf$/i.test(actualName) && !references.includes(actualName))
+    })
+  // A split before composition changes source filenames, and an external PDF
+  // can become the first merged document. Do not rewrite such references from
+  // guesses about what Gotenberg will name the resulting file.
+  const canRenameForCompose =
+    mergeBeforeCompose &&
+    !stages.slice(0, firstCompose).some(({ op }) => op === 'split') &&
+    !hasOtherPdfSources
   const orderedNames =
-    stages.some(({ op }) => op === 'merge') &&
-    !stages.some(({ op }) => op === 'compose') &&
-    inputs.length > 1
+    firstMerge !== -1 && (firstCompose === -1 || canRenameForCompose) && inputs.length > 1
       ? mergeUploadFilenames(
           inputs.map((file) => (file instanceof File ? file.name : '')),
           [
@@ -78,6 +94,28 @@ export function adaptPdfPipeline(
   const remote = legacy.get('downloadFrom')
   if (typeof remote === 'string') form.set('downloadFrom', remote)
   for (const archive of archives) form.append('archives', archive, archive.name)
-  form.set('stages', JSON.stringify(stages))
+  const firstSource = inputs[0]
+  const firstName = firstSource instanceof File ? firstSource.name.normalize('NFC') : ''
+  const mergedName = orderedNames[0]
+  const mappedStages =
+    canRenameForCompose && mergedName
+      ? stages.map((stage, index) => {
+          if (
+            stage.op !== 'compose' ||
+            index <= firstMerge ||
+            stages.slice(firstMerge + 1, index).some(({ op }) => op === 'split') ||
+            !Array.isArray(stage.placements)
+          ) {
+            return stage
+          }
+          return {
+            ...stage,
+            placements: stage.placements.map((placement) =>
+              placement.source === firstName ? { ...placement, source: mergedName } : placement,
+            ),
+          }
+        })
+      : stages
+  form.set('stages', JSON.stringify(mappedStages))
   return { path: '/forms/pdf/pipe', form }
 }

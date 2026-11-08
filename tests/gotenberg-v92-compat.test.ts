@@ -155,6 +155,58 @@ describe('Gotenberg 9.2 composition', () => {
     ])
   })
 
+  it('keeps upload order and the merged filename when composing after a merge', () => {
+    const result = adaptPdfPipeline(
+      {
+        operation: 'pdf-pipeline',
+        fields: {
+          stages: JSON.stringify([
+            { op: 'merge' },
+            { op: 'compose', paperSize: 'A4', placements: [{ source: 'z.pdf', x: 12, y: 12 }] },
+          ]),
+        },
+        advanced: {},
+      },
+      legacyFiles(pdf('z.pdf'), pdf('a.pdf')),
+      [],
+    )
+    assert.deepEqual(
+      (result.form.getAll('files') as File[]).map(({ name }) => name),
+      ['01_z.pdf', '02_a.pdf'],
+    )
+    assert.deepEqual(JSON.parse(String(result.form.get('stages'))), [
+      { op: 'merge' },
+      { op: 'compose', paperSize: 'A4', placements: [{ source: '01_z.pdf', x: 12, y: 12 }] },
+    ])
+
+    // Composition before merging still names the original source documents.
+    const composeFirst = adaptPdfPipeline(
+      {
+        operation: 'pdf-pipeline',
+        fields: {
+          stages: JSON.stringify([
+            {
+              op: 'compose',
+              paperSize: 'A4',
+              placements: [
+                { source: 'z.pdf', x: 0, y: 0 },
+                { source: 'a.pdf', x: 0, y: 0 },
+              ],
+            },
+            { op: 'merge' },
+          ]),
+        },
+        advanced: {},
+      },
+      legacyFiles(pdf('z.pdf'), pdf('a.pdf')),
+      [],
+    )
+    assert.deepEqual(
+      (composeFirst.form.getAll('files') as File[]).map(({ name }) => name),
+      ['z.pdf', 'a.pdf'],
+    )
+  })
+
   it('rejects unsupported sizes, missing sizing, malformed placement objects and invalid coordinates', () => {
     for (const [stage, expression] of [
       [{ placements: [{}] }, /paperSize|paperWidth/],

@@ -770,6 +770,36 @@ test.skipIf(!supportsV92)(
 )
 
 test.skipIf(!supportsV92)(
+  'Gotenberg 9.2 composes the ordered output of a PDF pipeline merge',
+  async () => {
+    const response = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'merge' },
+          {
+            op: 'compose',
+            paperSize: 'A4',
+            // The merged document is named after the first uploaded PDF.
+            // Source page 2 checks that the second input made it into the merge.
+            placements: [{ source: 'z.pdf', sourcePage: 2, page: 1, x: 0, y: 0 }],
+          },
+        ]),
+      },
+      [pdfFile('z.pdf'), pdfFile('a.pdf')],
+    )
+    if (!response.ok) {
+      throw new Error(`Merge then compose: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(await inspectV9Pdf('info', await response.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV92)(
   'Gotenberg 9.2 runs compose in a PDF pipeline before applying metadata',
   async () => {
     const response = await convertV9(
