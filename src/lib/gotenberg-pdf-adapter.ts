@@ -2,6 +2,7 @@ import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
 import { filenameKey } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { reservePrefixedMergeUploadNames } from '#/lib/merge-order'
 import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
@@ -108,9 +109,21 @@ export function adaptPdfForm(
 
   const fields = payload.fields
   const output = new FormData()
-  for (const entry of legacy.getAll('files')) {
+  const sources = legacy.getAll('files')
+  const reservedNames = [
+    ...archiveEntryNames,
+    ...(payload.downloadFrom ?? []).flatMap(({ name }) => (name ? [name] : [])),
+  ]
+  const numberedNames =
+    operation.id === 'merge'
+      ? reservePrefixedMergeUploadNames(
+          sources.map((source) => (source instanceof File ? source.name : '')),
+          reservedNames,
+        )
+      : []
+  for (const [index, entry] of sources.entries()) {
     if (!(entry instanceof File)) throw new InputError('The PDF input must be an uploaded file.')
-    output.append('files', entry, entry.name)
+    output.append('files', entry, numberedNames[index] ?? entry.name)
   }
   const remote = legacy.get('downloadFrom')
   if (typeof remote === 'string') output.set('downloadFrom', remote)

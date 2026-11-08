@@ -1,4 +1,5 @@
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { reservePrefixedMergeUploadNames } from '#/lib/merge-order'
 import { normalizePdfStageAssets, parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
@@ -290,6 +291,31 @@ export function adaptConversionForm(
     throw new InputError(
       'Complex PDF post-processing is not yet available on Gotenberg 9. Remove the post-processing options or use a Gotenberg 8 connection.',
     )
+  }
+  if (operation.id === 'office-pdf' && payload.fields.merge === true) {
+    // The v8 form builder numbers local documents so Gotenberg's filename sort
+    // retains upload order. Reserve filenames used by later stage assets and
+    // unpacked archives before sending that same numbered list to Gotenberg 9.
+    // Otherwise e.g. report.docx -> 01_report.docx can shadow an attachment
+    // named 01_report.docx, causing the stage to read the source document.
+    const sources = form.getAll('files')
+    if (sources.some((source) => !(source instanceof File))) {
+      throw new InputError('Expected an Office document upload.')
+    }
+    const renamed = reservePrefixedMergeUploadNames(
+      sources.map((source) => (source instanceof File ? source.name : '')),
+      [
+        ...stageFiles.map(({ name }) => name),
+        ...archiveEntryNames,
+        ...(payload.downloadFrom ?? []).flatMap(({ name }) => (name ? [name] : [])),
+      ],
+    )
+    if (sources.some((source, index) => source instanceof File && source.name !== renamed[index])) {
+      form.delete('files')
+      for (const [index, source] of sources.entries()) {
+        if (source instanceof File) form.append('files', source, renamed[index])
+      }
+    }
   }
   if (operation.path.startsWith('/forms/chromium/')) {
     if (

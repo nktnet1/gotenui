@@ -24,6 +24,20 @@ export function mergeUploadFilenames(
   })
 }
 
+/** Reconcile the legacy encoder's numbered input names with Gotenberg 9 assets.
+ * Preserve the numeric prefix so generated names continue to sort in upload order.
+ */
+export function reservePrefixedMergeUploadNames(
+  prefixedNames: readonly string[],
+  reservedNames: readonly string[] = [],
+): string[] {
+  const originals = prefixedNames.map((name, index) => {
+    const prefix = mergeUploadFilename('', index, prefixedNames.length)
+    return name.startsWith(prefix) ? name.slice(prefix.length) : name
+  })
+  return mergeUploadFilenames(originals, reservedNames)
+}
+
 /** Keep filename-keyed bookmarks attached to their PDF after merge upload renaming. */
 export function mergeBookmarks(value: string, filenames: string[]): string {
   const parsed: unknown = JSON.parse(value)
