@@ -745,17 +745,26 @@ test.skipIf(!supportsV92)(
       {
         paperSize: 'A4',
         placements: JSON.stringify([
-          { source: 'label.pdf', page: 0, x: 18, y: 20, scale: 0.5 },
-          { source: 'slip.pdf', page: 1, x: 40, y: 60, scale: 0.5, rotation: 90 },
+          { source: 'label.pdf', page: 0, x: 18, y: 20, scale: 0.5, rotation: 90 },
+          // Gotenberg uses one-based target pages: 1 is still the first sheet.
+          { source: 'slip.pdf', page: 2, x: 40, y: 60, scale: 0.5 },
         ]),
       },
       [pdfFile('label.pdf'), pdfFile('slip.pdf')],
     )
     if (!response.ok) throw new Error(`Compose: ${response.status} ${await response.text()}`)
     expect(response.headers.get('content-type')).toContain('application/pdf')
-    expect(await inspectV9Pdf('info', await response.arrayBuffer())).toMatchObject({
+    const composed = await response.arrayBuffer()
+    expect(await inspectV9Pdf('info', composed)).toMatchObject({
       'verified.pdf': { pages: 2 },
     })
+    const secondPage = await convertV9('extract-text', { pages: '2' }, [
+      new File([composed], 'composed.pdf', { type: 'application/pdf' }),
+    ])
+    if (!secondPage.ok) {
+      throw new Error(`Composed second page: ${secondPage.status} ${await secondPage.text()}`)
+    }
+    expect(await secondPage.text()).toContain('Local PDF fixture')
   },
   120_000,
 )

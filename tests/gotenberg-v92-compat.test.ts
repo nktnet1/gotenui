@@ -87,6 +87,13 @@ describe('Gotenberg 9.2 composition', () => {
     const operation = getOperation('compose-pages')
     assert.equal(operation.path, '/forms/pdf/compose')
     assert.equal(operation.output, 'pdf')
+    const placementField = operation.fields.find(({ name }) => name === 'placements')
+    assert.match(placementField?.description ?? '', /page 2 creates the second output sheet/)
+    const placementDefaults = placementField?.defaultValue
+    assert.equal(typeof placementDefaults, 'string')
+    assert.deepEqual(JSON.parse(String(placementDefaults)), [
+      { sourcePage: 1, page: 1, x: 0, y: 0 },
+    ])
     assert.match(
       unavailableOperationReason({ online: true, version: '9.1.9', modules: [] }, operation) ?? '',
       /9\.2/,
@@ -98,7 +105,7 @@ describe('Gotenberg 9.2 composition', () => {
 
     const placements = [
       { sourcePage: 0, page: 0, x: 36, y: 72.5, scale: 0.5, rotation: 90 },
-      { sourcePage: 2, page: 1, x: -12, y: 0, scale: 1.25, rotation: 0 },
+      { sourcePage: 2, page: 2, x: -12, y: 0, scale: 1.25, rotation: 0 },
     ]
     const result = composeForm({
       paperSize: 'Letter',
@@ -186,7 +193,9 @@ describe('Gotenberg 9.2 composition', () => {
     assert.equal(older.count(), 0)
     const current = server('9.2.0', (path, form) => {
       assert.equal(path, '/forms/pdf/compose')
-      assert.deepEqual(JSON.parse(String(form.get('placements'))), [{ x: 0, y: 0 }])
+      assert.deepEqual(JSON.parse(String(form.get('placements'))), [
+        { sourcePage: 1, page: 1, x: 0, y: 0 },
+      ])
     })
     assert.equal(
       (

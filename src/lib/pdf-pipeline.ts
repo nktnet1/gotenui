@@ -19,8 +19,8 @@ export const PDF_PIPELINE_STAGES = [
     op: 'compose',
     label: 'Compose pages',
     description:
-      'Place source PDF pages on new sheets. Each input PDF must be placed; coordinates are in points (Gotenberg 9.2+).',
-    options: { paperSize: 'A4', placements: [{ x: 0, y: 0 }] },
+      'Place source PDF pages on new sheets. sourcePage and page are one-based (0 also means first); page 2 creates the second sheet. Each input PDF must be placed; coordinates are in points (Gotenberg 9.2+).',
+    options: { paperSize: 'A4', placements: [{ sourcePage: 1, page: 1, x: 0, y: 0 }] },
     fields: ['paperSize', 'paperWidth', 'paperHeight', 'placements'],
   },
   {

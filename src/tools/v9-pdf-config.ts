@@ -93,9 +93,9 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
         label: 'Page placements (JSON)',
         kind: 'json',
         required: true,
-        defaultValue: '[{"x":0,"y":0}]',
+        defaultValue: '[{"sourcePage":1,"page":1,"x":0,"y":0}]',
         description:
-          'Each placement accepts source, sourcePage, page, x, y, scale and rotation. Coordinates are PDF points; sourcePage 0 selects the first source page, and page 0 targets the first sheet. Name each source when uploading multiple PDFs, and place every input at least once. Source annotations, fields, bookmarks, tags and metadata are not copied.',
+          'Each placement accepts source, sourcePage, page, x, y, scale and rotation. Coordinates are PDF points. sourcePage and page are one-based: page 2 creates the second output sheet, not page 1. Gotenberg also treats 0 as the first page. Name each source when uploading multiple PDFs, and place every input at least once. Source annotations, fields, bookmarks, tags and metadata are not copied.',
       },
     ],
     { path: '/forms/pdf/compose' },
