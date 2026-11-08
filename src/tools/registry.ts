@@ -7,6 +7,7 @@
 import { operation as autotag } from '#/tools/autotag/config'
 import { operation as bookmarksRead } from '#/tools/bookmarks-read/config'
 import { operation as bookmarksWrite } from '#/tools/bookmarks-write/config'
+import { operation as composePages } from '#/tools/compose-pages/config'
 import { operation as convertColors } from '#/tools/convert-colors/config'
 import { operation as decrypt } from '#/tools/decrypt/config'
 import { operation as deletePages } from '#/tools/delete-pages/config'
@@ -72,6 +73,7 @@ export const OPERATIONS: readonly Operation[] = [
   embed,
   facturX,
   pdfPipeline,
+  composePages,
   pdfInfo,
   pdfValidate,
   pdfAttachments,

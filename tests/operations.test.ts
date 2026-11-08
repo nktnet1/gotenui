@@ -4,7 +4,7 @@ import { GROUPS, OPERATION_BY_ID, OPERATIONS, operationDefaults } from '#/lib/op
 import { integrationSmokeOperations } from './integration/operation-selection'
 
 test('all operation identifiers and Gotenberg endpoints are unique', () => {
-  assert.equal(OPERATIONS.length, 42)
+  assert.equal(OPERATIONS.length, 43)
   assert.equal(OPERATION_BY_ID.size, OPERATIONS.length)
   const v8 = OPERATIONS.filter((operation) => operation.supportedGotenbergMajors?.includes(8))
   assert.equal(new Set(v8.map((operation) => operation.path)).size, v8.length)

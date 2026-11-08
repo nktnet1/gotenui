@@ -31,3 +31,15 @@ export function requiresGotenberg91ForExtraction(
   }
   return false
 }
+
+/** PDF composition is new in Gotenberg 9.2 (both the route and pipeline stage). */
+export function requiresGotenberg92ForComposition(
+  version: GotenbergVersion,
+  operations: Iterable<string>,
+): boolean {
+  if (version.major !== 9 || version.minor >= 2) return false
+  for (const operation of operations) {
+    if (operation === 'compose' || operation === 'compose-pages') return true
+  }
+  return false
+}

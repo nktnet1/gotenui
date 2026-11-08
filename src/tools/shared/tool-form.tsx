@@ -1131,6 +1131,7 @@ export function Workbench({
                 )}
                 <RemoteInputsEditor
                   isV9={isV9}
+                  backendVersion={backendVersion}
                   pdfInputOnly={operation.id === 'pdf-pipeline'}
                   rows={remoteRows}
                   onChange={setRemoteRows}

@@ -44,7 +44,7 @@ export function adaptPdfPipeline(
   const stages = parsePdfPipeline(raw, {
     assetNames: [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
     allowUnresolvedAssets: payload.downloadFrom?.some(
-      (remote) => !remote.name && !remote.field && !remote.embedded,
+      (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
     ),
     acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
   })
@@ -54,13 +54,17 @@ export function adaptPdfPipeline(
   // multipart upload order. Number local inputs when merging, as the standalone
   // merge tool does, without renaming referenced stage assets.
   const orderedNames =
-    stages.some(({ op }) => op === 'merge') && inputs.length > 1
+    stages.some(({ op }) => op === 'merge') &&
+    !stages.some(({ op }) => op === 'compose') &&
+    inputs.length > 1
       ? mergeUploadFilenames(
           inputs.map((file) => (file instanceof File ? file.name : '')),
           [
             ...auxiliary.map(({ name }) => name),
             ...archiveEntryNames,
-            ...(payload.downloadFrom ?? []).flatMap(({ name }) => (name ? [name] : [])),
+            ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
+              filename || name ? [filename ?? name ?? ''] : [],
+            ),
           ],
         )
       : []
@@ -69,8 +73,8 @@ export function adaptPdfPipeline(
     form.append('files', file, orderedNames[index] ?? file.name)
   }
   for (const asset of auxiliary) form.append('files', asset, asset.name)
-  // Remote downloads use the upstream Content-Disposition filename. Archive
-  // stage assets are checked against indexed ZIP names by the proxy.
+  // Remote downloads use a v9.2 explicit filename or the upstream response's
+  // Content-Disposition/URL filename. ZIP assets are checked by the proxy.
   const remote = legacy.get('downloadFrom')
   if (typeof remote === 'string') form.set('downloadFrom', remote)
   for (const archive of archives) form.append('archives', archive, archive.name)

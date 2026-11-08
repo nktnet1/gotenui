@@ -39,9 +39,9 @@ const error = (stages: unknown, matches: RegExp) => {
 }
 
 describe('PDF pipeline catalogue and stage contract', () => {
-  it('lists all 28 distinct Gotenberg 9.1 stages, including explicit option templates', () => {
-    assert.equal(PDF_PIPELINE_STAGES.length, 28)
-    assert.equal(new Set(PDF_PIPELINE_STAGES.map(({ op }) => op)).size, 28)
+  it('lists all 29 distinct Gotenberg 9.2 stages, including explicit option templates', () => {
+    assert.equal(PDF_PIPELINE_STAGES.length, 29)
+    assert.equal(new Set(PDF_PIPELINE_STAGES.map(({ op }) => op)).size, 29)
     for (const stage of PDF_PIPELINE_STAGES) {
       assert.ok(stage.label)
       assert.ok(stage.description)

@@ -8,6 +8,7 @@ import {
   type GotenbergVersion,
   parseGotenbergVersion,
   requiresGotenberg91ForExtraction,
+  requiresGotenberg92ForComposition,
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import {
@@ -15,6 +16,7 @@ import {
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
 import { canWebhookForOperation } from '#/lib/operation-availability'
+import { hasGotenberg92PageSyntax, stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import { parsePdfPipeline, pipelineResponseTypes } from '#/lib/pdf-pipeline'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
@@ -380,6 +382,7 @@ function allowedConversionContentTypes(
     const imageType = payload.fields.format === 'jpeg' ? 'image/jpeg' : 'image/png'
     return [imageType, 'application/zip']
   }
+  if (operation.id === 'compose-pages') return ['application/pdf']
   // Even an intervals split can produce a PDF when there is just one output.
   // The proxy cannot know its page count without reading the input document.
   if (operation.id === 'split') return ['application/pdf', 'application/zip']
@@ -551,6 +554,27 @@ export async function proxyConversionRequest(
   if (requiresGotenberg91ForExtraction(version, [operation.id])) {
     throw new InputError('PDF text and attachment extraction require Gotenberg 9.1 or newer.', 409)
   }
+  if (requiresGotenberg92ForComposition(version, [operation.id])) {
+    throw new InputError('PDF page composition requires Gotenberg 9.2 or newer.', 409)
+  }
+  if (
+    major === 9 &&
+    version.minor < 2 &&
+    [
+      payload.fields.pages,
+      payload.fields.sourcePages,
+      payload.fields.rotatePages,
+      payload.fields.watermarkPages,
+      payload.fields.stampPages,
+      payload.fields.splitSpan,
+      payload.advanced.splitSpan,
+    ].some(hasGotenberg92PageSyntax)
+  ) {
+    throw new InputError(
+      'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.',
+      409,
+    )
+  }
   if (major === 9 && (operation.id === 'pdf-pipeline' || payload.conversionStages)) {
     const stages = parsePdfPipeline(
       operation.id === 'pdf-pipeline'
@@ -571,6 +595,20 @@ export async function proxyConversionRequest(
     ) {
       throw new InputError(
         'PDF text and attachment extraction require Gotenberg 9.1 or newer.',
+        409,
+      )
+    }
+    if (
+      requiresGotenberg92ForComposition(
+        version,
+        stages.map(({ op }) => op),
+      )
+    ) {
+      throw new InputError('PDF page composition requires Gotenberg 9.2 or newer.', 409)
+    }
+    if (major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(stages)) {
+      throw new InputError(
+        'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.',
         409,
       )
     }
@@ -625,6 +663,7 @@ export async function proxyConversionRequest(
     postFiles,
     archives,
     major,
+    version,
   )
   const { path, form } =
     operation.input === 'pdf'

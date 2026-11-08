@@ -2,8 +2,8 @@ import { filenameKey } from '#/lib/file-names'
 import type { RemoteFile } from '#/lib/validation'
 import { InputError } from '#/lib/validation'
 
-/** Remote assets are named by Content-Disposition upstream, not the download URL.
- * The optional expected name is for preflight validation and asset selection only.
+/** Before 9.2, remote assets are named by Content-Disposition. In 9.2,
+ * filename (or the editor's legacy name hint) overrides that header.
  * Gotenberg auto-numbers duplicate source document filenames, but a named stage
  * asset must remain unambiguous to resolve to the intended uploaded file.
  */
@@ -17,12 +17,13 @@ export function remoteStageAssets(
   const assets: string[] = []
   for (const remote of remotes) {
     if (remote.field || remote.embedded) continue // Legacy v8 destinations are handled elsewhere.
-    if (!remote.name) continue
-    const key = filenameKey(remote.name)
+    const name = remote.filename ?? remote.name
+    if (!name) continue
+    const key = filenameKey(name)
     const isStageAsset = referenced.has(key)
     if (isStageAsset && known.has(key)) {
       throw new InputError(
-        `Remote filename "${remote.name}" duplicates another file or expected download.`,
+        `Remote filename "${name}" duplicates another file or expected download.`,
       )
     }
     known.add(key)

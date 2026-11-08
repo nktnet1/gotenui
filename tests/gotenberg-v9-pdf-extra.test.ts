@@ -34,7 +34,7 @@ function adapted(
 
 describe('version-gated PDF tool catalogue', () => {
   it('adds processing, extraction and inspection endpoints on the supported v9 minor', () => {
-    assert.equal(V9_PDF_IDS.size, 19)
+    assert.equal(V9_PDF_IDS.size, 20)
     assert.equal(OPERATION_BY_ID.get('sign')?.auxiliary?.accept, undefined)
     assert.equal(
       OPERATION_BY_ID.get('insert-pages')?.fields.find((field) => field.name === 'at')?.required,

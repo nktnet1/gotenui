@@ -16,6 +16,14 @@ export const PDF_PIPELINE_STAGES = [
     fields: [],
   },
   {
+    op: 'compose',
+    label: 'Compose pages',
+    description:
+      'Place source PDF pages on new sheets. Each input PDF must be placed; coordinates are in points (Gotenberg 9.2+).',
+    options: { paperSize: 'A4', placements: [{ x: 0, y: 0 }] },
+    fields: ['paperSize', 'paperWidth', 'paperHeight', 'placements'],
+  },
+  {
     op: 'split',
     label: 'Split documents',
     description: 'Split by a page interval or named ranges.',
@@ -276,7 +284,9 @@ const optionalPages = (stage: PdfPipelineStage, key: string): void => {
     !(typeof value === 'string' && !value.trim()) &&
     !isPdfPageSelector(value)
   ) {
-    throw new InputError(`${stage.op}: "${key}" must select pages such as 1-3, last or all.`)
+    throw new InputError(
+      `${stage.op}: "${key}" must select pages such as 1-3, 3-, !1, last or all.`,
+    )
   }
 }
 const integer = (value: unknown, min: number, max = Number.MAX_SAFE_INTEGER): boolean =>
@@ -327,6 +337,9 @@ function validateStage(stage: PdfPipelineStage): void {
     'contactInfo',
     'timestampUrl',
     'format',
+    'paperSize',
+    'paperWidth',
+    'paperHeight',
   ])
   for (const [key, value] of Object.entries(stage)) {
     if (stringOptions.has(key) && typeof value !== 'string') {
@@ -385,6 +398,53 @@ function validateStage(stage: PdfPipelineStage): void {
     }
   }
   switch (name) {
+    case 'compose': {
+      const sizes = ['A3', 'A4', 'A5', 'B4', 'B5', 'Letter', 'Legal', 'Tabloid']
+      const paperSize = stage.paperSize as string | undefined
+      if (paperSize && !sizes.some((size) => size.toLowerCase() === paperSize.toLowerCase())) {
+        throw new InputError('compose: unsupported paperSize.')
+      }
+      for (const side of ['paperWidth', 'paperHeight'] as const) {
+        const length = stage[side] as string | undefined
+        if (length === undefined || length === '') continue
+        const match = /^\+?((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:pt|px|in|mm|cm|pc)?$/.exec(
+          length,
+        )
+        if (!match || !Number.isFinite(Number(match[1])) || Number(match[1]) <= 0) {
+          throw new InputError(`compose: "${side}" must be a positive length such as 6in or 432pt.`)
+        }
+      }
+      if (!paperSize && (!stage.paperWidth || !stage.paperHeight)) {
+        throw new InputError('compose: set paperSize, or both paperWidth and paperHeight.')
+      }
+      if (!Array.isArray(stage.placements) || !stage.placements.length) {
+        throw new InputError('compose: placements must contain at least one page placement.')
+      }
+      for (const [index, placement] of stage.placements.entries()) {
+        if (
+          !object(placement) ||
+          Object.keys(placement).some(
+            (key) => !['source', 'sourcePage', 'page', 'x', 'y', 'scale', 'rotation'].includes(key),
+          ) ||
+          (placement.source !== undefined && typeof placement.source !== 'string') ||
+          ['sourcePage', 'page'].some(
+            (key) => placement[key] !== undefined && !integer(placement[key], 0),
+          ) ||
+          ['x', 'y', 'rotation'].some(
+            (key) =>
+              placement[key] !== undefined &&
+              (typeof placement[key] !== 'number' || !Number.isFinite(placement[key])),
+          ) ||
+          (placement.scale !== undefined &&
+            (typeof placement.scale !== 'number' ||
+              !Number.isFinite(placement.scale) ||
+              placement.scale <= 0))
+        ) {
+          throw new InputError(`compose: invalid placements entry ${index + 1}.`)
+        }
+      }
+      break
+    }
     case 'split': {
       // Go decides whether ranges are supplied by their length, not merely
       // whether the JSON property exists. [] is valid alongside "every".
@@ -578,6 +638,12 @@ function validateStage(stage: PdfPipelineStage): void {
 
 const PDF_STAGE_FILE_FIELDS = ['source', 'image', 'file', 'certificate', 'key', 'xml'] as const
 
+/** Compose sources name the current documents, not separately uploaded stage assets. */
+const stageFileReferences = (stage: PdfPipelineStage): string[] =>
+  PDF_STAGE_FILE_FIELDS.filter((key) => key !== 'source' || stage.op !== 'compose')
+    .map((key) => stage[key])
+    .filter((value): value is string => typeof value === 'string' && value !== '')
+
 /** Gotenberg NFC-normalises uploaded/archived filenames before resolving stages.
  * Canonicalise only file references, never user-facing text or embedded names.
  */
@@ -588,21 +654,19 @@ export function normalizePdfStageAssets<T extends object>(stages: readonly T[]):
       const name = normalized[key]
       if (typeof name === 'string') normalized[key] = name.normalize('NFC')
     }
+    if (normalized.op === 'compose' && Array.isArray(normalized.placements)) {
+      normalized.placements = normalized.placements.map((placement: unknown) => {
+        if (!object(placement) || typeof placement.source !== 'string') return placement
+        return { ...placement, source: placement.source.normalize('NFC') }
+      })
+    }
     return normalized as T
   })
 }
 
 /** Files resolved by Gotenberg, whether uploaded individually or extracted from archives. */
 export function pdfStageAssetNames(stages: readonly PdfPipelineStage[]): string[] {
-  return [
-    ...new Set(
-      stages.flatMap((stage) =>
-        PDF_STAGE_FILE_FIELDS.map((key) => stage[key]).filter(
-          (value): value is string => typeof value === 'string' && value !== '',
-        ),
-      ),
-    ),
-  ]
+  return [...new Set(stages.flatMap(stageFileReferences))]
 }
 
 export type PdfPipelineValidation = {
@@ -689,6 +753,7 @@ export function parsePdfPipeline(
     if (context.assetNames) {
       const assetNames = new Set(context.assetNames.map((name) => name.normalize('NFC')))
       for (const key of PDF_STAGE_FILE_FIELDS) {
+        if (op === 'compose' && key === 'source') continue
         if (
           typeof stage[key] === 'string' &&
           stage[key] !== '' &&
@@ -745,7 +810,7 @@ export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): read
   // The final read operations above are different: they add rendered/extracted
   // files alongside the PDF even after a merge.
   for (let i = stages.length - 1; i >= 0; i--) {
-    if (stages[i]?.op === 'merge') return ['application/pdf']
+    if (stages[i]?.op === 'merge' || stages[i]?.op === 'compose') return ['application/pdf']
     if (stages[i]?.op === 'split') break
   }
   return ['application/pdf', 'application/zip']

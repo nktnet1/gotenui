@@ -56,7 +56,11 @@ describe('per-operation API compatibility', () => {
 
   it('gates by major version without assuming minor-version capabilities', () => {
     for (const tool of OPERATIONS) {
-      assert.equal(unavailableOperationReason(status('9.1.0'), tool), null, tool.id)
+      if (tool.id === 'compose-pages') {
+        assert.match(unavailableOperationReason(status('9.1.0'), tool) ?? '', /9\.2/, tool.id)
+      } else {
+        assert.equal(unavailableOperationReason(status('9.1.0'), tool), null, tool.id)
+      }
       assert.equal(unavailableOperationReason(status('9.3.0'), tool), null, tool.id)
       assert.deepEqual(
         tool.supportedGotenbergMajors,

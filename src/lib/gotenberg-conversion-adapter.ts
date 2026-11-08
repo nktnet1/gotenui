@@ -307,7 +307,9 @@ export function adaptConversionForm(
       [
         ...stageFiles.map(({ name }) => name),
         ...archiveEntryNames,
-        ...(payload.downloadFrom ?? []).flatMap(({ name }) => (name ? [name] : [])),
+        ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
+          filename || name ? [filename ?? name ?? ''] : [],
+        ),
       ],
     )
     if (sources.some((source, index) => source instanceof File && source.name !== renamed[index])) {
@@ -365,7 +367,7 @@ export function adaptConversionForm(
       ? parsePdfPipeline(payload.conversionStages, {
           assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
           allowUnresolvedAssets: payload.downloadFrom?.some(
-            (remote) => !remote.name && !remote.field && !remote.embedded,
+            (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
           ),
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
@@ -375,13 +377,7 @@ export function adaptConversionForm(
         'Decryption is only available for uploaded PDFs, not newly converted PDFs.',
       )
     }
-    const referenced = new Set(
-      userStages.flatMap((stage) =>
-        ['source', 'image', 'file', 'certificate', 'key', 'xml']
-          .map((key) => stage[key])
-          .filter((value): value is string => typeof value === 'string'),
-      ),
-    )
+    const referenced = new Set(pdfStageAssetNames(userStages))
     for (const file of stageFiles) {
       if (!referenced.has(file.name.normalize('NFC'))) {
         throw new InputError(`Unused conversion stage file: ${file.name}.`)
@@ -409,7 +405,7 @@ export function adaptConversionForm(
       parsePdfPipeline(JSON.stringify(stages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
         allowUnresolvedAssets: payload.downloadFrom?.some(
-          (remote) => !remote.name && !remote.field && !remote.embedded,
+          (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
         ),
         acknowledgedRedaction: payload.acknowledgedConversionRedaction,
       })

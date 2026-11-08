@@ -9,8 +9,8 @@ import { REMOTE_OVERLAY_PNG } from './overlay-fixture'
 
 const exec = promisify(execFile)
 const testVersion = process.env.GOTENBERG_TEST_VERSION ?? '8.40.0'
-if (testVersion !== '8.40.0' && testVersion !== '9.1.0') {
-  throw new Error('Integration tests must use pinned Gotenberg 8.40.0 or 9.1.0 images.')
+if (testVersion !== '8.40.0' && testVersion !== '9.2.0') {
+  throw new Error('Integration tests must use pinned Gotenberg 8.40.0 or 9.2.0 images.')
 }
 const image = `gotenberg/gotenberg:${testVersion}`
 const startupTimeoutMs = 120_000
