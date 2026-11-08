@@ -10,9 +10,9 @@ export type OverlayKind = (typeof OVERLAY_KINDS)[number]
 
 const overlaySchema = v.strictObject({
   source: v.picklist(['text', 'image', 'pdf']),
-  expression: v.optional(v.pipe(v.string(), v.maxLength(2_000))),
-  pages: v.optional(v.pipe(v.string(), v.maxLength(200))),
-  options: v.optional(v.pipe(v.string(), v.maxLength(4_000))),
+  expression: v.optional(v.string()),
+  pages: v.optional(v.string()),
+  options: v.optional(v.string()),
 })
 
 export const pdfPostProcessSchema = v.strictObject({
@@ -20,22 +20,22 @@ export const pdfPostProcessSchema = v.strictObject({
   watermark: v.optional(overlaySchema),
   stamp: v.optional(overlaySchema),
   // Ordered, nonempty lists for Gotenberg 8.36+ parallel multipart parameters.
-  watermarks: v.optional(v.pipe(v.array(overlaySchema), v.minLength(1), v.maxLength(10))),
-  stamps: v.optional(v.pipe(v.array(overlaySchema), v.minLength(1), v.maxLength(10))),
-  metadata: v.optional(v.pipe(v.string(), v.maxLength(10_000))),
-  embedsMetadata: v.optional(v.pipe(v.string(), v.maxLength(10_000))),
+  watermarks: v.optional(v.pipe(v.array(overlaySchema), v.minLength(1))),
+  stamps: v.optional(v.pipe(v.array(overlaySchema), v.minLength(1))),
+  metadata: v.optional(v.string()),
+  embedsMetadata: v.optional(v.string()),
   facturxConformanceLevel: v.optional(
     v.picklist(['MINIMUM', 'BASIC WL', 'BASIC', 'EN 16931', 'EXTENDED', 'XRECHNUNG']),
   ),
   facturxDocumentType: v.optional(
     v.picklist(['INVOICE', 'ORDER', 'ORDER_RESPONSE', 'ORDER_CHANGE']),
   ),
-  facturxVersion: v.optional(v.pipe(v.string(), v.maxLength(30))),
+  facturxVersion: v.optional(v.string()),
   flatten: v.optional(v.boolean()),
   rotateAngle: v.optional(v.picklist(['90', '180', '270'])),
-  rotatePages: v.optional(v.pipe(v.string(), v.maxLength(200))),
-  userPassword: v.optional(v.pipe(v.string(), v.maxLength(256))),
-  ownerPassword: v.optional(v.pipe(v.string(), v.maxLength(256))),
+  rotatePages: v.optional(v.string()),
+  userPassword: v.optional(v.string()),
+  ownerPassword: v.optional(v.string()),
   allowPrinting: v.optional(v.boolean()),
   allowCopying: v.optional(v.boolean()),
   allowModifying: v.optional(v.boolean()),

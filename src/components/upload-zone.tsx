@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, FileText, UploadCloud, X } from 'lucide-react'
 import { useId, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
+import { combineUploadSelection } from '#/lib/file-names'
 import { formatBytes } from '#/lib/security'
 import { cn } from '#/lib/utils'
 
@@ -45,18 +46,7 @@ export function UploadZone({
   }
   const [dragging, setDragging] = useState(false)
   const addFiles = (newFiles: File[]) => {
-    const existing = multiple ? files : []
-    onChange(
-      [...existing, ...newFiles]
-        .filter(
-          (file, index, all) =>
-            allowDuplicateNames ||
-            all.findIndex(
-              (candidate) => candidate.name.toLowerCase() === file.name.toLowerCase(),
-            ) === index,
-        )
-        .slice(0, maxFiles ?? Number.POSITIVE_INFINITY),
-    )
+    onChange(combineUploadSelection(files, newFiles, { multiple, allowDuplicateNames, maxFiles }))
     if (ref.current) ref.current.value = ''
   }
   const move = (index: number, offset: number) => {

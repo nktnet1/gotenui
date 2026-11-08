@@ -1,6 +1,8 @@
 /** Strict request mapping for the Gotenberg 9-only PDF workflows. */
 
+import { filenameKey } from '#/lib/file-names'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
+import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
@@ -84,18 +86,23 @@ export function adaptV9PdfExtra(
   const stages: Record<string, unknown>[] = []
   const value = (name: string): string =>
     typeof fields[name] === 'string' ? fields[name].trim() : ''
+  // Passwords are opaque strings. Never trim or treat whitespace as absent.
+  const password = (name: 'password' | 'certificatePassword'): string | undefined => {
+    const text = fields[name]
+    return typeof text === 'string' && text !== '' ? text : undefined
+  }
   const allow = (...names: string[]) => validateFields(payload, names)
   const onlyPdfInputs = () => {
     if (auxiliary.length) throw new InputError('This PDF tool does not accept additional files.')
   }
   const uploaded = new Set(
-    form.getAll('files').map((entry) => (entry instanceof File ? entry.name.toLowerCase() : '')),
+    form.getAll('files').map((entry) => (entry instanceof File ? filenameKey(entry.name) : '')),
   )
   const addAsset = (file: File): void => {
-    if (uploaded.has(file.name.toLowerCase())) {
+    if (uploaded.has(filenameKey(file.name))) {
       throw new InputError(`Additional file '${file.name}' collides with a PDF input filename.`)
     }
-    uploaded.add(file.name.toLowerCase())
+    uploaded.add(filenameKey(file.name))
     form.append('files', file, file.name)
   }
   const requirePages = (name: string) => namedPages(value(name), name)
@@ -153,10 +160,10 @@ export function adaptV9PdfExtra(
       break
     case 'insert-pages': {
       allow('at', 'sourcePages')
-      if (auxiliary.length !== 1 || !/\.pdf$/i.test(auxiliary[0]?.name ?? '')) {
+      if (auxiliary.length !== 1) {
         throw new InputError('Upload exactly one additional PDF containing pages to insert.')
       }
-      const at = decimal(fields.at, 'Insert position')
+      const at = value('at') ? decimal(fields.at, 'Insert position') : 0
       if (!Number.isSafeInteger(at) || at < 0)
         throw new InputError('Insert position must be zero or a positive whole number.')
       const asset = auxiliary[0]
@@ -181,17 +188,14 @@ export function adaptV9PdfExtra(
       ) {
         throw new InputError('Form values must be an object with at least one named field.')
       }
-      for (const [key, field] of Object.entries(data)) {
+      for (const field of Object.values(data)) {
         if (
-          !key.trim() ||
           !(
             typeof field === 'string' ||
             (Array.isArray(field) && field.every((entry) => typeof entry === 'string'))
           )
         ) {
-          throw new InputError(
-            'Form field names must be non-empty; values must be strings or arrays of strings.',
-          )
+          throw new InputError('Form values must be strings or arrays of strings.')
         }
       }
       stages.push({ op: 'set-form', fields: data })
@@ -231,25 +235,28 @@ export function adaptV9PdfExtra(
           !['x', 'y', 'width', 'height'].every(
             (key) => typeof region[key] === 'number' && Number.isFinite(region[key]),
           ) ||
-          region.x < 0 ||
-          region.y < 0 ||
           region.width <= 0 ||
           region.height <= 0
         ) {
           throw new InputError(
-            'Each redaction region needs a positive page number and finite, non-negative coordinates with positive width and height.',
+            'Each redaction region needs a positive page number, finite coordinates and positive width and height.',
           )
         }
       }
       stages.push({ op: 'redact', regions })
       break
     }
-    case 'detach':
+    case 'detach': {
       allow('attachmentName')
       onlyPdfInputs()
-      if (!value('attachmentName')) throw new InputError('Specify the exact embedded filename.')
-      stages.push({ op: 'detach', name: value('attachmentName') })
+      // Embedded attachment names are exact strings, including surrounding spaces.
+      const name = fields.attachmentName
+      if (typeof name !== 'string' || name === '') {
+        throw new InputError('Specify the exact embedded filename.')
+      }
+      stages.push({ op: 'detach', name })
       break
+    }
     case 'decrypt':
       allow('password')
       onlyPdfInputs()
@@ -270,29 +277,22 @@ export function adaptV9PdfExtra(
       )
       if (auxiliary.length < 1 || auxiliary.length > 2)
         throw new InputError('Upload a PKCS#12 certificate or a PEM certificate and key.')
-      const certificates = auxiliary.filter((file) => /\.(p12|pfx|pem|crt|cer)$/i.test(file.name))
-      const privateKeys = auxiliary.filter((file) => /\.key$/i.test(file.name))
-      if (
-        certificates.length !== 1 ||
-        (auxiliary.length === 2 &&
-          (privateKeys.length !== 1 || /\.(p12|pfx)$/i.test(certificates[0].name))) ||
-        (auxiliary.length === 1 && !/\.(p12|pfx)$/i.test(certificates[0].name))
-      ) {
-        throw new InputError('Use one .p12/.pfx file, or one PEM certificate plus one .key file.')
-      }
-      if (privateKeys.length && value('certificatePassword')) {
-        throw new InputError(
-          'The certificate password applies only to PKCS#12 signing credentials.',
-        )
-      }
+      // One file is a PKCS#12 store; two files are a PEM certificate and key.
+      // Gotenberg selects PEM when a key is supplied, otherwise PKCS#12.
+      // Neither format requires a particular filename extension.
+      // Prefer an explicit .key suffix when present; otherwise use upload order.
+      const namedKey =
+        auxiliary.length === 2 ? auxiliary.find((file) => /\.key$/i.test(file.name)) : undefined
+      const key = auxiliary.length === 2 ? (namedKey ?? auxiliary[1]) : undefined
+      const certificate = auxiliary.find((file) => file !== key)
+      if (!certificate) throw new InputError('Choose a signing certificate.')
       for (const file of auxiliary) addAsset(file)
+      const certificatePassword = password('certificatePassword')
       stages.push({
         op: 'sign',
-        certificate: certificates[0].name,
-        ...(privateKeys.length ? { key: privateKeys[0].name } : {}),
-        ...(value('certificatePassword')
-          ? { certificatePassword: fields.certificatePassword }
-          : {}),
+        certificate: certificate.name,
+        ...(key ? { key: key.name } : {}),
+        ...(certificatePassword !== undefined ? { certificatePassword } : {}),
         ...(value('reason') ? { reason: fields.reason } : {}),
         ...(value('location') ? { location: fields.location } : {}),
         ...(value('contactInfo') ? { contactInfo: fields.contactInfo } : {}),
@@ -340,9 +340,10 @@ export function adaptV9PdfExtra(
   }
   const route = V9_PDF_READ_ROUTES.get(operationId)
   if (route) {
-    if (value('password')) form.set('password', fields.password as string)
+    const openPassword = password('password')
+    if (openPassword !== undefined) form.set('password', openPassword)
     return { path: route, form }
   }
-  form.set('stages', JSON.stringify(stages))
+  form.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))
   return { path: '/forms/pdf/pipe', form }
 }

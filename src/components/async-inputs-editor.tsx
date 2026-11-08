@@ -30,13 +30,12 @@ function ExtraHeaders({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-medium text-slate-700 dark:text-slate-200">
-          Optional outbound headers ({rows.length}/20)
+          Optional outbound headers ({rows.length})
         </p>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          disabled={rows.length >= 20}
           onClick={() => onChange([...rows, { id: newId(), name: '', value: '' }])}
         >
           <Plus className="size-3.5" /> Add header
@@ -52,7 +51,6 @@ function ExtraHeaders({
               onChange={(event) => update(index, { name: event.target.value })}
               placeholder="X-Api-Key"
               autoComplete="off"
-              maxLength={80}
             />
           </div>
           <div className="min-w-32 flex-1 space-y-1">
@@ -64,7 +62,6 @@ function ExtraHeaders({
               onChange={(event) => update(index, { value: event.target.value })}
               autoComplete="new-password"
               placeholder="Secret or header value"
-              maxLength={2000}
             />
           </div>
           <Button
@@ -185,7 +182,6 @@ export function RemoteInputsEditor({
               onChange={(event) => update(index, { url: event.target.value })}
               placeholder="https://files.example.com/report.pdf"
               autoComplete="off"
-              maxLength={2048}
             />
           </div>
           {isV9 && (
@@ -196,11 +192,11 @@ export function RemoteInputsEditor({
                 value={row.filename ?? ''}
                 onChange={(event) => update(index, { filename: event.target.value })}
                 placeholder="stamp.png"
-                maxLength={155}
               />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Required to reference this file by name in a PDF stage. It must match the filename
-                in the remote server's Content-Disposition header exactly.
+                Optional preflight hint. If omitted, Gotenberg resolves the filename from the remote
+                server's Content-Disposition header at request time. A PDF stage must still
+                reference that exact filename.
               </p>
             </div>
           )}
@@ -334,7 +330,6 @@ export function WebhookEditor({
                 onChange={(event) => update({ url: event.target.value })}
                 placeholder="https://hooks.example.com/success"
                 autoComplete="off"
-                maxLength={2048}
               />
             </div>
             <div className="space-y-1">
@@ -366,7 +361,6 @@ export function WebhookEditor({
                   onChange={(event) => update({ errorUrl: event.target.value })}
                   placeholder="https://hooks.example.com/error"
                   autoComplete="off"
-                  maxLength={2048}
                 />
               </div>
               <div className="space-y-1">
@@ -411,7 +405,6 @@ export function WebhookEditor({
               onChange={(event) => update({ eventsUrl: event.target.value })}
               placeholder="https://hooks.example.com/events"
               autoComplete="off"
-              maxLength={2048}
             />
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
               {isV9

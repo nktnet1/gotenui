@@ -3,6 +3,7 @@ import { normalizeBackendUrl } from '#/lib/backend-url'
 import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { CHROMIUM_MEDIA_OPTIONS, encodeChromiumMediaFeatures } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
+import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
 import {
@@ -173,8 +174,9 @@ export function createGotenbergForm(
   maxBytes = MAX_UPLOAD_BYTES,
   postFiles: PostProcessFiles = {},
   archives: readonly File[] = [],
+  major?: SupportedGotenbergMajor,
 ): FormData {
-  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, [], archives)
+  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, [], archives, major)
   const form = new FormData()
   const isChromium = operation.path.startsWith('/forms/chromium/')
   const mediaFieldNames = new Set<string>(CHROMIUM_MEDIA_OPTIONS.map((feature) => feature.name))
@@ -190,12 +192,16 @@ export function createGotenbergForm(
             files.map((file) => file.name),
           )
         : String(value)
+    // The legacy LibreOffice encoder expects tenths of a degree, whereas
+    // Gotenberg 9 parses arbitrary finite degree values itself.
     form.set(
       key,
-      encodeOfficialField(
-        operation.fields.find((field) => field.name === key),
-        encoded,
-      ),
+      major === 9 && key === 'nativeWatermarkRotateAngle'
+        ? encoded
+        : encodeOfficialField(
+            operation.fields.find((field) => field.name === key),
+            encoded,
+          ),
     )
   }
   if (isChromium) {
@@ -212,8 +218,8 @@ export function createGotenbergForm(
   }
   if (operation.input === 'html' || operation.input === 'markdown') {
     const markdownNames = [
-      payload.markdownName ?? DEFAULT_MARKDOWN_NAME,
-      ...(payload.markdownFiles ?? []).map((file) => file.name),
+      (payload.markdownName ?? DEFAULT_MARKDOWN_NAME).normalize('NFC'),
+      ...(payload.markdownFiles ?? []).map((file) => file.name.normalize('NFC')),
     ]
     const html =
       operation.input === 'html'
@@ -226,7 +232,10 @@ export function createGotenbergForm(
         new File([payload.source ?? ''], markdownNames[0], { type: 'text/markdown' }),
       )
       for (const file of payload.markdownFiles ?? []) {
-        form.append('files', new File([file.content], file.name, { type: 'text/markdown' }))
+        form.append(
+          'files',
+          new File([file.content], file.name.normalize('NFC'), { type: 'text/markdown' }),
+        )
       }
     }
     for (const file of auxiliary) form.append('files', file, file.name)

@@ -1,5 +1,12 @@
 /** Definition for the pdfa Gotenberg operation. */
-import { pdfa, pdfFiles, pdfua } from '#/tools/shared/fields'
+import {
+  pdfa,
+  pdfFiles,
+  pdfua,
+  v9PdfaProfile,
+  v9PdfuaProfile,
+  v9RemediationFields,
+} from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
@@ -12,8 +19,11 @@ export const operation: Operation = {
   docs: 'manipulate-pdfs/pdfa-pdfua',
   ...pdfFiles,
   fields: [
-    { ...pdfa, advanced: false },
-    { ...pdfua, advanced: false },
+    { ...pdfa, advanced: false, supportedGotenbergMajors: [8] },
+    { ...pdfua, advanced: false, supportedGotenbergMajors: [8] },
+    { ...v9PdfaProfile, advanced: false },
+    { ...v9PdfuaProfile, advanced: false },
+    ...v9RemediationFields,
   ],
   output: 'pdf',
 }

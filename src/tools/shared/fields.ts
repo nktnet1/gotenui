@@ -105,6 +105,35 @@ export const v9PdfuaProfile: FieldDefinition = {
     'Gotenberg 9. PDF/A-4 profiles require PDF/UA-2; older PDF/A profiles require PDF/UA-1.',
 }
 
+/** Gotenberg 9 remediation settings, available for every remediate stage. */
+export const v9RemediationFields: FieldDefinition[] = [
+  {
+    name: 'v9Language',
+    label: 'Document language',
+    kind: 'text',
+    placeholder: 'en-AU',
+    description: 'Optional document language for PDF/A, PDF/UA or Factur-X remediation.',
+    supportedGotenbergMajors: [9],
+    advanced: true,
+  },
+  {
+    name: 'v9Aggressive',
+    label: 'Allow appearance-changing repairs',
+    kind: 'toggle',
+    description: 'Permits remediation changes that may alter how the pages look.',
+    supportedGotenbergMajors: [9],
+    advanced: true,
+  },
+  {
+    name: 'v9FigureAltText',
+    label: 'Fallback figure alt text',
+    kind: 'text',
+    description: 'Text assigned to figures missing alternative text.',
+    supportedGotenbergMajors: [9],
+    advanced: true,
+  },
+]
+
 export const v9OfficePdfaMethod: FieldDefinition = {
   name: 'pdfaMethod',
   label: 'PDF conformance method',
@@ -118,7 +147,7 @@ export const v9OfficePdfaMethod: FieldDefinition = {
   advanced: true,
   supportedGotenbergMajors: [9],
   description:
-    'Native export supports PDF/A-1b, 2b, 3b, 4 and PDF/UA-1 when no PDF processing follows. Merge, split and custom stages require final remediation; PDF/A-4 with PDF/UA also requires remediation.',
+    'Native export supports PDF/A-1b, 2b, 3b, 4 and PDF/UA-1 when no PDF processing follows. Merge, split and custom stages require remediation after document edits and before signatures; PDF/A-4 with PDF/UA also requires remediation.',
 }
 
 export const chromiumWait: FieldDefinition[] = [
@@ -312,7 +341,8 @@ export const chromiumReliability: FieldDefinition[] = [
     section: 'reliability',
     placeholder: 'e.g. analytics.example.com, cdn.example.com',
     when: { name: 'failOnResourceHttpStatusCodes', equals: '' },
-    description: 'Comma-separated hostnames excluded from asset HTTP status checks.',
+    description:
+      'Comma-separated hostnames, optional ports, or URLs excluded from asset HTTP status checks.',
   },
   {
     name: 'failOnResourceLoadingFailed',
@@ -445,6 +475,7 @@ export const chromePdf: FieldDefinition[] = [
   { ...pdfua, supportedGotenbergMajors: [8] },
   { ...v9PdfaProfile },
   { ...v9PdfuaProfile },
+  ...v9RemediationFields,
 ]
 
 export const screenshot: FieldDefinition[] = [
@@ -479,7 +510,15 @@ export const screenshot: FieldDefinition[] = [
     max: 5,
     advanced: true,
   },
-  { name: 'quality', label: 'JPEG quality', kind: 'number', min: 0, max: 100, advanced: true },
+  {
+    name: 'quality',
+    label: 'JPEG/WebP quality',
+    kind: 'number',
+    min: 0,
+    max: 100,
+    advanced: true,
+    description: 'Image compression quality for JPEG and WebP screenshots.',
+  },
   {
     name: 'optimizeForSpeed',
     label: 'Prefer faster image encoding',

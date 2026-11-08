@@ -1,7 +1,11 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
+import { filenameKey } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { reservePrefixedMergeUploadNames } from '#/lib/merge-order'
+import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
+import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { metadataObject } from '#/lib/pdf-structure-editors'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
@@ -54,6 +58,17 @@ export function adaptPdfForm(
     ) {
       throw new InputError('Gotenberg 9 PDF controls cannot be sent to a Gotenberg 8 connection.')
     }
+    if (payload.fields.pdfaProfile || payload.fields.pdfuaProfile) {
+      throw new InputError('Advanced PDF conformance profiles require Gotenberg 9.')
+    }
+    if (
+      (payload.fields.pdfa ?? payload.advanced.pdfa) === 'PDF/A-1b' &&
+      (payload.fields.pdfua ?? payload.advanced.pdfua) === true
+    ) {
+      throw new InputError(
+        'Gotenberg 8 cannot combine PDF/A-1b and PDF/UA. Select another PDF/A profile.',
+      )
+    }
     if (
       (operation.id === 'metadata-read' || operation.id === 'bookmarks-read') &&
       payload.fields.password
@@ -94,9 +109,21 @@ export function adaptPdfForm(
 
   const fields = payload.fields
   const output = new FormData()
-  for (const entry of legacy.getAll('files')) {
+  const sources = legacy.getAll('files')
+  const reservedNames = [
+    ...archiveEntryNames,
+    ...(payload.downloadFrom ?? []).flatMap(({ name }) => (name ? [name] : [])),
+  ]
+  const numberedNames =
+    operation.id === 'merge'
+      ? reservePrefixedMergeUploadNames(
+          sources.map((source) => (source instanceof File ? source.name : '')),
+          reservedNames,
+        )
+      : []
+  for (const [index, entry] of sources.entries()) {
     if (!(entry instanceof File)) throw new InputError('The PDF input must be an uploaded file.')
-    output.append('files', entry, entry.name)
+    output.append('files', entry, numberedNames[index] ?? entry.name)
   }
   const remote = legacy.get('downloadFrom')
   if (typeof remote === 'string') output.set('downloadFrom', remote)
@@ -110,16 +137,45 @@ export function adaptPdfForm(
     const value = fields[name]
     return typeof value === 'string' && value.trim() ? value.trim() : undefined
   }
+  // Secrets are exact byte strings: even an all-whitespace password is valid.
+  const optionalPassword = (name: 'password' | 'userPassword' | 'ownerPassword') => {
+    const value = fields[name]
+    return typeof value === 'string' && value !== '' ? value : undefined
+  }
   const pdfaStage = (): void => {
-    permitted('pdfa', 'pdfua')
-    const pdfa = optional('pdfa')
-    const pdfua = fields.pdfua === true
-    if (!pdfa && !pdfua) return
-    const profiles = [
-      pdfa,
-      pdfua ? (pdfa?.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1') : undefined,
-    ].filter((profile): profile is string => Boolean(profile))
-    stages.push({ op: 'remediate', profile: profiles.length === 1 ? profiles[0] : profiles })
+    permitted('pdfa', 'pdfua', 'pdfaProfile', 'pdfuaProfile', ...V9_REMEDIATION_FIELD_NAMES)
+    const legacyPdfa = optional('pdfa')
+    const legacyPdfua = fields.pdfua === true
+    const selectedPdfa = optional('pdfaProfile')
+    const selectedPdfua = optional('pdfuaProfile')
+    if (legacyPdfa && selectedPdfa) {
+      throw new InputError('Choose either a legacy PDF/A standard or a Gotenberg 9 profile.')
+    }
+    if (legacyPdfua && selectedPdfua) {
+      throw new InputError('Choose either legacy PDF/UA or a Gotenberg 9 PDF/UA profile.')
+    }
+    const pdfa = selectedPdfa || legacyPdfa
+    const pdfua =
+      selectedPdfua ||
+      (legacyPdfua ? (pdfa?.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1') : undefined)
+    const options = v9RemediationOptions(fields)
+    if (!pdfa && !pdfua) {
+      if (Object.keys(options).length) {
+        throw new InputError('Choose PDF/A or PDF/UA before setting remediation options.')
+      }
+      return
+    }
+    if (pdfa && pdfua && pdfua !== (pdfa.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1')) {
+      throw new InputError(
+        'This PDF/A profile cannot be combined with the selected PDF/UA profile.',
+      )
+    }
+    const profiles = [pdfa, pdfua].filter((profile): profile is string => Boolean(profile))
+    stages.push({
+      op: 'remediate',
+      profile: profiles.length === 1 ? profiles[0] : profiles,
+      ...options,
+    })
   }
   const v8Optimization = (): void => {
     permitted('optimizeImages', 'imageQuality')
@@ -133,7 +189,7 @@ export function adaptPdfForm(
     if (
       output
         .getAll('files')
-        .some((item) => item instanceof File && item.name.toLowerCase() === file.name.toLowerCase())
+        .some((item) => item instanceof File && filenameKey(item.name) === filenameKey(file.name))
     ) {
       throw new InputError(
         `The PDF and attachment filenames must be unique on Gotenberg 9: ${file.name}.`,
@@ -189,15 +245,26 @@ export function adaptPdfForm(
       pdfaStage()
       if (!stages.length) throw new InputError('Choose PDF/A or PDF/UA remediation.')
       break
-    case 'optimize':
-      permitted('imageQuality')
+    case 'optimize': {
+      permitted('imageQuality', 'v9ObjectStreams', 'v9Dedup', 'v9RecompressImages', 'v9SubsetFonts')
       if (optional('imageQuality')) {
         throw new InputError(
           'Gotenberg 9 optimization is lossless; its PDF pipeline has no image quality slider.',
         )
       }
-      stages.push({ op: 'optimize' })
+      const options: Record<string, boolean> = {}
+      for (const [name, option] of Object.entries({
+        v9ObjectStreams: 'objectStreams',
+        v9Dedup: 'dedup',
+        v9RecompressImages: 'recompressImages',
+        v9SubsetFonts: 'subsetFonts',
+      })) {
+        if (fields[name] === 'enabled') options[option] = true
+        if (fields[name] === 'disabled') options[option] = false
+      }
+      stages.push({ op: 'optimize', ...options })
       break
+    }
     case 'rotate': {
       permitted('rotateAngle', 'rotatePages')
       stages.push({
@@ -226,6 +293,8 @@ export function adaptPdfForm(
         'allowAnnotating',
         'allowFillingForms',
         'allowAssembling',
+        'v9Algorithm',
+        'v9PrintHighQuality',
       )
       const mapped: Readonly<Record<string, readonly string[]>> = {
         allowPrinting: ['print', 'printHighQuality'],
@@ -240,10 +309,13 @@ export function adaptPdfForm(
         if (typeof fields[name] !== 'boolean') continue
         for (const key of keys) permissions[key] = fields[name]
       }
+      if (fields.v9PrintHighQuality === 'allow') permissions.printHighQuality = true
+      if (fields.v9PrintHighQuality === 'deny') permissions.printHighQuality = false
       stages.push({
         op: 'encrypt',
-        ...(optional('userPassword') ? { userPassword: fields.userPassword } : {}),
-        ...(optional('ownerPassword') ? { ownerPassword: fields.ownerPassword } : {}),
+        ...(optionalPassword('userPassword') ? { userPassword: fields.userPassword } : {}),
+        ...(optionalPassword('ownerPassword') ? { ownerPassword: fields.ownerPassword } : {}),
+        ...(optional('v9Algorithm') ? { algorithm: fields.v9Algorithm } : {}),
         ...(Object.keys(permissions).length ? { permissions } : {}),
       })
       break
@@ -260,6 +332,7 @@ export function adaptPdfForm(
         'v9OverlayWidth',
         'v9OverlayHeight',
         'v9OverlayScale',
+        'v9OverlaySourcePage',
       )
       if (fields.v9OverlayAcknowledged !== true) {
         throw new InputError(
@@ -267,9 +340,22 @@ export function adaptPdfForm(
         )
       }
       const source = fields[`${kind}Source`]
-      const expression = optional(`${kind}Expression`)
-      if (!expression) throw new InputError('Enter overlay text or the exact uploaded filename.')
+      // An overlay filename or text can contain significant leading/trailing spaces.
+      const expression = fields[`${kind}Expression`]
+      if (typeof expression !== 'string' || expression === '') {
+        throw new InputError('Enter overlay text or the exact uploaded filename.')
+      }
       const options = overlayOptions(optional(`${kind}Options`))
+      const sourcePage = optional('v9OverlaySourcePage')
+      if (sourcePage !== undefined && source !== 'pdf') {
+        throw new InputError('A PDF overlay source page requires a PDF overlay.')
+      }
+      if (
+        sourcePage !== undefined &&
+        (!Number.isSafeInteger(Number(sourcePage)) || Number(sourcePage) < 0)
+      ) {
+        throw new InputError('The PDF overlay source page must be a non-negative whole number.')
+      }
       const common: Record<string, unknown> = {
         ...(optional(`${kind}Pages`) ? { pages: optional(`${kind}Pages`) } : {}),
         x: coordinate(fields.v9OverlayX, 48),
@@ -295,9 +381,7 @@ export function adaptPdfForm(
         if (source === 'image' && !/\.(png|jpe?g)$/i.test(asset.name)) {
           throw new InputError('Gotenberg 9 PDF image stamps accept only PNG or JPEG assets.')
         }
-        if (source === 'pdf' && !/\.pdf$/i.test(asset.name)) {
-          throw new InputError('A PDF overlay requires an uploaded PDF.')
-        }
+        // The stamp-pdf stage opens the asset as a PDF regardless of suffix.
         attachFile(asset)
         stages.push(
           source === 'image'
@@ -315,6 +399,7 @@ export function adaptPdfForm(
                 ...(optional('v9OverlayScale')
                   ? { scale: coordinate(fields.v9OverlayScale, 1) }
                   : {}),
+                ...(sourcePage !== undefined ? { sourcePage: Number(sourcePage) } : {}),
               },
         )
       } else {
@@ -323,10 +408,12 @@ export function adaptPdfForm(
       break
     }
     case 'metadata-read':
-    case 'bookmarks-read':
+    case 'bookmarks-read': {
       permitted('password')
-      if (optional('password')) output.set('password', fields.password as string)
+      const password = optionalPassword('password')
+      if (password !== undefined) output.set('password', password)
       break
+    }
     case 'metadata-write': {
       permitted('metadata')
       const raw = optional('metadata')
@@ -397,6 +484,7 @@ export function adaptPdfForm(
         'pdfa',
         'pdfua',
         'v9FacturxRepairExisting',
+        ...V9_REMEDIATION_FIELD_NAMES,
       )
       if (optional('facturxVersion'))
         throw new InputError(
@@ -413,7 +501,7 @@ export function adaptPdfForm(
           'Repairing embedded Factur-X XML does not accept a replacement XML upload.',
         )
       }
-      if (!repair && (auxiliary.length !== 1 || !/\.xml$/i.test(auxiliary[0]?.name ?? ''))) {
+      if (!repair && auxiliary.length !== 1) {
         throw new InputError('Upload one Factur-X XML invoice or enable repair of embedded XML.')
       }
       if (!repair && !optional('facturxConformanceLevel')) {
@@ -424,6 +512,7 @@ export function adaptPdfForm(
       stages.push({
         op: 'remediate',
         profile: fields.pdfua === true ? ['Factur-X', 'PDF/UA-1'] : 'Factur-X',
+        ...v9RemediationOptions(fields),
         ...(xml ? { xml: xml.name, level: fields.facturxConformanceLevel } : {}),
         ...(xml && optional('facturxDocumentType')
           ? { documentType: fields.facturxDocumentType }
@@ -440,7 +529,8 @@ export function adaptPdfForm(
     if (value === undefined || value === '' || value === false) continue
     throw new InputError(`Gotenberg 9 does not support the '${name}' field on ${operation.title}.`)
   }
-  if (!readRoutes[operation.id]) output.set('stages', JSON.stringify(stages))
+  if (!readRoutes[operation.id])
+    output.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))
   return { path: readRoutes[operation.id] ?? '/forms/pdf/pipe', form: output }
 }
 

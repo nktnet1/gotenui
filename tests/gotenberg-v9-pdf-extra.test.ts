@@ -35,6 +35,11 @@ function adapted(
 describe('version-gated PDF tool catalogue', () => {
   it('adds processing, extraction and inspection endpoints on the supported v9 minor', () => {
     assert.equal(V9_PDF_IDS.size, 19)
+    assert.equal(OPERATION_BY_ID.get('sign')?.auxiliary?.accept, undefined)
+    assert.equal(
+      OPERATION_BY_ID.get('insert-pages')?.fields.find((field) => field.name === 'at')?.required,
+      undefined,
+    )
     for (const id of V9_PDF_IDS) {
       const op = OPERATION_BY_ID.get(id)
       assert.deepEqual(op?.supportedGotenbergMajors, [9])
@@ -77,6 +82,17 @@ describe('Gotenberg 9 read endpoints', () => {
     assert.equal(adapted('pdf-form', { pages: '1-2,5' }).form.get('pages'), '1-2,5')
     assert.equal(adapted('pdf-form', { pages: 'all' }).form.get('pages'), 'all')
     assert.equal(adapted('extract-text', { pages: 'last' }).form.get('pages'), 'last')
+  })
+
+  it('preserves exact read passwords, including all-whitespace values', () => {
+    for (const id of ['pdf-info', 'pdf-attachments', 'pdf-form', 'pdf-validate']) {
+      const result = adapted(id, { password: '   ' })
+      assert.equal(result.form.get('password'), '   ', id)
+    }
+    for (const id of ['pdf-info', 'pdf-attachments', 'pdf-form', 'pdf-validate']) {
+      const result = adapted(id, { password: '  private  ' })
+      assert.equal(result.form.get('password'), '  private  ', id)
+    }
   })
 
   it('encodes validation profiles as repeated multipart fields', () => {
@@ -126,6 +142,17 @@ describe('Gotenberg 9 PDF stages', () => {
     assert.deepEqual(result.stages, [stage])
   })
 
+  it('uses exact attachment names, including meaningful surrounding spaces', () => {
+    const attachmentName = ' invoice.xml '
+    const result = adapted('detach', { attachmentName })
+    assert.deepEqual(result.stages, [{ op: 'detach', name: attachmentName }])
+    const args = request('detach', { attachmentName })
+    assert.doesNotThrow(() => validatePayload(args.payload))
+    assert.deepEqual(adapted('detach', { attachmentName: '   ' }).stages, [
+      { op: 'detach', name: '   ' },
+    ])
+  })
+
   it('normalises the timestamp authority for standalone timestamping and PAdES signing', () => {
     assert.deepEqual(
       adapted('timestamp', { timestampUrl: 'HTTPS://TSA.EXAMPLE.test:443/issue?key=1' }).stages,
@@ -159,11 +186,24 @@ describe('Gotenberg 9 PDF stages', () => {
       () => adapted('insert-pages', { at: '1' }, [new File(['duplicate'], 'example.pdf')]),
       /collides/,
     )
+    assert.deepEqual(adapted('insert-pages', { at: '' }, [extra]).stages, [
+      { op: 'insert', source: 'insert.pdf', at: 0 },
+    ])
     assert.throws(() => adapted('insert-pages', { at: '-1' }, [extra]), /Insert position/)
-    assert.throws(
-      () => adapted('insert-pages', {}, [new File(['nope'], 'insert.txt')]),
-      /additional PDF/,
+    // Gotenberg reads the named asset as PDF; unlike input documents its
+    // filename does not need the .pdf suffix.
+    assert.deepEqual(
+      adapted('insert-pages', {}, [new File(['%PDF-1.7\n'], 'insert.data')]).stages,
+      [{ op: 'insert', source: 'insert.data', at: 0 }],
     )
+  })
+
+  it('uses Gotenberg NFC filenames for standalone insertion stages', () => {
+    const decomposed = 're\u0301sume\u0301.pdf'
+    const extra = new File(['%PDF-1.7\n'], decomposed)
+    const result = adapted('insert-pages', { at: '1' }, [extra])
+    assert.deepEqual(result.stages, [{ op: 'insert', source: decomposed.normalize('NFC'), at: 1 }])
+    assert.equal((result.form.getAll('files')[1] as File).name, decomposed)
   })
 
   it('fills interactive fields only from a name-to-values JSON object', () => {
@@ -174,6 +214,11 @@ describe('Gotenberg 9 PDF stages', () => {
     for (const input of ['{}', '[]', '{"empty":4}', '{"null":null}', '{"items":[5]}']) {
       assert.throws(() => adapted('fill-form', { formValues: input }), /Form (field names|values)/)
     }
+    // Gotenberg's set-form parser uses exact field-name keys, including
+    // whitespace-only names when a PDF form defines them.
+    assert.deepEqual(adapted('fill-form', { formValues: '{" ":"Yes"}' }).stages, [
+      { op: 'set-form', fields: { ' ': 'Yes' } },
+    ])
     const manyFields: Record<string, string | string[]> = Object.fromEntries(
       Array.from({ length: 125 }, (_, index) => [`Form.Field.${index}`, 'signed']),
     )
@@ -189,6 +234,11 @@ describe('Gotenberg 9 PDF stages', () => {
       { op: 'redact', regions: [{ page: 1, x: 48, y: 100, width: 150, height: 20 }] },
     ])
     assert.throws(() => adapted('redact', { regions }), /Confirm permanent redaction/)
+    const negative = [{ page: 1, x: -12, y: -8, width: 20, height: 30 }]
+    assert.deepEqual(
+      adapted('redact', { regions: JSON.stringify(negative), confirmRedaction: true }).stages,
+      [{ op: 'redact', regions: negative }],
+    )
     const manyRegions = Array.from({ length: 125 }, (_, index) => ({
       page: 1,
       x: index,
@@ -202,7 +252,6 @@ describe('Gotenberg 9 PDF stages', () => {
     )
     for (const invalid of [
       [{ page: 0, x: 1, y: 1, width: 3, height: 2 }],
-      [{ page: 1, x: -1, y: 0, width: 3, height: 2 }],
       [{ page: 1, x: 1, y: 1, width: 0, height: 2 }],
       [{ page: 1, x: 1, y: 1, width: 3, height: 2, replaceWith: 'secret' }],
     ]) {
@@ -230,10 +279,32 @@ describe('Gotenberg 9 PDF stages', () => {
       result.form.getAll('files').map((file) => (file instanceof File ? file.name : '')),
       ['example.pdf', 'public.pem', 'private.key'],
     )
-    assert.throws(() => adapted('sign', {}, [cert]), /PKCS#12|PEM certificate/)
+    // Upstream inspects certificate bytes; file extensions are not required.
+    assert.deepEqual(adapted('sign', {}, [cert]).stages, [
+      { op: 'sign', certificate: 'public.pem' },
+    ])
+    assert.deepEqual(adapted('sign', { certificatePassword: 'secret' }, [cert, key]).stages, [
+      { op: 'sign', certificate: 'public.pem', key: 'private.key', certificatePassword: 'secret' },
+    ])
+    assert.deepEqual(adapted('sign', {}, [new File(['store'], 'credentials.bin')]).stages, [
+      { op: 'sign', certificate: 'credentials.bin' },
+    ])
+    assert.deepEqual(
+      adapted('sign', {}, [
+        new File(['pem cert'], 'certificate.dat'),
+        new File(['pem key'], 'secret.dat'),
+      ]).stages,
+      [{ op: 'sign', certificate: 'certificate.dat', key: 'secret.dat' }],
+    )
+    assert.throws(() => adapted('sign', {}, []), /PKCS#12|PEM certificate/)
     assert.throws(
-      () => adapted('sign', { certificatePassword: 'secret' }, [cert, key]),
-      /only to PKCS#12/,
+      () => adapted('sign', {}, [cert, key, new File(['extra'], 'extra.pem')]),
+      /PKCS#12|PEM certificate/,
+    )
+    assert.deepEqual(
+      adapted('sign', { certificatePassword: '   ' }, [new File(['certificate'], 'signer.p12')])
+        .stages,
+      [{ op: 'sign', certificate: 'signer.p12', certificatePassword: '   ' }],
     )
     const pkcs12 = adapted('sign', { certificatePassword: 'secret' }, [
       new File(['certificate'], 'signer.p12'),

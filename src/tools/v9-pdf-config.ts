@@ -161,7 +161,6 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
         min: 0,
         integer: true,
         defaultValue: '0',
-        required: true,
         description:
           '0 inserts before the first page. The position applies to each source document.',
       },
@@ -178,8 +177,7 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
         name: 'source',
         label: 'PDF containing pages to insert',
         description:
-          'Exactly one additional PDF; its filename must differ from all input documents.',
-        accept: '.pdf',
+          'Exactly one additional PDF; Gotenberg reads PDF contents even if the filename lacks a .pdf extension. The filename must differ from all input documents.',
         required: true,
       },
     },
@@ -292,8 +290,8 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
         name: 'certificate',
         label: 'Signing credentials',
         description:
-          'Upload one .p12/.pfx certificate or a PEM certificate plus a .key private key. These files are sent only to your selected Gotenberg server.',
-        accept: '.p12,.pfx,.pem,.crt,.cer,.key',
+          'Upload one PKCS#12 credential, or a PEM certificate and private key. File extensions are not required. Credentials are sent only to your selected Gotenberg server.',
+        // Gotenberg reads the certificate bytes and does not require a filename extension.
         multiple: true,
         required: true,
       },

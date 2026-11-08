@@ -19,3 +19,15 @@ export function parseGotenbergVersion(version: string | undefined): GotenbergVer
   if (![major, minor, patch].every(Number.isSafeInteger)) return null
   return { major, minor, patch }
 }
+
+/** PDF extraction endpoints and final pipeline stages were added in Gotenberg 9.1. */
+export function requiresGotenberg91ForExtraction(
+  version: GotenbergVersion,
+  operations: Iterable<string>,
+): boolean {
+  if (version.major !== 9 || version.minor >= 1) return false
+  for (const operation of operations) {
+    if (operation === 'extract-text' || operation === 'extract-attachments') return true
+  }
+  return false
+}

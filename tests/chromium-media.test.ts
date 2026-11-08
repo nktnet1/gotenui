@@ -138,3 +138,20 @@ describe('first-class Chromium media emulation', () => {
     )
   })
 })
+
+describe('advanced Chromium media parity with Gotenberg 9', () => {
+  it('accepts more than 16 features and long or non-standard values', () => {
+    const features = Array.from({ length: 22 }, (_, index) => ({
+      name: `custom-media-feature-${index}-${'a'.repeat(64)}`,
+      value: `${index}-${'v'.repeat(256)}`,
+    }))
+    features.push({ name: '__proto__', value: 'metadata' })
+    const source = JSON.stringify(features)
+    const { payload: valid, operation: op } = payload(
+      'url-pdf',
+      { url: 'https://example.test' },
+      { emulatedMediaFeatures: source },
+    )
+    expect(createGotenbergForm(op, valid, [], []).get('emulatedMediaFeatures')).toBe(source)
+  })
+})

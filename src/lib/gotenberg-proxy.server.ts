@@ -7,6 +7,7 @@ import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
 import {
   type GotenbergVersion,
   parseGotenbergVersion,
+  requiresGotenberg91ForExtraction,
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import {
@@ -363,13 +364,16 @@ function allowedConversionContentTypes(
     const stages = parsePdfPipeline(payload.conversionStages, {
       acknowledgedRedaction: payload.acknowledgedConversionRedaction,
     })
-    const types = pipelineResponseTypes(stages)
-    // Each ZIP can contain several Office documents, whose count is only
-    // known after Gotenberg extracts it. Even one uploaded ZIP can yield
-    // several independent output PDFs in another ZIP.
-    return archives.length && operation.id === 'office-pdf'
-      ? [...new Set([...types, 'application/zip'])]
-      : types
+    // Gotenberg's Chromium and LibreOffice conversion routes pass newly
+    // generated PDFs to Processor.Run and include those PDFs in its outputs.
+    // Unlike /forms/pdf/pipe, they do not drop the source PDF when the sole
+    // stage renders pages or extracts content. The PDF plus at least one
+    // generated file therefore always produces a ZIP, never a lone image,
+    // text file or arbitrary attachment.
+    if (['render', 'extract-text', 'extract-attachments'].includes(stages.at(-1)?.op ?? '')) {
+      return ['application/zip']
+    }
+    return pipelineResponseTypes(stages)
   }
   const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
   if (operation.id === 'render-pages') {
@@ -488,7 +492,7 @@ export async function proxyConversionRequest(
   const postFiles: PostProcessFiles = {}
   let payloadCount = 0
   for (const [key, value] of fields) {
-    if (key === 'payload' && typeof value === 'string' && value.length <= 400_000) {
+    if (key === 'payload' && typeof value === 'string') {
       payloadCount++
       try {
         candidate = JSON.parse(value)
@@ -543,10 +547,12 @@ export async function proxyConversionRequest(
       409,
     )
   }
-  // Validate the actual stages. Gotenberg exposes /version but not a reliable
-  // feature-discovery API, so v9 tools share the v9 major-version gate.
+  // These extraction routes and stages were introduced in Gotenberg 9.1.
+  if (requiresGotenberg91ForExtraction(version, [operation.id])) {
+    throw new InputError('PDF text and attachment extraction require Gotenberg 9.1 or newer.', 409)
+  }
   if (major === 9 && (operation.id === 'pdf-pipeline' || payload.conversionStages)) {
-    parsePdfPipeline(
+    const stages = parsePdfPipeline(
       operation.id === 'pdf-pipeline'
         ? String(payload.fields.stages ?? '')
         : (payload.conversionStages ?? ''),
@@ -557,22 +563,32 @@ export async function proxyConversionRequest(
             : payload.acknowledgedConversionRedaction,
       },
     )
+    if (
+      requiresGotenberg91ForExtraction(
+        version,
+        stages.map(({ op }) => op),
+      )
+    ) {
+      throw new InputError(
+        'PDF text and attachment extraction require Gotenberg 9.1 or newer.',
+        409,
+      )
+    }
   }
-  // The initial validation accepts the union of both Office extension sets.
-  // Recheck after authenticating /version so neither version receives an unsupported format.
-  if (operation.input === 'office') {
-    validateFiles(
-      operation,
-      files,
-      auxiliary,
-      maxBytes,
-      payload,
-      postFiles,
-      stageFiles,
-      archives,
-      major,
-    )
-  }
+  // The first preflight permits version-dependent inputs (Office formats,
+  // single-PDF merges, named XML/PDF assets). Recheck all file contracts once
+  // the authenticated server's actual major version is known.
+  validateFiles(
+    operation,
+    files,
+    auxiliary,
+    maxBytes,
+    payload,
+    postFiles,
+    stageFiles,
+    archives,
+    major,
+  )
   if (archives.length && major !== 9) {
     throw new InputError('ZIP archive inputs require Gotenberg 9.')
   }
@@ -608,6 +624,7 @@ export async function proxyConversionRequest(
     maxBytes,
     postFiles,
     archives,
+    major,
   )
   const { path, form } =
     operation.input === 'pdf'
@@ -698,11 +715,6 @@ export async function proxyConversionRequest(
     (operation.id === 'pdf-pipeline' &&
       (() => {
         const stages = parsePdfPipeline(String(payload.fields.stages ?? ''))
-        return stages.length === 1 && stages[0]?.op === 'extract-attachments'
-      })()) ||
-    (payload.conversionStages !== undefined &&
-      (() => {
-        const stages = parsePdfPipeline(payload.conversionStages)
         return stages.length === 1 && stages[0]?.op === 'extract-attachments'
       })())
   const attachmentDisposition = upstream.headers.get('content-disposition')

@@ -74,6 +74,18 @@ export const operation: Operation = {
       when: { name: 'stampSource', equals: 'pdf' },
     },
     {
+      name: 'v9OverlaySourcePage',
+      label: 'V9 source PDF page (1 = first)',
+      kind: 'number',
+      supportedGotenbergMajors: [9],
+      advanced: true,
+      min: 0,
+      integer: true,
+      placeholder: '1',
+      description: 'Pages start at 1. Leave blank (or enter 0) to use the first page.',
+      when: { name: 'stampSource', equals: 'pdf' },
+    },
+    {
       name: 'stampSource',
       label: 'Source',
       kind: 'select',

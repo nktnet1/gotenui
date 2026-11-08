@@ -158,9 +158,54 @@ test('validates cookie domains, types, boundaries and security attributes', () =
       /cookie/i,
     )
   }
-  for (const bad of ['{}', '[]', '{', JSON.stringify(Array(21).fill(cookie))]) {
+  for (const bad of ['{}', '{']) {
     assert.throws(() => validatePayload(request('url-pdf', { cookies: bad })), /cookie/i)
   }
+})
+
+test('accepts long Chromium cookie values and case-insensitive SameSite settings', () => {
+  // Gotenberg 9 explicitly normalises SameSite before decoding the cookies.
+  const longValue = `jwt-${'x'.repeat(4_096)}`
+  const cookies = [
+    {
+      ...cookie,
+      name: `session_${'y'.repeat(150)}`,
+      value: longValue,
+      path: `/${'p'.repeat(600)}`,
+      sameSite: 'lAx',
+    },
+    { ...cookie, sameSite: 'nOnE' },
+  ]
+  const fields = request('url-pdf', { cookies: JSON.stringify(cookies) })
+  const { payload, operation } = validatePayload(fields)
+  assert.deepEqual(
+    JSON.parse(String(createGotenbergForm(operation, payload, [], []).get('cookies'))),
+    cookies,
+  )
+  assert.throws(
+    () =>
+      validatePayload(request('url-pdf', { cookies: JSON.stringify([{ ...cookie, value: ' ' }]) })),
+    /cookie/i,
+  )
+  assert.throws(
+    () =>
+      validatePayload(
+        request('url-pdf', {
+          cookies: JSON.stringify([{ ...cookie, sameSite: 'nOnE', secure: false }]),
+        }),
+      ),
+    /SameSite=None/,
+  )
+})
+
+test('forwards large scoped Chromium header values without an artificial length cap', () => {
+  const value = `Bearer ${'x'.repeat(8_192)};scope=^https://internal\\.example\\.test/`
+  const fields = request('url-pdf', { extraHttpHeaders: JSON.stringify({ Authorization: value }) })
+  const { operation, payload } = validatePayload(fields)
+  assert.deepEqual(
+    JSON.parse(String(createGotenbergForm(operation, payload, [], []).get('extraHttpHeaders'))),
+    { Authorization: value },
+  )
 })
 
 test('rejects secret browser headers without a scope, unsafe header names and malformed scoped headers', () => {
@@ -171,9 +216,8 @@ test('rejects secret browser headers without a scope, unsafe header names and ma
     { 'Set-Cookie': 'a=b' },
     { 'X-Safe': 'secret\r\nCookie: a=b' },
     { Authorization: 'Bearer secret;scope=' },
-    { Authorization: 'Bearer secret;scope=^https://[broken' },
     { Authorization: 'Bearer secret;scope=^https://a\\.test/;scope=^https://b\\.test/' },
-    { Authorization: `Bearer secret;scope=${'a'.repeat(257)}` },
+    { Authorization: `Bearer secret;scope=${'a'.repeat(1025)}` },
   ]) {
     assert.throws(
       () => validatePayload(request('url-pdf', { extraHttpHeaders: JSON.stringify(fields) })),
@@ -197,6 +241,95 @@ test('rejects secret browser headers without a scope, unsafe header names and ma
       request('url-pdf', { extraHttpHeaders: JSON.stringify({ 'X-Public-Header': 'public' }) }),
     ),
   )
+})
+
+test('accepts Chromium resource headers to Gotenberg 9 limits and delegates regexp2 syntax', () => {
+  const manyHeaders = Object.fromEntries(
+    Array.from({ length: 64 }, (_, i) => [
+      `X-Header-${i}`,
+      `value-${i};scope=^https://example\\.test/`,
+    ]),
+  )
+  const encoded = JSON.stringify(manyHeaders)
+  const parsed = validatePayload(request('url-pdf', { extraHttpHeaders: encoded }))
+  assert.equal(parsed.payload.fields.extraHttpHeaders, encoded)
+  assert.throws(
+    () =>
+      validatePayload(
+        request('url-pdf', {
+          extraHttpHeaders: JSON.stringify({
+            ...manyHeaders,
+            'X-Extra': 'additional;scope=^https://',
+          }),
+        }),
+      ),
+    /64 entries/,
+  )
+
+  // Gotenberg 9 uses .NET regexp2, not JavaScript RegExp: (?i) is valid upstream.
+  const dotNetPattern = '(?i)^https://portal\\.example\\.test/'
+  for (const scope of [dotNetPattern, 'a'.repeat(1024)]) {
+    assert.doesNotThrow(() =>
+      validatePayload(
+        request('url-pdf', {
+          extraHttpHeaders: JSON.stringify({ Authorization: `Bearer token;SCOPE=${scope}` }),
+        }),
+      ),
+    )
+  }
+  for (const scope of ['a'.repeat(1025), 'é'.repeat(513)]) {
+    assert.throws(
+      () =>
+        validatePayload(
+          request('url-pdf', {
+            extraHttpHeaders: JSON.stringify({ Authorization: `Bearer token;scope=${scope}` }),
+          }),
+        ),
+      /1,024 UTF-8 bytes/,
+    )
+  }
+  // Invalid syntax is diagnosed by the backend's regexp2 compiler.
+  assert.doesNotThrow(() =>
+    validatePayload(
+      request('url-pdf', {
+        extraHttpHeaders: JSON.stringify({ Authorization: 'Bearer secret;scope=^https://[broken' }),
+      }),
+    ),
+  )
+  assert.doesNotThrow(() => validatePayload(request('url-pdf', { extraHttpHeaders: '{}' })))
+})
+
+test('preserves valid HTTP token header names and empty Chromium resource header values', () => {
+  const headers = {
+    X_Trace_ID: 'trace-123',
+    'X-Empty': '',
+    Authorization: 'scope=^https://portal\\.example\\.test/',
+  }
+  const raw = JSON.stringify(headers)
+  for (const operationId of ['url-pdf', 'html-shot']) {
+    const { operation, payload } = validatePayload(request(operationId, { extraHttpHeaders: raw }))
+    assert.equal(createGotenbergForm(operation, payload, [], []).get('extraHttpHeaders'), raw)
+  }
+  assert.doesNotThrow(() =>
+    validatePayload(
+      request('url-pdf', {
+        extraHttpHeaders: JSON.stringify({ [`X-${'a'.repeat(120)}`]: 'value' }),
+      }),
+    ),
+  )
+})
+
+test('supports large Chromium cookie lists without an unrelated 20-cookie cap', () => {
+  const cookies = Array.from({ length: 64 }, (_, index) => ({
+    ...cookie,
+    name: `session_${index}`,
+  }))
+  const settings = chromiumNetworkFields(cookies, [])
+  const parsed = validatePayload(request('html-shot', settings))
+  const spec = OPERATION_BY_ID.get('html-shot')
+  assert.ok(spec)
+  assert.equal(createGotenbergForm(spec, parsed.payload, [], []).get('cookies'), settings.cookies)
+  assert.doesNotThrow(() => validatePayload(request('url-pdf', { cookies: '[]' })))
 })
 
 test('validates Chromium typed printing, waiting and tag/outline controls', () => {

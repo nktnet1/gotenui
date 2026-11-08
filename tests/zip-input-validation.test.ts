@@ -33,6 +33,46 @@ async function check(
   )
 }
 
+test('accepts ZIPs with a trailing stub after the end record or ZIP comment', async () => {
+  const original = zipFixture({ 'input.pdf': '%PDF-1.7' })
+  const trailer = new TextEncoder().encode('extra bytes after the end record')
+  assert.deepEqual(await check('pdf-pipeline', [new File([original, trailer], 'appended.zip')]), [
+    'input.pdf',
+  ])
+  const raw = new Uint8Array(await original.arrayBuffer())
+  const comment = new TextEncoder().encode('some comment')
+  const modified = new Uint8Array(raw.length + comment.length + trailer.length)
+  modified.set(raw)
+  new DataView(modified.buffer).setUint16(raw.length - 2, comment.length, true)
+  modified.set(comment, raw.length)
+  modified.set(trailer, raw.length + comment.length)
+  assert.deepEqual(await check('pdf-pipeline', [new File([modified], 'comment.zip')]), [
+    'input.pdf',
+  ])
+})
+
+test('accepts empty ZIPs when other source inputs are available', async () => {
+  const empty = zipFixture({})
+  const input = new File(['%PDF-1.7'], 'original.pdf')
+  assert.deepEqual(await check('pdf-pipeline', [empty], { files: [input] }), [])
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'docs/': '', '__MACOSX/._input.pdf': 'metadata' })], {
+      files: [input],
+    }),
+    [],
+  )
+  assert.deepEqual(await check('html-pdf', [empty]), [])
+  await assert.rejects(check('pdf-pipeline', [empty]), /at least one source PDF/)
+  await assert.rejects(check('office-pdf', [empty]), /at least one source document/)
+})
+
+test('accepts self-extracting ZIPs with a prefixed stub and relative directory offsets', async () => {
+  const original = zipFixture({ 'document.pdf': '%PDF-1.7' })
+  const stub = new TextEncoder().encode('MZ\x90\x00valid stub prefix')
+  const archive = new File([stub, original], 'self-extracting.zip')
+  assert.deepEqual(await check('pdf-pipeline', [archive]), ['document.pdf'])
+})
+
 test('accepts PDF-only pipeline ZIPs, known Office files, and Chromium assets', async () => {
   await check('pdf-pipeline', [
     zipFixture({ 'one.pdf': '%PDF-1.7', 'invoices/two.PDF': '%PDF-1.7' }),
@@ -53,7 +93,7 @@ test('ignores macOS metadata, directory entries and Unix symlinks like Gotenberg
   assert.deepEqual(await check('pdf-pipeline', [archive]), ['input.pdf'])
   await assert.rejects(
     check('pdf-pipeline', [zipFixture({ '__MACOSX/._input.pdf': 'metadata' })]),
-    /include at least one file/,
+    /at least one source PDF/,
   )
 
   const symlink = new Uint8Array(
@@ -71,15 +111,15 @@ test('normalises effective ZIP names like Gotenberg and prevents Unicode filenam
   assert.deepEqual(await check('pdf-pipeline', [zipFixture({ 'cafe\u0301.pdf': '%PDF' })]), [
     'café.pdf',
   ])
-  await assert.rejects(
-    check('pdf-pipeline', [zipFixture({ 'café.pdf': '%PDF', 'cafe\u0301.pdf': '%PDF' })]),
-    /duplicate or reserved filename: café\.pdf/,
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'café.pdf': '%PDF', 'cafe\u0301.pdf': '%PDF' })]),
+    ['café.pdf', 'café.pdf'],
   )
-  await assert.rejects(
-    check('pdf-pipeline', [zipFixture({ 'cafe\u0301.pdf': '%PDF' })], {
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'cafe\u0301.pdf': '%PDF' })], {
       files: [new File(['%PDF'], 'café.pdf')],
     }),
-    /duplicate or reserved filename: café\.pdf/,
+    ['café.pdf'],
   )
 })
 
@@ -107,17 +147,19 @@ test('allows exact referenced PDF-pipeline and Office stage assets within ZIP in
     ),
     ['input.pdf', 'brand.png', 'invoice.xml'],
   )
-  await assert.rejects(
-    check('pdf-pipeline', [zipFixture({ 'input.pdf': '%PDF', 'brand.PNG': 'image' })], {
+  // Unreferenced resources are harmless; Gotenberg ignores them when
+  // selecting source PDFs, and still reports missing named assets if needed.
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'input.pdf': '%PDF', 'brand.PNG': 'image' })], {
       payload: pdfStagePayload,
     }),
-    /requires PDFs or referenced stage assets/,
+    ['input.pdf', 'brand.PNG'],
   )
-  await assert.rejects(
-    check('pdf-pipeline', [zipFixture({ 'input.pdf': '%PDF', 'brand.png': 'image' })], {
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'input.pdf': '%PDF', 'brand.png': 'image' })], {
       payload,
     }),
-    /requires PDFs or referenced stage assets/,
+    ['input.pdf', 'brand.png'],
   )
 
   const officePayload: ConversionPayload = {
@@ -137,9 +179,11 @@ test('allows exact referenced PDF-pipeline and Office stage assets within ZIP in
     ),
     ['report.docx', 'invoice.bin'],
   )
-  await assert.rejects(
-    check('office-pdf', [zipFixture({ 'report.docx': 'office', 'invoice.bin': 'unreferenced' })]),
-    /unsupported Gotenberg 9 Office entry/,
+  assert.deepEqual(
+    await check('office-pdf', [
+      zipFixture({ 'report.docx': 'office', 'invoice.bin': 'unreferenced' }),
+    ]),
+    ['report.docx', 'invoice.bin'],
   )
 })
 
@@ -179,41 +223,76 @@ test('rejects asset-only ZIPs without a source document, including referenced PD
   )
 })
 
-test('checks the formats of every ZIP entry, not just the first 30', async () => {
+test('accepts unrelated ZIP resources while requiring a real PDF or Office input', async () => {
   const many = Object.fromEntries(
     Array.from({ length: 35 }, (_, index) => [`document-${index}.pdf`, '%PDF-1.7']),
   )
-  await assert.rejects(
-    check('pdf-pipeline', [zipFixture({ ...many, 'not-a-pdf.txt': 'bad' })]),
-    /PDF pipeline requires PDFs or referenced stage assets.*not-a-pdf\.txt/,
+  const names = await check('pdf-pipeline', [zipFixture({ ...many, 'README.txt': 'notes' })])
+  assert.equal(names.length, 36)
+  assert.ok(names.includes('README.txt'))
+  assert.deepEqual(
+    await check('office-pdf', [zipFixture({ 'document.docx': 'good', 'obsolete.epub': 'extra' })]),
+    ['document.docx', 'obsolete.epub'],
   )
   await assert.rejects(
-    check('office-pdf', [zipFixture({ 'document.docx': 'good', 'obsolete.epub': 'bad' })]),
-    /unsupported Gotenberg 9 Office entry: obsolete\.epub/,
+    check('pdf-pipeline', [zipFixture({ 'README.txt': 'no PDF here' })]),
+    /at least one source PDF/,
+  )
+  await assert.rejects(
+    check('office-pdf', [zipFixture({ 'obsolete.epub': 'no supported source' })]),
+    /at least one source document/,
   )
 })
 
-test('rejects input collisions within and across ZIPs and with explicit uploads', async () => {
-  await assert.rejects(
-    check('pdf-pipeline', [zipFixture({ 'input.pdf': '1', 'other/INPUT.PDF': '2' })]),
-    /duplicate or reserved filename: input\.pdf/,
-  )
-  await assert.rejects(
-    check('office-pdf', [
-      zipFixture({ 'first.docx': '1' }, 'first.zip'),
-      zipFixture({ 'FIRST.docx': '2' }, 'second.zip'),
+test('permits duplicate unrelated archive resources but protects referenced stage assets', async () => {
+  assert.deepEqual(
+    await check('pdf-pipeline', [
+      zipFixture({
+        'source.pdf': '%PDF',
+        'docs/README.txt': 'first',
+        'other/README.txt': 'second',
+      }),
     ]),
-    /duplicate or reserved filename: first\.docx/,
+    ['source.pdf', 'README.txt', 'README.txt'],
   )
-  await assert.rejects(
-    check('pdf-pipeline', [zipFixture({ 'source.pdf': '%PDF-1.7' })], {
-      files: [new File(['%PDF'], 'SOURCE.pdf')],
+  assert.deepEqual(
+    await check('html-pdf', [zipFixture({ 'first/logo.png': 'one', 'second/logo.png': 'two' })]),
+    ['logo.png', 'logo.png'],
+  )
+})
+
+test('accepts same-name source documents within ZIPs and alongside local PDFs', async () => {
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'input.pdf': '1', 'other/input.pdf': '2' })]),
+    ['input.pdf', 'input.pdf'],
+  )
+  assert.deepEqual(
+    await check('office-pdf', [
+      zipFixture({ 'first.docx': '1' }, 'first.zip'),
+      zipFixture({ 'first.docx': '2' }, 'second.zip'),
+    ]),
+    ['first.docx', 'first.docx'],
+  )
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'source.pdf': '%PDF-1.7' })], {
+      files: [new File(['%PDF'], 'source.pdf')],
     }),
-    /duplicate or reserved filename: source\.pdf/,
+    ['source.pdf'],
+  )
+  // A named pipeline input must still have an unambiguous identity.
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'stamp.pdf': 'one', 'second/stamp.pdf': 'two' })], {
+      payload: {
+        ...payload,
+        fields: { stages: '[{"op":"stamp-pdf","source":"stamp.pdf"}]' },
+      },
+      files: [new File(['%PDF'], 'input.pdf')],
+    }),
+    /duplicate or reserved filename: stamp\.pdf/,
   )
   await assert.rejects(
     check('html-pdf', [zipFixture({ 'logo.png': 'image' })], {
-      auxiliary: [new File(['image'], 'LOGO.PNG')],
+      auxiliary: [new File(['image'], 'logo.png')],
     }),
     /duplicate or reserved filename: logo\.png/,
   )
@@ -226,7 +305,7 @@ test('rejects input collisions within and across ZIPs and with explicit uploads'
 })
 
 test('rejects archive assets that could shadow generated HTML or Markdown sources', async () => {
-  for (const name of ['index.html', 'HEADER.HTML', 'footer.html']) {
+  for (const name of ['index.html', 'header.html', 'footer.html']) {
     await assert.rejects(
       check('html-pdf', [zipFixture({ [name]: 'shadow' })]),
       /duplicate or reserved filename/,
@@ -252,7 +331,7 @@ test('rejects archive assets that could shadow generated HTML or Markdown source
   )
 })
 
-test('rejects unsafe paths, corrupt directories, encrypted ZIPs, and empty ZIP inputs', async () => {
+test('rejects unsafe paths, corrupt directories, encrypted ZIPs, and archives without sources', async () => {
   for (const name of ['../secrets.pdf', '/etc/secrets.pdf', 'C:\\secrets.pdf']) {
     await assert.rejects(check('pdf-pipeline', [zipFixture({ [name]: '%PDF' })]), /paths/)
   }
@@ -278,7 +357,7 @@ test('rejects unsafe paths, corrupt directories, encrypted ZIPs, and empty ZIP i
   new DataView(empty.buffer).setUint32(0, 0x06054b50, true)
   await assert.rejects(
     check('office-pdf', [new File([empty], 'no-files.zip')]),
-    /include at least one file/,
+    /at least one source document/,
   )
   const zip64 = new Uint8Array(await truncated.arrayBuffer())
   new DataView(zip64.buffer).setUint32(zip64.length - 10, 0xffffffff, true)
@@ -314,6 +393,12 @@ test('accepts a valid ZIP64 end record and rejects an overlapping central direct
   end.setUint32(12, 0xffffffff, true)
   end.setUint32(16, 0xffffffff, true)
   assert.deepEqual(await check('pdf-pipeline', [new File([bytes], 'valid.zip')]), ['source.pdf'])
+  assert.deepEqual(
+    await check('pdf-pipeline', [
+      new File([new TextEncoder().encode('MZstub'), bytes], 'sfx64.zip'),
+    ]),
+    ['source.pdf'],
+  )
 
   // A directory cannot overlap the ZIP64 EOCD, even when it finishes before the locator.
   zip64.setBigUint64(40, BigInt(directorySize + 4), true)
@@ -332,7 +417,7 @@ test('limits central-directory memory and never reads or unpacks entry contents'
     return slice(start, end, type)
   }
   await check('pdf-pipeline', [archive])
-  assert.deepEqual(readSizes.length, 3)
+  assert.deepEqual(readSizes.length, 2)
   assert.ok(readSizes.every((size) => size <= 65_557))
   assert.ok(readSizes.reduce((sum, size) => sum + size, 0) < 70_000)
 })
@@ -344,5 +429,32 @@ test('matches the default upstream ZIP entry limit before requesting extraction'
   await assert.rejects(
     check('pdf-pipeline', [zipFixture(many)]),
     /too many entries or is too large/,
+  )
+})
+
+test('keeps case-distinct ZIP names separate like the Gotenberg file registry', async () => {
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'Report.PDF': '%PDF', 'report.pdf': '%PDF' })]),
+    ['Report.PDF', 'report.pdf'],
+  )
+  assert.deepEqual(
+    await check('office-pdf', [
+      zipFixture({ 'Budget.DOCX': 'one' }, 'budget-1.zip'),
+      zipFixture({ 'budget.docx': 'two' }, 'budget-2.zip'),
+    ]),
+    ['Budget.DOCX', 'budget.docx'],
+  )
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'report.pdf': '%PDF' })], {
+      files: [new File(['%PDF'], 'Report.pdf')],
+    }),
+    ['report.pdf'],
+  )
+  assert.deepEqual(await check('html-pdf', [zipFixture({ 'HEADER.HTML': 'asset' })]), [
+    'HEADER.HTML',
+  ])
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'cafe\u0301.pdf': '%PDF', 'café.pdf': '%PDF' })]),
+    ['café.pdf', 'café.pdf'],
   )
 })

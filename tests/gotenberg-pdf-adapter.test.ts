@@ -43,7 +43,7 @@ function requestFor(
 }
 
 function fixture(
-  version: '8.40.0' | '9.0.0',
+  version: '8.40.0' | '9.0.0' | '9.1.0',
   callback: (form: FormData, path: string) => void,
   response?: Response,
 ) {
@@ -84,7 +84,50 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
       { pdfa: 'PDF/A-4', pdfua: true },
       [{ op: 'remediate', profile: ['PDF/A-4', 'PDF/UA-2'] }],
     ],
+    [
+      'pdfa',
+      { pdfaProfile: 'PDF/A-1b', pdfuaProfile: 'PDF/UA-1' },
+      [{ op: 'remediate', profile: ['PDF/A-1b', 'PDF/UA-1'] }],
+    ],
+    [
+      'pdfa',
+      {
+        pdfaProfile: 'PDF/A-4f',
+        pdfuaProfile: 'PDF/UA-2',
+        v9Language: 'en-AU',
+        v9Aggressive: true,
+        v9FigureAltText: 'Figure without a description',
+      },
+      [
+        {
+          op: 'remediate',
+          profile: ['PDF/A-4f', 'PDF/UA-2'],
+          language: 'en-AU',
+          aggressive: true,
+          figureAltText: 'Figure without a description',
+        },
+      ],
+    ],
+    ['pdfa', { pdfuaProfile: 'PDF/UA-2' }, [{ op: 'remediate', profile: 'PDF/UA-2' }]],
     ['optimize', {}, [{ op: 'optimize' }]],
+    [
+      'optimize',
+      {
+        v9ObjectStreams: 'disabled',
+        v9Dedup: 'enabled',
+        v9RecompressImages: 'disabled',
+        v9SubsetFonts: 'disabled',
+      },
+      [
+        {
+          op: 'optimize',
+          objectStreams: false,
+          dedup: true,
+          recompressImages: false,
+          subsetFonts: false,
+        },
+      ],
+    ],
     [
       'rotate',
       { rotateAngle: '270', rotatePages: '1-3' },
@@ -102,6 +145,31 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
             print: false,
             printHighQuality: false,
             extractText: false,
+            modifyContent: true,
+            modifyAnnotations: true,
+            fillForms: true,
+            assemble: true,
+          },
+        },
+      ],
+    ],
+    [
+      'encrypt',
+      {
+        userPassword: 'pass',
+        allowPrinting: false,
+        v9PrintHighQuality: 'allow',
+        v9Algorithm: 'aes128',
+      },
+      [
+        {
+          op: 'encrypt',
+          userPassword: 'pass',
+          algorithm: 'aes128',
+          permissions: {
+            print: false,
+            printHighQuality: true,
+            extractText: true,
             modifyContent: true,
             modifyAnnotations: true,
             fillForms: true,
@@ -172,6 +240,55 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
   })
 
   it.each([
+    ['pdfa', { pdfaProfile: 'PDF/A-3u' }, /require Gotenberg 9/],
+    ['pdfa', { pdfa: 'PDF/A-1b', pdfua: true }, /cannot combine/],
+    ['optimize', { v9Dedup: 'disabled' }, /Gotenberg 9 PDF controls/],
+    ['encrypt', { userPassword: 'pass', v9Algorithm: 'aes128' }, /Gotenberg 9 PDF controls/],
+  ] as const)(
+    'does not forward v9-only or incompatible settings to v8 %s',
+    async (id, fields, error) => {
+      const remote = fixture('8.40.0', () => {
+        throw new Error('Should not forward')
+      })
+      await assert.rejects(proxyConversionRequest(requestFor(id, fields), remote.fetcher), error)
+      assert.equal(remote.count(), 0)
+    },
+  )
+
+  it.each([
+    [{ pdfaProfile: 'PDF/A-4f', pdfuaProfile: 'PDF/UA-1' }, /cannot be combined/],
+    [{ pdfa: 'PDF/A-2b', pdfaProfile: 'PDF/A-3a' }, /either a legacy/],
+    [{ pdfua: true, pdfuaProfile: 'PDF/UA-2' }, /either legacy/],
+  ] as const)(
+    'rejects conflicting v9 standalone PDF conformance options',
+    async (fields, error) => {
+      const remote = fixture('9.1.0', () => {
+        throw new Error('Should not forward')
+      })
+      await assert.rejects(
+        proxyConversionRequest(requestFor('pdfa', fields), remote.fetcher),
+        error,
+      )
+      assert.equal(remote.count(), 0)
+    },
+  )
+
+  it('accepts legacy PDF/A-1b plus PDF/UA when the selected server is v9.1', async () => {
+    const remote = fixture('9.1.0', (form, path) => {
+      assert.equal(path, '/forms/pdf/pipe')
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+        { op: 'remediate', profile: ['PDF/A-1b', 'PDF/UA-1'] },
+      ])
+    })
+    const response = await proxyConversionRequest(
+      requestFor('pdfa', { pdfa: 'PDF/A-1b', pdfua: true }),
+      remote.fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(remote.count(), 1)
+  })
+
+  it.each([
     ['metadata-read', '/forms/pdf/metadata'],
     ['bookmarks-read', '/forms/pdf/bookmarks'],
   ])('uses v9 JSON read route for %s', async (id, path) => {
@@ -220,6 +337,41 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
       assert.equal(legacy.count(), 0)
     },
   )
+
+  it('preserves whitespace-only PDF passwords in actual Gotenberg 9 multipart requests', async () => {
+    for (const id of ['metadata-read', 'bookmarks-read'] as const) {
+      const remote = fixture(
+        '9.1.0',
+        (form, path) => {
+          assert.equal(
+            path,
+            id === 'metadata-read' ? '/forms/pdf/metadata' : '/forms/pdf/bookmarks',
+          )
+          assert.equal(form.get('password'), '   ')
+        },
+        new Response('"{}"', { headers: { 'content-type': 'application/json' } }),
+      )
+      const result = await proxyConversionRequest(
+        requestFor(id, { password: '   ' }),
+        remote.fetcher,
+      )
+      assert.equal(result.status, 200)
+      assert.equal(remote.count(), 1)
+    }
+    const remote = fixture('9.1.0', (form, path) => {
+      assert.equal(path, '/forms/pdf/pipe')
+      const stage = JSON.parse(String(form.get('stages')))[0]
+      assert.equal(stage.op, 'encrypt')
+      assert.equal(stage.userPassword, '  ')
+      assert.equal(stage.ownerPassword, '  owner  ')
+    })
+    const result = await proxyConversionRequest(
+      requestFor('encrypt', { userPassword: '  ', ownerPassword: '  owner  ' }),
+      remote.fetcher,
+    )
+    assert.equal(result.status, 200)
+    assert.equal(remote.count(), 1)
+  })
 
   it('relabels attachment uploads as files and emits one attach stage per file', async () => {
     const remote = fixture('9.0.0', (form, path) => {
@@ -289,6 +441,67 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
       200,
     )
     assert.equal(remote.count(), 1)
+  })
+
+  it('preserves whitespace in standalone stamps and exact overlay filenames', async () => {
+    const text = '  CONFIDENTIAL  '
+    const remoteText = fixture('9.0.0', (form, path) => {
+      assert.equal(path, '/forms/pdf/pipe')
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+        { op: 'stamp-text', text, x: 48, y: 48, fontSize: 24 },
+      ])
+    })
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor('stamp', {
+            stampSource: 'text',
+            stampExpression: text,
+            v9OverlayAcknowledged: true,
+          }),
+          remoteText.fetcher,
+        )
+      ).status,
+      200,
+    )
+
+    const whitespace = fixture('9.0.0', (form) => {
+      assert.equal(JSON.parse(String(form.get('stages')))[0]?.text, '   ')
+    })
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor('watermark', {
+            watermarkSource: 'text',
+            watermarkExpression: '   ',
+            v9OverlayAcknowledged: true,
+          }),
+          whitespace.fetcher,
+        )
+      ).status,
+      200,
+    )
+
+    const filename = ' logo.png'
+    const remoteImage = fixture('9.0.0', (form) => {
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+        { op: 'stamp-image', image: filename, x: 48, y: 48, width: 0, height: 0 },
+      ])
+      assert.equal((form.getAll('files')[1] as File).name, filename)
+    })
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor(
+            'stamp',
+            { stampSource: 'image', stampExpression: filename, v9OverlayAcknowledged: true },
+            { auxiliary: [new File(['image'], filename, { type: 'image/png' })] },
+          ),
+          remoteImage.fetcher,
+        )
+      ).status,
+      200,
+    )
   })
 
   it('converts legacy opacity to inverse litho opacity without assuming equal defaults', async () => {
@@ -467,6 +680,38 @@ describe('version-specific merge editor fields', () => {
   })
 })
 
+describe('Gotenberg 9.1 standalone PDF controls', () => {
+  it.each([
+    [
+      'pdfa',
+      ['pdfa', 'pdfua'],
+      ['pdfaProfile', 'pdfuaProfile', 'v9Language', 'v9Aggressive', 'v9FigureAltText'],
+    ],
+    [
+      'optimize',
+      ['imageQuality'],
+      ['v9ObjectStreams', 'v9Dedup', 'v9RecompressImages', 'v9SubsetFonts'],
+    ],
+    ['encrypt', [], ['v9Algorithm', 'v9PrintHighQuality']],
+  ] as const)('%s displays the right version-specific controls', (id, legacy, modern) => {
+    const operation = OPERATION_BY_ID.get(id)
+    assert.ok(operation)
+    const selected = Object.fromEntries(
+      [...legacy, ...modern].map((name) => [name, name === 'v9Aggressive' ? true : 'enabled']),
+    )
+    const v8 = activeOperationFields(operation, selected, '8.40.0')
+    const v9 = activeOperationFields(operation, selected, '9.1.0')
+    for (const name of legacy) {
+      assert.notEqual(v8[name], undefined)
+      assert.equal(v9[name], undefined)
+    }
+    for (const name of modern) {
+      assert.equal(v8[name], undefined)
+      assert.notEqual(v9[name], undefined)
+    }
+  })
+})
+
 describe('v8 and v9 standalone overlay field visibility', () => {
   it.each(['stamp', 'watermark'] as const)(
     '%s keeps v8 fields but exposes the v9 acknowledgment and coordinates only on v9',
@@ -518,5 +763,228 @@ describe('v9 PDF read payload import', () => {
       ),
       [{ title: 'Intro', page: 1, children: [{ title: 'Sub', page: 3 }] }],
     )
+  })
+})
+
+function remediationRequestFor(id: string, fields: Record<string, string | boolean>): Request {
+  return requestFor(
+    id,
+    fields,
+    id === 'merge'
+      ? {
+          files: [pdf(), new File(['%PDF-1.7\n'], 'second.pdf', { type: 'application/pdf' })],
+        }
+      : {},
+  )
+}
+
+describe('Gotenberg 9 remediation parity across PDF tools', () => {
+  it.each([
+    [
+      'merge',
+      { pdfaProfile: 'PDF/A-4f', pdfuaProfile: 'PDF/UA-2' },
+      [{ op: 'merge' }, { op: 'remediate', profile: ['PDF/A-4f', 'PDF/UA-2'] }],
+    ],
+    [
+      'split',
+      { splitMode: 'intervals', splitSpan: '2', pdfaProfile: 'PDF/A-3a' },
+      [
+        { op: 'split', every: 2 },
+        { op: 'remediate', profile: 'PDF/A-3a' },
+      ],
+    ],
+  ] as const)('accepts advanced conformance profiles in %s', async (id, fields, expected) => {
+    const remote = fixture('9.1.0', (form, path) => {
+      assert.equal(path, '/forms/pdf/pipe')
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), expected)
+    })
+    const result = await proxyConversionRequest(remediationRequestFor(id, fields), remote.fetcher)
+    assert.equal(result.status, 200)
+    assert.equal(remote.count(), 1)
+  })
+
+  it.each(['merge', 'split', 'pdfa'] as const)(
+    'forwards language, aggressive repair and exact figure text in %s',
+    async (id) => {
+      const fields = {
+        ...(id === 'split' ? { splitMode: 'intervals', splitSpan: '2' } : {}),
+        pdfaProfile: 'PDF/A-2u',
+        v9Language: '  de-DE  ',
+        v9Aggressive: true,
+        v9FigureAltText: '  Untitled figure  ',
+      }
+      const remote = fixture('9.1.0', (form) => {
+        const stages = JSON.parse(String(form.get('stages'))) as Record<string, unknown>[]
+        assert.deepEqual(stages.at(-1), {
+          op: 'remediate',
+          profile: 'PDF/A-2u',
+          language: 'de-DE',
+          aggressive: true,
+          figureAltText: '  Untitled figure  ',
+        })
+      })
+      const result = await proxyConversionRequest(remediationRequestFor(id, fields), remote.fetcher)
+      assert.equal(result.status, 200)
+    },
+  )
+
+  it.each([true, false])(
+    'supports Factur-X remediation settings (repair existing=%s)',
+    async (repair) => {
+      const remote = fixture('9.1.0', (form) => {
+        assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+          {
+            op: 'remediate',
+            profile: 'Factur-X',
+            ...(repair ? {} : { xml: 'invoice.xml', level: 'EN 16931' }),
+            language: 'fr-FR',
+            aggressive: true,
+            figureAltText: 'Invoice figure',
+          },
+        ])
+      })
+      const response = await proxyConversionRequest(
+        requestFor(
+          'factur-x',
+          {
+            v9FacturxRepairExisting: repair,
+            v9Language: 'fr-FR',
+            v9Aggressive: true,
+            v9FigureAltText: 'Invoice figure',
+          },
+          repair ? {} : { auxiliary: [new File(['<xml/>'], 'invoice.xml')] },
+        ),
+        remote.fetcher,
+      )
+      assert.equal(response.status, 200)
+    },
+  )
+
+  it.each(['merge', 'split'] as const)(
+    'rejects conformance settings without a profile in %s',
+    async (id) => {
+      const remote = fixture('9.1.0', () => {
+        throw new Error('Should not forward')
+      })
+      await assert.rejects(
+        proxyConversionRequest(
+          remediationRequestFor(id, {
+            ...(id === 'split' ? { splitMode: 'intervals', splitSpan: '2' } : {}),
+            v9Aggressive: true,
+          }),
+          remote.fetcher,
+        ),
+        /Choose PDF\/A or PDF\/UA/,
+      )
+      assert.equal(remote.count(), 0)
+    },
+  )
+
+  it.each(['merge', 'split'] as const)(
+    'refuses v9 profiles when forwarding to Gotenberg 8 %s',
+    async (id) => {
+      const remote = fixture('8.40.0', () => {
+        throw new Error('Should not forward')
+      })
+      await assert.rejects(
+        proxyConversionRequest(
+          remediationRequestFor(id, {
+            ...(id === 'split' ? { splitMode: 'intervals', splitSpan: '2' } : {}),
+            pdfaProfile: 'PDF/A-4f',
+          }),
+          remote.fetcher,
+        ),
+        /require Gotenberg 9/,
+      )
+      assert.equal(remote.count(), 0)
+    },
+  )
+})
+
+describe('Gotenberg 9 remediation option visibility', () => {
+  it.each([
+    'merge',
+    'split',
+    'pdfa',
+    'factur-x',
+    'url-pdf',
+    'html-pdf',
+    'markdown-pdf',
+    'office-pdf',
+  ])('%s shows remediation fields only with Gotenberg 9', (id) => {
+    const operation = OPERATION_BY_ID.get(id)
+    assert.ok(operation)
+    const draft = {
+      ...operationDefaults(operation),
+      v9Language: 'en-AU',
+      v9Aggressive: true,
+      v9FigureAltText: 'Unlabelled image',
+    }
+    const v8 = activeOperationFields(operation, draft, '8.40.0')
+    const v9 = activeOperationFields(operation, draft, '9.1.0')
+    for (const field of ['v9Language', 'v9Aggressive', 'v9FigureAltText']) {
+      assert.equal(v8[field], undefined)
+      assert.equal(v9[field], draft[field as keyof typeof draft])
+    }
+  })
+})
+
+describe('Gotenberg 9 source PDF overlay page', () => {
+  it.each(['stamp', 'watermark'] as const)('selects the source PDF page for %s', async (id) => {
+    const overlay = new File(['%PDF-1.7\n'], 'overlay.pdf', { type: 'application/pdf' })
+    const remote = fixture('9.1.0', (form) => {
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+        {
+          op: 'stamp-pdf',
+          source: 'overlay.pdf',
+          x: 48,
+          y: 48,
+          sourcePage: 3,
+        },
+      ])
+      assert.deepEqual(
+        form.getAll('files').map((file) => (file instanceof File ? file.name : '')),
+        ['report.pdf', 'overlay.pdf'],
+      )
+    })
+    const response = await proxyConversionRequest(
+      requestFor(
+        id,
+        {
+          [`${id}Source`]: 'pdf',
+          [`${id}Expression`]: overlay.name,
+          v9OverlayAcknowledged: true,
+          v9OverlaySourcePage: '3',
+        },
+        { auxiliary: [overlay] },
+      ),
+      remote.fetcher,
+    )
+    assert.equal(response.status, 200)
+  })
+
+  it('rejects negative and non-integral source page numbers', async () => {
+    const remote = fixture('9.1.0', () => {
+      throw new Error('Should not forward')
+    })
+    for (const value of ['-1', '1.5']) {
+      await assert.rejects(
+        proxyConversionRequest(
+          requestFor(
+            'stamp',
+            {
+              stampSource: 'pdf',
+              stampExpression: 'overlay.pdf',
+              v9OverlayAcknowledged: true,
+              v9OverlaySourcePage: value,
+            },
+            { auxiliary: [new File(['%PDF-1.7\n'], 'overlay.pdf')] },
+          ),
+          remote.fetcher,
+        ),
+        /range|non-negative/,
+      )
+    }
+    assert.equal(remote.count(), 0)
   })
 })

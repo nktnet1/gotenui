@@ -50,11 +50,15 @@ test('rejects malformed remote URLs and unsupported descriptors', () => {
   }
 })
 
-test('merge requires at least two combined remote or uploaded PDF inputs', () => {
+test('Gotenberg 9 merges one PDF; Gotenberg 8 still requires two inputs', () => {
   const { operation, payload } = validatePayload(
     payloadFor('merge', { downloadFrom: [{ url: 'https://files.example.test/part-a.pdf' }] }),
   )
-  assert.throws(() => validateFiles(operation, [], [], 4_000_000, payload), /Upload at least 2/)
+  validateFiles(operation, [], [], 4_000_000, payload, {}, [], [], 9)
+  assert.throws(
+    () => validateFiles(operation, [], [], 4_000_000, payload, {}, [], [], 8),
+    /Upload at least 2/,
+  )
   const second = new File(['%PDF-1.7'], 'part-b.pdf', { type: 'application/pdf' })
   validateFiles(operation, [second], [], 4_000_000, payload)
 })

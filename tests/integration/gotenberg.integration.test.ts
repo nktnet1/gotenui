@@ -501,6 +501,24 @@ test.skipIf(!isV9)(
 )
 
 test.skipIf(!isV9)(
+  'Gotenberg 9 embeds zero-byte attachments without rejecting their uploaded files',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'embed')
+    if (!operation) throw new Error('Missing PDF embed operation')
+    const response = await proxyConversionRequest(
+      request(operation, {}, [pdfFile()], [new File([], 'empty.txt', { type: 'text/plain' })]),
+    )
+    if (!response.ok) {
+      throw new Error(`Empty attachment: ${response.status} ${await response.text()}`)
+    }
+    expect(
+      JSON.stringify(await inspectV9Pdf('attachments', await response.arrayBuffer())),
+    ).toContain('empty.txt')
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
   'Gotenberg 9 extracts named PDF stage assets while skipping macOS ZIP metadata',
   async () => {
     const pipeline = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
@@ -818,6 +836,75 @@ test.skipIf(!isV9)(
     expect(await inspectV9Pdf('info', await result.arrayBuffer())).toMatchObject({
       'verified.pdf': { pages: 2 },
     })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 accepts ZIP trailers and empty archives when source PDFs are available',
+  async () => {
+    const pipeline = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
+    if (!pipeline) throw new Error('Missing PDF pipeline')
+    const archive = officeZipFixture(['source.pdf'], { 'source.pdf': new Uint8Array(pdfBytes) })
+    const withTrailer = new File([archive, 'trailing bytes'], 'with-trailer.zip')
+    const appended = await proxyConversionRequest(
+      request(
+        pipeline,
+        { fields: { stages: '[{"op":"optimize"}]' } },
+        [],
+        [],
+        {},
+        [],
+        [withTrailer],
+      ),
+    )
+    if (!appended.ok) {
+      throw new Error(`Trailing ZIP: ${appended.status}: ${await appended.text()}`)
+    }
+    expect(await inspectV9Pdf('info', await appended.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+
+    // An empty archive is permitted if the source was uploaded separately.
+    const emptyArchive = officeZipFixture([])
+    const other = await proxyConversionRequest(
+      request(
+        pipeline,
+        { fields: { stages: '[{"op":"optimize"}]' } },
+        [pdfFile()],
+        [],
+        {},
+        [],
+        [emptyArchive],
+      ),
+    )
+    if (!other.ok) throw new Error(`Empty ZIP: ${other.status}: ${await other.text()}`)
+    expect(await inspectV9Pdf('info', await other.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 pipeline applies empty split ranges and default render format',
+  async () => {
+    const pipeline = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
+    if (!pipeline) throw new Error('Missing PDF pipeline')
+    const result = await proxyConversionRequest(
+      request(
+        pipeline,
+        {
+          fields: { stages: '[{"op":"split","every":2,"ranges":[]},{"op":"render","format":""}]' },
+        },
+        [pdfFile()],
+      ),
+    )
+    if (!result.ok) throw new Error(`Default stages: ${result.status}: ${await result.text()}`)
+    // Rendering a single-page document as one image uses PNG by default.
+    expect(result.headers.get('content-type')?.split(';')[0]).toBe('application/zip')
+    const entries = [...zipEntries(new Uint8Array(await result.arrayBuffer()))]
+    expect(entries.some(([name]) => name.endsWith('.png'))).toBe(true)
   },
   120_000,
 )
@@ -1535,6 +1622,30 @@ test.each(['url-pdf', 'html-pdf', 'markdown-pdf'])(
   120_000,
 )
 
+test.skipIf(!isV9)(
+  'Gotenberg 9 accepts Chromium header and footer fragments without document wrappers',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!operation) throw new Error('Missing HTML conversion')
+    const response = await proxyConversionRequest(
+      request(operation, {
+        source: '<html><body><h1>Header fragments</h1></body></html>',
+        headerHtml: '<div>Page <span class="pageNumber"></span></div>',
+        footerHtml: '<div>Footer</div>',
+        fields: { marginTop: '0.8', marginBottom: '0.8' },
+      }),
+    )
+    if (!response.ok) {
+      throw new Error(`Fragment header: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(
+      new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
+    ).toBe('%PDF-')
+  },
+  120_000,
+)
+
 test.each(['markdown-pdf', 'markdown-shot'])(
   'Gotenberg renders %s with a custom template, two Markdown files and a local stylesheet',
   async (id) => {
@@ -1808,6 +1919,26 @@ test('LibreOffice applies documented PDF viewer preferences to a real source fil
     new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).subarray(0, 5)),
   ).toBe('%PDF-')
 }, 120_000)
+
+test.skipIf(!isV9)(
+  'Gotenberg 9 accepts fractional LibreOffice watermark rotation in degrees',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!operation) throw new Error('Missing Office conversion')
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        { fields: { nativeWatermarkText: 'DRAFT', nativeWatermarkRotateAngle: '12.34' } },
+        [new File(['Sample document'], 'watermark.txt', { type: 'text/plain' })],
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(`Fractional rotation: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+  },
+  120_000,
+)
 
 const officeCompressionCases: {
   description: string

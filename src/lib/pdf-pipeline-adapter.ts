@@ -1,3 +1,4 @@
+import { mergeUploadFilenames } from '#/lib/merge-order'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -42,12 +43,30 @@ export function adaptPdfPipeline(
   ])
   const stages = parsePdfPipeline(raw, {
     assetNames: [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
+    allowUnresolvedAssets: payload.downloadFrom?.some(
+      (remote) => !remote.name && !remote.field && !remote.embedded,
+    ),
     acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
   })
   const form = new FormData()
-  for (const file of legacy.getAll('files')) {
+  const inputs = legacy.getAll('files')
+  // Gotenberg 9 sorts PDFs by their received filenames, regardless of the
+  // multipart upload order. Number local inputs when merging, as the standalone
+  // merge tool does, without renaming referenced stage assets.
+  const orderedNames =
+    stages.some(({ op }) => op === 'merge') && inputs.length > 1
+      ? mergeUploadFilenames(
+          inputs.map((file) => (file instanceof File ? file.name : '')),
+          [
+            ...auxiliary.map(({ name }) => name),
+            ...archiveEntryNames,
+            ...(payload.downloadFrom ?? []).flatMap(({ name }) => (name ? [name] : [])),
+          ],
+        )
+      : []
+  for (const [index, file] of inputs.entries()) {
     if (!(file instanceof File)) throw new InputError('Expected an uploaded PDF.')
-    form.append('files', file, file.name)
+    form.append('files', file, orderedNames[index] ?? file.name)
   }
   for (const asset of auxiliary) form.append('files', asset, asset.name)
   // Remote downloads use the upstream Content-Disposition filename. Archive

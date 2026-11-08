@@ -1,3 +1,4 @@
+import { filenameKey, safeFilename } from '#/lib/file-names'
 /** Gotenberg 8.31+ PDF/A-3 attachment metadata, keyed by exact upload filename. */
 export const ATTACHMENT_RELATIONSHIPS = [
   'Source',
@@ -9,6 +10,20 @@ export const ATTACHMENT_RELATIONSHIPS = [
 
 export type AttachmentRelationship = (typeof ATTACHMENT_RELATIONSHIPS)[number]
 export type AttachmentMetadata = { mimeType?: string; relationship?: AttachmentRelationship }
+
+/** Accept ordinary MIME types and parameterised media types without loosening
+ * the no-control-character requirement for metadata sent upstream. */
+export function isAttachmentMimeType(value: string): boolean {
+  return (
+    /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:\s*;\s*[!#$%&'*+.^_`|~0-9A-Za-z-]+=(?:[!#$%&'*+.^_`|~0-9A-Za-z-]+|"(?:[^"\\\r\n]|\\.)*"))*$/.test(
+      value,
+    ) &&
+    ![...value].some((character) => {
+      const code = character.charCodeAt(0)
+      return code < 32 || code === 127
+    })
+  )
+}
 
 export function parseAttachmentMetadata(
   raw: string | undefined,
@@ -41,12 +56,12 @@ function checkedMetadata(raw: string | undefined): Record<string, AttachmentMeta
 }
 
 function checkedFilename(name: string): string {
-  // Mirror the proxy's simple-filename contract; do not silently trim a name,
-  // because embedsMetadata keys must exactly match Content-Disposition or uploads.
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9 _.()-]{0,150}$/.test(name) || name === '.' || name === '..') {
-    throw new Error(
-      'Use an exact simple attachment filename without folders or special characters.',
-    )
+  // Preserve the exact uploaded filename, including significant surrounding spaces.
+  // Gotenberg's embedsMetadata map uses exact keys.
+  try {
+    safeFilename(name)
+  } catch {
+    throw new Error('Use the exact attachment filename without paths or control characters.')
   }
   return name
 }
@@ -64,7 +79,7 @@ export function setAttachmentMetadata(
   const current = checkedMetadata(raw)
   const name = checkedFilename(filename)
   const value = input.trim()
-  if (key === 'mimeType' && value && !/^[\w.+-]+\/[\w.+-]+$/.test(value)) {
+  if (key === 'mimeType' && value && !isAttachmentMimeType(value)) {
     throw new Error('MIME type must look like application/xml or image/png.')
   }
   if (
@@ -74,7 +89,9 @@ export function setAttachmentMetadata(
   ) {
     throw new Error('Choose a supported PDF/A attachment relationship.')
   }
-  const entry: AttachmentMetadata = { ...current[name] }
+  const entry: AttachmentMetadata = {
+    ...(Object.hasOwn(current, name) ? current[name] : {}),
+  }
   if (value) {
     if (key === 'relationship') entry.relationship = value as AttachmentRelationship
     else entry.mimeType = value
@@ -82,8 +99,17 @@ export function setAttachmentMetadata(
     delete entry[key]
   }
   const next = { ...current }
-  if (Object.keys(entry).length) next[name] = entry
-  else delete next[name]
+  if (Object.keys(entry).length) {
+    // Use an own data property even for special names such as '__proto__'.
+    Object.defineProperty(next, name, {
+      value: entry,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+  } else {
+    delete next[name]
+  }
   return serialized(next)
 }
 
@@ -91,7 +117,7 @@ export function setAttachmentMetadata(
 export function addRemoteAttachmentMetadata(raw: string | undefined, filename: string): string {
   const current = checkedMetadata(raw)
   const name = checkedFilename(filename)
-  if (Object.keys(current).some((item) => item.toLowerCase() === name.toLowerCase())) {
+  if (Object.keys(current).some((item) => filenameKey(item) === filenameKey(name))) {
     throw new Error('This attachment already has a metadata entry.')
   }
   return serialized({ ...current, [name]: { relationship: 'Unspecified' } })

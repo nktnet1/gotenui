@@ -70,11 +70,10 @@ test('Office file picker and proxy validation use the same extended upstream fil
   assert.throws(() => validateFiles(spec, [doc('bad.exe')], [], 1000), /Unsupported Office/)
 })
 
-test('canonical Unicode filename collisions are rejected before Gotenberg handles input files', () => {
+test('canonical Unicode duplicate source names are accepted for upstream auto-renaming', () => {
   const pipeline = operation('pdf-pipeline')
-  assert.throws(
-    () => validateFiles(pipeline, [pdf('café.pdf'), pdf('cafe\u0301.pdf')], [], 1_000),
-    /Duplicate filename/,
+  assert.doesNotThrow(() =>
+    validateFiles(pipeline, [pdf('café.pdf'), pdf('cafe\u0301.pdf')], [], 1_000),
   )
 })
 
@@ -309,7 +308,7 @@ test('Office compression has separate controls from post-conversion image optimi
   assert.equal(isFieldVisible(quality, {}), true)
 })
 
-test('Office merging preserves ordered uploads and permits repeated local filenames only when enabled', async () => {
+test('Office merging preserves ordered uploads and repeated local filenames', async () => {
   const spec = operation('office-pdf')
   const docs = [doc('z.docx', 'first'), doc('same.docx', 'second'), doc('same.docx', 'third')]
   const { payload } = validatePayload(request('office-pdf', { merge: true }))
@@ -326,7 +325,7 @@ test('Office merging preserves ordered uploads and permits repeated local filena
     'second',
     'third',
   ])
-  assert.throws(() => validateFiles(spec, docs, [], 1000), /Duplicate filename/)
+  assert.doesNotThrow(() => validateFiles(spec, docs, [], 1000))
   assert.doesNotThrow(() => validateFiles(spec, docs.slice(0, 1), [], 1000, payload))
 })
 
@@ -408,10 +407,11 @@ test('Chromium reliability controls convert friendly strings to upstream JSON ar
     )
   }
   for (const invalid of [
-    'https://evil.test/path',
-    'example.test/anything',
-    'example.test:443',
-    '.com',
+    'https://',
+    'example.test:invalid-port',
+    'https://user:password@example.test',
+    'example.test,',
+    'example.test\r\nX-Header: malicious',
   ]) {
     assert.throws(
       () =>
@@ -469,4 +469,34 @@ test('Gotenberg backend capability checks reject unknown versions without guessi
   assert.equal(versionAtLeast('v8.36.0', 36), true)
   assert.equal(versionAtLeast('8.35.1', 36), false)
   assert.equal(versionAtLeast('9.0.0', 36), null)
+})
+
+test('resource exclusions match Gotenberg 9 URL/port forms and unlimited status-code lists', () => {
+  const domains = [
+    'Example.com:443',
+    'https://Example.com/ignored/path',
+    'example.com/other/path',
+    '*.example.com',
+    '.example.com',
+    ...Array.from({ length: 35 }, (_, i) => `cdn${i}.example.com`),
+  ]
+  const statuses = Array.from({ length: 40 }, (_, i) => String(i + 400))
+  const spec = operation('url-shot')
+  const { payload } = validatePayload(
+    request('url-shot', {
+      failOnResourceHttpStatusCodes: statuses.join(', '),
+      ignoreResourceHttpStatusDomains: domains.join(', '),
+    }),
+  )
+  const form = createGotenbergForm(spec, payload, [], [])
+  assert.deepEqual(
+    JSON.parse(String(form.get('failOnResourceHttpStatusCodes'))),
+    statuses.map(Number),
+  )
+  assert.deepEqual(
+    JSON.parse(String(form.get('ignoreResourceHttpStatusDomains'))),
+    domains.map((domain) => domain.toLowerCase()),
+  )
+  assert.deepEqual(parseIgnoredDomains('Example.com, example.com'), ['example.com'])
+  assert.deepEqual(parseStatusCodes('404, 499, 404'), [404, 499])
 })

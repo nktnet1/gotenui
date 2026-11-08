@@ -40,6 +40,36 @@ function form(
 }
 
 describe('Single-request PDF post-processing', () => {
+  test('does not apply legacy overlay or metadata-length caps', () => {
+    const text = 'Watermark'.repeat(1600)
+    const settings = {
+      watermarks: Array.from({ length: 22 }, (_, index) => ({
+        source: 'text' as const,
+        expression: `${index}: ${text}`,
+        options: JSON.stringify({ font: 'Nimbus Sans', content: text }),
+      })),
+    }
+    const result = form('url-pdf', { postProcess: settings })
+    assert.equal(result.getAll('watermarkExpression').length, 22)
+    const version = '2026.'.repeat(30)
+    const { payload } = validatePayload(
+      candidate('url-pdf', {
+        postProcess: { facturxConformanceLevel: 'MINIMUM', facturxVersion: version },
+      }),
+    )
+    assert.equal(payload.postProcess?.facturxVersion, version)
+  })
+
+  test('preserves metadata above 10 KB without bypassing metadata validation', () => {
+    const metadata = JSON.stringify({ Title: 'Quarterly results '.repeat(800) })
+    assert.ok(metadata.length > 10_000)
+    assert.equal(form('url-pdf', { postProcess: { metadata } }).get('metadata'), metadata)
+    assert.throws(
+      () => form('url-pdf', { postProcess: { metadata: '{broken' } }),
+      /Metadata must be a valid JSON object/,
+    )
+  })
+
   test.each(['url-pdf', 'html-pdf', 'markdown-pdf', 'office-pdf'])(
     '%s includes watermark, stamp, metadata and flatten in the original conversion request',
     (id) => {
@@ -104,6 +134,18 @@ describe('Single-request PDF post-processing', () => {
     assert.deepEqual(
       (result.getAll('embeds') as File[]).map((file) => file.name),
       ['first.txt', 'second.txt'],
+    )
+  })
+
+  test('accepts more than 20 embedded attachments when within the upload budget', () => {
+    const embeds = Array.from(
+      { length: 25 },
+      (_, index) => new File([`embedded ${index}`], `attachment-${index}.txt`),
+    )
+    const result = form('url-pdf', {}, { embeds })
+    assert.deepEqual(
+      (result.getAll('embeds') as File[]).map((file) => file.name),
+      embeds.map((file) => file.name),
     )
   })
 
@@ -289,12 +331,20 @@ describe('Single-request PDF post-processing', () => {
     )
   })
 
-  test('rejects duplicate, oversized, empty, or wrongly typed upload files', () => {
+  test('rejects exact duplicates and oversized files while permitting case-distinct and empty attachments', () => {
     assert.throws(
-      () => form('url-pdf', {}, { embeds: [first, new File(['other'], 'FIRST.TXT')] }),
+      () => form('url-pdf', {}, { embeds: [first, new File(['other'], 'first.txt')] }),
       /Duplicate PDF attachment/,
     )
-    assert.throws(() => form('url-pdf', {}, { embeds: [new File([], 'empty.txt')] }), /empty/)
+    const caseDistinct = form('url-pdf', {}, { embeds: [first, new File(['other'], 'FIRST.TXT')] })
+    assert.deepEqual(
+      (caseDistinct.getAll('embeds') as File[]).map((file) => file.name),
+      ['first.txt', 'FIRST.TXT'],
+    )
+    assert.equal(
+      (form('url-pdf', {}, { embeds: [new File([], 'empty.txt')] }).get('embeds') as File).size,
+      0,
+    )
     const parsed = validatePayload(candidate('url-pdf'))
     assert.throws(
       () =>
@@ -574,14 +624,13 @@ describe('Ordered, repeated watermark and stamp groups (v1.0.22)', () => {
         ),
       /source type/,
     )
-    assert.throws(
-      () =>
-        form('url-pdf', {
-          postProcess: {
-            stamps: Array.from({ length: 11 }, () => ({ source: 'text', expression: 'X' })),
-          },
-        }),
-      /10/,
+    const manyStamps = Array.from({ length: 24 }, (_, index) => ({
+      source: 'text' as const,
+      expression: `CONFIDENTIAL ${index}`,
+    }))
+    assert.equal(
+      form('url-pdf', { postProcess: { stamps: manyStamps } }).getAll('stampSource').length,
+      manyStamps.length,
     )
     assert.throws(
       () =>

@@ -56,7 +56,8 @@ import {
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { officeAcceptForVersion } from '#/lib/office-formats'
 import { canWebhookForOperation, versionAtLeast } from '#/lib/operation-availability'
-import { DEFAULT_PDF_PIPELINE, parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { DEFAULT_PDF_PIPELINE } from '#/lib/pdf-pipeline'
+import { pdfPipelineEditorError } from '#/lib/pdf-pipeline-editor-validation'
 import {
   type OverlayKind,
   overlayUploads,
@@ -297,32 +298,26 @@ export function Workbench({
   const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && !isV9
   const supportsConversionPipeline = isV9 && operation.output === 'pdf' && operation.input !== 'pdf'
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
-  const pipelineError = (() => {
-    if (operation.id !== 'pdf-pipeline') return null
-    try {
-      parsePdfPipeline(String(fields.stages ?? ''), {
-        // Archive entries are indexed and checked against references by the proxy.
-        // Do not reject a stage asset solely because it is inside an uploaded ZIP.
-        assetNames: archives.length ? undefined : auxFiles.map(({ name }) => name),
-        acknowledgedRedaction: fields.acknowledgedRedaction === true,
-      })
-      return null
-    } catch (error) {
-      return error instanceof Error ? error.message : 'Invalid PDF pipeline.'
-    }
-  })()
-  const conversionPipelineError = (() => {
-    if (!conversionStages) return null
-    try {
-      parsePdfPipeline(conversionStages, {
-        assetNames: archives.length ? undefined : conversionStageFiles.map(({ name }) => name),
+  const remotePipelineInputs = { remoteRows, remoteJson: remoteInput }
+  const pipelineError =
+    operation.id === 'pdf-pipeline'
+      ? pdfPipelineEditorError(String(fields.stages ?? ''), {
+          ...remotePipelineInputs,
+          localAssetNames: auxFiles.map(({ name }) => name),
+          archivesPresent: archives.length > 0,
+          acknowledgedRedaction: fields.acknowledgedRedaction === true,
+          backendVersion,
+        })
+      : null
+  const conversionPipelineError = conversionStages
+    ? pdfPipelineEditorError(conversionStages, {
+        ...remotePipelineInputs,
+        localAssetNames: conversionStageFiles.map(({ name }) => name),
+        archivesPresent: archives.length > 0,
         acknowledgedRedaction: acknowledgedConversionRedaction,
+        backendVersion,
       })
-      return null
-    } catch (error) {
-      return error instanceof Error ? error.message : 'Invalid conversion PDF stages.'
-    }
-  })()
+    : null
   const docsUrl =
     isV9 && operation.input === 'pdf'
       ? `https://gotenberg.dev/docs/pdf/${operation.id === 'extract-attachments' ? 'attachments' : operation.id === 'extract-text' ? 'pages' : operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`
@@ -644,7 +639,9 @@ export function Workbench({
                 }
                 description={
                   operation.id === 'merge'
-                    ? 'Select at least two PDFs. Gotenui prefixes uploaded filenames to preserve the order shown below.'
+                    ? isV9
+                      ? 'Select one or more PDFs. Gotenberg 9 also accepts a single PDF. Gotenui prefixes filenames to preserve the selected order when merging multiple files.'
+                      : 'Select at least two PDFs. Gotenui prefixes uploaded filenames to preserve the order shown below.'
                     : operation.input === 'pdf'
                       ? 'Select PDF files to process. Multiple files may produce a ZIP archive.'
                       : 'Documents, slides, spreadsheets, drawings and images supported by Gotenberg.'
@@ -665,6 +662,7 @@ export function Workbench({
                   (operation.id === 'office-pdf' && fields.merge === true)
                 }
                 allowDuplicateNames={
+                  (isV9 && (operation.input === 'pdf' || operation.input === 'office')) ||
                   operation.id === 'merge' ||
                   (operation.id === 'office-pdf' && fields.merge === true)
                 }
@@ -688,7 +686,6 @@ export function Workbench({
                 }
                 files={archives}
                 onChange={setArchives}
-                accept=".zip,application/zip"
                 multiple
               />
             )}
@@ -751,7 +748,12 @@ export function Workbench({
                 files={auxFiles}
                 onChange={updateAux}
                 multiple={operation.auxiliary.multiple}
-                accept={operation.auxiliary.accept}
+                accept={
+                  (isV9 && operation.id === 'factur-x') ||
+                  (isV9 && standaloneKind && fields[`${standaloneKind}Source`] === 'pdf')
+                    ? undefined
+                    : operation.auxiliary.accept
+                }
               />
             )}
           </CardContent>
@@ -1014,7 +1016,6 @@ export function Workbench({
                 value={outputName}
                 onChange={(event) => setOutputName(event.target.value)}
                 placeholder={`e.g. ${operation.id}-result (without extension)`}
-                maxLength={100}
               />
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {operation.output === 'json'
@@ -1042,7 +1043,9 @@ export function Workbench({
                         field={
                           isV9 && operation.id === 'factur-x' && field.name === 'pdfa'
                             ? { ...field, options: ['PDF/A-3b'] }
-                            : field
+                            : isV9 && operation.output === 'image' && field.name === 'quality'
+                              ? { ...field, min: 1 }
+                              : field
                         }
                         value={fields[field.name]}
                         onChange={(value) => updateField(field.name, value)}
@@ -1174,7 +1177,11 @@ export function Workbench({
               type="button"
               variant="outline"
               size="lg"
-              disabled={pending || Boolean(unavailableReason) || Boolean(pipelineError)}
+              disabled={
+                pending ||
+                Boolean(unavailableReason) ||
+                Boolean(pipelineError || conversionPipelineError)
+              }
               onClick={queueCurrent}
             >
               <ListPlus className="size-4" /> Add to batch
@@ -1182,7 +1189,11 @@ export function Workbench({
             <Button
               type="submit"
               size="lg"
-              disabled={pending || Boolean(unavailableReason) || Boolean(pipelineError)}
+              disabled={
+                pending ||
+                Boolean(unavailableReason) ||
+                Boolean(pipelineError || conversionPipelineError)
+              }
               className="min-w-44"
             >
               {pending ? (

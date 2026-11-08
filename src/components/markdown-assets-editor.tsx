@@ -5,6 +5,9 @@ import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Textarea } from '#/components/ui/textarea'
 import { defaultMarkdownTemplate } from '#/lib/chromium-documents'
+import { filenameKey } from '#/lib/file-names'
+import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
+import { readHtmlSource } from '#/lib/html-source-import'
 import { safeFilename } from '#/lib/validation'
 
 export type MarkdownSource = { id: number; name: string; content: string }
@@ -41,23 +44,23 @@ export function MarkdownAssetsEditor({
   }
   const add = () => {
     let number = 2
-    while (names.some((name) => name.toLowerCase() === `chapter-${number}.md`)) number++
+    while (names.some((name) => filenameKey(name) === `chapter-${number}.md`)) number++
     onSourcesChange([...sources, { id: nextId(), name: `chapter-${number}.md`, content: '' }])
   }
   const importFiles = async (selected: File[]) => {
     if (!selected.length) return
-    const seen = new Set(names.map((name) => name.toLowerCase()))
+    const seen = new Set(names.map(filenameKey))
     const added: MarkdownSource[] = []
     try {
       for (const file of selected) {
         safeFilename(file.name)
-        if (!/\.md$/i.test(file.name) || !file.size || file.size > 300_000) {
-          throw new Error(`Choose a non-empty .md file under 300 KB: ${file.name}`)
+        if (!/\.md$/i.test(file.name) || file.size > MAX_UPLOAD_BYTES) {
+          throw new Error(`Choose a .md file within the configured upload limit: ${file.name}`)
         }
-        if (seen.has(file.name.toLowerCase())) {
+        if (seen.has(filenameKey(file.name))) {
           throw new Error(`Duplicate Markdown filename: ${file.name}`)
         }
-        seen.add(file.name.toLowerCase())
+        seen.add(filenameKey(file.name))
         added.push({ id: nextId(), name: file.name, content: await file.text() })
       }
       onSourcesChange([...sources, ...added])
@@ -67,14 +70,10 @@ export function MarkdownAssetsEditor({
   }
   const importTemplate = async (file: File | undefined) => {
     if (!file) return
-    if (!/\.html?$/i.test(file.name) || !file.size || file.size > 150_000) {
-      toast.error('Choose a non-empty HTML template under 150 KB.')
-      return
-    }
     try {
-      onCustomTemplateChange(await file.text())
-    } catch {
-      toast.error('Could not read the Markdown template.')
+      onCustomTemplateChange(await readHtmlSource(file))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not read the Markdown template.')
     }
   }
   return (
@@ -230,8 +229,9 @@ export function MarkdownAssetsEditor({
           }}
         />
         <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-          Each Markdown file needs a matching <code>{'{{ toHTML "filename.md" }}'}</code> call.
-          Assets must be referenced by their filename, not a directory path.
+          Use <code>{'{{ toHTML "filename.md" }}'}</code> to render a Markdown source. Custom
+          templates may render only selected files, or none; reference assets by filename, not a
+          directory path.
         </p>
       </div>
     </section>

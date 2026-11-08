@@ -10,7 +10,7 @@ export function defaultMarkdownTemplate(names: readonly string[]): string {
   // Quote filenames as template string literals. Names may legitimately
   // contain quotes or punctuation; interpolating them raw breaks the action.
   const sections = names
-    .map((name) => `    <section>{{ toHTML ${JSON.stringify(name)} }}</section>`)
+    .map((name) => `    <section>{{ toHTML ${JSON.stringify(name.normalize('NFC'))} }}</section>`)
     .join('\n')
   return `<!DOCTYPE html>
 <html lang="en">
