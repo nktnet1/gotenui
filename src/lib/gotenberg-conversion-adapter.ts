@@ -1,5 +1,10 @@
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
-import { reservePrefixedMergeUploadNames } from '#/lib/merge-order'
+import {
+  mergeUploadFilename,
+  mergeUploadFilenames,
+  reservePrefixedMergeUploadNames,
+} from '#/lib/merge-order'
+import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { normalizePdfStageAssets, parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
@@ -236,6 +241,116 @@ function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
   }
 }
 
+type MergedOfficeSource = { original: string; merged: string }
+
+/** The 9.x LibreOffice route sorts source documents by filename before running
+ * PDF stages. Keep the selected upload order even when merge comes from the
+ * pipeline editor rather than the legacy Merge switch.
+ */
+function orderOfficeMergeInputs(
+  form: FormData,
+  payload: ConversionPayload,
+  stages: readonly Stage[],
+  stageFiles: readonly File[],
+  archiveEntryNames: readonly string[],
+  stageAssetNames: readonly string[],
+): MergedOfficeSource | null {
+  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
+  if (firstMerge === -1) return null
+
+  const firstCompose = stages.findIndex(({ op }) => op === 'compose')
+  const hasOtherOfficeInputs = (name: string): boolean =>
+    OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase())
+  // Gotenberg excludes files referenced by stages from LibreOffice's input
+  // documents, even if those assets have a convertible extension (.pdf, .png,
+  // .txt, etc.). Only an unreferenced archive or remote can change which
+  // converted document becomes first after the backend sorts filenames.
+  const referenced = new Set(stageAssetNames.map((name) => name.normalize('NFC')))
+  const isOtherSource = (name: string): boolean =>
+    hasOtherOfficeInputs(name) && !referenced.has(name.normalize('NFC'))
+  const hasExternalSources =
+    archiveEntryNames.some(isOtherSource) ||
+    (payload.downloadFrom ?? []).some(({ filename, name }) => {
+      const remoteName = filename ?? name
+      return !remoteName || isOtherSource(remoteName)
+    })
+  const canRemapCompose =
+    firstCompose > firstMerge &&
+    !stages.slice(0, firstCompose).some(({ op }) => op === 'split') &&
+    !hasExternalSources
+  const builtInMerge = payload.fields.merge === true
+  // Composing first needs the original PDF names. If the first merge has
+  // unpredictable inputs, likewise leave explicit-stage requests unchanged.
+  if (!builtInMerge && firstCompose !== -1 && !canRemapCompose) {
+    return null
+  }
+
+  const sources = form.getAll('files')
+  if (sources.some((source) => !(source instanceof File))) {
+    throw new InputError('Expected an Office document upload.')
+  }
+  if (!builtInMerge && sources.length < 2) return null
+
+  const filenames = sources.map((source) => (source instanceof File ? source.name : ''))
+  const reserved = [
+    ...stageFiles.map(({ name }) => name),
+    ...archiveEntryNames,
+    ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
+      filename || name ? [filename ?? name ?? ''] : [],
+    ),
+  ]
+  // The v8 form builder already prefixes documents for its Merge switch.
+  const ordered = builtInMerge
+    ? reservePrefixedMergeUploadNames(filenames, reserved)
+    : mergeUploadFilenames(filenames, reserved)
+  if (filenames.some((name, index) => name !== ordered[index])) {
+    form.delete('files')
+    for (const [index, source] of sources.entries()) {
+      if (source instanceof File) form.append('files', source, ordered[index])
+    }
+  }
+
+  if (!canRemapCompose) return null
+  const prefix = mergeUploadFilename('', 0, sources.length)
+  const firstName =
+    builtInMerge && filenames[0]?.startsWith(prefix)
+      ? filenames[0].slice(prefix.length)
+      : filenames[0]
+  return {
+    original: `${firstName.normalize('NFC')}.pdf`,
+    merged: `${ordered[0].normalize('NFC')}.pdf`,
+  }
+}
+
+/** Point composition after a merge at the generated PDF filename, which is
+ * the first converted Office input's filename with an additional .pdf suffix.
+ */
+function mapMergedOfficeCompose(stages: Stage[], source: MergedOfficeSource | null): Stage[] {
+  if (!source) return stages
+  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
+  return stages.map((stage, index) => {
+    if (
+      stage.op !== 'compose' ||
+      index <= firstMerge ||
+      stages.slice(firstMerge + 1, index).some(({ op }) => op === 'split') ||
+      !Array.isArray(stage.placements)
+    ) {
+      return stage
+    }
+    return {
+      ...stage,
+      placements: stage.placements.map((placement: unknown) =>
+        placement &&
+        typeof placement === 'object' &&
+        'source' in placement &&
+        placement.source === source.original
+          ? { ...placement, source: source.merged }
+          : placement,
+      ),
+    }
+  })
+}
+
 /** Adapt validated v8 UI fields to Gotenberg 9, without modifying the existing v8 encoder. */
 export function adaptConversionForm(
   operation: Operation,
@@ -292,33 +407,6 @@ export function adaptConversionForm(
       'Complex PDF post-processing is not yet available on Gotenberg 9. Remove the post-processing options or use a Gotenberg 8 connection.',
     )
   }
-  if (operation.id === 'office-pdf' && payload.fields.merge === true) {
-    // The v8 form builder numbers local documents so Gotenberg's filename sort
-    // retains upload order. Reserve filenames used by later stage assets and
-    // unpacked archives before sending that same numbered list to Gotenberg 9.
-    // Otherwise e.g. report.docx -> 01_report.docx can shadow an attachment
-    // named 01_report.docx, causing the stage to read the source document.
-    const sources = form.getAll('files')
-    if (sources.some((source) => !(source instanceof File))) {
-      throw new InputError('Expected an Office document upload.')
-    }
-    const renamed = reservePrefixedMergeUploadNames(
-      sources.map((source) => (source instanceof File ? source.name : '')),
-      [
-        ...stageFiles.map(({ name }) => name),
-        ...archiveEntryNames,
-        ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
-          filename || name ? [filename ?? name ?? ''] : [],
-        ),
-      ],
-    )
-    if (sources.some((source, index) => source instanceof File && source.name !== renamed[index])) {
-      form.delete('files')
-      for (const [index, source] of sources.entries()) {
-        if (source instanceof File) form.append('files', source, renamed[index])
-      }
-    }
-  }
   if (operation.path.startsWith('/forms/chromium/')) {
     if (
       operation.output === 'pdf' &&
@@ -345,23 +433,31 @@ export function adaptConversionForm(
       Boolean(payload.conversionStages),
       payload.fields,
     )
+    const firstUserStages = payload.conversionStages
+      ? parsePdfPipeline(payload.conversionStages, {
+          acknowledgedRedaction: payload.acknowledgedConversionRedaction,
+        })
+      : []
+    const mergedOfficeSource =
+      operation.id === 'office-pdf'
+        ? orderOfficeMergeInputs(
+            form,
+            payload,
+            [...generated.filter(({ op }) => op !== 'remediate'), ...firstUserStages],
+            stageFiles,
+            archiveEntryNames,
+            pdfStageAssetNames(firstUserStages),
+          )
+        : null
     const remoteNames = payload.conversionStages
-      ? remoteStageAssets(
-          payload.downloadFrom,
-          pdfStageAssetNames(
-            parsePdfPipeline(payload.conversionStages, {
-              acknowledgedRedaction: payload.acknowledgedConversionRedaction,
-            }),
-          ),
-          [
-            ...stageFiles.map(({ name }) => name),
-            ...archiveEntryNames,
-            ...form
-              .getAll('files')
-              .filter((file): file is File => file instanceof File)
-              .map(({ name }) => name),
-          ],
-        )
+      ? remoteStageAssets(payload.downloadFrom, pdfStageAssetNames(firstUserStages), [
+          ...stageFiles.map(({ name }) => name),
+          ...archiveEntryNames,
+          ...form
+            .getAll('files')
+            .filter((file): file is File => file instanceof File)
+            .map(({ name }) => name),
+        ])
       : []
     const userStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {
@@ -402,14 +498,15 @@ export function adaptConversionForm(
       ...userStages.slice(remediationAt),
     ]
     if (stages.length) {
-      parsePdfPipeline(JSON.stringify(stages), {
+      const mergedStages = mapMergedOfficeCompose(stages, mergedOfficeSource)
+      parsePdfPipeline(JSON.stringify(mergedStages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
         allowUnresolvedAssets: payload.downloadFrom?.some(
           (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
         ),
         acknowledgedRedaction: payload.acknowledgedConversionRedaction,
       })
-      form.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))
+      form.set('stages', JSON.stringify(normalizePdfStageAssets(mergedStages)))
     }
     for (const file of stageFiles) form.append('files', file, file.name)
   } else if (payload.conversionStages || stageFiles.length) {

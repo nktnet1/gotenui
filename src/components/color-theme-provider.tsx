@@ -164,7 +164,7 @@ export function ThemeSelect() {
     }
     const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'))
     const index = items.indexOf(event.target as HTMLButtonElement)
-    const next = nextThemeMenuIndex(index < 0 ? 0 : index, event.key)
+    const next = nextThemeMenuIndex(Math.max(index, 0), event.key)
     if (next !== null) {
       event.preventDefault()
       items[next]?.focus()

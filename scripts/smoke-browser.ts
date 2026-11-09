@@ -281,7 +281,7 @@ function assertRgbPalette(
 ): void {
   assert.ok(actual && typeof actual === 'object', description)
   for (const [part, channels] of Object.entries(expected)) {
-    const rgb = (actual as Record<string, unknown>)[part]
+    const rgb: unknown = (actual as Record<string, unknown>)[part]
     assert.ok(Array.isArray(rgb) && rgb.length === 3, `${description} ${part}: invalid RGB`)
     assert.ok(
       rgb.every(
