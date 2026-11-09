@@ -155,7 +155,7 @@ describe('Gotenberg 9.2 composition', () => {
     ])
   })
 
-  it('keeps upload order and the merged filename when composing after a merge', () => {
+  it('keeps upload order and omits the ambiguous source after a merge', () => {
     const result = adaptPdfPipeline(
       {
         operation: 'pdf-pipeline',
@@ -176,7 +176,7 @@ describe('Gotenberg 9.2 composition', () => {
     )
     assert.deepEqual(JSON.parse(String(result.form.get('stages'))), [
       { op: 'merge' },
-      { op: 'compose', paperSize: 'A4', placements: [{ source: '01_z.pdf', x: 12, y: 12 }] },
+      { op: 'compose', paperSize: 'A4', placements: [{ x: 12, y: 12 }] },
     ])
 
     // Composition before merging still names the original source documents.

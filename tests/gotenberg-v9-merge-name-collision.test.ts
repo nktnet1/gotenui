@@ -116,7 +116,7 @@ test('Gotenberg 9.2 preserves upload order for an explicit Office merge stage', 
   assert.deepEqual(output.stages, [{ op: 'merge' }])
 })
 
-test('Gotenberg 9.2 composes the renamed first Office PDF after an explicit merge', async () => {
+test('Gotenberg 9.2 omits the source after an explicit Office merge', async () => {
   const output = await forwardedFiles(
     officeRequest({
       merge: false,
@@ -131,11 +131,11 @@ test('Gotenberg 9.2 composes the renamed first Office PDF after an explicit merg
   assert.deepEqual(output.filenames, ['01_z.docx', '02_a.docx'])
   assert.deepEqual(output.stages, [
     { op: 'merge' },
-    { op: 'compose', paperSize: 'A4', placements: [{ source: '01_z.docx.pdf', x: 12 }] },
+    { op: 'compose', paperSize: 'A4', placements: [{ x: 12 }] },
   ])
 })
 
-test('Gotenberg 9.2 composes the renamed Office PDF after the Merge switch', async () => {
+test('Gotenberg 9.2 omits the source after the Office Merge switch', async () => {
   const output = await forwardedFiles(
     officeRequest({
       sourceNames: ['z.docx', 'a.docx'],
@@ -146,7 +146,7 @@ test('Gotenberg 9.2 composes the renamed Office PDF after the Merge switch', asy
   assert.deepEqual(output.filenames, ['01_z.docx', '02_a.docx'])
   assert.deepEqual(output.stages, [
     { op: 'merge' },
-    { op: 'compose', paperSize: 'A4', placements: [{ source: '01_z.docx.pdf', x: 12 }] },
+    { op: 'compose', paperSize: 'A4', placements: [{ x: 12 }] },
   ])
 })
 
@@ -168,7 +168,7 @@ test('Gotenberg 9.2 composes merged Office PDFs even with a PDF stage asset', as
   assert.deepEqual(output.filenames, ['01_z.docx', '02_a.docx', 'overlay.pdf'])
   assert.deepEqual(output.stages, [
     { op: 'merge' },
-    { op: 'compose', paperSize: 'A4', placements: [{ source: '01_z.docx.pdf' }] },
+    { op: 'compose', paperSize: 'A4', placements: [{}] },
     { op: 'stamp-pdf', source: 'overlay.pdf', x: 0, y: 0 },
   ])
 })
