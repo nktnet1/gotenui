@@ -1,4 +1,4 @@
-import urlJoin from 'url-join'
+import { joinURL } from 'ufo'
 import * as v from 'valibot'
 import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
@@ -252,7 +252,7 @@ async function conversionTargetVersion(
   fetcher: typeof fetch,
   target: { url: string; headers?: HeadersInit; oauth2?: OAuth2ClientCredentials },
 ): Promise<GotenbergVersion> {
-  const response = await fetcher(urlJoin(target.url, '/version'), {
+  const response = await fetcher(joinURL(target.url, '/version'), {
     method: 'GET',
     ...fetchOptions(request),
     headers: target.headers,
@@ -680,7 +680,7 @@ export async function proxyConversionRequest(
             archiveEntryNames,
           ),
         }
-  const upstream = await fetcher(urlJoin(url, path), {
+  const upstream = await fetcher(joinURL(url, path), {
     method: 'POST',
     ...fetchOptions(request),
     body: form,
@@ -845,7 +845,7 @@ export async function proxyStatusRequest(
   }
   let status: ServerStatus
   try {
-    const health = await fetcher(urlJoin(url, '/health'), options)
+    const health = await fetcher(joinURL(url, '/health'), options)
     if (health.status !== 200) {
       invalidateUnauthorized(health.status, target)
       await health.body?.cancel().catch(() => {})
@@ -873,7 +873,7 @@ export async function proxyStatusRequest(
     let version = 'Unknown'
     let versionAuthFailure: number | undefined
     try {
-      const response = await fetcher(urlJoin(url, '/version'), options)
+      const response = await fetcher(joinURL(url, '/version'), options)
       if (response.status === 401 || response.status === 403) {
         invalidateUnauthorized(response.status, target)
         versionAuthFailure = response.status
@@ -921,7 +921,7 @@ export async function proxyHeadHealthRequest(
     fetcher,
   )
   const { url, headers: authHeaders } = target
-  const upstream = await fetcher(urlJoin(url, '/health'), {
+  const upstream = await fetcher(joinURL(url, '/health'), {
     method: 'HEAD',
     ...fetchOptions(request),
     headers: authHeaders,
@@ -971,7 +971,7 @@ export async function proxyMetricsRequest(
       409,
     )
   }
-  const metricsUrl = profile?.metricsUrl ?? urlJoin(url, '/prometheus/metrics')
+  const metricsUrl = profile?.metricsUrl ?? joinURL(url, '/prometheus/metrics')
   const metricsHeaders = isOtel
     ? profile?.metricsAuthorization
       ? { Authorization: profile.metricsAuthorization }
@@ -1052,7 +1052,7 @@ export async function proxyDebugRequest(
     fetcher,
   )
   const { url, headers: authHeaders } = target
-  const upstream = await fetcher(urlJoin(url, '/debug'), {
+  const upstream = await fetcher(joinURL(url, '/debug'), {
     method: 'GET',
     ...fetchOptions(request),
     headers: authHeaders,
