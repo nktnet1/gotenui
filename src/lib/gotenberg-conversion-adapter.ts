@@ -5,7 +5,13 @@ import {
   reservePrefixedMergeUploadNames,
 } from '#/lib/merge-order'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
-import { normalizePdfStageAssets, parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import { type PdfComposeInput, reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
+import {
+  normalizePdfStageAssets,
+  type PdfPipelineStage,
+  parsePdfPipeline,
+  pdfStageAssetNames,
+} from '#/lib/pdf-pipeline'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError, supportsArchiveInputs } from '#/lib/validation'
@@ -241,8 +247,6 @@ function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
   }
 }
 
-type MergedOfficeSource = { original: string; merged: string }
-
 /** The 9.x LibreOffice route sorts source documents by filename before running
  * PDF stages. Keep the selected upload order even when merge comes from the
  * pipeline editor rather than the legacy Merge switch.
@@ -253,35 +257,15 @@ function orderOfficeMergeInputs(
   stages: readonly Stage[],
   stageFiles: readonly File[],
   archiveEntryNames: readonly string[],
-  stageAssetNames: readonly string[],
-): MergedOfficeSource | null {
+): PdfComposeInput[] | null {
   const firstMerge = stages.findIndex(({ op }) => op === 'merge')
   if (firstMerge === -1) return null
 
   const firstCompose = stages.findIndex(({ op }) => op === 'compose')
-  const hasOtherOfficeInputs = (name: string): boolean =>
-    OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase())
-  // Gotenberg excludes files referenced by stages from LibreOffice's input
-  // documents, even if those assets have a convertible extension (.pdf, .png,
-  // .txt, etc.). Only an unreferenced archive or remote can change which
-  // converted document becomes first after the backend sorts filenames.
-  const referenced = new Set(stageAssetNames.map((name) => name.normalize('NFC')))
-  const isOtherSource = (name: string): boolean =>
-    hasOtherOfficeInputs(name) && !referenced.has(name.normalize('NFC'))
-  const hasExternalSources =
-    archiveEntryNames.some(isOtherSource) ||
-    (payload.downloadFrom ?? []).some(({ filename, name }) => {
-      const remoteName = filename ?? name
-      return !remoteName || isOtherSource(remoteName)
-    })
-  const canRemapCompose =
-    firstCompose > firstMerge &&
-    !stages.slice(0, firstCompose).some(({ op }) => op === 'split') &&
-    !hasExternalSources
   const builtInMerge = payload.fields.merge === true
-  // Composing first needs the original PDF names. If the first merge has
-  // unpredictable inputs, likewise leave explicit-stage requests unchanged.
-  if (!builtInMerge && firstCompose !== -1 && !canRemapCompose) {
+  // Composing before merging still needs the original document filenames.
+  // After merge, compose can omit source rather than guessing a filename.
+  if (!builtInMerge && firstCompose !== -1 && firstCompose < firstMerge) {
     return null
   }
 
@@ -310,44 +294,10 @@ function orderOfficeMergeInputs(
     }
   }
 
-  if (!canRemapCompose) return null
-  const prefix = mergeUploadFilename('', 0, sources.length)
-  const firstName =
-    builtInMerge && filenames[0]?.startsWith(prefix)
-      ? filenames[0].slice(prefix.length)
-      : filenames[0]
-  return {
-    original: `${firstName.normalize('NFC')}.pdf`,
-    merged: `${ordered[0].normalize('NFC')}.pdf`,
-  }
-}
-
-/** Point composition after a merge at the generated PDF filename, which is
- * the first converted Office input's filename with an additional .pdf suffix.
- */
-function mapMergedOfficeCompose(stages: Stage[], source: MergedOfficeSource | null): Stage[] {
-  if (!source) return stages
-  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
-  return stages.map((stage, index) => {
-    if (
-      stage.op !== 'compose' ||
-      index <= firstMerge ||
-      stages.slice(firstMerge + 1, index).some(({ op }) => op === 'split') ||
-      !Array.isArray(stage.placements)
-    ) {
-      return stage
-    }
-    return {
-      ...stage,
-      placements: stage.placements.map((placement: unknown) =>
-        placement &&
-        typeof placement === 'object' &&
-        'source' in placement &&
-        placement.source === source.original
-          ? { ...placement, source: source.merged }
-          : placement,
-      ),
-    }
+  return filenames.map((name, index) => {
+    const prefix = mergeUploadFilename('', index, sources.length)
+    const original = builtInMerge && name.startsWith(prefix) ? name.slice(prefix.length) : name
+    return { original: `${original}.pdf`, forwarded: `${ordered[index]}.pdf` }
   })
 }
 
@@ -438,7 +388,7 @@ export function adaptConversionForm(
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
-    const mergedOfficeSource =
+    const officeSourceNames =
       operation.id === 'office-pdf'
         ? orderOfficeMergeInputs(
             form,
@@ -446,7 +396,6 @@ export function adaptConversionForm(
             [...generated.filter(({ op }) => op !== 'remediate'), ...firstUserStages],
             stageFiles,
             archiveEntryNames,
-            pdfStageAssetNames(firstUserStages),
           )
         : null
     const remoteNames = payload.conversionStages
@@ -498,7 +447,42 @@ export function adaptConversionForm(
       ...userStages.slice(remediationAt),
     ]
     if (stages.length) {
-      const mergedStages = mapMergedOfficeCompose(stages, mergedOfficeSource)
+      const referenced = new Set(pdfStageAssetNames(userStages))
+      const isOfficeSource = (name: string): boolean =>
+        OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase()) &&
+        !referenced.has(name.normalize('NFC'))
+      const remoteSources = (payload.downloadFrom ?? []).flatMap(({ filename, name }) => {
+        const remoteName = filename ?? name
+        return remoteName && isOfficeSource(remoteName) ? [remoteName] : []
+      })
+      const localSources =
+        officeSourceNames ??
+        form
+          .getAll('files')
+          .filter((file): file is File => file instanceof File)
+          .map(({ name }) => ({ original: `${name}.pdf`, forwarded: `${name}.pdf` }))
+      const mergedStages = reconcilePdfComposeSources(stages as PdfPipelineStage[], {
+        inputs:
+          operation.id === 'office-pdf'
+            ? [
+                ...localSources,
+                ...archiveEntryNames.filter(isOfficeSource).map((name) => ({
+                  original: `${name}.pdf`,
+                  forwarded: `${name}.pdf`,
+                })),
+                ...remoteSources.map((name) => ({
+                  original: `${name}.pdf`,
+                  forwarded: `${name}.pdf`,
+                })),
+              ]
+            : payload.outputName
+              ? [{ original: `${payload.outputName}.pdf`, forwarded: `${payload.outputName}.pdf` }]
+              : [],
+        singleInput: operation.id !== 'office-pdf',
+        unknownInputs:
+          operation.id === 'office-pdf' &&
+          (payload.downloadFrom ?? []).some(({ filename, name }) => !(filename ?? name)),
+      })
       parsePdfPipeline(JSON.stringify(mergedStages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
         allowUnresolvedAssets: payload.downloadFrom?.some(

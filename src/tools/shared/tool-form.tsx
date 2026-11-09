@@ -307,6 +307,8 @@ export function Workbench({
           archivesPresent: archives.length > 0,
           acknowledgedRedaction: fields.acknowledgedRedaction === true,
           backendVersion,
+          documentNames: files.map(({ name }) => name),
+          documentKind: 'pdf',
         })
       : null
   const conversionPipelineError = conversionStages
@@ -316,6 +318,10 @@ export function Workbench({
         archivesPresent: archives.length > 0,
         acknowledgedRedaction: acknowledgedConversionRedaction,
         backendVersion,
+        documentNames: files.map(({ name }) => name),
+        documentKind: operation.id === 'office-pdf' ? 'office' : 'single',
+        builtInMerge: operation.id === 'office-pdf' && fields.merge === true,
+        outputName: outputName.trim() || undefined,
       })
     : null
   const docsUrl =
