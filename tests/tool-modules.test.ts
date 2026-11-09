@@ -50,6 +50,7 @@ const orderedIds = [
   'embed',
   'factur-x',
   'pdf-pipeline',
+  'compose-pages',
   'pdf-info',
   'pdf-validate',
   'pdf-attachments',

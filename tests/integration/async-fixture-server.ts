@@ -105,7 +105,12 @@ export function asyncFixtureHandler(): (req: IncomingMessage, res: ServerRespons
     }
     if (path === '/gotenui-remote/no-filename.txt') {
       res.writeHead(200, { 'content-type': 'text/plain' })
-      res.end('Missing the required Content-Disposition filename.')
+      res.end('Office input delivered without a Content-Disposition header.')
+      return true
+    }
+    if (path === '/gotenui-remote/extensionless') {
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('No header or URL extension gives Gotenberg no filename.')
       return true
     }
     const snapshot = /^\/_gotenui_callbacks\/([a-f0-9-]{36})$/.exec(path)

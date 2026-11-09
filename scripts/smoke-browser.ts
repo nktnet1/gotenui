@@ -1396,25 +1396,27 @@ async function run(): Promise<void> {
     checks++
 
     await page.command('Input.insertText', { text: 'comp' })
+    // Gotenberg 9.2 adds Compose PDF pages, which outranks Optimize PDFs for
+    // "comp". On the active v8 connection Compose is still visible but
+    // disabled, so keyboard navigation must start at the next usable result.
     await page.waitUntil(
-      "document.querySelector('[role=option]')?.textContent?.includes('Optimize PDFs')",
-      'relevance-ranked search',
-    )
-    assert.equal(
-      await page.evaluate(
-        "document.querySelector('[role=option]')?.textContent?.includes('Optimize PDFs')",
-      ),
-      true,
+      `(() => {
+        const options = document.querySelectorAll('[role=option]')
+        return options[0]?.textContent?.includes('Compose PDF pages') && options[0]?.disabled &&
+          options[1]?.textContent?.includes('Optimize PDFs') && !options[1]?.disabled &&
+          options[1]?.getAttribute('aria-selected') === 'true'
+      })()`,
+      'relevance-ranked search skips an unavailable tool',
     )
     checks++
     await page.press('ArrowDown')
     await page.waitUntil(
-      "document.querySelector('[role=combobox]')?.getAttribute('aria-activedescendant')?.endsWith('-result-1')",
+      "document.querySelector('[role=combobox]')?.getAttribute('aria-activedescendant')?.endsWith('-result-2')",
       'keyboard highlight moves down',
     )
     await page.press('ArrowUp')
     await page.waitUntil(
-      "document.querySelector('[role=combobox]')?.getAttribute('aria-activedescendant')?.endsWith('-result-0')",
+      "document.querySelector('[role=combobox]')?.getAttribute('aria-activedescendant')?.endsWith('-result-1')",
       'keyboard highlight moves up',
     )
     checks++

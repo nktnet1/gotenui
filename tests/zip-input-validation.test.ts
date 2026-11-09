@@ -223,6 +223,30 @@ test('rejects asset-only ZIPs without a source document, including referenced PD
   )
 })
 
+test('recognises Gotenberg 9.2 downloadFrom.filename as a stage asset when checking ZIP sources', async () => {
+  const stages = '[{"op":"attach","file":"attachment.pdf"}]'
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'notes.txt': 'unrelated' })], {
+      payload: {
+        ...payload,
+        fields: { stages },
+        downloadFrom: [{ url: 'https://example.com/object', filename: 'attachment.pdf' }],
+      },
+    }),
+    /at least one source PDF/,
+  )
+  assert.deepEqual(
+    await check('pdf-pipeline', [zipFixture({ 'notes.txt': 'unrelated' })], {
+      payload: {
+        ...payload,
+        fields: { stages },
+        downloadFrom: [{ url: 'https://example.com/object', filename: 'input.pdf' }],
+      },
+    }),
+    ['notes.txt'],
+  )
+})
+
 test('accepts unrelated ZIP resources while requiring a real PDF or Office input', async () => {
   const many = Object.fromEntries(
     Array.from({ length: 35 }, (_, index) => [`document-${index}.pdf`, '%PDF-1.7']),

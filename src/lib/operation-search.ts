@@ -12,6 +12,8 @@ const KEYWORDS: Readonly<Record<string, string>> = {
   'markdown-shot': 'md screen capture image snapshot',
   merge: 'combine join concatenate append assemble pdf documents',
   split: 'separate divide pages ranges intervals',
+  'compose-pages':
+    'impose imposition layout labels label packing slip n-up multiple pages on sheet',
   'extract-attachments': 'extract embedded attachments export download pdf files zip',
   'extract-text':
     'extract text selectable pages utf8 plain txt pdftotext invisible annotations artifacts no ocr',

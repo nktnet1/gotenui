@@ -5,9 +5,9 @@ const pages: FieldDefinition = {
   name: 'pages',
   label: 'Pages',
   kind: 'text',
-  placeholder: '1-3,5, last or all',
+  placeholder: '1-3, 3-, -3, !1, odd,!last or all',
   required: true,
-  description: 'One-based page selection in Gotenberg 9 syntax.',
+  description: 'One-based page selection. Exclusions (!) and open ranges require Gotenberg 9.2+.',
 }
 const password: FieldDefinition = {
   name: 'password',
@@ -61,6 +61,45 @@ const tool = (
 })
 
 export const V9_PDF_OPERATIONS: readonly Operation[] = [
+  tool(
+    'compose-pages',
+    'Compose PDF pages',
+    'Arrange pages from uploaded PDFs on new sheets, labels or packing slips (Gotenberg 9.2+).',
+    [
+      {
+        name: 'paperSize',
+        label: 'Paper size',
+        kind: 'select',
+        defaultValue: 'A4',
+        options: ['A3', 'A4', 'A5', 'B4', 'B5', 'Letter', 'Legal', 'Tabloid'],
+        description: 'Use a named page size, or clear it and enter both custom dimensions.',
+      },
+      {
+        name: 'paperWidth',
+        label: 'Custom paper width',
+        kind: 'text',
+        placeholder: '6in or 432pt',
+        description: 'Optional. Overrides the selected paper size width.',
+      },
+      {
+        name: 'paperHeight',
+        label: 'Custom paper height',
+        kind: 'text',
+        placeholder: '5in or 360pt',
+        description: 'Optional. Overrides the selected paper size height.',
+      },
+      {
+        name: 'placements',
+        label: 'Page placements (JSON)',
+        kind: 'json',
+        required: true,
+        defaultValue: '[{"sourcePage":1,"page":1,"x":0,"y":0}]',
+        description:
+          'Each placement accepts source, sourcePage, page, x, y, scale and rotation. Coordinates are PDF points. sourcePage and page are one-based: page 2 creates the second output sheet, not page 1. Gotenberg also treats 0 as the first page. Name each source when uploading multiple PDFs, and place every input at least once. Source annotations, fields, bookmarks, tags and metadata are not copied.',
+      },
+    ],
+    { path: '/forms/pdf/compose' },
+  ),
   tool(
     'pdf-info',
     'PDF information',

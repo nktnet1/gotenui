@@ -11,6 +11,7 @@ import {
   safeOutboundHost,
   type WebhookEditorState,
 } from '#/lib/async-inputs'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 
 function ExtraHeaders({
   rows,
@@ -86,6 +87,7 @@ function ExtraHeaders({
 
 export function RemoteInputsEditor({
   isV9 = false,
+  backendVersion,
   pdfInputOnly = false,
   rows,
   onChange,
@@ -94,6 +96,7 @@ export function RemoteInputsEditor({
   newId,
 }: {
   isV9?: boolean
+  backendVersion?: string
   pdfInputOnly?: boolean
   rows: RemoteInputRow[]
   onChange: (rows: RemoteInputRow[]) => void
@@ -102,6 +105,8 @@ export function RemoteInputsEditor({
   newId: () => number
 }) {
   const id = useId()
+  const version = parseGotenbergVersion(backendVersion)
+  const supportsFilenameOverride = isV9 && version?.major === 9 && version.minor >= 2
   const update = (index: number, patch: Partial<RemoteInputRow>) =>
     onChange(rows.map((row, position) => (position === index ? { ...row, ...patch } : row)))
   const move = (from: number, to: number) => {
@@ -186,7 +191,11 @@ export function RemoteInputsEditor({
           </div>
           {isV9 && (
             <div className="space-y-1">
-              <Label htmlFor={`${id}-remote-name-${row.id}`}>Expected filename (optional)</Label>
+              <Label htmlFor={`${id}-remote-name-${row.id}`}>
+                {supportsFilenameOverride
+                  ? 'Downloaded filename (optional)'
+                  : 'Expected filename (optional)'}
+              </Label>
               <Input
                 id={`${id}-remote-name-${row.id}`}
                 value={row.filename ?? ''}
@@ -194,9 +203,9 @@ export function RemoteInputsEditor({
                 placeholder="stamp.png"
               />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Optional preflight hint. If omitted, Gotenberg resolves the filename from the remote
-                server's Content-Disposition header at request time. A PDF stage must still
-                reference that exact filename.
+                {supportsFilenameOverride
+                  ? 'Sent as downloadFrom.filename. Overrides Content-Disposition; if blank, Gotenberg uses the response header, then the URL path when it ends in a filename with an extension. PDF stage references must match the actual download name.'
+                  : 'Preflight hint only (not sent upstream). Gotenberg expects a Content-Disposition filename. PDF stage references must match the downloaded name.'}
               </p>
             </div>
           )}
@@ -245,9 +254,20 @@ export function RemoteInputsEditor({
         </div>
       ))}
       <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
-        Each download response <strong>must</strong> include Content-Disposition with a filename and
-        a valid Content-Type. Gotenberg must be able to reach the URL and allow it through its
-        outbound filtering.{' '}
+        {supportsFilenameOverride ? (
+          <>
+            Gotenberg 9.2 names downloads using your filename override, then Content-Disposition,
+            then the final URL path segment when it has an extension. If none supplies a filename,
+            the download fails.
+          </>
+        ) : (
+          <>
+            Each download response <strong>must</strong> include Content-Disposition with a
+            filename.
+          </>
+        )}{' '}
+        Downloads require a valid Content-Type, and Gotenberg must be able to reach the URL through
+        its outbound filtering.{' '}
         {pdfInputOnly
           ? 'Remote ZIP files are not extracted; upload ZIPs through PDF ZIP archives instead. For remote pipeline assets, enter the expected filename and reference it in the stage editor.'
           : isV9

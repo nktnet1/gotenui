@@ -1,5 +1,9 @@
 import type { ServerStatus } from '#/lib/gotenberg-client'
-import { parseGotenbergVersion, requiresGotenberg91ForExtraction } from '#/lib/gotenberg-version'
+import {
+  parseGotenbergVersion,
+  requiresGotenberg91ForExtraction,
+  requiresGotenberg92ForComposition,
+} from '#/lib/gotenberg-version'
 import type { Operation } from '#/tools/registry'
 
 /** Legacy feature gates are specific to Gotenberg 8's minor-version numbering. */
@@ -33,6 +37,9 @@ export function unavailableOperationReason(
   }
   if (requiresGotenberg91ForExtraction(version, [operation.id])) {
     return 'PDF text and attachment extraction require Gotenberg 9.1 or newer.'
+  }
+  if (requiresGotenberg92ForComposition(version, [operation.id])) {
+    return 'PDF page composition requires Gotenberg 9.2 or newer.'
   }
   const healthModules = status.modules.filter((module) =>
     ['chromium', 'libreoffice'].includes(module.name.toLowerCase()),

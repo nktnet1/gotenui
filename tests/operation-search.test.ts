@@ -23,6 +23,8 @@ describe('tool search', () => {
     ['pptx', 'office-pdf'],
     ['word', 'office-pdf'],
     ['combine pdf', 'merge'],
+    ['packing slip', 'compose-pages'],
+    ['impose', 'compose-pages'],
     ['html screenshot', 'html-shot'],
     ['webpage', 'url-pdf'],
     ['accessibility pdf', 'pdfa'],
@@ -35,7 +37,7 @@ describe('tool search', () => {
   })
 
   it('allows prefixes, requires every search word and ignores unmatched queries', () => {
-    expect(searchOperations('comp')[0]?.id).toBe('optimize')
+    expect(searchOperations('comp')[0]?.id).toBe('compose-pages')
     expect(searchOperations('compr')[0]?.id).toBe('optimize')
     expect(searchOperations('compli')[0]?.id).toBe('pdfa')
     expect(searchOperations('compliance')[0]?.id).toBe('pdfa')
@@ -45,7 +47,7 @@ describe('tool search', () => {
   })
 
   it('keeps match relevance ahead of navigation categories', () => {
-    expect(visibleSearchOperations('comp')[0]?.id).toBe('optimize')
+    expect(visibleSearchOperations('comp')[0]?.id).toBe('compose-pages')
     expect(visibleSearchOperations('compliance')[0]?.id).toBe('pdfa')
     expect(visibleSearchOperations('')).toEqual(
       ['Convert', 'Capture', 'PDF tools'].flatMap((group) =>

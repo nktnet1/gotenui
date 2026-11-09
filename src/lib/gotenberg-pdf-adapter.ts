@@ -112,7 +112,9 @@ export function adaptPdfForm(
   const sources = legacy.getAll('files')
   const reservedNames = [
     ...archiveEntryNames,
-    ...(payload.downloadFrom ?? []).flatMap(({ name }) => (name ? [name] : [])),
+    ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
+      filename || name ? [filename ?? name ?? ''] : [],
+    ),
   ]
   const numberedNames =
     operation.id === 'merge'

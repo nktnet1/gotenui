@@ -31,7 +31,7 @@ describe('all tools home', () => {
   })
 
   it('shows v9-compatible conversion, screenshot and PDF cards', () => {
-    const html = renderHome({ online: true, version: '9.1.0', modules: [] })
+    const html = renderHome({ online: true, version: '9.2.0', modules: [] })
     expect(html).not.toContain('data-slot="tool-card" disabled=""')
     expect(html).toContain('Website screenshot')
     expect(html).toContain('HTML screenshot')

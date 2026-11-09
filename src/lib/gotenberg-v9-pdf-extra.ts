@@ -2,7 +2,7 @@
 
 import { filenameKey } from '#/lib/file-names'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
-import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
+import { normalizePdfStageAssets, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
@@ -18,7 +18,9 @@ function jsonValue(raw: string, label: string): unknown {
 function namedPages(value: string, label: string): string {
   const normalized = value.trim()
   if (!isPdfPageSelector(normalized)) {
-    throw new InputError(`${label} must use page numbers, ranges, odd, even, last or all.`)
+    throw new InputError(
+      `${label} must use page numbers, ranges, !exclusions, odd, even, last or all.`,
+    )
   }
   return normalized
 }
@@ -108,6 +110,28 @@ export function adaptV9PdfExtra(
   const requirePages = (name: string) => namedPages(value(name), name)
 
   switch (operationId) {
+    case 'compose-pages': {
+      allow('paperSize', 'paperWidth', 'paperHeight', 'placements')
+      onlyPdfInputs()
+      const placements = jsonValue(value('placements'), 'Page placements')
+      const stage = parsePdfPipeline(
+        JSON.stringify([
+          {
+            op: 'compose',
+            ...(value('paperSize') ? { paperSize: value('paperSize') } : {}),
+            ...(value('paperWidth') ? { paperWidth: value('paperWidth') } : {}),
+            ...(value('paperHeight') ? { paperHeight: value('paperHeight') } : {}),
+            placements,
+          },
+        ]),
+      )[0]
+      if (!stage) throw new InputError('Invalid page composition.')
+      for (const name of ['paperSize', 'paperWidth', 'paperHeight']) {
+        if (stage[name]) form.set(name, String(stage[name]))
+      }
+      form.set('placements', JSON.stringify(stage.placements))
+      return { path: '/forms/pdf/compose', form }
+    }
     case 'extract-attachments':
       allow('name')
       onlyPdfInputs()

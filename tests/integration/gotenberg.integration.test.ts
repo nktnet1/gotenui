@@ -29,7 +29,9 @@ const backendUrl = inject('gotenbergTestUrl')
 const testContainerName = inject('gotenbergTestContainerName')
 const testVersion = inject('gotenbergTestVersion')
 const isV9 = testVersion.startsWith('9.')
-const isV91 = testVersion === '9.1.0'
+const minorVersion = parseGotenbergVersion(testVersion)?.minor ?? 0
+const supportsV91 = isV9 && minorVersion >= 1
+const supportsV92 = isV9 && minorVersion >= 2
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -583,7 +585,7 @@ async function convertV9(
   return proxyConversionRequest(request(operation, { fields }, inputs, assets))
 }
 
-test.skipIf(!isV9 || isV91)(
+test.skipIf(!isV9 || supportsV91)(
   'Gotenberg 9.0 rejects 9.1-only extraction tools and ordered extraction stages',
   async () => {
     for (const id of ['extract-text', 'extract-attachments']) {
@@ -596,7 +598,7 @@ test.skipIf(!isV9 || isV91)(
   120_000,
 )
 
-test.skipIf(!isV91)(
+test.skipIf(!supportsV91)(
   'Gotenberg 9.1 extracts selected PDF text with full plain-text response semantics',
   async () => {
     const result = await convertV9('extract-text', {
@@ -613,7 +615,7 @@ test.skipIf(!isV91)(
   120_000,
 )
 
-test.skipIf(!isV91)(
+test.skipIf(!supportsV91)(
   'Gotenberg 9.1 returns per-document text results inside a ZIP for multiple source PDFs',
   async () => {
     const result = await convertV9('extract-text', {}, [
@@ -631,7 +633,7 @@ test.skipIf(!isV91)(
   120_000,
 )
 
-test.skipIf(!isV91)(
+test.skipIf(!supportsV91)(
   'Gotenberg 9.1 round-trips a named extracted attachment with its original contents',
   async () => {
     const source = await convertV9(
@@ -653,7 +655,7 @@ test.skipIf(!isV91)(
   120_000,
 )
 
-test.skipIf(!isV91)(
+test.skipIf(!supportsV91)(
   'Gotenberg 9.1 returns all embedded attachments as ZIP entries',
   async () => {
     const source = await convertV9(
@@ -684,7 +686,7 @@ test.skipIf(!isV91)(
   120_000,
 )
 
-test.skipIf(!isV91)(
+test.skipIf(!supportsV91)(
   'Gotenberg 9.1 ordered pipelines return the processed PDF and extracted text or attachment',
   async () => {
     for (const [stage, expectedSuffix] of [
@@ -713,7 +715,7 @@ test.skipIf(!isV91)(
   120_000,
 )
 
-test.skipIf(!isV91)(
+test.skipIf(!supportsV91)(
   'Gotenberg 9.1 conversion-time pipelines return generated PDFs and text together as ZIP',
   async () => {
     const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
@@ -731,6 +733,124 @@ test.skipIf(!isV91)(
     const text = [...entries.entries()].find(([name]) => name.endsWith('.txt'))?.[1]
     if (!text) throw new Error('Conversion-time extraction did not include a text file')
     expect(new TextDecoder().decode(text)).toContain('Conversion-stage text verified')
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV92)(
+  'Gotenberg 9.2 composes two named PDF sources onto separate pages',
+  async () => {
+    const response = await convertV9(
+      'compose-pages',
+      {
+        paperSize: 'A4',
+        placements: JSON.stringify([
+          { source: 'label.pdf', page: 0, x: 18, y: 20, scale: 0.5, rotation: 90 },
+          // Gotenberg uses one-based target pages: 1 is still the first sheet.
+          { source: 'slip.pdf', page: 2, x: 40, y: 60, scale: 0.5 },
+        ]),
+      },
+      [pdfFile('label.pdf'), pdfFile('slip.pdf')],
+    )
+    if (!response.ok) throw new Error(`Compose: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    const composed = await response.arrayBuffer()
+    expect(await inspectV9Pdf('info', composed)).toMatchObject({
+      'verified.pdf': { pages: 2 },
+    })
+    const secondPage = await convertV9('extract-text', { pages: '2' }, [
+      new File([composed], 'composed.pdf', { type: 'application/pdf' }),
+    ])
+    if (!secondPage.ok) {
+      throw new Error(`Composed second page: ${secondPage.status} ${await secondPage.text()}`)
+    }
+    expect(await secondPage.text()).toContain('Local PDF fixture')
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV92)(
+  'Gotenberg 9.2 composes the ordered output of a PDF pipeline merge',
+  async () => {
+    const response = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'merge' },
+          {
+            op: 'compose',
+            paperSize: 'A4',
+            // The merged document is named after the first uploaded PDF.
+            // Source page 2 checks that the second input made it into the merge.
+            placements: [{ source: 'z.pdf', sourcePage: 2, page: 1, x: 0, y: 0 }],
+          },
+        ]),
+      },
+      [pdfFile('z.pdf'), pdfFile('a.pdf')],
+    )
+    if (!response.ok) {
+      throw new Error(`Merge then compose: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(await inspectV9Pdf('info', await response.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV92)(
+  'Gotenberg 9.2 runs compose in a PDF pipeline before applying metadata',
+  async () => {
+    const response = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          {
+            op: 'compose',
+            paperWidth: '6in',
+            paperHeight: '5in',
+            placements: [
+              { source: 'label.pdf', x: 0, y: 180, scale: 0.25 },
+              { source: 'slip.pdf', x: 216, y: 0, scale: 0.25 },
+            ],
+          },
+          { op: 'set-metadata', title: 'Composed pipeline' },
+        ]),
+      },
+      [pdfFile('label.pdf'), pdfFile('slip.pdf')],
+    )
+    if (!response.ok)
+      throw new Error(`Compose pipeline: ${response.status} ${await response.text()}`)
+    const bytes = await response.arrayBuffer()
+    expect(await inspectV9Pdf('info', bytes)).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+    expect(await inspectV9Pdf('metadata', bytes)).toMatchObject({
+      'verified.pdf': { title: 'Composed pipeline' },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV92)(
+  'Gotenberg 9.2 supports exclusion/open page ranges and rejects empty selections',
+  async () => {
+    for (const pages of ['!1', '2-', '-1', '!last']) {
+      const result = await convertV9('select-pages', { pages }, [
+        new File([splitPdfBytes], 'two-pages.pdf', { type: 'application/pdf' }),
+      ])
+      if (!result.ok) {
+        throw new Error(`Page selection ${pages}: ${result.status} ${await result.text()}`)
+      }
+      expect(await inspectV9Pdf('info', await result.arrayBuffer())).toMatchObject({
+        'verified.pdf': { pages: 1 },
+      })
+    }
+    const empty = await convertV9('select-pages', { pages: 'odd,!1' }, [
+      new File([splitPdfBytes], 'two-pages.pdf', { type: 'application/pdf' }),
+    ])
+    expect(empty.status).toBe(400)
   },
   120_000,
 )
@@ -2061,16 +2181,68 @@ test('real downloadFrom fetches a named Office source with its per-file header',
   ).toBe('%PDF-')
 }, 60_000)
 
-test('real downloadFrom rejects a response without Content-Disposition filename', async () => {
+test.skipIf(!supportsV92)(
+  'Gotenberg 9.2 resolves the downloadFrom filename from a URL extension without a header',
+  async () => {
+    const office = OPERATIONS.find((operation) => operation.id === 'office-pdf')
+    if (!office) throw new Error('Missing Office PDF route')
+    const remote = new URL('/gotenui-remote/no-filename.txt', fixtureUrl)
+    const response = await proxyConversionRequest(
+      request(office, { downloadFrom: [{ url: remote.toString() }] }),
+    )
+    if (!response.ok) throw new Error(`URL filename: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+  },
+  60_000,
+)
+
+test('real downloadFrom still rejects a source without a header, URL extension or filename', async () => {
   const office = OPERATIONS.find((operation) => operation.id === 'office-pdf')
   if (!office) throw new Error('Missing Office PDF route')
-  const remote = new URL(fixtureUrl)
-  remote.pathname = '/gotenui-remote/no-filename.txt'
+  const remote = new URL('/gotenui-remote/extensionless', fixtureUrl)
   const response = await proxyConversionRequest(
     request(office, { downloadFrom: [{ url: remote.toString() }] }),
   )
   expect(response.status).toBeGreaterThanOrEqual(400)
 }, 60_000)
+
+test.skipIf(!supportsV92)(
+  'Gotenberg 9.2 uses downloadFrom.filename over the response Content-Disposition in PDF composition',
+  async () => {
+    const remoteUrl = new URL('/gotenui-remote/pipeline.pdf', fixtureUrl)
+    const setupUrl = new URL(remoteUrl)
+    setupUrl.hostname = '127.0.0.1'
+    const prepared = await fetch(setupUrl, {
+      method: 'PUT',
+      headers: { 'x-gotenui-remote-token': 'fixture-remote-key' },
+      body: pdfBytes,
+    })
+    expect(prepared.status).toBe(204)
+    const pipeline = OPERATIONS.find((operation) => operation.id === 'pdf-pipeline')
+    if (!pipeline) throw new Error('Missing PDF pipeline')
+    const response = await proxyConversionRequest(
+      request(pipeline, {
+        fields: {
+          stages: JSON.stringify([
+            { op: 'compose', paperSize: 'A4', placements: [{ source: 'renamed.pdf' }] },
+          ]),
+        },
+        downloadFrom: [
+          {
+            url: remoteUrl.toString(),
+            filename: 'renamed.pdf',
+            extraHttpHeaders: { 'x-gotenui-remote-token': 'fixture-remote-key' },
+          },
+        ],
+      }),
+    )
+    if (!response.ok) throw new Error(`Remote rename: ${response.status} ${await response.text()}`)
+    expect(await inspectV9Pdf('info', await response.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 1 },
+    })
+  },
+  120_000,
+)
 
 test('real async success and events callbacks are delivered after 204 acceptance', async () => {
   const html = OPERATIONS.find((operation) => operation.id === 'html-pdf')

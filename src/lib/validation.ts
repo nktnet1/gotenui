@@ -36,8 +36,10 @@ const markdownFileSchema = v.object({
 
 const remoteFileSchema = v.object({
   url: v.string(),
-  /** Client-side filename hint for v9 named pipeline assets; never sent upstream. */
+  /** Legacy client-side filename hint; on Gotenberg 9.2+ also names the remote download. */
   name: v.optional(v.string()),
+  /** Official Gotenberg 9.2+ downloadFrom filename override (raw JSON descriptors). */
+  filename: v.optional(v.string()),
   field: v.optional(v.picklist(['embedded', 'watermark', 'stamp'])),
   embedded: v.optional(v.boolean()),
   extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
@@ -189,6 +191,10 @@ function validateAsyncInputs(payload: ConversionPayload): void {
   for (const remote of payload.downloadFrom ?? []) {
     requireHttpUrl(remote.url, 'downloadFrom URL')
     if (remote.name !== undefined) safeFilename(remote.name)
+    if (remote.filename) safeFilename(remote.filename)
+    if (remote.name && remote.filename && remote.name !== remote.filename) {
+      throw new InputError('Specify one remote filename, not two conflicting names.')
+    }
     validateHeaderMap(remote.extraHttpHeaders)
   }
   const webhook = payload.webhook
@@ -539,8 +545,8 @@ export function validateFiles(
         (file) =>
           !file.field &&
           !file.embedded &&
-          file.name !== undefined &&
-          stageAssets.has(file.name.normalize('NFC')),
+          (file.filename !== undefined || file.name !== undefined) &&
+          stageAssets.has((file.filename ?? file.name ?? '').normalize('NFC')),
       ).length
     }
   }

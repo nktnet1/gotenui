@@ -3,7 +3,7 @@ import { normalizeBackendUrl } from '#/lib/backend-url'
 import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { CHROMIUM_MEDIA_OPTIONS, encodeChromiumMediaFeatures } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
-import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
 import {
@@ -175,6 +175,7 @@ export function createGotenbergForm(
   postFiles: PostProcessFiles = {},
   archives: readonly File[] = [],
   major?: SupportedGotenbergMajor,
+  version?: GotenbergVersion,
 ): FormData {
   validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, [], archives, major)
   const form = new FormData()
@@ -209,11 +210,25 @@ export function createGotenbergForm(
     if (mediaFeatures) form.set('emulatedMediaFeatures', mediaFeatures)
   }
   if (payload.downloadFrom?.length) {
-    // The optional name is a client-side hint used only to resolve pipeline
-    // assets; Gotenberg names downloads from Content-Disposition instead.
+    // 9.2 adds filename to the official downloadFrom descriptor. The previous
+    // name hint remains client-only on older servers, preserving their API.
+    const supportsFilename = major === 9 && version?.major === 9 && version.minor >= 2
     form.set(
       'downloadFrom',
-      JSON.stringify(payload.downloadFrom.map(({ name: _name, ...remote }) => remote)),
+      JSON.stringify(
+        payload.downloadFrom.map(({ name, filename, ...remote }) => {
+          if (filename && !supportsFilename) {
+            throw new InputError(
+              'downloadFrom filename overrides require Gotenberg 9.2 or newer.',
+              409,
+            )
+          }
+          return {
+            ...remote,
+            ...(supportsFilename && (filename || name) ? { filename: filename ?? name } : {}),
+          }
+        }),
+      ),
     )
   }
   if (operation.input === 'html' || operation.input === 'markdown') {
