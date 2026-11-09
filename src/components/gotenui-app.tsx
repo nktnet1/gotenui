@@ -17,6 +17,7 @@ import { BrowserBatchQueuePanel } from '#/components/browser-batch-queue'
 import { ThemeSelect } from '#/components/color-theme-provider'
 import { ConnectionManager } from '#/components/connection-manager'
 import { DiagnosticsDialog } from '#/components/diagnostics-dialog'
+import { GitHubIcon } from '#/components/github-icon'
 import { operationIcon } from '#/components/operation-icons'
 import { OperationSearchDialog } from '#/components/operation-search-dialog'
 import { ToolsHome } from '#/components/tools-home'
@@ -198,7 +199,7 @@ function Sidebar({
           mobileOpen ? 'visible translate-x-0' : 'invisible -translate-x-full lg:visible',
         )}
       >
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-6 dark:border-white/10">
+        <div className="flex items-center justify-between gap-1 border-b border-slate-200 px-6 py-6 dark:border-white/10">
           <button
             type="button"
             aria-label="Go to all tools"
@@ -211,16 +212,27 @@ function Sidebar({
           >
             <Brand />
           </button>
-          <Button
-            variant="ghost"
-            size="icon"
-            type="button"
-            aria-label="Close menu"
-            className="text-slate-600 dark:text-slate-300 lg:hidden"
-            onClick={() => setMobileOpen(false)}
-          >
-            <PanelLeftClose className="size-5" />
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <a
+              href="https://github.com/nktnet1/gotenui"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="View Gotenui on GitHub"
+              className="flex size-9 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 dark:text-slate-400 dark:hover:bg-white/7 dark:hover:text-white"
+            >
+              <GitHubIcon aria-hidden="true" className="size-4" />
+            </a>
+            <Button
+              variant="ghost"
+              size="icon"
+              type="button"
+              aria-label="Close menu"
+              className="text-slate-600 dark:text-slate-300 lg:hidden"
+              onClick={() => setMobileOpen(false)}
+            >
+              <PanelLeftClose className="size-5" />
+            </Button>
+          </div>
         </div>
         <div className="px-4 pt-5">
           <button

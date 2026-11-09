@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { GitHubIcon } from '#/components/github-icon'
 import { Brand, GotenuiApp, Sidebar } from '#/components/gotenui-app'
 import { TooltipProvider } from '#/components/ui/tooltip'
 import { OPERATIONS } from '#/lib/operations'
@@ -61,6 +62,52 @@ describe('sidebar branding and bookmark navigation', () => {
     expect(nav).not.toContain('All tools')
     expect(nav.match(/<button\b/g)).toHaveLength(OPERATIONS.length)
     expect(html.match(/aria-current="page"/g)).toHaveLength(1)
+  })
+
+  it('links to the Gotenui repository through an icon-only sidebar header link', () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(Sidebar, {
+          selectedId: 'home',
+          onSelect: vi.fn(),
+          status: null,
+          onSettings: vi.fn(),
+          onSearch: vi.fn(),
+          mobileOpen: false,
+          setMobileOpen: vi.fn(),
+        }),
+      ),
+    )
+    const link =
+      html.match(/<a[^>]*href="https:\/\/github\.com\/nktnet1\/gotenui"[^>]*>[\s\S]*?<\/a>/)?.[0] ??
+      ''
+
+    expect(link).toContain('target="_blank"')
+    expect(link).toContain('rel="noopener noreferrer"')
+    expect(link).toContain('aria-label="View Gotenui on GitHub"')
+    expect(link).not.toContain('title=')
+    expect(link).toContain('<svg')
+    expect(link).toContain('viewBox="0 0 16 16"')
+    expect(html.match(/href="https:\/\/github\.com\/nktnet1\/gotenui"/g)).toHaveLength(1)
+    expect(html.indexOf('href="https://github.com/nktnet1/gotenui"')).toBeLessThan(
+      html.indexOf('aria-label="Search tools"'),
+    )
+    expect(
+      link
+        .replace(/^<a[^>]*>/, '')
+        .replace(/<\/a>$/, '')
+        .trim(),
+    ).toMatch(/^<svg\b[\s\S]*<\/svg>$/)
+    expect(link).not.toContain('GitHub pull requests')
+  })
+
+  it('renders the GitHub icon from a standalone component file', () => {
+    const html = renderToStaticMarkup(createElement(GitHubIcon, { className: 'size-4' }))
+    expect(html).toContain('viewBox="0 0 16 16"')
+    expect(html).toContain('fill="currentColor"')
+    expect(html).toContain('M8 0C3.58 0 0 3.58 0 8')
   })
 
   it('keeps a stable operation identifier when a v9-only tool gains an N/A label on v8', () => {
