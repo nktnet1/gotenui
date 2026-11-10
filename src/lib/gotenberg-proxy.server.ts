@@ -4,6 +4,7 @@ import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.se
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
 import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
+import { describePdfUpstreamError } from '#/lib/gotenberg-v93-errors'
 import {
   type GotenbergVersion,
   parseGotenbergVersion,
@@ -712,24 +713,16 @@ export async function proxyConversionRequest(
   }
   if (!upstream.ok) {
     invalidateUnauthorized(upstream.status, target)
-    const missingExtractionEndpoint =
-      upstream.status === 404 &&
-      (operation.id === 'extract-text' || operation.id === 'extract-attachments')
     const headers = new Headers({
       ...safeResponseHeaders,
       'Content-Type': 'text/plain; charset=utf-8',
     })
     copyUpstreamDiagnostics(upstream, headers)
-    if (missingExtractionEndpoint) await upstream.body?.cancel().catch(() => {})
-    return new Response(
-      missingExtractionEndpoint
-        ? `This Gotenberg instance does not expose ${operation.path}. Use the latest Gotenberg 9 release with PDF routes enabled.`
-        : await upstreamErrorText(upstream),
-      {
-        status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
-        headers,
-      },
-    )
+    const detail = await upstreamErrorText(upstream)
+    return new Response(describePdfUpstreamError(version, path, upstream.status, detail), {
+      status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
+      headers,
+    })
   }
   const headers = new Headers(safeResponseHeaders)
   copyUpstreamDiagnostics(upstream, headers)

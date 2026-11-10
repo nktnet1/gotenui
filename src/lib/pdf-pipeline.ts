@@ -227,7 +227,8 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'render',
     label: 'Render pages',
-    description: 'Render final PDF pages as PNG/JPEG. Must be last.',
+    description:
+      'Render final PDF pages as PNG/JPEG. Must be last. Gotenberg 9.3+ may require lower DPI if the server pixel budget is exceeded.',
     options: { pages: '1', format: 'png' },
     fields: ['pages', 'dpi', 'format', 'quality'],
   },

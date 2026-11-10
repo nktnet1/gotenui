@@ -26,6 +26,15 @@ With **Gotenberg 9.1 or later**, **Extract PDF text** produces a `.txt` file for
 
 For Gotenberg 9 **Office to PDF**, a requested PDF/A or PDF/UA profile uses native LibreOffice export only when no PDF processing follows. **Merge**, **Split**, and custom pipeline stages automatically move conformance to a final PDF remediation stage; selecting **Native LibreOffice export** alongside those stages reports an error. Use PDF validation to check actual conformance rather than relying on HTTP 200 or a successful native export.
 
+### Gotenberg 9.3 server-side PDF limits
+
+Gotenberg 9.3 adds two **server settings**, not conversion form fields:
+
+- `PDF_MAX_RENDER_PIXELS` limits the number of pixels a PDF page may render (the default is 50 million; `0` uses Gotenberg's default). If **Render PDF pages** or a pipeline `render` stage exceeds the instance's limit, reduce the DPI. A Gotenberg administrator can change the limit based on available memory; rendered images may need about 16 bytes per pixel while being processed. `flatten-transparency` automatically reduces its rendering resolution to fit the limit.
+- `PDF_DISABLE_STAGES=true` causes Chromium and LibreOffice **PDF conversions** to reject the `stages` field (including built-in merge/split and automatic PDF/A remediation). Remove the PDF processing settings to make a plain conversion, or ask an administrator to re-enable stages. PDF tools such as **Merge PDFs** still work unless the separate `PDF_DISABLE_ROUTES=true` setting also disables the PDF endpoints.
+
+Gotenui preserves the HTTP error and displays specific advice when these limits are hit. The selected Gotenberg server does not advertise these flags through `/version` or `/health`, so the UI cannot determine their settings in advance. Set these variables on the **Gotenberg server/container**, not on Gotenui.
+
 Before sending uploaded ZIP archives on Gotenberg 9, Gotenui reads only the bounded ZIP directory: PDF pipeline ZIPs must contain source PDFs and any **exactly referenced** stage assets; Office ZIPs must contain supported Office inputs and any exactly referenced conversion-stage assets (unless source documents are provided separately). It ignores macOS `__MACOSX` and `._` metadata, directory entries and symlinks as the upstream extractor does, normalises names to prevent collisions, and rejects unrelated or duplicate filenames that would shadow local uploads or generated HTML/Markdown files. For now, archives with encrypted entries, a ZIP64 directory, more than 1,000 entries or an index over 512 KB must be repackaged or uploaded as individual files. Gotenui does not inspect the documents inside the ZIP; Gotenberg remains responsible for safe extraction and content validation.
 
 ## Results and presets

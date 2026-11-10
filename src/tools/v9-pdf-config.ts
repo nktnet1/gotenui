@@ -366,6 +366,8 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
         min: 1,
         integer: true,
         placeholder: 'Default Gotenberg DPI',
+        description:
+          'Higher DPI needs more memory. Gotenberg 9.3+ rejects pages above the server PDF_MAX_RENDER_PIXELS limit; lower DPI if this happens.',
         advanced: true,
       },
       {
