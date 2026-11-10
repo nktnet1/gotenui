@@ -63,6 +63,7 @@ export function pdfPipelineEditorError(
     const parsed = parsePdfPipeline(stages, {
       assetNames,
       allowUnresolvedAssets,
+      allowEmpty: documentKind === 'office' || documentKind === 'single',
       acknowledgedRedaction,
     })
     const version = parseGotenbergVersion(backendVersion)

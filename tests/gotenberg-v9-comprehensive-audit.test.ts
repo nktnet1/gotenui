@@ -268,6 +268,29 @@ test('v9 ZIP archives use their contents, not a .zip filename extension', async 
   assert.equal(v8.forwarded(), 0)
 })
 
+test('conversion-time empty stage lists reach Gotenberg 9, but standalone pipe rejects them', async () => {
+  for (const conversionStages of ['[]', 'null', '  ']) {
+    const v9 = fixture('9.3.0', (path, form) => {
+      assert.equal(path, '/forms/libreoffice/convert')
+      assert.equal(form.has('stages'), false)
+    })
+    const response = await proxyConversionRequest(
+      request('office-pdf', {}, [new File(['office'], 'report.docx')], { conversionStages }),
+      v9.fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(v9.forwarded(), 1)
+  }
+  for (const raw of ['[]', 'null']) {
+    const v9 = fixture('9.3.0', () => assert.fail('invalid standalone pipe must not forward'))
+    await assert.rejects(
+      proxyConversionRequest(request('pdf-pipeline', { stages: raw }), v9.fetcher),
+      /at least one ordered PDF processing stage/,
+    )
+    assert.equal(v9.forwarded(), 0)
+  }
+})
+
 test('v9 standalone stamp forwards a renamed PDF asset rather than blocking it', async () => {
   const v9 = fixture('9.1.0', (path, form) => {
     assert.equal(path, '/forms/pdf/pipe')

@@ -53,7 +53,8 @@ export function JobPanel({
   const Icon = operationIcon(operation.id)
   const validationNeedsReview =
     operation.id === 'pdf-validate' &&
-    (!lastDownload?.validation || lastDownload.validation.some((report) => !report.compliant))
+    (!lastDownload?.validation ||
+      lastDownload.validation.some((report) => !report.compliant || report.totalViolations > 0))
   const remediationWarning = remediationReviewNotice(lastDownload?.remediation)
   const downloadNeedsReview = validationNeedsReview || !!remediationWarning
   return (
@@ -279,13 +280,18 @@ export function JobPanel({
                           role={result.compliant ? 'status' : 'alert'}
                           className={cn(
                             'rounded-lg border p-3 text-xs',
-                            result.compliant
+                            result.compliant && result.totalViolations === 0
                               ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200'
                               : 'border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200',
                           )}
                         >
                           <p className="font-semibold">
-                            {result.filename}: {result.compliant ? 'Compliant' : 'Not compliant'}
+                            {result.filename}:{' '}
+                            {result.compliant
+                              ? result.totalViolations > 0
+                                ? 'Compliant with findings'
+                                : 'Compliant'
+                              : 'Not compliant'}
                           </p>
                           <p>
                             {result.profile} · {result.totalViolations} reported finding(s)

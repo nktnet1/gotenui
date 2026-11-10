@@ -152,6 +152,10 @@ async function batchReviewNotice(
     if (noncompliant > 0) {
       return `PDF validation found ${noncompliant} non-compliant document(s) out of ${reports.length}. Review the downloaded JSON report.`
     }
+    const withFindings = reports.filter((report) => report.totalViolations > 0).length
+    if (withFindings > 0) {
+      return `PDF validation found non-fatal findings in ${withFindings} compliant document(s). Review the downloaded JSON report.`
+    }
   }
   return remediationReviewNotice(result.remediation)
 }

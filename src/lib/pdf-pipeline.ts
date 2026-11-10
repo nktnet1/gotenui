@@ -3,6 +3,7 @@
  */
 
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
+import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
@@ -82,7 +83,8 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'set-metadata',
     label: 'Set metadata',
-    description: 'Update standard PDF document properties.',
+    description:
+      'Update standard PDF document properties. Dates use PDF syntax, e.g. D:20261001090000Z.',
     options: { title: 'Updated document' },
     fields: [
       'title',
@@ -133,7 +135,7 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'redact',
     label: 'Redact content',
-    description: 'Permanently remove content in specified rectangles.',
+    description: 'Permanently remove content in rectangles; omitted x/y coordinates default to 0.',
     options: { regions: [{ page: 1, x: 50, y: 50, width: 100, height: 30 }] },
     fields: ['regions'],
   },
@@ -227,7 +229,8 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'render',
     label: 'Render pages',
-    description: 'Render final PDF pages as PNG/JPEG. Must be last.',
+    description:
+      'Render final PDF pages as PNG/JPEG. Must be last. Gotenberg 9.3+ may require lower DPI if the server pixel budget is exceeded.',
     options: { pages: '1', format: 'png' },
     fields: ['pages', 'dpi', 'format', 'quality'],
   },
@@ -256,6 +259,24 @@ const profiles = new Set([
   'PDF/UA-2',
   'Factur-X',
 ])
+// Gotenberg 9's PDF stage parser accepts exactly these standard PDF fonts.
+const stampFonts = new Set([
+  'Helvetica',
+  'Helvetica-Bold',
+  'Helvetica-Oblique',
+  'Helvetica-BoldOblique',
+  'Times-Roman',
+  'Times-Bold',
+  'Times-Italic',
+  'Times-BoldItalic',
+  'Courier',
+  'Courier-Bold',
+  'Courier-Oblique',
+  'Courier-BoldOblique',
+  'Symbol',
+  'ZapfDingbats',
+])
+const facturXLevels = new Set(['MINIMUM', 'BASIC WL', 'BASIC', 'EN 16931', 'EXTENDED', 'XRECHNUNG'])
 const permissions = new Set([
   'print',
   'printHighQuality',
@@ -280,7 +301,7 @@ const optionalPages = (stage: PdfPipelineStage, key: string): void => {
   const value = stage[key]
   // Litho interprets an omitted, empty, or whitespace-only optional page range as all pages.
   if (
-    value !== undefined &&
+    !absent(value) &&
     !(typeof value === 'string' && !value.trim()) &&
     !isPdfPageSelector(value)
   ) {
@@ -289,6 +310,8 @@ const optionalPages = (stage: PdfPipelineStage, key: string): void => {
     )
   }
 }
+/** Go's encoding/json treats null like an absent option for stage primitives. */
+const absent = (value: unknown): value is null | undefined => value === undefined || value === null
 const integer = (value: unknown, min: number, max = Number.MAX_SAFE_INTEGER): boolean =>
   Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max
 
@@ -342,20 +365,20 @@ function validateStage(stage: PdfPipelineStage): void {
     'paperHeight',
   ])
   for (const [key, value] of Object.entries(stage)) {
-    if (stringOptions.has(key) && typeof value !== 'string') {
+    if (stringOptions.has(key) && !absent(value) && typeof value !== 'string') {
       throw new InputError(`${name}: "${key}" must be a string.`)
     }
   }
   for (const key of ['pages', 'sourcePages']) optionalPages(stage, key)
   for (const key of ['x', 'y', 'width', 'height', 'scale', 'fontSize', 'opacity', 'rotation']) {
     const value = stage[key]
-    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+    if (!absent(value) && (typeof value !== 'number' || !Number.isFinite(value))) {
       throw new InputError(`${name}: "${key}" must be a finite number.`)
     }
   }
   for (const key of ['angle', 'at', 'every', 'sourcePage', 'dpi', 'quality']) {
     const value = stage[key]
-    if (value !== undefined && !integer(value, key === 'at' || key === 'sourcePage' ? 0 : 1)) {
+    if (!absent(value) && !integer(value, key === 'at' || key === 'sourcePage' ? 0 : 1)) {
       // Rotation allows negative multiples of 90 as well as zero.
       if (key !== 'angle' || !Number.isSafeInteger(value)) {
         throw new InputError(`${name}: "${key}" must be a valid integer.`)
@@ -373,31 +396,35 @@ function validateStage(stage: PdfPipelineStage): void {
     'aggressive',
     'pades',
   ]) {
-    if (stage[key] !== undefined && typeof stage[key] !== 'boolean') {
+    if (!absent(stage[key]) && typeof stage[key] !== 'boolean') {
       throw new InputError(`${name}: "${key}" must be true or false.`)
     }
   }
-  if (
-    stage.opacity !== undefined &&
-    ((stage.opacity as number) < 0 || (stage.opacity as number) > 1)
-  ) {
+  if (!absent(stage.opacity) && ((stage.opacity as number) < 0 || (stage.opacity as number) > 1)) {
     throw new InputError(`${name}: opacity must be from 0 to 1.`)
   }
-  if (stage.scale !== undefined && (stage.scale as number) <= 0)
+  if (!absent(stage.scale) && (stage.scale as number) <= 0)
     throw new InputError(`${name}: scale must be positive.`)
-  if (stage.fontSize !== undefined && (stage.fontSize as number) <= 0)
+  if (!absent(stage.fontSize) && (stage.fontSize as number) <= 0)
     throw new InputError(`${name}: font size must be positive.`)
-  if (stage.permissions !== undefined) {
+  if (!absent(stage.permissions)) {
     if (
       !object(stage.permissions) ||
       Object.entries(stage.permissions).some(
-        ([key, value]) => !permissions.has(key) || typeof value !== 'boolean',
+        ([key, value]) => !permissions.has(key) || (!absent(value) && typeof value !== 'boolean'),
       )
     ) {
       throw new InputError('encrypt: permissions must contain only supported boolean permissions.')
     }
   }
   switch (name) {
+    case 'set-metadata':
+      for (const key of ['creationDate', 'modDate'] as const) {
+        if (!absent(stage[key]) && !isPdfMetadataDate(stage[key] as string)) {
+          throw new InputError(`${name}: "${key}" must be a PDF date such as D:20261001090000Z.`)
+        }
+      }
+      break
     case 'compose': {
       const sizes = ['A3', 'A4', 'A5', 'B4', 'B5', 'Letter', 'Legal', 'Tabloid']
       const paperSize = stage.paperSize as string | undefined
@@ -406,7 +433,7 @@ function validateStage(stage: PdfPipelineStage): void {
       }
       for (const side of ['paperWidth', 'paperHeight'] as const) {
         const length = stage[side] as string | undefined
-        if (length === undefined || length === '') continue
+        if (absent(length) || length === '') continue
         const match = /^\+?((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:pt|px|in|mm|cm|pc)?$/.exec(
           length,
         )
@@ -426,16 +453,16 @@ function validateStage(stage: PdfPipelineStage): void {
           Object.keys(placement).some(
             (key) => !['source', 'sourcePage', 'page', 'x', 'y', 'scale', 'rotation'].includes(key),
           ) ||
-          (placement.source !== undefined && typeof placement.source !== 'string') ||
+          (!absent(placement.source) && typeof placement.source !== 'string') ||
           ['sourcePage', 'page'].some(
-            (key) => placement[key] !== undefined && !integer(placement[key], 0),
+            (key) => !absent(placement[key]) && !integer(placement[key], 0),
           ) ||
           ['x', 'y', 'rotation'].some(
             (key) =>
-              placement[key] !== undefined &&
+              !absent(placement[key]) &&
               (typeof placement[key] !== 'number' || !Number.isFinite(placement[key])),
           ) ||
-          (placement.scale !== undefined &&
+          (!absent(placement.scale) &&
             (typeof placement.scale !== 'number' ||
               !Number.isFinite(placement.scale) ||
               placement.scale <= 0))
@@ -451,7 +478,7 @@ function validateStage(stage: PdfPipelineStage): void {
       if (stage.ranges !== undefined && stage.ranges !== null && !Array.isArray(stage.ranges))
         throw new InputError('split: ranges must be an array of page selectors.')
       const ranges = (stage.ranges ?? []) as unknown[]
-      if ((stage.every === undefined) === (ranges.length === 0))
+      if (absent(stage.every) === (ranges.length === 0))
         throw new InputError('split: choose either every or ranges.')
       if (ranges.some((page) => !isPdfPageSelector(page)))
         throw new InputError('split: ranges must be a non-empty array of page selectors.')
@@ -466,7 +493,7 @@ function validateStage(stage: PdfPipelineStage): void {
       // Gotenberg resolves this named asset and opens its PDF contents;
       // unlike a source document, its filename need not end in .pdf.
       requiredText(stage, 'source')
-      if (stage.at !== undefined && !integer(stage.at, 0))
+      if (!absent(stage.at) && !integer(stage.at, 0))
         throw new InputError('insert: at must be a non-negative integer.')
       break
     case 'rotate':
@@ -475,8 +502,12 @@ function validateStage(stage: PdfPipelineStage): void {
       break
     case 'stamp-text':
       // Litho rejects only the empty string; whitespace is valid stamp content.
-      if (stage.text === '' || stage.text === undefined)
+      if (typeof stage.text !== 'string' || stage.text === '')
         throw new InputError('stamp-text: text must be non-empty.')
+      if (stage.font && !stampFonts.has(stage.font as string))
+        throw new InputError('stamp-text: font must be one of the 14 standard PDF fonts.')
+      if (stage.color && !/^#[\da-fA-F]{6}$/.test(stage.color as string))
+        throw new InputError('stamp-text: color must be a #rrggbb hexadecimal colour.')
       break
     case 'stamp-image':
       if (!/\.(png|jpe?g)$/i.test(requiredText(stage, 'image')))
@@ -501,7 +532,7 @@ function validateStage(stage: PdfPipelineStage): void {
             throw new InputError(
               'set-bookmarks: every bookmark needs a title and positive pageNumber.',
             )
-          if (entry.children !== undefined) {
+          if (!absent(entry.children)) {
             if (!Array.isArray(entry.children))
               throw new InputError('set-bookmarks: invalid children.')
             pending.push(...entry.children)
@@ -519,7 +550,9 @@ function validateStage(stage: PdfPipelineStage): void {
           ([_key, value]) =>
             !(
               typeof value === 'string' ||
-              (Array.isArray(value) && value.every((item) => typeof item === 'string'))
+              value === null ||
+              (Array.isArray(value) &&
+                value.every((item) => item === null || typeof item === 'string'))
             ),
         )
       )
@@ -537,11 +570,14 @@ function validateStage(stage: PdfPipelineStage): void {
           !object(region) ||
           !integer(region.page, 1) ||
           Object.keys(region).some((key) => !['page', 'x', 'y', 'width', 'height'].includes(key)) ||
-          !['x', 'y', 'width', 'height'].every(
-            (key) => typeof region[key] === 'number' && Number.isFinite(region[key]),
-          ) ||
-          (region.width as number) <= 0 ||
-          (region.height as number) <= 0
+          !['width', 'height'].every((key) => {
+            const value = region[key]
+            return typeof value === 'number' && Number.isFinite(value) && value > 0
+          }) ||
+          ['x', 'y'].some((key) => {
+            const value = region[key]
+            return !absent(value) && (typeof value !== 'number' || !Number.isFinite(value))
+          })
         )
           throw new InputError('redact: invalid rectangle coordinates.')
       }
@@ -549,14 +585,14 @@ function validateStage(stage: PdfPipelineStage): void {
     case 'attach':
       requiredText(stage, 'file')
       if (
-        stage.relationship !== undefined &&
+        !absent(stage.relationship) &&
         !['Source', 'Data', 'Alternative', 'Supplement', 'Unspecified', ''].includes(
           String(stage.relationship),
         )
       )
         throw new InputError('attach: unsupported attachment relationship.')
       if (
-        stage.mimeType !== undefined &&
+        !absent(stage.mimeType) &&
         stage.mimeType !== '' &&
         !isAttachmentMimeType(String(stage.mimeType))
       )
@@ -572,7 +608,7 @@ function validateStage(stage: PdfPipelineStage): void {
       if (!stage.userPassword && !stage.ownerPassword)
         throw new InputError('encrypt: enter a user or owner password.')
       if (
-        stage.algorithm !== undefined &&
+        !absent(stage.algorithm) &&
         !['', 'aes256', 'aes128', 'rc4-128', 'rc4-40'].includes(String(stage.algorithm))
       )
         throw new InputError('encrypt: unsupported algorithm.')
@@ -602,34 +638,33 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('remediate: Factur-X options need a Factur-X profile.')
       if ((stage.level || stage.documentType) && !stage.xml)
         throw new InputError('remediate: level/documentType require an XML upload.')
+      if (stage.xml && !facturXLevels.has(stage.level as string))
+        throw new InputError('remediate: specify a supported Factur-X level for the invoice XML.')
       break
     }
     case 'decrypt':
       // Upstream permits an empty/missing password for owner-password-only PDFs.
-      if (stage.password !== undefined && typeof stage.password !== 'string') {
+      if (!absent(stage.password) && typeof stage.password !== 'string') {
         throw new InputError('decrypt: "password" must be a string (empty is allowed).')
       }
       break
     case 'sign': {
       requiredText(stage, 'certificate')
       // Empty key requests PKCS#12 signing, just like an omitted key.
-      if (stage.key !== undefined && stage.key !== '') requiredText(stage, 'key')
+      if (!absent(stage.key) && stage.key !== '') requiredText(stage, 'key')
       break
     }
     case 'timestamp':
       requiredText(stage, 'timestampUrl')
       break
     case 'render':
-      if (stage.format !== undefined && !['', 'png', 'jpeg'].includes(String(stage.format)))
+      if (!absent(stage.format) && !['', 'png', 'jpeg'].includes(String(stage.format)))
         throw new InputError('render: format must be png or jpeg.')
-      if (
-        stage.quality !== undefined &&
-        (stage.format !== 'jpeg' || !integer(stage.quality, 1, 100))
-      )
+      if (!absent(stage.quality) && (stage.format !== 'jpeg' || !integer(stage.quality, 1, 100)))
         throw new InputError('render: JPEG quality must be between 1 and 100.')
       break
   }
-  if ((name === 'sign' || name === 'timestamp') && stage.timestampUrl !== undefined) {
+  if ((name === 'sign' || name === 'timestamp') && !absent(stage.timestampUrl)) {
     if (typeof stage.timestampUrl !== 'string')
       throw new InputError(`${name}: invalid timestamp authority URL.`)
     stage.timestampUrl = timestampAuthorityUrl(stage.timestampUrl)
@@ -674,6 +709,8 @@ export type PdfPipelineValidation = {
   /** An unnamed remote download may supply a stage asset; Gotenberg checks its actual filename. */
   allowUnresolvedAssets?: boolean
   acknowledgedRedaction?: boolean
+  /** Chromium and LibreOffice accept blank, null or [] stage lists; /pdf/pipe does not. */
+  allowEmpty?: boolean
 }
 
 /** Parse user JSON, validate ordered stage semantics and (on server) file references. */
@@ -681,12 +718,15 @@ export function parsePdfPipeline(
   raw: string,
   context: PdfPipelineValidation = {},
 ): PdfPipelineStage[] {
+  if (context.allowEmpty && !raw.trim()) return []
   let decoded: unknown
   try {
     decoded = JSON.parse(raw)
   } catch {
     throw new InputError('The PDF pipeline must be valid JSON.')
   }
+  if (context.allowEmpty && (decoded === null || (Array.isArray(decoded) && !decoded.length)))
+    return []
   if (!Array.isArray(decoded) || decoded.length < 1)
     throw new InputError('Add at least one ordered PDF processing stage.')
   const stages: PdfPipelineStage[] = []

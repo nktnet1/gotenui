@@ -301,6 +301,29 @@ describe('read existing PDF structure into visual writers', () => {
     )
   })
 
+  it('preserves writable PDF dates on Gotenberg 9 without importing v8-only XMP tags', () => {
+    const result = {
+      'report.pdf': {
+        title: 'Quarterly report',
+        copyright: 'Unsupported XMP tag',
+        creationDate: 'D:20261001090000Z',
+        modDate: "D:20261002140000+10'00'",
+      },
+    }
+    assert.deepEqual(JSON.parse(importReadableMetadata(result, 'report.pdf')), {
+      Title: 'Quarterly report',
+      Copyright: 'Unsupported XMP tag',
+    })
+    assert.deepEqual(
+      JSON.parse(importReadableMetadata(result, 'report.pdf', { standardOnly: true })),
+      {
+        Title: 'Quarterly report',
+        CreationDate: 'D:20261001090000Z',
+        ModDate: "D:20261002140000+10'00'",
+      },
+    )
+  })
+
   it('imports NFC-keyed metadata and bookmarks for decomposed Unicode upload names', () => {
     const localName = 're\u0301sume\u0301.pdf'
     const responseName = localName.normalize('NFC')

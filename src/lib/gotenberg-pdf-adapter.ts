@@ -3,6 +3,7 @@ import { filenameKey } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { reservePrefixedMergeUploadNames } from '#/lib/merge-order'
+import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
@@ -443,6 +444,11 @@ export function adaptPdfForm(
             : value
         if (typeof normalized !== 'string')
           throw new InputError(`Gotenberg 9 metadata '${name}' must be a string.`)
+        if ((key === 'creationDate' || key === 'modDate') && !isPdfMetadataDate(normalized)) {
+          throw new InputError(
+            `Gotenberg 9 metadata '${name}' must be a PDF date such as D:20261001090000Z.`,
+          )
+        }
         translated[key] = normalized
       }
       stages.push({ op: 'set-metadata', ...translated })

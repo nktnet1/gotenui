@@ -211,9 +211,14 @@ describe('Gotenberg 9 PDF stages', () => {
     assert.deepEqual(adapted('fill-form', { formValues: values }).stages, [
       { op: 'set-form', fields: { 'Address.City': 'Sydney', 'Choices.List': ['one', 'two'] } },
     ])
-    for (const input of ['{}', '[]', '{"empty":4}', '{"null":null}', '{"items":[5]}']) {
+    for (const input of ['{}', '[]', '{"empty":4}', '{"items":[5]}']) {
       assert.throws(() => adapted('fill-form', { formValues: input }), /Form (field names|values)/)
     }
+    // json.Unmarshal turns null into the empty string for a string-valued field.
+    assert.deepEqual(
+      adapted('fill-form', { formValues: '{"empty":null,"choices":[null,"Yes"]}' }).stages,
+      [{ op: 'set-form', fields: { empty: null, choices: [null, 'Yes'] } }],
+    )
     // Gotenberg's set-form parser uses exact field-name keys, including
     // whitespace-only names when a PDF form defines them.
     assert.deepEqual(adapted('fill-form', { formValues: '{" ":"Yes"}' }).stages, [
@@ -239,6 +244,20 @@ describe('Gotenberg 9 PDF stages', () => {
       adapted('redact', { regions: JSON.stringify(negative), confirmRedaction: true }).stages,
       [{ op: 'redact', regions: negative }],
     )
+    const nullable = [{ page: 1, x: null, y: null, width: 30, height: 12 }]
+    assert.deepEqual(
+      adapted('redact', { regions: JSON.stringify(nullable), confirmRedaction: true }).stages,
+      [{ op: 'redact', regions: nullable }],
+    )
+    const omitted = [
+      { page: 1, width: 150, height: 20 },
+      { page: 2, x: -5, width: 100, height: 10 },
+      { page: 3, y: 7, width: 100, height: 10 },
+    ]
+    assert.deepEqual(
+      adapted('redact', { regions: JSON.stringify(omitted), confirmRedaction: true }).stages,
+      [{ op: 'redact', regions: omitted }],
+    )
     const manyRegions = Array.from({ length: 125 }, (_, index) => ({
       page: 1,
       x: index,
@@ -254,6 +273,9 @@ describe('Gotenberg 9 PDF stages', () => {
       [{ page: 0, x: 1, y: 1, width: 3, height: 2 }],
       [{ page: 1, x: 1, y: 1, width: 0, height: 2 }],
       [{ page: 1, x: 1, y: 1, width: 3, height: 2, replaceWith: 'secret' }],
+      [{ page: 1, height: 2 }],
+      [{ page: 1, width: 3 }],
+      [{ page: 1, y: '4', width: 3, height: 2 }],
     ]) {
       assert.throws(
         () => adapted('redact', { regions: JSON.stringify(invalid), confirmRedaction: true }),

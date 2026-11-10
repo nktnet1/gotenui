@@ -374,7 +374,7 @@ export function Workbench({
         throw new Error('The PDF structure response is too large to edit.')
       const content: unknown = JSON.parse(await result.blob.text())
       const editable = metadata
-        ? importReadableMetadata(content, files[0]?.name ?? '')
+        ? importReadableMetadata(content, files[0]?.name ?? '', { standardOnly: isV9 })
         : importReadableBookmarks(
             content,
             files.map((file) => file.name),
@@ -573,6 +573,10 @@ export function Workbench({
       if (validation?.some((result) => !result.compliant)) {
         toast.warning(
           'PDF validation found non-compliant documents. Review the reported violations before relying on them.',
+        )
+      } else if (validation?.some((result) => result.totalViolations > 0)) {
+        toast.warning(
+          'PDF validation found non-fatal findings in compliant documents. Review the downloaded JSON report.',
         )
       } else if (operation.id === 'pdf-validate' && !validation) {
         toast.warning(
@@ -844,6 +848,7 @@ export function Workbench({
             )}
             {hasMetadataEditor && (
               <PdfMetadataEditor
+                standardOnly={isV9}
                 value={String(fields.metadata ?? '{}')}
                 onChange={(value) => updateField('metadata', value)}
               />

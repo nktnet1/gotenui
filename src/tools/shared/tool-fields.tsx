@@ -13,6 +13,8 @@ import {
 import { versionAtLeast } from '#/lib/operation-availability'
 import type { FieldDefinition } from '#/tools/registry'
 
+const v9BookmarkLevels = ['-1', ...Array.from({ length: 10 }, (_, index) => String(index + 1))]
+
 function FieldControl({
   field,
   value,
@@ -31,6 +33,10 @@ function FieldControl({
     field.minGotenbergMinor !== undefined &&
     versionAtLeast(backendVersion, field.minGotenbergMinor) === false
   const inactive = disabled || unsupported
+  const isV9BookmarkLevels =
+    field.name === 'openBookmarkLevels' &&
+    field.kind === 'number' &&
+    parseGotenbergVersion(backendVersion)?.major === 9
   if (field.kind === 'console-message-types') {
     let selected: string[] = []
     try {
@@ -89,7 +95,7 @@ function FieldControl({
         {field.label}
         {field.required && <span className="ml-1 text-red-500 dark:text-red-400">*</span>}
       </Label>
-      {field.kind === 'select' ? (
+      {field.kind === 'select' || isV9BookmarkLevels ? (
         <div className="relative">
           <select
             id={id}
@@ -100,13 +106,23 @@ function FieldControl({
             disabled={inactive}
           >
             {!field.required && <option value="">Default / not set</option>}
-            {field.options?.map((option) => (
+            {isV9BookmarkLevels &&
+              value !== undefined &&
+              String(value) !== '' &&
+              !v9BookmarkLevels.includes(String(value)) && (
+                <option value={String(value)} disabled>
+                  Unsupported bookmark level: {String(value)}
+                </option>
+              )}
+            {(isV9BookmarkLevels ? v9BookmarkLevels : field.options)?.map((option) => (
               <option
                 key={option}
                 value={option}
                 disabled={option === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false}
               >
-                {field.optionLabels?.[option] ?? option}
+                {isV9BookmarkLevels && option === '-1'
+                  ? 'All levels (-1)'
+                  : (field.optionLabels?.[option] ?? option)}
               </option>
             ))}
           </select>

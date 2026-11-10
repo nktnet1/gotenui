@@ -219,7 +219,6 @@ describe('Gotenberg 9.2 composition', () => {
       [{ paperSize: 'A4', placements: [{ page: 1.5 }] }, /placements entry/],
       [{ paperSize: 'A4', placements: [{ scale: 0 }] }, /placements entry/],
       [{ paperSize: 'A4', placements: [{ x: '36' }] }, /placements entry/],
-      [{ paperSize: 'A4', placements: [{ rotation: null }] }, /placements entry/],
       [{ paperSize: 'A4', placements: [{ unknown: true }] }, /placements entry/],
     ] as const) {
       assert.throws(
@@ -227,6 +226,12 @@ describe('Gotenberg 9.2 composition', () => {
         expression,
       )
     }
+    assert.deepEqual(
+      parsePdfPipeline(
+        JSON.stringify([{ op: 'compose', paperSize: 'A4', placements: [{ rotation: null }] }]),
+      ),
+      [{ op: 'compose', paperSize: 'A4', placements: [{ rotation: null }] }],
+    )
     assert.throws(() => composeForm({ placements: '{' }), /valid JSON/)
     assert.throws(() => composeForm({ placements: '[]' }), /placements/)
   })

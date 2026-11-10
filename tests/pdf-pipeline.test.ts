@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, it } from 'vitest'
 import { PdfPipelineBuilder } from '#/components/pdf-pipeline-builder'
 import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
+import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import {
   DEFAULT_PDF_PIPELINE,
   PDF_PIPELINE_STAGES,
@@ -99,6 +100,40 @@ describe('PDF pipeline catalogue and stage contract', () => {
     const { payload, legacy } = input([{ op: 'merge' }])
     assert.throws(() => adaptPdfForm(operation, payload, legacy, 8, []), { status: 409 })
   })
+  it('matches Gotenberg 9 PDF date rules for pipeline metadata', () => {
+    for (const date of [
+      '',
+      'D:2026',
+      'D:202612',
+      'D:20261231',
+      'D:20261001090000Z',
+      "D:20261002140000+10'00'",
+      'D:20261231235959-0230',
+    ]) {
+      assert.equal(isPdfMetadataDate(date), true, date)
+      const stages = [{ op: 'set-metadata', creationDate: date, modDate: date }]
+      assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    }
+    for (const date of [
+      '2026-10-01',
+      'D:2026X',
+      'D:202613',
+      'D:202600',
+      'D:20260100',
+      'D:20260101240000Z',
+      'D:20260101235960Z',
+      "D:20261002140000+10'60'",
+      'D:20261002140000+1000extra',
+      'D:20261001 090000Z',
+      "D:2026'30'",
+    ]) {
+      assert.equal(isPdfMetadataDate(date), false, date)
+      error([{ op: 'set-metadata', creationDate: date }], /creationDate.*PDF date/)
+      error([{ op: 'set-metadata', modDate: date }], /modDate.*PDF date/)
+    }
+    error([{ op: 'set-metadata', creationDate: 20261001 }], /creationDate.*string/)
+  })
+
   it('accepts large stamp text and metadata fields within the configured request budget', () => {
     const longText = 'Confidential report '.repeat(900)
     const stages = [
@@ -124,6 +159,198 @@ describe('PDF pipeline catalogue and stage contract', () => {
       JSON.parse(String(adaptPdfPipeline(payload, legacy, []).form.get('stages'))),
       stages,
     )
+  })
+
+  it('accepts only Gotenberg standard PDF stamp fonts and six-digit RGB colours', () => {
+    const fonts = [
+      'Helvetica',
+      'Helvetica-Bold',
+      'Helvetica-Oblique',
+      'Helvetica-BoldOblique',
+      'Times-Roman',
+      'Times-Bold',
+      'Times-Italic',
+      'Times-BoldItalic',
+      'Courier',
+      'Courier-Bold',
+      'Courier-Oblique',
+      'Courier-BoldOblique',
+      'Symbol',
+      'ZapfDingbats',
+    ]
+    for (const font of [...fonts, '']) {
+      const stages = [{ op: 'stamp-text', text: 'DRAFT', font, color: '#aBc123' }]
+      assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    }
+    assert.deepEqual(
+      parsePdfPipeline('[{"op":"stamp-text","text":"DRAFT","color":"","font":""}]'),
+      [{ op: 'stamp-text', text: 'DRAFT', color: '', font: '' }],
+    )
+    const stages = [{ op: 'stamp-text', text: 'DRAFT', font: 'Helvetica', color: '#00ffAC' }]
+    assert.deepEqual(JSON.parse(String(adapted(stages).form.get('stages'))), stages)
+    for (const font of ['Garamond', 'times-roman', 'Helvetica Neue']) {
+      error([{ op: 'stamp-text', text: 'DRAFT', font }], /14 standard PDF fonts/)
+    }
+    for (const color of ['red', '#abc', '#GG0000', '#0123456', '123456']) {
+      error([{ op: 'stamp-text', text: 'DRAFT', color }], /#rrggbb hexadecimal/)
+    }
+  })
+
+  it('accepts all six upstream Factur-X invoice levels but rejects unsupported ones', () => {
+    for (const level of ['MINIMUM', 'BASIC WL', 'BASIC', 'EN 16931', 'EXTENDED', 'XRECHNUNG']) {
+      const stages = [{ op: 'remediate', profile: 'Factur-X', xml: 'invoice.xml', level }]
+      assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    }
+    const stages = [{ op: 'remediate', profile: 'Factur-X', xml: 'invoice.xml', level: 'EN 16931' }]
+    assert.deepEqual(
+      JSON.parse(String(adapted(stages, [new File(['xml'], 'invoice.xml')]).form.get('stages'))),
+      stages,
+    )
+    error(
+      [{ op: 'remediate', profile: 'Factur-X', xml: 'invoice.xml' }],
+      /supported Factur-X level/,
+    )
+    error(
+      [{ op: 'remediate', profile: 'Factur-X', xml: 'invoice.xml', level: 'UNKNOWN' }],
+      /supported Factur-X level/,
+    )
+    assert.deepEqual(parsePdfPipeline('[{"op":"remediate","profile":"Factur-X"}]'), [
+      { op: 'remediate', profile: 'Factur-X' },
+    ])
+  })
+
+  it('allows x and y to be omitted independently from Gotenberg redaction rectangles', () => {
+    const regions = [
+      { page: 1, width: 100, height: 20 },
+      { page: 2, x: -4, width: 50, height: 10 },
+      { page: 3, y: 8, width: 50, height: 10 },
+    ]
+    const stages = [{ op: 'redact', regions }]
+    assert.deepEqual(
+      parsePdfPipeline(JSON.stringify(stages), { acknowledgedRedaction: true }),
+      stages,
+    )
+    assert.deepEqual(JSON.parse(String(adapted(stages, [], true).form.get('stages'))), stages)
+    assert.throws(() => adapted(stages), /Confirm that redaction/)
+    for (const invalid of [
+      { page: 1, height: 20 },
+      { page: 1, width: 100 },
+      { page: 1, width: 0, height: 20 },
+      { page: 1, width: 100, height: -1 },
+      { page: 1, width: 100, height: 20, y: '8' },
+    ]) {
+      assert.throws(
+        () =>
+          parsePdfPipeline(JSON.stringify([{ op: 'redact', regions: [invalid] }]), {
+            acknowledgedRedaction: true,
+          }),
+        /invalid rectangle/,
+      )
+    }
+  })
+
+  it('matches upstream JSON null semantics for optional and nested stage fields', () => {
+    // Go's encoding/json decodes null as the zero value of a primitive or a nil
+    // pointer. An explicit null must not be mistaken for a malformed field.
+    const cases = [
+      [{ op: 'split', every: null, ranges: ['1-2'] }],
+      [{ op: 'split', every: 2, ranges: null }],
+      [{ op: 'insert', source: 'additional.pdf', at: null, sourcePages: null }],
+      [{ op: 'stamp-text', text: 'DRAFT', fontSize: null, font: null, color: null, opacity: null }],
+      [{ op: 'stamp-image', image: 'stamp.png', pages: null, x: null, y: null }],
+      [{ op: 'stamp-pdf', source: 'overlay.pdf', sourcePage: null, scale: null }],
+      [
+        {
+          op: 'compose',
+          paperSize: 'A4',
+          paperWidth: null,
+          placements: [
+            { source: null, sourcePage: null, page: null, x: null, y: null, scale: null },
+          ],
+        },
+      ],
+      [{ op: 'set-metadata', author: null, creationDate: null, modDate: null }],
+      [{ op: 'set-bookmarks', bookmarks: [{ title: 'Intro', pageNumber: 1, children: null }] }],
+      [{ op: 'set-form', fields: { customer: null, choices: ['Yes', null] } }],
+      [{ op: 'redact', regions: [{ page: 1, x: null, y: null, width: 100, height: 25 }] }],
+      [{ op: 'attach', file: 'receipt.txt', relationship: null, mimeType: null }],
+      [{ op: 'extract-text', pages: null, invisible: null, artifacts: null, annotations: null }],
+      [{ op: 'optimize', objectStreams: null, dedup: null, recompressImages: null }],
+      [{ op: 'encrypt', ownerPassword: 'secret', algorithm: null, permissions: null }],
+      [
+        {
+          op: 'encrypt',
+          userPassword: 'secret',
+          permissions: { print: null, assemble: false, fillForms: null },
+        },
+      ],
+      [{ op: 'decrypt', password: null }],
+      [{ op: 'remediate', profile: 'PDF/A-2b', aggressive: null, language: null }],
+      [{ op: 'sign', certificate: 'signing.p12', key: null, timestampUrl: null }],
+      [{ op: 'render', format: 'png', dpi: null, quality: null }],
+      [{ op: 'render', format: null, dpi: null }],
+    ]
+    for (const stages of cases) {
+      assert.deepEqual(
+        parsePdfPipeline(JSON.stringify(stages), { acknowledgedRedaction: true }),
+        stages,
+        JSON.stringify(stages),
+      )
+    }
+    // Without stage assets, the same nulls must survive the actual multipart
+    // encoding rather than being coerced into string "null" or dropped.
+    for (const stages of [
+      [{ op: 'set-metadata', author: null, modDate: null }],
+      [{ op: 'set-form', fields: { customer: null, choices: ['Yes', null] } }],
+      [{ op: 'render', format: 'png', quality: null }],
+      [{ op: 'optimize', dedup: null }],
+    ]) {
+      assert.deepEqual(JSON.parse(String(adapted(stages).form.get('stages'))), stages)
+    }
+    assert.deepEqual(
+      parsePdfPipeline(
+        JSON.stringify([{ op: 'redact', regions: [{ page: 1, x: null, width: 10, height: 10 }] }]),
+        {
+          acknowledgedRedaction: true,
+        },
+      ),
+      [{ op: 'redact', regions: [{ page: 1, x: null, width: 10, height: 10 }] }],
+    )
+    error([{ op: 'split', every: null, ranges: null }], /either every or ranges/)
+    error([{ op: 'stamp-text', text: null }], /text must be non-empty/)
+    error([{ op: 'rotate', angle: null }], /multiple of 90/)
+    error([{ op: 'render', format: 'png', quality: 80 }], /JPEG quality/)
+    error(
+      [{ op: 'encrypt', ownerPassword: 'secret', permissions: { print: 'yes' } }],
+      /permissions/,
+    )
+    error([{ op: 'compose', paperSize: 'A4', placements: [{ scale: -1 }] }], /placements/)
+    error([{ op: 'set-form', fields: { amount: 123 } }], /fields must map/)
+    error([{ op: 'redact', regions: [{ page: 1, width: null, height: 5 }] }], /invalid rectangle/)
+  })
+
+  it('distinguishes empty conversion-time stages from required standalone pipeline stages', () => {
+    for (const raw of ['[]', 'null', '  ']) {
+      assert.deepEqual(parsePdfPipeline(raw, { allowEmpty: true }), [])
+      assert.throws(() => parsePdfPipeline(raw), /at least one|valid JSON/)
+    }
+    assert.throws(() => parsePdfPipeline('{}', { allowEmpty: true }), /at least one/)
+    assert.throws(() => parsePdfPipeline('[null]', { allowEmpty: true }), /Stage 1/)
+    const editor = {
+      localAssetNames: [],
+      archivesPresent: false,
+      remoteRows: [],
+      remoteJson: '',
+      acknowledgedRedaction: false,
+    }
+    for (const raw of ['[]', 'null', '  ']) {
+      assert.equal(pdfPipelineEditorError(raw, { ...editor, documentKind: 'office' }), null)
+      assert.equal(pdfPipelineEditorError(raw, { ...editor, documentKind: 'single' }), null)
+      assert.match(
+        pdfPipelineEditorError(raw, { ...editor, documentKind: 'pdf' }) ?? '',
+        /at least one|valid JSON/,
+      )
+    }
   })
 
   it('accepts default insert position, negative redaction offsets, and extensionless signing assets', () => {
@@ -729,6 +956,22 @@ describe('visual pipeline builder', () => {
     assert.doesNotMatch(markup, /value="decrypt"/)
     assert.match(markup, /value="sign"/)
     assert.match(markup, /Pipeline stage files/)
+  })
+  it('renders empty conversion pipelines without injecting the default optimise stage', () => {
+    const props = {
+      value: '[]',
+      onChange: () => {},
+      acknowledgedRedaction: false,
+      onRedactionChange: () => {},
+      error: null,
+    }
+    const conversion = renderToStaticMarkup(
+      createElement(PdfPipelineBuilder, { ...props, conversionMode: true }),
+    )
+    assert.match(conversion, /Preview ordered stages/)
+    assert.doesNotMatch(conversion, /aria-label="Remove Optimise"/)
+    const pipeline = renderToStaticMarkup(createElement(PdfPipelineBuilder, props))
+    assert.match(pipeline, /aria-label="Remove Optimise"/)
   })
   it('shows a mandatory redaction confirmation only for redaction stages', () => {
     const props = {

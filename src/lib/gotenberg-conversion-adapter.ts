@@ -377,17 +377,13 @@ export function adaptConversionForm(
     v9MediaFeatures(form)
   }
   if (operation.output === 'pdf') {
-    const generated = v9PdfStages(
-      form,
-      operation,
-      Boolean(payload.conversionStages),
-      payload.fields,
-    )
     const firstUserStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {
+          allowEmpty: true,
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
+    const generated = v9PdfStages(form, operation, firstUserStages.length > 0, payload.fields)
     const officeSourceNames =
       operation.id === 'office-pdf'
         ? orderOfficeMergeInputs(
@@ -410,6 +406,7 @@ export function adaptConversionForm(
       : []
     const userStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {
+          allowEmpty: true,
           assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
           allowUnresolvedAssets: payload.downloadFrom?.some(
             (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,

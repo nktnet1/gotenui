@@ -194,6 +194,30 @@ test('v9 Office uses native export for supported profiles and remediation otherw
   )
 })
 
+test('v9 Office keeps native PDF/A export with a no-op conversion pipeline', () => {
+  for (const conversionStages of ['[]', 'null', '  ']) {
+    const form = adapt(
+      'office-pdf',
+      { fields: { pdfaProfile: 'PDF/A-2b', pdfaMethod: 'native' }, conversionStages },
+      9,
+    )
+    assert.equal(form.get('nativePdfa'), 'PDF/A-2b')
+    assert.equal(form.has('stages'), false)
+  }
+  assert.throws(
+    () =>
+      adapt(
+        'office-pdf',
+        {
+          fields: { pdfaProfile: 'PDF/A-2b', pdfaMethod: 'native' },
+          conversionStages: '[{"op":"optimize"}]',
+        },
+        9,
+      ),
+    /requires PDF remediation/,
+  )
+})
+
 test('v9 Office uploads ZIP archives using the archives field, never the files field', () => {
   const archive = new File(['PK\u0003\u0004'], 'sources.zip', { type: 'application/zip' })
   const { operation, payload, form } = fixture('office-pdf')

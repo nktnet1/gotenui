@@ -46,7 +46,17 @@ export function parsePdfValidationReport(raw: string): PdfValidationResult[] | n
       return null
     const violations = row.violations
     if (
-      (row.compliant && violations.length !== 0) ||
+      // Gotenberg 9.3 bases compliance on fatal findings only. Factur-X can
+      // be compliant while reporting non-fatal Schematron warnings.
+      (row.compliant &&
+        violations.some(
+          (violation) =>
+            violation &&
+            typeof violation === 'object' &&
+            !Array.isArray(violation) &&
+            typeof violation.severity === 'string' &&
+            violation.severity.toLowerCase() === 'fatal',
+        )) ||
       !violations.every(
         (violation) =>
           violation &&

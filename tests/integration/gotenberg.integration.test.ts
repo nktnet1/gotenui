@@ -32,6 +32,7 @@ const isV9 = testVersion.startsWith('9.')
 const minorVersion = parseGotenbergVersion(testVersion)?.minor ?? 0
 const supportsV91 = isV9 && minorVersion >= 1
 const supportsV92 = isV9 && minorVersion >= 2
+const supportsV93 = isV9 && minorVersion >= 3
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -1132,6 +1133,18 @@ test.skipIf(!isV9)(
     expect(preview.totalFiles).toBe(2)
     expect(preview.entries).toHaveLength(2)
     expect(preview.entries.every((entry) => entry.kind === 'Image')).toBe(true)
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV93)(
+  'Gotenberg 9.3 refuses oversized renders without allocating the requested pixels',
+  async () => {
+    // The pinned 9.3 image uses the default 50-million-pixel rendering limit.
+    // 1200 DPI exceeds it even for a single A4 page, and must fail before drawing.
+    const response = await convertV9('render-pages', { format: 'png', dpi: '1200' })
+    expect(response.status).toBe(400)
+    expect(await response.text()).toMatch(/PDF_MAX_RENDER_PIXELS/)
   },
   120_000,
 )

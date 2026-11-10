@@ -99,6 +99,44 @@ describe('visual metadata fields', () => {
     ).toThrow(/Metadata key/)
   })
 
+  it('shows only Gotenberg 9-writable fields and PDF dates in the v9 editor', () => {
+    const html = renderToStaticMarkup(
+      createElement(PdfMetadataEditor, {
+        standardOnly: true,
+        value: '{"Title":"Report","CreationDate":"D:20261001090000Z"}',
+        onChange: vi.fn(),
+      }),
+    )
+    for (const label of [
+      'Title',
+      'Author',
+      'Subject',
+      'Creator',
+      'Producer',
+      'Creation date',
+      'Modification date',
+      'Keywords',
+    ]) {
+      expect(html).toContain(`>${label}</label>`)
+    }
+    expect(html).not.toContain('>Copyright</label>')
+    expect(html).toContain('D:20261001090000Z')
+  })
+
+  it('keeps unsupported v8 XMP keys visible for repair rather than silently removing them', () => {
+    const html = renderToStaticMarkup(
+      createElement(PdfMetadataEditor, {
+        standardOnly: true,
+        value: '{"Copyright":"Kept for manual review","Title":"Report"}',
+        onChange: vi.fn(),
+      }),
+    )
+    expect(html).toContain('JSON-only keys')
+    expect(html).toContain('nothing has been discarded')
+    expect(html).not.toContain('>Copyright</label>')
+    expect(html).not.toContain('>Title</label>')
+  })
+
   it('renders common fields with a separate JSON mode and accessible control labels', () => {
     const html = renderToStaticMarkup(
       createElement(PdfMetadataEditor, { value: '{"Author":"Author"}', onChange: vi.fn() }),

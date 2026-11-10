@@ -181,12 +181,15 @@ export function ChromiumNetworkEditor({
           </Button>
         </div>
         <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-          Each header needs an explicit URL-matching regular expression. For example,
+          Authentication, session and CSRF headers need an explicit URL-matching regular expression.
+          Other headers can be unscoped. For example,
           <code className="ml-1 rounded bg-slate-100 dark:bg-slate-800 px-1">
             ^https://portal\.example\.com/
           </code>
-          . This avoids accidentally sending tokens to third-party fonts, scripts, or images. Do not
-          put credentials in an unscoped Advanced JSON field.
+          . Scope credentials carefully so they are not sent to third-party fonts, scripts, or
+          images. Do not put credentials in an unscoped Advanced JSON field. Scope patterns cannot
+          contain semicolons or literal whitespace because Gotenberg splits them before matching
+          URLs.
         </p>
         {headers.map((header, index) => (
           <div
@@ -217,7 +220,9 @@ export function ChromiumNetworkEditor({
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor={`${id}-header-scope-${index}`}>URL scope (regular expression)</Label>
+              <Label htmlFor={`${id}-header-scope-${index}`}>
+                URL scope (required for authentication headers)
+              </Label>
               <Input
                 id={`${id}-header-scope-${index}`}
                 value={header.scope}

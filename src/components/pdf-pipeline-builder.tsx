@@ -13,10 +13,11 @@ import {
 
 type EditorStage = { id: number; op: PdfPipelineOp; settings: string }
 
-function initialStages(value: string): EditorStage[] {
+function initialStages(value: string, allowEmpty = false): EditorStage[] {
   try {
     const stages = JSON.parse(value) as { op: PdfPipelineOp; [key: string]: unknown }[]
-    if (!Array.isArray(stages) || !stages.length) return initialStages(DEFAULT_PDF_PIPELINE)
+    if (!Array.isArray(stages)) return initialStages(DEFAULT_PDF_PIPELINE)
+    if (!stages.length) return allowEmpty ? [] : initialStages(DEFAULT_PDF_PIPELINE)
     return stages.map(({ op, ...options }, id) => ({
       id,
       op,
@@ -57,9 +58,11 @@ export function PdfPipelineBuilder({
   error: string | null
   conversionMode?: boolean
 }) {
-  const [stages, setStages] = useState<EditorStage[]>(() => initialStages(value))
+  const [stages, setStages] = useState<EditorStage[]>(() => initialStages(value, conversionMode))
   const [selected, setSelected] = useState<PdfPipelineOp>('select')
-  const nextId = useRef(Math.max(...initialStages(value).map(({ id }) => id)) + 1)
+  const nextId = useRef(
+    Math.max(-1, ...initialStages(value, conversionMode).map(({ id }) => id)) + 1,
+  )
   const [editorError, setEditorError] = useState<string | null>(null)
   const availableStages = PDF_PIPELINE_STAGES.filter(
     ({ op }) => !(conversionMode && op === 'decrypt'),
@@ -96,7 +99,10 @@ export function PdfPipelineBuilder({
   const preview = (() => {
     try {
       return safePipelinePreview(
-        parsePdfPipeline(serialize(stages), { acknowledgedRedaction: true }),
+        parsePdfPipeline(serialize(stages), {
+          allowEmpty: conversionMode,
+          acknowledgedRedaction: true,
+        }),
       )
     } catch {
       return null
@@ -182,7 +188,7 @@ export function PdfPipelineBuilder({
                     size="sm"
                     variant="outline"
                     aria-label={`Remove ${definition?.label}`}
-                    disabled={stages.length === 1}
+                    disabled={!conversionMode && stages.length === 1}
                     onClick={() => update(stages.filter(({ id }) => id !== stage.id))}
                   >
                     <Trash2 className="size-4" />

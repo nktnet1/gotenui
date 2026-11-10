@@ -1,6 +1,6 @@
 import { filenameKey, safeFilename } from '#/lib/file-names'
 
-/** Common XMP keys supported by Gotenberg's metadata/write route. */
+/** Common writable ExifTool/XMP keys for Gotenberg 8. */
 export const METADATA_TEXT_FIELDS = [
   { name: 'Title', label: 'Title', placeholder: 'Document title' },
   { name: 'Author', label: 'Author', placeholder: 'Author or organisation' },
@@ -10,8 +10,23 @@ export const METADATA_TEXT_FIELDS = [
   { name: 'Copyright', label: 'Copyright', placeholder: 'Copyright statement' },
 ] as const
 
+/** Gotenberg 9 also writes PDF /Info creation and modification dates. */
+export const PDF_METADATA_DATE_FIELDS = [
+  { name: 'CreationDate', label: 'Creation date', placeholder: 'D:20261001090000Z' },
+  { name: 'ModDate', label: 'Modification date', placeholder: 'D:20261001090000Z' },
+] as const
+
+/** Gotenberg 9 accepts only these editable PDF /Info properties. */
+export const GOTENBERG_9_METADATA_FIELDS = [
+  ...METADATA_TEXT_FIELDS.filter(({ name }) => name !== 'Copyright'),
+  ...PDF_METADATA_DATE_FIELDS,
+]
+
 export type MetadataTextKey = (typeof METADATA_TEXT_FIELDS)[number]['name']
-export type MetadataKey = MetadataTextKey | 'Keywords'
+export type MetadataKey =
+  | MetadataTextKey
+  | (typeof PDF_METADATA_DATE_FIELDS)[number]['name']
+  | 'Keywords'
 
 /** Match Gotenberg 8.39's ExifTool option and filesystem pseudo-tag protections. */
 const EXIFTOOL_OPTIONS = new Set([

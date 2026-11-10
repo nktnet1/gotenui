@@ -4,6 +4,7 @@ import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.se
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
 import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
+import { describePdfUpstreamError } from '#/lib/gotenberg-v93-errors'
 import {
   type GotenbergVersion,
   parseGotenbergVersion,
@@ -310,15 +311,29 @@ function copyUpstreamDiagnostics(upstream: Response, headers: Headers): void {
     headers.set('Gotenberg-Version', version)
   }
 }
+/** An upstream error may arrive in arbitrarily small network chunks. Read up
+ * to the diagnostic limit rather than truncating at the first chunk, while
+ * cancelling the remainder so a large error cannot be buffered by the proxy.
+ */
 async function upstreamErrorText(response: Response): Promise<string> {
+  const fallback = `Gotenberg returned HTTP ${response.status}.`
   const reader = response.body?.getReader()
-  if (!reader) return `Gotenberg returned HTTP ${response.status}.`
+  if (!reader) return fallback
+  const limit = 1_500
+  const prefix = new Uint8Array(limit)
+  let length = 0
   try {
-    const { value } = await reader.read()
-    return (
-      new TextDecoder().decode(value?.subarray(0, 1_500)).trim() ||
-      `Gotenberg returned HTTP ${response.status}.`
-    )
+    while (length < limit) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const count = Math.min(value.byteLength, limit - length)
+      prefix.set(value.subarray(0, count), length)
+      length += count
+    }
+    return new TextDecoder().decode(prefix.subarray(0, length)).trim() || fallback
+  } catch {
+    // A broken upstream diagnostic stream must not discard the HTTP status.
+    return fallback
   } finally {
     await reader.cancel().catch(() => {})
     reader.releaseLock()
@@ -364,6 +379,7 @@ function allowedConversionContentTypes(
   }
   if (payload.conversionStages) {
     const stages = parsePdfPipeline(payload.conversionStages, {
+      allowEmpty: true,
       acknowledgedRedaction: payload.acknowledgedConversionRedaction,
     })
     // Gotenberg's Chromium and LibreOffice conversion routes pass newly
@@ -581,6 +597,7 @@ export async function proxyConversionRequest(
         ? String(payload.fields.stages ?? '')
         : (payload.conversionStages ?? ''),
       {
+        allowEmpty: operation.id !== 'pdf-pipeline',
         acknowledgedRedaction:
           operation.id === 'pdf-pipeline'
             ? payload.fields.acknowledgedRedaction === true
@@ -712,24 +729,16 @@ export async function proxyConversionRequest(
   }
   if (!upstream.ok) {
     invalidateUnauthorized(upstream.status, target)
-    const missingExtractionEndpoint =
-      upstream.status === 404 &&
-      (operation.id === 'extract-text' || operation.id === 'extract-attachments')
     const headers = new Headers({
       ...safeResponseHeaders,
       'Content-Type': 'text/plain; charset=utf-8',
     })
     copyUpstreamDiagnostics(upstream, headers)
-    if (missingExtractionEndpoint) await upstream.body?.cancel().catch(() => {})
-    return new Response(
-      missingExtractionEndpoint
-        ? `This Gotenberg instance does not expose ${operation.path}. Use the latest Gotenberg 9 release with PDF routes enabled.`
-        : await upstreamErrorText(upstream),
-      {
-        status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
-        headers,
-      },
-    )
+    const detail = await upstreamErrorText(upstream)
+    return new Response(describePdfUpstreamError(version, path, upstream.status, detail), {
+      status: upstream.status >= 400 && upstream.status <= 599 ? upstream.status : 502,
+      headers,
+    })
   }
   const headers = new Headers(safeResponseHeaders)
   copyUpstreamDiagnostics(upstream, headers)
