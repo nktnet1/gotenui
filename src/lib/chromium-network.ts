@@ -15,6 +15,14 @@ export type ChromiumResourceHeader = {
   scope: string
 }
 
+/** Gotenberg splits headers on semicolons, then removes whitespace from the
+ * scope token before compiling its regex. Either character can silently
+ * change the URL pattern and widen where a credential is sent.
+ */
+export function hasAmbiguousChromiumScope(scope: string): boolean {
+  return /[;\p{White_Space}]/u.test(scope)
+}
+
 export function chromiumNetworkFields(
   cookies: readonly ChromiumCookie[],
   headers: readonly ChromiumResourceHeader[],
@@ -51,6 +59,11 @@ export function chromiumNetworkFields(
         throw new Error('Set the URL scope in its own field, not in the header value.')
       }
       const scope = header.scope.trim()
+      if (hasAmbiguousChromiumScope(scope)) {
+        throw new Error(
+          'Chromium header URL scopes cannot contain semicolons or whitespace; use regex escapes.',
+        )
+      }
       if (!scope && /authorization|token|secret|key|credential|auth/i.test(name)) {
         throw new Error('Authentication headers require an explicit URL scope.')
       }

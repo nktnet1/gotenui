@@ -188,6 +188,58 @@ test('rejects malformed scope tokens from direct requests and preserves safe edi
   )
 })
 
+test('rejects URL scopes that Gotenberg would silently truncate or rewrite', () => {
+  // Gotenberg splits the value on semicolons and strips whitespace from
+  // the scope token. The former broadens this credential regex to /private.
+  for (const scope of [
+    '^https://portal\\.example\\.test/private;admin',
+    '^https://portal\\.example\\.test/private admin',
+    '^https://portal\\.example\\.test/[ a-z]+',
+  ]) {
+    assert.throws(
+      () => chromiumNetworkFields([], [{ ...header, scope }]),
+      /scope.*semicolons or whitespace/i,
+    )
+  }
+
+  for (const value of [
+    'Bearer secret;scope=^https://portal\\.example\\.test/private;admin',
+    'Bearer secret;scope=^https://portal\\.example\\.test/private;more=value',
+  ]) {
+    assert.throws(
+      () =>
+        validatePayload(
+          request('url-pdf', { extraHttpHeaders: JSON.stringify({ Authorization: value }) }),
+        ),
+      /scope last/i,
+    )
+  }
+  assert.throws(
+    () =>
+      validatePayload(
+        request('html-shot', {
+          extraHttpHeaders: JSON.stringify({
+            Authorization: 'Bearer secret;scope=^https://portal\\.example\\.test/a b',
+          }),
+        }),
+      ),
+    /scope.*semicolons or whitespace/i,
+  )
+
+  // Backslash regex escapes retain their meaning and need no rewriting.
+  const escaped = '^https://portal\\.example\\.test/private\\x3Badmin'
+  const fromEditor = chromiumNetworkFields([], [{ ...header, scope: escaped }])
+  assert.doesNotThrow(() => validatePayload(request('url-pdf', fromEditor)))
+  // Normal non-sensitive headers may still contain semicolon-delimited values.
+  assert.doesNotThrow(() =>
+    validatePayload(
+      request('url-pdf', {
+        extraHttpHeaders: JSON.stringify({ 'X-Feature': 'one;scope=^https://example\\.test/;two' }),
+      }),
+    ),
+  )
+})
+
 test('editor retains special HTTP token names without modifying the object prototype', () => {
   const settings = chromiumNetworkFields(
     [],

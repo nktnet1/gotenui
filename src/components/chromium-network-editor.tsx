@@ -187,7 +187,9 @@ export function ChromiumNetworkEditor({
             ^https://portal\.example\.com/
           </code>
           . Scope credentials carefully so they are not sent to third-party fonts, scripts, or
-          images. Do not put credentials in an unscoped Advanced JSON field.
+          images. Do not put credentials in an unscoped Advanced JSON field. Scope patterns cannot
+          contain semicolons or literal whitespace because Gotenberg splits them before matching
+          URLs.
         </p>
         {headers.map((header, index) => (
           <div

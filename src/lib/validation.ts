@@ -6,6 +6,7 @@ import {
 } from '#/lib/attachment-metadata'
 import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
+import { hasAmbiguousChromiumScope } from '#/lib/chromium-network'
 import { safeFilename as checkFilename, filenameKey } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
@@ -845,30 +846,42 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     // `scope=` tokens. It uses .NET regexp2, not JavaScript's RegExp engine:
     // syntax validity must be checked upstream so valid .NET patterns survive.
     const tokens = headerValue.split(';')
-    const scopes = tokens.flatMap((token) => {
+    const scopes = tokens.flatMap((token, index) => {
       const separator = token.indexOf('=')
       const key = (separator < 0 ? token : token.slice(0, separator)).trim().toLowerCase()
       if (key !== 'scope') return []
       if (separator < 0) {
         throw new InputError('Chromium resource header URL scope needs a regex after scope=.')
       }
-      return [token.slice(separator + 1).replace(/\s+/g, '')]
+      const scope = token.slice(separator + 1).trim()
+      if (hasAmbiguousChromiumScope(scope)) {
+        throw new InputError(
+          'Chromium resource header URL scopes cannot contain semicolons or whitespace; use regex escapes.',
+        )
+      }
+      return [{ scope, index }]
     })
     if (scopes.length > 1) {
       throw new InputError('Chromium resource header must contain at most one URL scope.')
     }
-    const scope = scopes[0]
-    if (scope === undefined) {
-      if (/authorization|token|secret|key|credential|auth/i.test(key)) {
+    const scoped = scopes[0]
+    const authHeader = /authorization|token|secret|key|credential|auth/i.test(key)
+    if (scoped === undefined) {
+      if (authHeader) {
         throw new InputError(
           'Authentication headers require an explicit URL scope to avoid credential disclosure.',
         )
       }
       continue
     }
+    // Anything after scope= becomes another header value token upstream, not
+    // part of the URL regex. Never silently broaden a credential's scope.
+    if (authHeader && tokens.slice(scoped.index + 1).some((token) => token.trim() !== '')) {
+      throw new InputError('Chromium authentication headers must place the URL scope last.')
+    }
     // A scope-only header is valid upstream: it sends an empty header value
     // to matching URLs. Do not require a non-empty first value token.
-    if (!scope || new TextEncoder().encode(scope).length > 1024) {
+    if (!scoped.scope || new TextEncoder().encode(scoped.scope).length > 1024) {
       throw new InputError(
         'Chromium resource header scope must be a non-empty regex (max 1,024 UTF-8 bytes).',
       )
