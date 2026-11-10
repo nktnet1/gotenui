@@ -847,9 +847,12 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     const tokens = headerValue.split(';')
     const scopes = tokens.flatMap((token) => {
       const separator = token.indexOf('=')
-      return separator >= 0 && token.slice(0, separator).trim().toLowerCase() === 'scope'
-        ? [token.slice(separator + 1).replace(/\s+/g, '')]
-        : []
+      const key = (separator < 0 ? token : token.slice(0, separator)).trim().toLowerCase()
+      if (key !== 'scope') return []
+      if (separator < 0) {
+        throw new InputError('Chromium resource header URL scope needs a regex after scope=.')
+      }
+      return [token.slice(separator + 1).replace(/\s+/g, '')]
     })
     if (scopes.length > 1) {
       throw new InputError('Chromium resource header must contain at most one URL scope.')

@@ -6,6 +6,7 @@ import {
   chromiumNetworkFields,
 } from '#/lib/chromium-network'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
+import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
 import { validatePayload } from '#/lib/validation'
 
@@ -140,6 +141,66 @@ test('the request editor serializes Chromium cookies and scoped headers as JSON 
     () => chromiumNetworkFields([], [header, { ...header, name: 'authorization' }]),
     /Duplicate Chromium header/,
   )
+})
+
+test('unscoped public headers do not emit an invalid empty Gotenberg scope', () => {
+  const settings = chromiumNetworkFields(
+    [],
+    [
+      { name: 'X-Request-Id', value: 'trace-42', scope: '   ' },
+      { name: 'X-Feature-Flag', value: 'enabled', scope: '^https://example\\.test/' },
+    ],
+  )
+  assert.deepEqual(JSON.parse(settings.extraHttpHeaders), {
+    'X-Request-Id': 'trace-42',
+    'X-Feature-Flag': 'enabled;scope=^https://example\\.test/',
+  })
+  for (const operationId of ['url-pdf', 'html-shot'] as const) {
+    const { operation, payload } = validatePayload(request(operationId, settings))
+    const v8Form = createGotenbergForm(operation, payload, [], [])
+    assert.equal(v8Form.get('extraHttpHeaders'), settings.extraHttpHeaders)
+    const v9Form = adaptConversionForm(operation, payload, v8Form, 9)
+    assert.equal(v9Form.get('extraHttpHeaders'), settings.extraHttpHeaders)
+  }
+})
+
+test('rejects malformed scope tokens from direct requests and preserves safe editor headers', () => {
+  for (const headerValue of ['visible;scope', 'scope', 'visible;SCOPE   ']) {
+    assert.throws(
+      () =>
+        validatePayload(
+          request('url-pdf', { extraHttpHeaders: JSON.stringify({ 'X-Public': headerValue }) }),
+        ),
+      /scope/i,
+    )
+  }
+  assert.doesNotThrow(() =>
+    validatePayload(
+      request('url-pdf', { extraHttpHeaders: JSON.stringify({ 'X-Public': 'visible;scoped' }) }),
+    ),
+  )
+  for (const value of ['token;SCOPE=^https://example.test/', 'scope', 'token; Scope']) {
+    assert.throws(() => chromiumNetworkFields([], [{ ...header, value }]), /URL scope/)
+  }
+  assert.throws(
+    () => chromiumNetworkFields([], [{ ...header, scope: '   ' }]),
+    /Authentication headers require an explicit URL scope/,
+  )
+})
+
+test('editor retains special HTTP token names without modifying the object prototype', () => {
+  const settings = chromiumNetworkFields(
+    [],
+    [
+      { name: '__proto__', value: 'public-value', scope: '' },
+      { name: 'constructor', value: 'other-value', scope: '' },
+    ],
+  )
+  assert.deepEqual(Object.entries(JSON.parse(settings.extraHttpHeaders)), [
+    ['__proto__', 'public-value'],
+    ['constructor', 'other-value'],
+  ])
+  assert.doesNotThrow(() => validatePayload(request('html-shot', settings)))
 })
 
 test('validates cookie domains, types, boundaries and security attributes', () => {
