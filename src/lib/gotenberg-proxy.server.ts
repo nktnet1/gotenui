@@ -311,15 +311,29 @@ function copyUpstreamDiagnostics(upstream: Response, headers: Headers): void {
     headers.set('Gotenberg-Version', version)
   }
 }
+/** An upstream error may arrive in arbitrarily small network chunks. Read up
+ * to the diagnostic limit rather than truncating at the first chunk, while
+ * cancelling the remainder so a large error cannot be buffered by the proxy.
+ */
 async function upstreamErrorText(response: Response): Promise<string> {
+  const fallback = `Gotenberg returned HTTP ${response.status}.`
   const reader = response.body?.getReader()
-  if (!reader) return `Gotenberg returned HTTP ${response.status}.`
+  if (!reader) return fallback
+  const limit = 1_500
+  const prefix = new Uint8Array(limit)
+  let length = 0
   try {
-    const { value } = await reader.read()
-    return (
-      new TextDecoder().decode(value?.subarray(0, 1_500)).trim() ||
-      `Gotenberg returned HTTP ${response.status}.`
-    )
+    while (length < limit) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const count = Math.min(value.byteLength, limit - length)
+      prefix.set(value.subarray(0, count), length)
+      length += count
+    }
+    return new TextDecoder().decode(prefix.subarray(0, length)).trim() || fallback
+  } catch {
+    // A broken upstream diagnostic stream must not discard the HTTP status.
+    return fallback
   } finally {
     await reader.cancel().catch(() => {})
     reader.releaseLock()

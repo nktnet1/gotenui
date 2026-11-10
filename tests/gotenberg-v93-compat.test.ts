@@ -152,6 +152,92 @@ test('9.3 explains PDF render pixel-limit failures and retains upstream status',
   )
 })
 
+test('9.3 preserves complete render diagnostics split across network and UTF-8 chunks', async () => {
+  const message = renderBudget.replace('source.pdf', 'résumé.pdf')
+  const encoded = new TextEncoder().encode(message)
+  const accent = encoded.indexOf(0xc3)
+  assert.ok(accent > 5)
+  const upstream = server(
+    '9.3.0',
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const chunk of [
+              encoded.subarray(0, 2),
+              encoded.subarray(2, accent + 1),
+              encoded.subarray(accent + 1),
+            ]) {
+              controller.enqueue(chunk)
+            }
+            controller.close()
+          },
+        }),
+        { status: 400, headers: { 'Gotenberg-Trace': 'split-pdf-error' } },
+      ),
+    (path) => assert.equal(path, '/forms/pdf/pipe'),
+  )
+  const result = await proxyConversionRequest(
+    request('render-pages', { dpi: '900', format: 'png' }),
+    upstream.fetcher,
+  )
+  assert.equal(result.status, 400)
+  assert.equal(result.headers.get('Gotenberg-Trace'), 'split-pdf-error')
+  const detail = await result.text()
+  assert.ok(detail.startsWith(`${message}\n\n`))
+  assert.match(detail, /PDF_MAX_RENDER_PIXELS/)
+  assert.deepEqual(upstream.counts(), [1, 1])
+})
+
+test('error diagnostics stop at the bounded byte limit and cancel the remaining stream', async () => {
+  let cancelled = false
+  const upstream = server(
+    '9.3.0',
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(new Uint8Array(800).fill(0x78))
+          },
+          cancel() {
+            cancelled = true
+          },
+        }),
+        { status: 400 },
+      ),
+    (path) => assert.equal(path, '/forms/pdf/pipe'),
+  )
+  const result = await proxyConversionRequest(
+    request('render-pages', { dpi: '900', format: 'png' }),
+    upstream.fetcher,
+  )
+  assert.equal(result.status, 400)
+  assert.equal((await result.text()).length, 1_500)
+  assert.equal(cancelled, true)
+})
+
+test('a failed upstream error stream preserves the HTTP status and a readable fallback', async () => {
+  const upstream = server(
+    '9.3.0',
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(new Error('Connection interrupted'))
+          },
+        }),
+        { status: 400 },
+      ),
+    (path) => assert.equal(path, '/forms/pdf/pipe'),
+  )
+  const result = await proxyConversionRequest(
+    request('render-pages', { dpi: '900', format: 'png' }),
+    upstream.fetcher,
+  )
+  assert.equal(result.status, 400)
+  assert.equal(await result.text(), 'Gotenberg returned HTTP 400.')
+})
+
 test('9.3 reports disabled PDF routes without pretending that /version detects flags', async () => {
   const upstream = server(
     '9.3.0',
