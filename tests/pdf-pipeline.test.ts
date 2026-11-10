@@ -237,7 +237,6 @@ describe('PDF pipeline catalogue and stage contract', () => {
       { page: 1, width: 100 },
       { page: 1, width: 0, height: 20 },
       { page: 1, width: 100, height: -1 },
-      { page: 1, width: 100, height: 20, x: null },
       { page: 1, width: 100, height: 20, y: '8' },
     ]) {
       assert.throws(
@@ -246,6 +245,110 @@ describe('PDF pipeline catalogue and stage contract', () => {
             acknowledgedRedaction: true,
           }),
         /invalid rectangle/,
+      )
+    }
+  })
+
+  it('matches upstream JSON null semantics for optional and nested stage fields', () => {
+    // Go's encoding/json decodes null as the zero value of a primitive or a nil
+    // pointer. An explicit null must not be mistaken for a malformed field.
+    const cases = [
+      [{ op: 'split', every: null, ranges: ['1-2'] }],
+      [{ op: 'split', every: 2, ranges: null }],
+      [{ op: 'insert', source: 'additional.pdf', at: null, sourcePages: null }],
+      [{ op: 'stamp-text', text: 'DRAFT', fontSize: null, font: null, color: null, opacity: null }],
+      [{ op: 'stamp-image', image: 'stamp.png', pages: null, x: null, y: null }],
+      [{ op: 'stamp-pdf', source: 'overlay.pdf', sourcePage: null, scale: null }],
+      [
+        {
+          op: 'compose',
+          paperSize: 'A4',
+          paperWidth: null,
+          placements: [
+            { source: null, sourcePage: null, page: null, x: null, y: null, scale: null },
+          ],
+        },
+      ],
+      [{ op: 'set-metadata', author: null, creationDate: null, modDate: null }],
+      [{ op: 'set-bookmarks', bookmarks: [{ title: 'Intro', pageNumber: 1, children: null }] }],
+      [{ op: 'set-form', fields: { customer: null, choices: ['Yes', null] } }],
+      [{ op: 'redact', regions: [{ page: 1, x: null, y: null, width: 100, height: 25 }] }],
+      [{ op: 'attach', file: 'receipt.txt', relationship: null, mimeType: null }],
+      [{ op: 'extract-text', pages: null, invisible: null, artifacts: null, annotations: null }],
+      [{ op: 'optimize', objectStreams: null, dedup: null, recompressImages: null }],
+      [{ op: 'encrypt', ownerPassword: 'secret', algorithm: null, permissions: null }],
+      [
+        {
+          op: 'encrypt',
+          userPassword: 'secret',
+          permissions: { print: null, assemble: false, fillForms: null },
+        },
+      ],
+      [{ op: 'decrypt', password: null }],
+      [{ op: 'remediate', profile: 'PDF/A-2b', aggressive: null, language: null }],
+      [{ op: 'sign', certificate: 'signing.p12', key: null, timestampUrl: null }],
+      [{ op: 'render', format: 'png', dpi: null, quality: null }],
+      [{ op: 'render', format: null, dpi: null }],
+    ]
+    for (const stages of cases) {
+      assert.deepEqual(
+        parsePdfPipeline(JSON.stringify(stages), { acknowledgedRedaction: true }),
+        stages,
+        JSON.stringify(stages),
+      )
+    }
+    // Without stage assets, the same nulls must survive the actual multipart
+    // encoding rather than being coerced into string "null" or dropped.
+    for (const stages of [
+      [{ op: 'set-metadata', author: null, modDate: null }],
+      [{ op: 'set-form', fields: { customer: null, choices: ['Yes', null] } }],
+      [{ op: 'render', format: 'png', quality: null }],
+      [{ op: 'optimize', dedup: null }],
+    ]) {
+      assert.deepEqual(JSON.parse(String(adapted(stages).form.get('stages'))), stages)
+    }
+    assert.deepEqual(
+      parsePdfPipeline(
+        JSON.stringify([{ op: 'redact', regions: [{ page: 1, x: null, width: 10, height: 10 }] }]),
+        {
+          acknowledgedRedaction: true,
+        },
+      ),
+      [{ op: 'redact', regions: [{ page: 1, x: null, width: 10, height: 10 }] }],
+    )
+    error([{ op: 'split', every: null, ranges: null }], /either every or ranges/)
+    error([{ op: 'stamp-text', text: null }], /text must be non-empty/)
+    error([{ op: 'rotate', angle: null }], /multiple of 90/)
+    error([{ op: 'render', format: 'png', quality: 80 }], /JPEG quality/)
+    error(
+      [{ op: 'encrypt', ownerPassword: 'secret', permissions: { print: 'yes' } }],
+      /permissions/,
+    )
+    error([{ op: 'compose', paperSize: 'A4', placements: [{ scale: -1 }] }], /placements/)
+    error([{ op: 'set-form', fields: { amount: 123 } }], /fields must map/)
+    error([{ op: 'redact', regions: [{ page: 1, width: null, height: 5 }] }], /invalid rectangle/)
+  })
+
+  it('distinguishes empty conversion-time stages from required standalone pipeline stages', () => {
+    for (const raw of ['[]', 'null', '  ']) {
+      assert.deepEqual(parsePdfPipeline(raw, { allowEmpty: true }), [])
+      assert.throws(() => parsePdfPipeline(raw), /at least one|valid JSON/)
+    }
+    assert.throws(() => parsePdfPipeline('{}', { allowEmpty: true }), /at least one/)
+    assert.throws(() => parsePdfPipeline('[null]', { allowEmpty: true }), /Stage 1/)
+    const editor = {
+      localAssetNames: [],
+      archivesPresent: false,
+      remoteRows: [],
+      remoteJson: '',
+      acknowledgedRedaction: false,
+    }
+    for (const raw of ['[]', 'null', '  ']) {
+      assert.equal(pdfPipelineEditorError(raw, { ...editor, documentKind: 'office' }), null)
+      assert.equal(pdfPipelineEditorError(raw, { ...editor, documentKind: 'single' }), null)
+      assert.match(
+        pdfPipelineEditorError(raw, { ...editor, documentKind: 'pdf' }) ?? '',
+        /at least one|valid JSON/,
       )
     }
   })
@@ -853,6 +956,22 @@ describe('visual pipeline builder', () => {
     assert.doesNotMatch(markup, /value="decrypt"/)
     assert.match(markup, /value="sign"/)
     assert.match(markup, /Pipeline stage files/)
+  })
+  it('renders empty conversion pipelines without injecting the default optimise stage', () => {
+    const props = {
+      value: '[]',
+      onChange: () => {},
+      acknowledgedRedaction: false,
+      onRedactionChange: () => {},
+      error: null,
+    }
+    const conversion = renderToStaticMarkup(
+      createElement(PdfPipelineBuilder, { ...props, conversionMode: true }),
+    )
+    assert.match(conversion, /Preview ordered stages/)
+    assert.doesNotMatch(conversion, /aria-label="Remove Optimise"/)
+    const pipeline = renderToStaticMarkup(createElement(PdfPipelineBuilder, props))
+    assert.match(pipeline, /aria-label="Remove Optimise"/)
   })
   it('shows a mandatory redaction confirmation only for redaction stages', () => {
     const props = {

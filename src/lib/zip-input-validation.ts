@@ -237,6 +237,7 @@ export async function validateZipInputs(
         })
       : payload.conversionStages
         ? parsePdfPipeline(payload.conversionStages, {
+            allowEmpty: true,
             acknowledgedRedaction: payload.acknowledgedConversionRedaction,
           })
         : []

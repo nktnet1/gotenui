@@ -379,6 +379,7 @@ function allowedConversionContentTypes(
   }
   if (payload.conversionStages) {
     const stages = parsePdfPipeline(payload.conversionStages, {
+      allowEmpty: true,
       acknowledgedRedaction: payload.acknowledgedConversionRedaction,
     })
     // Gotenberg's Chromium and LibreOffice conversion routes pass newly
@@ -596,6 +597,7 @@ export async function proxyConversionRequest(
         ? String(payload.fields.stages ?? '')
         : (payload.conversionStages ?? ''),
       {
+        allowEmpty: operation.id !== 'pdf-pipeline',
         acknowledgedRedaction:
           operation.id === 'pdf-pipeline'
             ? payload.fields.acknowledgedRedaction === true

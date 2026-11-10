@@ -216,7 +216,9 @@ export function adaptV9PdfExtra(
         if (
           !(
             typeof field === 'string' ||
-            (Array.isArray(field) && field.every((entry) => typeof entry === 'string'))
+            field === null ||
+            (Array.isArray(field) &&
+              field.every((entry) => entry === null || typeof entry === 'string'))
           )
         ) {
           throw new InputError('Form values must be strings or arrays of strings.')
@@ -262,7 +264,11 @@ export function adaptV9PdfExtra(
           }) ||
           ['x', 'y'].some((key) => {
             const value = region[key]
-            return value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))
+            return (
+              value !== undefined &&
+              value !== null &&
+              (typeof value !== 'number' || !Number.isFinite(value))
+            )
           })
         ) {
           throw new InputError(

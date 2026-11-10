@@ -539,6 +539,7 @@ export function validateFiles(
       const stageAssets = new Set(
         pdfStageAssetNames(
           parsePdfPipeline(rawStages, {
+            allowEmpty: operation.id !== 'pdf-pipeline',
             acknowledgedRedaction:
               operation.id === 'pdf-pipeline'
                 ? payload.fields?.acknowledgedRedaction === true
@@ -651,6 +652,7 @@ export function validateFiles(
     [...auxiliary, ...stageFiles].some((file) => file.size === 0)
   ) {
     for (const stage of parsePdfPipeline(stageJson, {
+      allowEmpty: operation.id !== 'pdf-pipeline',
       acknowledgedRedaction:
         operation.id === 'pdf-pipeline'
           ? payload?.fields?.acknowledgedRedaction === true
