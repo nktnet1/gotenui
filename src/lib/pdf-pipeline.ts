@@ -133,7 +133,7 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'redact',
     label: 'Redact content',
-    description: 'Permanently remove content in specified rectangles.',
+    description: 'Permanently remove content in rectangles; omitted x/y coordinates default to 0.',
     options: { regions: [{ page: 1, x: 50, y: 50, width: 100, height: 30 }] },
     fields: ['regions'],
   },
@@ -257,6 +257,24 @@ const profiles = new Set([
   'PDF/UA-2',
   'Factur-X',
 ])
+// Gotenberg 9's PDF stage parser accepts exactly these standard PDF fonts.
+const stampFonts = new Set([
+  'Helvetica',
+  'Helvetica-Bold',
+  'Helvetica-Oblique',
+  'Helvetica-BoldOblique',
+  'Times-Roman',
+  'Times-Bold',
+  'Times-Italic',
+  'Times-BoldItalic',
+  'Courier',
+  'Courier-Bold',
+  'Courier-Oblique',
+  'Courier-BoldOblique',
+  'Symbol',
+  'ZapfDingbats',
+])
+const facturXLevels = new Set(['MINIMUM', 'BASIC WL', 'BASIC', 'EN 16931', 'EXTENDED', 'XRECHNUNG'])
 const permissions = new Set([
   'print',
   'printHighQuality',
@@ -478,6 +496,10 @@ function validateStage(stage: PdfPipelineStage): void {
       // Litho rejects only the empty string; whitespace is valid stamp content.
       if (stage.text === '' || stage.text === undefined)
         throw new InputError('stamp-text: text must be non-empty.')
+      if (stage.font && !stampFonts.has(stage.font as string))
+        throw new InputError('stamp-text: font must be one of the 14 standard PDF fonts.')
+      if (stage.color && !/^#[\da-fA-F]{6}$/.test(stage.color as string))
+        throw new InputError('stamp-text: color must be a #rrggbb hexadecimal colour.')
       break
     case 'stamp-image':
       if (!/\.(png|jpe?g)$/i.test(requiredText(stage, 'image')))
@@ -538,11 +560,14 @@ function validateStage(stage: PdfPipelineStage): void {
           !object(region) ||
           !integer(region.page, 1) ||
           Object.keys(region).some((key) => !['page', 'x', 'y', 'width', 'height'].includes(key)) ||
-          !['x', 'y', 'width', 'height'].every(
-            (key) => typeof region[key] === 'number' && Number.isFinite(region[key]),
-          ) ||
-          (region.width as number) <= 0 ||
-          (region.height as number) <= 0
+          !['width', 'height'].every((key) => {
+            const value = region[key]
+            return typeof value === 'number' && Number.isFinite(value) && value > 0
+          }) ||
+          ['x', 'y'].some((key) => {
+            const value = region[key]
+            return value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))
+          })
         )
           throw new InputError('redact: invalid rectangle coordinates.')
       }
@@ -603,6 +628,8 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('remediate: Factur-X options need a Factur-X profile.')
       if ((stage.level || stage.documentType) && !stage.xml)
         throw new InputError('remediate: level/documentType require an XML upload.')
+      if (stage.xml && !facturXLevels.has(stage.level as string))
+        throw new InputError('remediate: specify a supported Factur-X level for the invoice XML.')
       break
     }
     case 'decrypt':

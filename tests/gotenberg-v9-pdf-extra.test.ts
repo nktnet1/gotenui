@@ -239,6 +239,15 @@ describe('Gotenberg 9 PDF stages', () => {
       adapted('redact', { regions: JSON.stringify(negative), confirmRedaction: true }).stages,
       [{ op: 'redact', regions: negative }],
     )
+    const omitted = [
+      { page: 1, width: 150, height: 20 },
+      { page: 2, x: -5, width: 100, height: 10 },
+      { page: 3, y: 7, width: 100, height: 10 },
+    ]
+    assert.deepEqual(
+      adapted('redact', { regions: JSON.stringify(omitted), confirmRedaction: true }).stages,
+      [{ op: 'redact', regions: omitted }],
+    )
     const manyRegions = Array.from({ length: 125 }, (_, index) => ({
       page: 1,
       x: index,
@@ -254,6 +263,10 @@ describe('Gotenberg 9 PDF stages', () => {
       [{ page: 0, x: 1, y: 1, width: 3, height: 2 }],
       [{ page: 1, x: 1, y: 1, width: 0, height: 2 }],
       [{ page: 1, x: 1, y: 1, width: 3, height: 2, replaceWith: 'secret' }],
+      [{ page: 1, height: 2 }],
+      [{ page: 1, width: 3 }],
+      [{ page: 1, x: null, width: 3, height: 2 }],
+      [{ page: 1, y: '4', width: 3, height: 2 }],
     ]) {
       assert.throws(
         () => adapted('redact', { regions: JSON.stringify(invalid), confirmRedaction: true }),

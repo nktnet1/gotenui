@@ -126,6 +126,95 @@ describe('PDF pipeline catalogue and stage contract', () => {
     )
   })
 
+  it('accepts only Gotenberg standard PDF stamp fonts and six-digit RGB colours', () => {
+    const fonts = [
+      'Helvetica',
+      'Helvetica-Bold',
+      'Helvetica-Oblique',
+      'Helvetica-BoldOblique',
+      'Times-Roman',
+      'Times-Bold',
+      'Times-Italic',
+      'Times-BoldItalic',
+      'Courier',
+      'Courier-Bold',
+      'Courier-Oblique',
+      'Courier-BoldOblique',
+      'Symbol',
+      'ZapfDingbats',
+    ]
+    for (const font of [...fonts, '']) {
+      const stages = [{ op: 'stamp-text', text: 'DRAFT', font, color: '#aBc123' }]
+      assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    }
+    assert.deepEqual(
+      parsePdfPipeline('[{"op":"stamp-text","text":"DRAFT","color":"","font":""}]'),
+      [{ op: 'stamp-text', text: 'DRAFT', color: '', font: '' }],
+    )
+    const stages = [{ op: 'stamp-text', text: 'DRAFT', font: 'Helvetica', color: '#00ffAC' }]
+    assert.deepEqual(JSON.parse(String(adapted(stages).form.get('stages'))), stages)
+    for (const font of ['Garamond', 'times-roman', 'Helvetica Neue']) {
+      error([{ op: 'stamp-text', text: 'DRAFT', font }], /14 standard PDF fonts/)
+    }
+    for (const color of ['red', '#abc', '#GG0000', '#0123456', '123456']) {
+      error([{ op: 'stamp-text', text: 'DRAFT', color }], /#rrggbb hexadecimal/)
+    }
+  })
+
+  it('accepts all six upstream Factur-X invoice levels but rejects unsupported ones', () => {
+    for (const level of ['MINIMUM', 'BASIC WL', 'BASIC', 'EN 16931', 'EXTENDED', 'XRECHNUNG']) {
+      const stages = [{ op: 'remediate', profile: 'Factur-X', xml: 'invoice.xml', level }]
+      assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    }
+    const stages = [{ op: 'remediate', profile: 'Factur-X', xml: 'invoice.xml', level: 'EN 16931' }]
+    assert.deepEqual(
+      JSON.parse(String(adapted(stages, [new File(['xml'], 'invoice.xml')]).form.get('stages'))),
+      stages,
+    )
+    error(
+      [{ op: 'remediate', profile: 'Factur-X', xml: 'invoice.xml' }],
+      /supported Factur-X level/,
+    )
+    error(
+      [{ op: 'remediate', profile: 'Factur-X', xml: 'invoice.xml', level: 'UNKNOWN' }],
+      /supported Factur-X level/,
+    )
+    assert.deepEqual(parsePdfPipeline('[{"op":"remediate","profile":"Factur-X"}]'), [
+      { op: 'remediate', profile: 'Factur-X' },
+    ])
+  })
+
+  it('allows x and y to be omitted independently from Gotenberg redaction rectangles', () => {
+    const regions = [
+      { page: 1, width: 100, height: 20 },
+      { page: 2, x: -4, width: 50, height: 10 },
+      { page: 3, y: 8, width: 50, height: 10 },
+    ]
+    const stages = [{ op: 'redact', regions }]
+    assert.deepEqual(
+      parsePdfPipeline(JSON.stringify(stages), { acknowledgedRedaction: true }),
+      stages,
+    )
+    assert.deepEqual(JSON.parse(String(adapted(stages, [], true).form.get('stages'))), stages)
+    assert.throws(() => adapted(stages), /Confirm that redaction/)
+    for (const invalid of [
+      { page: 1, height: 20 },
+      { page: 1, width: 100 },
+      { page: 1, width: 0, height: 20 },
+      { page: 1, width: 100, height: -1 },
+      { page: 1, width: 100, height: 20, x: null },
+      { page: 1, width: 100, height: 20, y: '8' },
+    ]) {
+      assert.throws(
+        () =>
+          parsePdfPipeline(JSON.stringify([{ op: 'redact', regions: [invalid] }]), {
+            acknowledgedRedaction: true,
+          }),
+        /invalid rectangle/,
+      )
+    }
+  })
+
   it('accepts default insert position, negative redaction offsets, and extensionless signing assets', () => {
     const pipeline = [
       { op: 'insert', source: 'source.pdf' },

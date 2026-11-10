@@ -256,14 +256,17 @@ export function adaptV9PdfExtra(
           Object.keys(region).some((key) => !['page', 'x', 'y', 'width', 'height'].includes(key)) ||
           !Number.isSafeInteger(region.page) ||
           region.page < 1 ||
-          !['x', 'y', 'width', 'height'].every(
-            (key) => typeof region[key] === 'number' && Number.isFinite(region[key]),
-          ) ||
-          region.width <= 0 ||
-          region.height <= 0
+          !['width', 'height'].every((key) => {
+            const value = region[key]
+            return typeof value === 'number' && Number.isFinite(value) && value > 0
+          }) ||
+          ['x', 'y'].some((key) => {
+            const value = region[key]
+            return value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))
+          })
         ) {
           throw new InputError(
-            'Each redaction region needs a positive page number, finite coordinates and positive width and height.',
+            'Each redaction region needs a positive page number and width/height, with finite x/y when supplied.',
           )
         }
       }

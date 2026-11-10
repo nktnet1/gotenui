@@ -262,7 +262,7 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
       required: true,
       placeholder: '[{"page":1,"x":72,"y":600,"width":200,"height":40}]',
       description:
-        'Array of page rectangles, in PDF points from the bottom-left corner. Review the result for unredacted information.',
+        'Array of page rectangles, in PDF points from the bottom-left corner. x and y default to 0 when omitted. Review the result for unredacted information.',
     },
     {
       name: 'confirmRedaction',
