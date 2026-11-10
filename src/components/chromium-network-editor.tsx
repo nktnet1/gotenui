@@ -181,8 +181,8 @@ export function ChromiumNetworkEditor({
           </Button>
         </div>
         <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
-          Authentication headers need an explicit URL-matching regular expression. Other headers can
-          be unscoped. For example,
+          Authentication, session and CSRF headers need an explicit URL-matching regular expression.
+          Other headers can be unscoped. For example,
           <code className="ml-1 rounded bg-slate-100 dark:bg-slate-800 px-1">
             ^https://portal\.example\.com/
           </code>

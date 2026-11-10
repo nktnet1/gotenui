@@ -6,7 +6,11 @@ import {
 } from '#/lib/attachment-metadata'
 import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
-import { hasAmbiguousChromiumScope } from '#/lib/chromium-network'
+import {
+  hasAmbiguousChromiumScope,
+  isAllowedChromiumResourceHeader,
+  isChromiumCredentialHeader,
+} from '#/lib/chromium-network'
 import { safeFilename as checkFilename, filenameKey } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
@@ -817,25 +821,7 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
   const names = new Set<string>()
   for (const [key, headerValue] of entries) {
     const lower = key.toLowerCase()
-    if (
-      // HTTP token names may contain underscores and other token punctuation.
-      // Keep disallowed transport headers blocked below, rather than
-      // restricting valid application header names or their length.
-      !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) ||
-      names.has(lower) ||
-      [
-        'host',
-        'cookie',
-        'set-cookie',
-        'connection',
-        'content-length',
-        'transfer-encoding',
-        'upgrade',
-        'te',
-        'trailer',
-      ].includes(lower) ||
-      lower.startsWith('proxy-')
-    ) {
+    if (!isAllowedChromiumResourceHeader(key) || names.has(lower)) {
       throw new InputError('Invalid or unsafe Chromium resource header name.')
     }
     names.add(lower)
@@ -865,7 +851,7 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       throw new InputError('Chromium resource header must contain at most one URL scope.')
     }
     const scoped = scopes[0]
-    const authHeader = /authorization|token|secret|key|credential|auth/i.test(key)
+    const authHeader = isChromiumCredentialHeader(key)
     if (scoped === undefined) {
       if (authHeader) {
         throw new InputError(

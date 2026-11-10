@@ -23,6 +23,36 @@ export function hasAmbiguousChromiumScope(scope: string): boolean {
   return /[;\p{White_Space}]/u.test(scope)
 }
 
+/** Gotenberg applies headers with no scope to every requested asset, including
+ * third-party URLs. Session identifiers, CSRF proofs and request signatures
+ * need the same protection as bearer tokens and API keys.
+ */
+export function isChromiumCredentialHeader(name: string): boolean {
+  return /authorization|token|secret|key|credential|auth|session|csrf|xsrf|signature/i.test(name)
+}
+
+const blockedResourceHeaders = new Set([
+  'host',
+  'cookie',
+  'set-cookie',
+  'connection',
+  'content-length',
+  'transfer-encoding',
+  'upgrade',
+  'te',
+  'trailer',
+])
+
+/** Keep the visual editor and direct proxy requests on the same policy. */
+export function isAllowedChromiumResourceHeader(name: string): boolean {
+  const lower = name.toLowerCase()
+  return (
+    /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) &&
+    !blockedResourceHeaders.has(lower) &&
+    !lower.startsWith('proxy-')
+  )
+}
+
 export function chromiumNetworkFields(
   cookies: readonly ChromiumCookie[],
   headers: readonly ChromiumResourceHeader[],
@@ -42,12 +72,18 @@ export function chromiumNetworkFields(
     )
   }
   if (headers.length) {
+    if (headers.length > 64)
+      throw new Error('Chromium resource headers must contain at most 64 entries.')
     const values: Record<string, string> = Object.create(null)
     const used = new Set<string>()
     for (const header of headers) {
       const name = header.name.trim()
+      if (!isAllowedChromiumResourceHeader(name)) {
+        throw new Error('Invalid or unsafe Chromium resource header name.')
+      }
       if (used.has(name.toLowerCase())) throw new Error(`Duplicate Chromium header: ${name}`)
       used.add(name.toLowerCase())
+      if (/[\r\n]/.test(header.value)) throw new Error('Invalid Chromium resource header value.')
       // Gotenberg treats every case-insensitive `scope` token as special,
       // including a bare token or one at the start of the header value.
       // Keeping it out of the value avoids duplicate or malformed scopes.
@@ -64,7 +100,7 @@ export function chromiumNetworkFields(
           'Chromium header URL scopes cannot contain semicolons or whitespace; use regex escapes.',
         )
       }
-      if (!scope && /authorization|token|secret|key|credential|auth/i.test(name)) {
+      if (!scope && isChromiumCredentialHeader(name)) {
         throw new Error('Authentication headers require an explicit URL scope.')
       }
       // Gotenberg rejects `scope=` with no pattern; ordinary non-sensitive

@@ -240,6 +240,85 @@ test('rejects URL scopes that Gotenberg would silently truncate or rewrite', () 
   )
 })
 
+test('session, CSRF and signature credentials cannot be sent to unscoped Chromium assets', () => {
+  const protectedHeaders = ['X-Session-ID', 'X-CSRF', 'X-XSRF', 'X-Signature']
+  for (const name of protectedHeaders) {
+    assert.throws(
+      () => chromiumNetworkFields([], [{ name, value: 'private', scope: '' }]),
+      /Authentication headers require an explicit URL scope/,
+      name,
+    )
+    for (const operationId of ['url-pdf', 'html-shot']) {
+      assert.throws(
+        () =>
+          validatePayload(
+            request(operationId, { extraHttpHeaders: JSON.stringify({ [name]: 'private' }) }),
+          ),
+        /Authentication headers require an explicit URL scope/,
+        `${operationId}: ${name}`,
+      )
+    }
+
+    const fields = chromiumNetworkFields(
+      [],
+      [{ name, value: 'private', scope: '^https://portal\\.example\\.test/' }],
+    )
+    const { operation, payload } = validatePayload(request('url-pdf', fields))
+    const v8 = createGotenbergForm(operation, payload, [], [])
+    assert.equal(v8.get('extraHttpHeaders'), fields.extraHttpHeaders)
+    assert.equal(
+      adaptConversionForm(operation, payload, v8, 9).get('extraHttpHeaders'),
+      fields.extraHttpHeaders,
+    )
+    assert.throws(
+      () =>
+        validatePayload(
+          request('url-pdf', {
+            extraHttpHeaders: JSON.stringify({
+              [name]: 'private;scope=^https://portal\\.example\\.test/;leaked',
+            }),
+          }),
+        ),
+      /scope last/i,
+    )
+  }
+  assert.doesNotThrow(() =>
+    validatePayload(
+      request(
+        'url-pdf',
+        chromiumNetworkFields([], [{ name: 'X-Request-ID', value: 'public', scope: '' }]),
+      ),
+    ),
+  )
+})
+
+test('Chromium header editor rejects names and values that the proxy would reject', () => {
+  for (const name of ['Cookie', 'Host', 'Proxy-Authorization', 'Bad Name', '']) {
+    assert.throws(
+      () =>
+        chromiumNetworkFields([], [{ name, value: 'private', scope: '^https://example.test/' }]),
+      /Invalid or unsafe Chromium resource header name/,
+      name,
+    )
+  }
+  assert.throws(
+    () => chromiumNetworkFields([], [{ name: 'X-Request-ID', value: 'a\r\nb', scope: '' }]),
+    /Invalid Chromium resource header value/,
+  )
+  assert.throws(
+    () =>
+      chromiumNetworkFields(
+        [],
+        Array.from({ length: 65 }, (_, id) => ({
+          name: `X-Request-${id}`,
+          value: 'ok',
+          scope: '',
+        })),
+      ),
+    /at most 64 entries/,
+  )
+})
+
 test('editor retains special HTTP token names without modifying the object prototype', () => {
   const settings = chromiumNetworkFields(
     [],
