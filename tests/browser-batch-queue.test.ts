@@ -422,6 +422,38 @@ describe('browser-managed batch queue', () => {
     queue.dispose()
   })
 
+  it('keeps compliant Factur-X warning reports downloadable and marks the batch for review', async () => {
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      name: 'report.json',
+      type: 'application/json',
+      blob: new Blob([
+        JSON.stringify({
+          'invoice.pdf': {
+            compliant: true,
+            profile: 'Factur-X',
+            violations: [{ description: 'Optional rule warning', severity: 'warning' }],
+          },
+        }),
+      ]),
+    }))
+    const request = input()
+    request.candidate = { operation: 'pdf-validate', fields: { profile: 'Factur-X' }, advanced: {} }
+    request.files = [new File(['%PDF-1.7\n'], 'invoice.pdf')]
+    queue.enqueue(request)
+    queue.start()
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({
+      status: 'completed',
+      review:
+        'PDF validation found non-fatal findings in 1 compliant document(s). Review the downloaded JSON report.',
+    })
+    expect(renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))).toContain(
+      'Review required',
+    )
+    queue.dispose()
+  })
+
   it('flags unparseable, oversized and unreadable validation reports without failing the download', async () => {
     for (const scenario of ['invalid', 'oversized', 'unreadable'] as const) {
       const blob = new Blob([scenario === 'invalid' ? '{not-json' : '{"ok":true}'])

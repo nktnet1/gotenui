@@ -29,12 +29,12 @@ describe('bounded PDF validation summaries', () => {
     ['blank profile', { 'a.pdf': { profile: ' ', compliant: true, violations: [] } }],
     ['empty profile list', { 'a.pdf': { profile: [], compliant: true, violations: [] } }],
     [
-      'contradictory success',
+      'contradictory fatal finding',
       {
         'a.pdf': {
           profile: 'PDF/A-2b',
           compliant: true,
-          violations: [{ description: 'Missing output intent' }],
+          violations: [{ description: 'Missing output intent', severity: 'fatal' }],
         },
       },
     ],
@@ -57,6 +57,37 @@ describe('bounded PDF validation summaries', () => {
     ],
   ])('rejects %s rather than declaring compliance', (_, report) => {
     assert.equal(parsePdfValidationReport(JSON.stringify(report)), null)
+  })
+
+  it('preserves compliant Factur-X reports with non-fatal findings', () => {
+    const source = JSON.stringify({
+      'invoice.pdf': {
+        profile: 'Factur-X',
+        compliant: true,
+        violations: [
+          {
+            specification: 'Factur-X',
+            description: 'An optional invoice rule generated a warning',
+            severity: 'warning',
+          },
+        ],
+      },
+    })
+    assert.deepEqual(parsePdfValidationReport(source), [
+      {
+        filename: 'invoice.pdf',
+        compliant: true,
+        profile: 'Factur-X',
+        totalViolations: 1,
+        violations: [
+          {
+            id: 'invoice.pdf-0',
+            description: 'An optional invoice rule generated a warning',
+            severity: 'warning',
+          },
+        ],
+      },
+    ])
   })
 
   it('caps input length and retains the five-item violations display bound', () => {

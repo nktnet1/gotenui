@@ -574,6 +574,10 @@ export function Workbench({
         toast.warning(
           'PDF validation found non-compliant documents. Review the reported violations before relying on them.',
         )
+      } else if (validation?.some((result) => result.totalViolations > 0)) {
+        toast.warning(
+          'PDF validation found non-fatal findings in compliant documents. Review the downloaded JSON report.',
+        )
       } else if (operation.id === 'pdf-validate' && !validation) {
         toast.warning(
           'PDF validation response could not be summarised. Review the downloaded JSON.',
