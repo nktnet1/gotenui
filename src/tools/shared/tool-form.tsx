@@ -374,7 +374,7 @@ export function Workbench({
         throw new Error('The PDF structure response is too large to edit.')
       const content: unknown = JSON.parse(await result.blob.text())
       const editable = metadata
-        ? importReadableMetadata(content, files[0]?.name ?? '')
+        ? importReadableMetadata(content, files[0]?.name ?? '', { standardOnly: isV9 })
         : importReadableBookmarks(
             content,
             files.map((file) => file.name),
@@ -844,6 +844,7 @@ export function Workbench({
             )}
             {hasMetadataEditor && (
               <PdfMetadataEditor
+                standardOnly={isV9}
                 value={String(fields.metadata ?? '{}')}
                 onChange={(value) => updateField('metadata', value)}
               />

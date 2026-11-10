@@ -1,18 +1,27 @@
-import { METADATA_TEXT_FIELDS, validateBookmarkDocument } from '#/lib/pdf-structure-editors'
+import {
+  GOTENBERG_9_METADATA_FIELDS,
+  METADATA_TEXT_FIELDS,
+  validateBookmarkDocument,
+} from '#/lib/pdf-structure-editors'
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 /** The read endpoint includes non-writable Exif/PDF information: never submit it wholesale. */
-export function importReadableMetadata(result: unknown, filename: string): string {
+export function importReadableMetadata(
+  result: unknown,
+  filename: string,
+  { standardOnly = false }: { standardOnly?: boolean } = {},
+): string {
   // Read-route result keys use the NFC filename registered by Gotenberg.
   const source = isObject(result) ? (result[filename] ?? result[filename.normalize('NFC')]) : null
   if (!isObject(source)) {
     throw new Error(`Gotenberg did not return metadata for ${filename}.`)
   }
   const metadata: Record<string, string | string[]> = {}
-  for (const { name } of METADATA_TEXT_FIELDS) {
+  const editableFields = standardOnly ? GOTENBERG_9_METADATA_FIELDS : METADATA_TEXT_FIELDS
+  for (const { name } of editableFields) {
     const value = source[name] ?? source[name.charAt(0).toLowerCase() + name.slice(1)]
     if (typeof value === 'string' && value.trim()) metadata[name] = value
   }

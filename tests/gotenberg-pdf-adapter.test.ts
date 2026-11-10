@@ -504,6 +504,46 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
     )
   })
 
+  it('forwards Gotenberg 9 PDF dates and rejects malformed dates before upstream requests', async () => {
+    const valid = fixture('9.0.0', (form) => {
+      assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+        {
+          op: 'set-metadata',
+          title: 'Report',
+          creationDate: 'D:20261001090000Z',
+          modDate: "D:20261002140000+10'00'",
+        },
+      ])
+    })
+    assert.equal(
+      (
+        await proxyConversionRequest(
+          requestFor('metadata-write', {
+            metadata: JSON.stringify({
+              Title: 'Report',
+              CreationDate: 'D:20261001090000Z',
+              modDate: "D:20261002140000+10'00'",
+            }),
+          }),
+          valid.fetcher,
+        )
+      ).status,
+      200,
+    )
+
+    const invalid = fixture('9.0.0', () => {
+      throw new Error('Invalid PDF dates must be rejected locally.')
+    })
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('metadata-write', { metadata: '{"CreationDate":"2026-10-01"}' }),
+        invalid.fetcher,
+      ),
+      /PDF date.*D:20261001090000Z/,
+    )
+    assert.equal(invalid.count(), 0)
+  })
+
   it('converts legacy opacity to inverse litho opacity without assuming equal defaults', async () => {
     const remote = fixture('9.0.0', (form) => {
       assert.deepEqual(JSON.parse(String(form.get('stages'))), [

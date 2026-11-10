@@ -11,6 +11,7 @@ import {
   type BookmarkNode,
   editBookmarks,
   editFileBookmarks,
+  GOTENBERG_9_METADATA_FIELDS,
   METADATA_TEXT_FIELDS,
   type MetadataKey,
   metadataObject,
@@ -56,7 +57,11 @@ function EditorMode({
   )
 }
 
-export function PdfMetadataEditor({ value, onChange }: EditorProps) {
+export function PdfMetadataEditor({
+  value,
+  onChange,
+  standardOnly = false,
+}: EditorProps & { standardOnly?: boolean }) {
   const [mode, setMode] = useState<'visual' | 'json'>('visual')
   // Keep a comma or trailing whitespace visible while users type a keyword list.
   const [keywordDraft, setKeywordDraft] = useState<string | null>(null)
@@ -67,11 +72,14 @@ export function PdfMetadataEditor({ value, onChange }: EditorProps) {
   } catch {
     // Preserve invalid user-authored JSON; repairing it must not discard input.
   }
+  const fields = standardOnly ? GOTENBERG_9_METADATA_FIELDS : METADATA_TEXT_FIELDS
+  const supportedVisualKeys: string[] = [...fields.map(({ name }) => name), 'Keywords']
   const unsupported =
     metadata &&
-    [...METADATA_TEXT_FIELDS.map(({ name }) => name), 'Keywords'].some(
+    (supportedVisualKeys.some(
       (name) => visualMetadataValue(metadata, name as MetadataKey) === null,
-    )
+    ) ||
+      (standardOnly && Object.keys(metadata).some((key) => !supportedVisualKeys.includes(key))))
   const visualReady = metadata !== null && !unsupported
   return (
     <section className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4 dark:border-slate-700 dark:bg-slate-800/40">
@@ -79,7 +87,9 @@ export function PdfMetadataEditor({ value, onChange }: EditorProps) {
         <div>
           <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">PDF metadata</h3>
           <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-            Common XMP tags. Other tags remain available in the JSON editor.
+            {standardOnly
+              ? 'Standard PDF properties. Dates use PDF syntax, such as D:20261001090000Z.'
+              : 'Common XMP tags. Other tags remain available in the JSON editor.'}
           </p>
         </div>
         <EditorMode
@@ -105,8 +115,9 @@ export function PdfMetadataEditor({ value, onChange }: EditorProps) {
               required
             />
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Use JSON for uncommon XMP tags and non-text values. Existing fields are never removed
-              by changing modes.
+              {standardOnly
+                ? 'Gotenberg 9 accepts only standard PDF properties. Delete unsupported keys before submitting. Changing modes never removes fields.'
+                : 'Use JSON for uncommon XMP tags and non-text values. Existing fields are never removed by changing modes.'}
             </p>
           </div>
         ) : !visualReady ? (
@@ -114,12 +125,13 @@ export function PdfMetadataEditor({ value, onChange }: EditorProps) {
             role="status"
             className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
           >
-            This metadata contains invalid JSON or a non-text value in a common field. Open the JSON
-            editor to repair it. Nothing has been discarded.
+            {standardOnly
+              ? 'This metadata contains invalid JSON, JSON-only keys, or non-text fields. Gotenberg 9 cannot write custom XMP keys such as Copyright. Review the JSON editor before submitting; nothing has been discarded.'
+              : 'This metadata contains invalid JSON or a non-text value in a common field. Open the JSON editor to repair it. Nothing has been discarded.'}
           </p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
-            {METADATA_TEXT_FIELDS.map(({ name, label, placeholder }) => (
+            {fields.map(({ name, label, placeholder }) => (
               <div className="space-y-1.5" key={name}>
                 <Label htmlFor={`${id}-${name}`}>{label}</Label>
                 <Input
@@ -143,7 +155,9 @@ export function PdfMetadataEditor({ value, onChange }: EditorProps) {
                 onBlur={() => setKeywordDraft(null)}
               />
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Separate keywords with commas. Gotenberg receives them as a JSON string list.
+                {standardOnly
+                  ? 'Separate keywords with commas. Gotenberg 9 receives a comma-separated string.'
+                  : 'Separate keywords with commas. Gotenberg receives them as a JSON string list.'}
               </p>
             </div>
           </div>

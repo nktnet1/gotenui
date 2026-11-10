@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, it } from 'vitest'
 import { PdfPipelineBuilder } from '#/components/pdf-pipeline-builder'
 import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
+import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import {
   DEFAULT_PDF_PIPELINE,
   PDF_PIPELINE_STAGES,
@@ -99,6 +100,40 @@ describe('PDF pipeline catalogue and stage contract', () => {
     const { payload, legacy } = input([{ op: 'merge' }])
     assert.throws(() => adaptPdfForm(operation, payload, legacy, 8, []), { status: 409 })
   })
+  it('matches Gotenberg 9 PDF date rules for pipeline metadata', () => {
+    for (const date of [
+      '',
+      'D:2026',
+      'D:202612',
+      'D:20261231',
+      'D:20261001090000Z',
+      "D:20261002140000+10'00'",
+      'D:20261231235959-0230',
+    ]) {
+      assert.equal(isPdfMetadataDate(date), true, date)
+      const stages = [{ op: 'set-metadata', creationDate: date, modDate: date }]
+      assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
+    }
+    for (const date of [
+      '2026-10-01',
+      'D:2026X',
+      'D:202613',
+      'D:202600',
+      'D:20260100',
+      'D:20260101240000Z',
+      'D:20260101235960Z',
+      "D:20261002140000+10'60'",
+      'D:20261002140000+1000extra',
+      'D:20261001 090000Z',
+      "D:2026'30'",
+    ]) {
+      assert.equal(isPdfMetadataDate(date), false, date)
+      error([{ op: 'set-metadata', creationDate: date }], /creationDate.*PDF date/)
+      error([{ op: 'set-metadata', modDate: date }], /modDate.*PDF date/)
+    }
+    error([{ op: 'set-metadata', creationDate: 20261001 }], /creationDate.*string/)
+  })
+
   it('accepts large stamp text and metadata fields within the configured request budget', () => {
     const longText = 'Confidential report '.repeat(900)
     const stages = [

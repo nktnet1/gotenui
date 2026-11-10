@@ -3,6 +3,7 @@
  */
 
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
+import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
@@ -82,7 +83,8 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'set-metadata',
     label: 'Set metadata',
-    description: 'Update standard PDF document properties.',
+    description:
+      'Update standard PDF document properties. Dates use PDF syntax, e.g. D:20261001090000Z.',
     options: { title: 'Updated document' },
     fields: [
       'title',
@@ -417,6 +419,13 @@ function validateStage(stage: PdfPipelineStage): void {
     }
   }
   switch (name) {
+    case 'set-metadata':
+      for (const key of ['creationDate', 'modDate'] as const) {
+        if (stage[key] !== undefined && !isPdfMetadataDate(stage[key] as string)) {
+          throw new InputError(`${name}: "${key}" must be a PDF date such as D:20261001090000Z.`)
+        }
+      }
+      break
     case 'compose': {
       const sizes = ['A3', 'A4', 'A5', 'B4', 'B5', 'Letter', 'Legal', 'Tabloid']
       const paperSize = stage.paperSize as string | undefined
