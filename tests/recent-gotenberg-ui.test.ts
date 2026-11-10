@@ -68,3 +68,30 @@ test('Gotenberg 9 screenshots expose the upstream quality minimum without changi
   assert.match(markup('office-pdf', 'quality', '90', '8.40.0'), /min="1"/)
   assert.match(markup('office-pdf', 'quality', '90', '9.0.0'), /min="1"/)
 })
+
+test('Gotenberg 9 Office bookmark levels show only valid choices without changing v8', () => {
+  const old = markup('office-pdf', 'openBookmarkLevels', '100', '8.40.0')
+  assert.match(old, /type="number"/)
+  assert.match(old, /min="-1"/)
+  assert.match(old, /max="100"/)
+
+  const modern = markup('office-pdf', 'openBookmarkLevels', '10', '9.3.0')
+  assert.match(modern, /<select\b/)
+  const choices = Array.from(
+    modern.matchAll(/<option\b[^>]*value="([^"]*)"/g),
+    ([, value]) => value,
+  )
+  assert.deepEqual(choices, [
+    '',
+    '-1',
+    ...Array.from({ length: 10 }, (_, index) => String(index + 1)),
+  ])
+  assert.match(modern, /All levels \(-1\)/)
+  assert.doesNotMatch(modern, /type="number"/)
+
+  // Switching a saved v8 draft to v9 should show the unsupported value until corrected.
+  const migrated = markup('office-pdf', 'openBookmarkLevels', '100', '9.3.0')
+  assert.match(migrated, /<option\b[^>]*value="100"[^>]*disabled=""/)
+  assert.match(migrated, /Unsupported bookmark level: 100/)
+  assert.doesNotMatch(markup('office-pdf', 'openBookmarkLevels', '', '9.3.0'), /Unsupported/)
+})

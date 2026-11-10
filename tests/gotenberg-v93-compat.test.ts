@@ -210,3 +210,24 @@ test('Gotenberg 8 and 9.2 retain their existing error semantics', () => {
   assert.equal(describePdfUpstreamError(v8, '/forms/pdf/info', 404, 'Not Found'), 'Not Found')
   assert.equal(OPERATION_BY_ID.get('render-pages')?.path, '/forms/pdf/pipe')
 })
+
+test('9.3 diagnostic advice retains the exact upstream filename, page and error detail', () => {
+  const version = { major: 9, minor: 3, patch: 0 }
+  const render = describePdfUpstreamError(version, '/forms/pdf/pipe', 400, renderBudget)
+  assert.ok(render.startsWith(`${renderBudget}\n\n`))
+  assert.match(render, /Stage 'render' failed on 'source\.pdf': page 1:/)
+  assert.match(render, /PDF_MAX_RENDER_PIXELS/)
+
+  const stages = describePdfUpstreamError(
+    version,
+    '/forms/chromium/convert/html',
+    400,
+    stageDisabled,
+  )
+  assert.ok(stages.startsWith(`${stageDisabled}\n\n`))
+  assert.match(stages, /PDF_DISABLE_STAGES/)
+
+  const missing = describePdfUpstreamError(version, '/forms/pdf/info', 404, 'Custom 404 detail')
+  assert.ok(missing.startsWith('Custom 404 detail\n\n'))
+  assert.match(missing, /PDF_DISABLE_ROUTES/)
+})
