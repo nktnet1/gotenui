@@ -43,3 +43,22 @@ export function requiresGotenberg92ForComposition(
   }
   return false
 }
+
+/** Only Gotenberg 9.4+ understands anchored text, image and PDF stamps. */
+export function requiresGotenberg94ForStampPosition(
+  version: GotenbergVersion,
+  stages: Iterable<{ op: string; position?: unknown }>,
+): boolean {
+  if (version.major !== 9 || version.minor >= 4) return false
+  for (const { op, position } of stages) {
+    if (
+      (op === 'stamp-text' || op === 'stamp-image' || op === 'stamp-pdf') &&
+      position !== undefined &&
+      position !== null &&
+      position !== ''
+    ) {
+      return true
+    }
+  }
+  return false
+}

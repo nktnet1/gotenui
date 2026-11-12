@@ -35,7 +35,7 @@ test('native Node resolves extensionless source and script subpaths, including b
     "import { integrationVersions } from '#scripts/run-integration-tests'",
     "import { vercelCommitSha } from '#/lib/app-version'",
     "if ([labelDynamicChunkGroups, runTestSuites, integrationVersions, vercelCommitSha].some((value) => typeof value !== 'function')) throw new Error('Invalid Node import aliases')",
-    "if (integrationVersions('9.3.0')[0] !== '9.3.0') throw new Error('Invalid integration version')",
+    "if (integrationVersions('9.4.0')[0] !== '9.4.0') throw new Error('Invalid integration version')",
   ].join('\n')
 
   expect(() =>

@@ -5,6 +5,7 @@
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
+import { isPdfStampPosition, PDF_STAMP_POSITIONS } from '#/lib/pdf-stamp-position'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
 
@@ -62,23 +63,37 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'stamp-text',
     label: 'Stamp text',
-    description: 'Draw text over PDF content.',
+    description:
+      'Draw text over PDF content. Gotenberg 9.4+ accepts position (e.g. "center" or "top-right"); x/y then offset right/up from that anchor, including on rotated pages. Set x/y to 0 for exact anchoring.',
     options: { text: 'DRAFT', x: 48, y: 48, fontSize: 24 },
-    fields: ['text', 'pages', 'x', 'y', 'fontSize', 'font', 'color', 'opacity', 'rotation'],
+    fields: [
+      'text',
+      'pages',
+      'position',
+      'x',
+      'y',
+      'fontSize',
+      'font',
+      'color',
+      'opacity',
+      'rotation',
+    ],
   },
   {
     op: 'stamp-image',
     label: 'Stamp image',
-    description: 'Overlay an uploaded PNG or JPEG.',
+    description:
+      'Overlay an uploaded PNG or JPEG. Gotenberg 9.4+ accepts position (e.g. "bottom-right"); x/y then offset right/up from that anchor. Set x/y to 0 for exact anchoring.',
     options: { image: 'stamp.png', x: 48, y: 48 },
-    fields: ['image', 'pages', 'x', 'y', 'width', 'height', 'opacity', 'rotation'],
+    fields: ['image', 'pages', 'position', 'x', 'y', 'width', 'height', 'opacity', 'rotation'],
   },
   {
     op: 'stamp-pdf',
     label: 'Stamp PDF',
-    description: 'Overlay a page from an additional PDF.',
+    description:
+      'Overlay a page from an additional PDF. Gotenberg 9.4+ accepts position (e.g. "top-left"); x/y then offset right/up from that anchor. Set x/y to 0 for exact anchoring.',
     options: { source: 'stamp.pdf', x: 48, y: 48 },
-    fields: ['source', 'sourcePage', 'pages', 'x', 'y', 'scale', 'opacity', 'rotation'],
+    fields: ['source', 'sourcePage', 'pages', 'position', 'x', 'y', 'scale', 'opacity', 'rotation'],
   },
   {
     op: 'set-metadata',
@@ -328,6 +343,7 @@ function validateStage(stage: PdfPipelineStage): void {
     'text',
     'font',
     'color',
+    'position',
     'image',
     'source',
     'title',
@@ -407,6 +423,14 @@ function validateStage(stage: PdfPipelineStage): void {
     throw new InputError(`${name}: scale must be positive.`)
   if (!absent(stage.fontSize) && (stage.fontSize as number) <= 0)
     throw new InputError(`${name}: font size must be positive.`)
+  if (
+    (name === 'stamp-text' || name === 'stamp-image' || name === 'stamp-pdf') &&
+    !absent(stage.position) &&
+    stage.position !== '' &&
+    !isPdfStampPosition(stage.position)
+  ) {
+    throw new InputError(`${name}: position must be one of ${PDF_STAMP_POSITIONS.join(', ')}.`)
+  }
   if (!absent(stage.permissions)) {
     if (
       !object(stage.permissions) ||

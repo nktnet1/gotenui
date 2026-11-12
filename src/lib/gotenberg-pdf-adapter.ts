@@ -7,6 +7,7 @@ import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
+import { isPdfStampPosition } from '#/lib/pdf-stamp-position'
 import { metadataObject } from '#/lib/pdf-structure-editors'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
@@ -329,6 +330,7 @@ export function adaptPdfForm(
       permitted(`${kind}Source`, `${kind}Expression`, `${kind}Pages`, `${kind}Options`)
       permitted(
         'v9OverlayAcknowledged',
+        'v9OverlayPosition',
         'v9OverlayX',
         'v9OverlayY',
         'v9OverlayFontSize',
@@ -349,6 +351,10 @@ export function adaptPdfForm(
         throw new InputError('Enter overlay text or the exact uploaded filename.')
       }
       const options = overlayOptions(optional(`${kind}Options`))
+      const position = fields.v9OverlayPosition
+      if (position !== undefined && position !== '' && !isPdfStampPosition(position)) {
+        throw new InputError('Select a supported Gotenberg 9.4 stamp anchor position.')
+      }
       const sourcePage = optional('v9OverlaySourcePage')
       if (sourcePage !== undefined && source !== 'pdf') {
         throw new InputError('A PDF overlay source page requires a PDF overlay.')
@@ -361,8 +367,13 @@ export function adaptPdfForm(
       }
       const common: Record<string, unknown> = {
         ...(optional(`${kind}Pages`) ? { pages: optional(`${kind}Pages`) } : {}),
-        x: coordinate(fields.v9OverlayX, 48),
-        y: coordinate(fields.v9OverlayY, 48),
+        ...(position ? { position } : {}),
+        ...(!position || optional('v9OverlayX') !== undefined
+          ? { x: coordinate(fields.v9OverlayX, 48) }
+          : {}),
+        ...(!position || optional('v9OverlayY') !== undefined
+          ? { y: coordinate(fields.v9OverlayY, 48) }
+          : {}),
         ...(options.rotation !== undefined ? { rotation: options.rotation } : {}),
         // pdfcpu opacity runs 0 (invisible) to 1 (opaque), litho is the inverse.
         ...(options.opacity !== undefined ? { opacity: 1 - options.opacity } : {}),

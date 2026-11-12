@@ -33,6 +33,7 @@ const minorVersion = parseGotenbergVersion(testVersion)?.minor ?? 0
 const supportsV91 = isV9 && minorVersion >= 1
 const supportsV92 = isV9 && minorVersion >= 2
 const supportsV93 = isV9 && minorVersion >= 3
+const supportsV94 = isV9 && minorVersion >= 4
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -1145,6 +1146,58 @@ test.skipIf(!supportsV93)(
     const response = await convertV9('render-pages', { format: 'png', dpi: '1200' })
     expect(response.status).toBe(400)
     expect(await response.text()).toMatch(/PDF_MAX_RENDER_PIXELS/)
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV94)(
+  'Gotenberg 9.4 applies anchored text, image and PDF stamps through the live PDF engine',
+  async () => {
+    const sources = [new File([splitPdfBytes], 'two-pages.pdf', { type: 'application/pdf' })]
+    const cases = [
+      {
+        id: 'stamp',
+        fields: {
+          stampSource: 'text',
+          stampExpression: 'LIVE 9.4 STAMP',
+          v9OverlayAcknowledged: true,
+          v9OverlayPosition: 'center',
+        },
+        assets: [],
+      },
+      {
+        id: 'watermark',
+        fields: {
+          watermarkSource: 'image',
+          watermarkExpression: 'raster.png',
+          v9OverlayAcknowledged: true,
+          v9OverlayPosition: 'bottom-right',
+          v9OverlayX: '-12',
+          v9OverlayY: '12',
+        },
+        assets: [new File([REMOTE_OVERLAY_PNG], 'raster.png', { type: 'image/png' })],
+      },
+      {
+        id: 'pdf-pipeline',
+        fields: {
+          stages: JSON.stringify([
+            { op: 'stamp-pdf', source: 'overlay.pdf', position: 'top-left', x: 0, y: 0 },
+          ]),
+        },
+        assets: [pdfFile('overlay.pdf')],
+      },
+    ] as const
+
+    for (const entry of cases) {
+      const response = await convertV9(entry.id, entry.fields, sources, [...entry.assets])
+      if (!response.ok) {
+        throw new Error(`${entry.id} anchor: ${response.status} ${await response.text()}`)
+      }
+      expect(response.headers.get('content-type')).toContain('application/pdf')
+      expect(await inspectV9Pdf('info', await response.arrayBuffer())).toMatchObject({
+        'verified.pdf': { pages: 2 },
+      })
+    }
   },
   120_000,
 )
