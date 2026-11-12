@@ -53,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gotenberg-version: ["8.40.0", "9.4.0"]
+        gotenberg-version: ["8.40.0", "9.4.1"]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/setup@v3

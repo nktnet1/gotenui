@@ -8,7 +8,7 @@ type RunSuite = (suite: TestSuite) => TestProcessResult | Promise<TestProcessRes
 
 function spawnSuite(suite: TestSuite): Promise<TestProcessResult> {
   if (suite === 'unit') return spawnVitest('vitest.config.ts', 'unit')
-  const version = suite === 'v8' ? '8.40.0' : '9.4.0'
+  const version = suite === 'v8' ? '8.40.0' : '9.4.1'
   return spawnVitest('vitest.integration.config.ts', suite, {
     ...process.env,
     GOTENBERG_TEST_VERSION: version,
@@ -48,7 +48,7 @@ export async function runTestSuites(
         return results
       })()
   if (passed.every(Boolean)) {
-    console.info('Unit and Gotenberg 8.40.0 / 9.4.0 integration tests passed.')
+    console.info('Unit and Gotenberg 8.40.0 / 9.4.1 integration tests passed.')
     return 0
   }
   console.error(
