@@ -10,6 +10,7 @@ import {
   parseGotenbergVersion,
   requiresGotenberg91ForExtraction,
   requiresGotenberg92ForComposition,
+  requiresGotenberg94ForStampPosition,
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import {
@@ -574,6 +575,14 @@ export async function proxyConversionRequest(
     throw new InputError('PDF page composition requires Gotenberg 9.2 or newer.', 409)
   }
   if (
+    (operation.id === 'stamp' || operation.id === 'watermark') &&
+    requiresGotenberg94ForStampPosition(version, [
+      { op: 'stamp-text', position: payload.fields.v9OverlayPosition },
+    ])
+  ) {
+    throw new InputError('Anchored PDF stamps require Gotenberg 9.4 or newer.', 409)
+  }
+  if (
     major === 9 &&
     version.minor < 2 &&
     [
@@ -622,6 +631,9 @@ export async function proxyConversionRequest(
       )
     ) {
       throw new InputError('PDF page composition requires Gotenberg 9.2 or newer.', 409)
+    }
+    if (requiresGotenberg94ForStampPosition(version, stages)) {
+      throw new InputError('Anchored PDF stamps require Gotenberg 9.4 or newer.', 409)
     }
     if (major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(stages)) {
       throw new InputError(

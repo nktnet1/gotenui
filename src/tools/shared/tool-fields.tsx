@@ -29,9 +29,14 @@ function FieldControl({
   backendVersion?: string
 }) {
   const id = useId()
+  const parsedVersion = parseGotenbergVersion(backendVersion)
+  const v9Only =
+    field.supportedGotenbergMajors?.length === 1 && field.supportedGotenbergMajors[0] === 9
   const unsupported =
     field.minGotenbergMinor !== undefined &&
-    versionAtLeast(backendVersion, field.minGotenbergMinor) === false
+    (v9Only
+      ? parsedVersion?.major === 9 && parsedVersion.minor < field.minGotenbergMinor
+      : versionAtLeast(backendVersion, field.minGotenbergMinor) === false)
   const inactive = disabled || unsupported
   const isV9BookmarkLevels =
     field.name === 'openBookmarkLevels' &&
@@ -103,7 +108,7 @@ function FieldControl({
             value={String(value ?? '')}
             onChange={(event) => onChange(event.target.value)}
             required={field.required}
-            disabled={inactive}
+            disabled={disabled || (unsupported && !value)}
           >
             {!field.required && <option value="">Default / not set</option>}
             {isV9BookmarkLevels &&
@@ -118,7 +123,10 @@ function FieldControl({
               <option
                 key={option}
                 value={option}
-                disabled={option === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false}
+                disabled={
+                  unsupported ||
+                  (option === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false)
+                }
               >
                 {isV9BookmarkLevels && option === '-1'
                   ? 'All levels (-1)'

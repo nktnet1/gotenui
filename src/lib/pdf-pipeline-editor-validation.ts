@@ -3,6 +3,7 @@ import {
   parseGotenbergVersion,
   requiresGotenberg91ForExtraction,
   requiresGotenberg92ForComposition,
+  requiresGotenberg94ForStampPosition,
 } from '#/lib/gotenberg-version'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
@@ -84,6 +85,9 @@ export function pdfPipelineEditorError(
       )
     ) {
       return 'PDF page composition requires Gotenberg 9.2 or newer.'
+    }
+    if (version && requiresGotenberg94ForStampPosition(version, parsed)) {
+      return 'Anchored PDF stamps require Gotenberg 9.4 or newer.'
     }
     if (version?.major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(parsed)) {
       return 'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.'

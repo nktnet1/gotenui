@@ -1,4 +1,5 @@
 /** Definition for the stamp Gotenberg operation. */
+import { PDF_STAMP_POSITIONS } from '#/lib/pdf-stamp-position'
 import { pdfFiles } from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
@@ -18,23 +19,35 @@ export const operation: Operation = {
       kind: 'toggle',
       supportedGotenbergMajors: [9],
       description:
-        'Required on v9. Unlike v8 behind-content watermarks, v9 always overlays on top; coordinates are PDF points from the bottom-left corner.',
+        'Required on v9. Unlike v8 behind-content watermarks, v9 always overlays on top. With no anchor, coordinates are PDF points from the bottom-left corner.',
+    },
+    {
+      name: 'v9OverlayPosition',
+      label: 'Anchor position (Gotenberg 9.4+)',
+      kind: 'select',
+      options: PDF_STAMP_POSITIONS,
+      supportedGotenbergMajors: [9],
+      minGotenbergMinor: 4,
+      description:
+        'Optional. Places the stamp relative to the displayed page, respecting its rotation. X moves it right and Y moves it up from the anchor. Leave unset for absolute bottom-left coordinates.',
     },
     {
       name: 'v9OverlayX',
-      label: 'V9 X position (PDF points)',
+      label: 'V9 X position / offset (PDF points)',
       kind: 'number',
       supportedGotenbergMajors: [9],
       advanced: true,
       placeholder: '48',
+      description: 'Defaults to 48 without an anchor, or 0 with an anchor.',
     },
     {
       name: 'v9OverlayY',
-      label: 'V9 Y position (PDF points)',
+      label: 'V9 Y position / offset (PDF points)',
       kind: 'number',
       supportedGotenbergMajors: [9],
       advanced: true,
       placeholder: '48',
+      description: 'Defaults to 48 without an anchor, or 0 with an anchor.',
     },
     {
       name: 'v9OverlayFontSize',
