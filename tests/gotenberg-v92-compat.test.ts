@@ -211,7 +211,7 @@ describe('Gotenberg 9.2 composition', () => {
     for (const [stage, expression] of [
       [{ placements: [{}] }, /paperSize|paperWidth/],
       [{ paperWidth: '6in', placements: [{}] }, /paperWidth and paperHeight/],
-      [{ paperSize: 'A0', placements: [{}] }, /unsupported paperSize/],
+      [{ paperSize: 'A7', placements: [{}] }, /unsupported paperSize/],
       [{ paperSize: 'A4', paperHeight: '2ft', placements: [{}] }, /paperHeight/],
       [{ paperSize: 'A4', paperWidth: '0', placements: [{}] }, /paperWidth/],
       [{ paperSize: 'A4', placements: [] }, /placements/],

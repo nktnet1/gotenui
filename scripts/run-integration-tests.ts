@@ -1,7 +1,7 @@
 import { styleText } from 'node:util'
 import { spawnVitest, type TestProcessResult } from '#scripts/test-process'
 
-export const GOTENBERG_INTEGRATION_VERSIONS = ['8.40.0', '9.4.1'] as const
+export const GOTENBERG_INTEGRATION_VERSIONS = ['8.40.0', '9.5.0'] as const
 export type GotenbergIntegrationVersion = (typeof GOTENBERG_INTEGRATION_VERSIONS)[number]
 
 export function integrationVersions(
@@ -16,7 +16,7 @@ export function integrationVersions(
   const version = requested || environment
   if (!version) return [...GOTENBERG_INTEGRATION_VERSIONS]
   if (!GOTENBERG_INTEGRATION_VERSIONS.some((candidate) => candidate === version)) {
-    throw new Error('Integration tests require Gotenberg 8.40.0 or 9.4.1.')
+    throw new Error('Integration tests require Gotenberg 8.40.0 or 9.5.0.')
   }
   return [version as GotenbergIntegrationVersion]
 }

@@ -1,4 +1,5 @@
 /** Gotenberg 9-only PDF tools. v8 tools remain in their original configurations. */
+import { PDF_PAPER_SIZES } from '#/lib/pdf-paper-sizes'
 import type { FieldDefinition, Operation } from '#/tools/types'
 
 const pages: FieldDefinition = {
@@ -71,8 +72,9 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
         label: 'Paper size',
         kind: 'select',
         defaultValue: 'A4',
-        options: ['A3', 'A4', 'A5', 'B4', 'B5', 'Letter', 'Legal', 'Tabloid'],
-        description: 'Use a named page size, or clear it and enter both custom dimensions.',
+        options: PDF_PAPER_SIZES,
+        description:
+          'A0, A1 and A2 require Gotenberg 9.5+. Or clear the size and enter both custom dimensions.',
       },
       {
         name: 'paperWidth',
@@ -103,7 +105,7 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
   tool(
     'pdf-info',
     'PDF information',
-    'Inspect page count, version, encryption and tagging.',
+    'Inspect pages, encryption, tagging and digital-signature presence (9.5+; not validity).',
     [password],
     {
       ...pdfRead,

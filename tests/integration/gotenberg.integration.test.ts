@@ -34,6 +34,7 @@ const supportsV91 = isV9 && minorVersion >= 1
 const supportsV92 = isV9 && minorVersion >= 2
 const supportsV93 = isV9 && minorVersion >= 3
 const supportsV94 = isV9 && minorVersion >= 4
+const supportsV95 = isV9 && minorVersion >= 5
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -902,6 +903,9 @@ test.skipIf(!isV9).each(v9PdfWorkflows)(
     } else if (type === 'application/json') {
       const parsed = JSON.parse(new TextDecoder().decode(bytes))
       expect(parsed).toHaveProperty('original.pdf')
+      if (id === 'pdf-info' && supportsV95) {
+        expect(parsed['original.pdf']).toMatchObject({ signed: false })
+      }
       if (id === 'pdf-validate') {
         expect(parsed['original.pdf']).toMatchObject({ profile: 'PDF/A-2b' })
         expect(typeof parsed['original.pdf'].compliant).toBe('boolean')
@@ -1348,6 +1352,11 @@ test.skipIf(!isV9)(
       const bytes = new Uint8Array(await signed.arrayBuffer())
       expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
       expect(new TextDecoder().decode(bytes).includes('/ByteRange')).toBe(true)
+      if (supportsV95) {
+        expect(await inspectV9Pdf('info', bytes.buffer as ArrayBuffer)).toMatchObject({
+          'verified.pdf': { signed: true },
+        })
+      }
     } finally {
       rmSync(temporary, { recursive: true, force: true })
     }
@@ -2693,6 +2702,35 @@ test.skipIf(!isV9).each(['html-pdf', 'office-pdf'] as const)(
     expect(new TextDecoder().decode(new Uint8Array(await response.arrayBuffer()).slice(0, 5))).toBe(
       '%PDF-',
     )
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV95).each([
+  ['html-pdf', 'A0'],
+  ['office-pdf', 'A1'],
+  ['compose-pages', 'A2'],
+] as const)(
+  'Gotenberg 9.5 accepts %s with the new %s paper size on the live engine',
+  async (operationId, paperSize) => {
+    const operation = OPERATIONS.find(({ id }) => id === operationId)
+    if (!operation) throw new Error(`Missing ${operationId}`)
+    const { overrides, files, auxiliary } = inputFor(operation)
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        { ...overrides, fields: { ...overrides.fields, paperSize } },
+        files,
+        auxiliary,
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(`${operationId} ${paperSize}: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(await inspectV9Pdf('info', await response.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 1, signed: false },
+    })
   },
   120_000,
 )
