@@ -11,6 +11,7 @@ import {
   requiresGotenberg91ForExtraction,
   requiresGotenberg92ForComposition,
   requiresGotenberg94ForStampPosition,
+  requiresGotenberg95ForPaperSize,
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import {
@@ -574,6 +575,9 @@ export async function proxyConversionRequest(
   if (requiresGotenberg92ForComposition(version, [operation.id])) {
     throw new InputError('PDF page composition requires Gotenberg 9.2 or newer.', 409)
   }
+  if (requiresGotenberg95ForPaperSize(version, [payload.fields.paperSize])) {
+    throw new InputError('A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.', 409)
+  }
   if (
     (operation.id === 'stamp' || operation.id === 'watermark') &&
     requiresGotenberg94ForStampPosition(version, [
@@ -634,6 +638,14 @@ export async function proxyConversionRequest(
     }
     if (requiresGotenberg94ForStampPosition(version, stages)) {
       throw new InputError('Anchored PDF stamps require Gotenberg 9.4 or newer.', 409)
+    }
+    if (
+      requiresGotenberg95ForPaperSize(
+        version,
+        stages.filter(({ op }) => op === 'compose').map(({ paperSize }) => paperSize),
+      )
+    ) {
+      throw new InputError('A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.', 409)
     }
     if (major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(stages)) {
       throw new InputError(

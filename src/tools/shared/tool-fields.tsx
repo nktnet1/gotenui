@@ -11,6 +11,7 @@ import {
   updateConsoleMessageTypes,
 } from '#/lib/official-form-fields'
 import { versionAtLeast } from '#/lib/operation-availability'
+import { isGotenberg95PaperSize } from '#/lib/pdf-paper-sizes'
 import type { FieldDefinition } from '#/tools/registry'
 
 const v9BookmarkLevels = ['-1', ...Array.from({ length: 10 }, (_, index) => String(index + 1))]
@@ -125,6 +126,10 @@ function FieldControl({
                 value={option}
                 disabled={
                   unsupported ||
+                  (field.name === 'paperSize' &&
+                    isGotenberg95PaperSize(option) &&
+                    parsedVersion?.major === 9 &&
+                    parsedVersion.minor < 5) ||
                   (option === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false)
                 }
               >

@@ -1,4 +1,5 @@
 /** API compatibility is based on the selected server's /version response, not the UI version. */
+import { isGotenberg95PaperSize } from '#/lib/pdf-paper-sizes'
 export type SupportedGotenbergMajor = 8 | 9
 
 export type GotenbergVersion = {
@@ -59,6 +60,18 @@ export function requiresGotenberg94ForStampPosition(
     ) {
       return true
     }
+  }
+  return false
+}
+
+/** Large named paper sizes were added in 9.5 for Chromium, Office and PDF compose. */
+export function requiresGotenberg95ForPaperSize(
+  version: GotenbergVersion,
+  sizes: Iterable<unknown>,
+): boolean {
+  if (version.major !== 9 || version.minor >= 5) return false
+  for (const size of sizes) {
+    if (isGotenberg95PaperSize(size)) return true
   }
   return false
 }

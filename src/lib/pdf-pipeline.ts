@@ -5,6 +5,7 @@
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
+import { PDF_PAPER_SIZES } from '#/lib/pdf-paper-sizes'
 import { isPdfStampPosition, PDF_STAMP_POSITIONS } from '#/lib/pdf-stamp-position'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
@@ -21,7 +22,7 @@ export const PDF_PIPELINE_STAGES = [
     op: 'compose',
     label: 'Compose pages',
     description:
-      'Place source PDF pages on new sheets. sourcePage and page are one-based (0 also means first); page 2 creates the second sheet. Each input PDF must be placed; coordinates are in points (Gotenberg 9.2+).',
+      'Place source pages on new sheets (Gotenberg 9.2+). A0/A1/A2 paper sizes require 9.5+. sourcePage and page are one-based (0 also means first); page 2 creates the second sheet. Each input PDF must be placed; coordinates are in points.',
     options: { paperSize: 'A4', placements: [{ sourcePage: 1, page: 1, x: 0, y: 0 }] },
     fields: ['paperSize', 'paperWidth', 'paperHeight', 'placements'],
   },
@@ -450,9 +451,11 @@ function validateStage(stage: PdfPipelineStage): void {
       }
       break
     case 'compose': {
-      const sizes = ['A3', 'A4', 'A5', 'B4', 'B5', 'Letter', 'Legal', 'Tabloid']
       const paperSize = stage.paperSize as string | undefined
-      if (paperSize && !sizes.some((size) => size.toLowerCase() === paperSize.toLowerCase())) {
+      if (
+        paperSize &&
+        !PDF_PAPER_SIZES.some((size) => size.toLowerCase() === paperSize.toLowerCase())
+      ) {
         throw new InputError('compose: unsupported paperSize.')
       }
       for (const side of ['paperWidth', 'paperHeight'] as const) {

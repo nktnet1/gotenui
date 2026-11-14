@@ -1,5 +1,6 @@
 /** Shared Gotenberg field groups - compose these within individual tool configurations. */
 import { CHROMIUM_MEDIA_OPTIONS } from '#/lib/chromium-media'
+import { PDF_PAPER_SIZES } from '#/lib/pdf-paper-sizes'
 import type { FieldDefinition } from '#/tools/types'
 
 export const pdfa: FieldDefinition = {
@@ -16,10 +17,11 @@ export const paperSize: FieldDefinition = {
   name: 'paperSize',
   label: 'Named paper size',
   kind: 'select',
-  options: ['A3', 'A4', 'A5', 'B4', 'B5', 'Letter', 'Legal', 'Tabloid'],
+  options: PDF_PAPER_SIZES,
   advanced: true,
   supportedGotenbergMajors: [9],
-  description: 'Gotenberg 9 only. Custom width and height override this preset.',
+  description:
+    'Gotenberg 9 only. A0, A1 and A2 require 9.5+. Custom dimensions override this preset.',
 }
 
 /** Gotenberg 9 LibreOffice accepts dimensions in addition to named paper sizes. */

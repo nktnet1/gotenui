@@ -26,6 +26,12 @@ With **Gotenberg 9.1 or later**, **Extract PDF text** produces a `.txt` file for
 
 For Gotenberg 9 **Office to PDF**, a requested PDF/A or PDF/UA profile uses native LibreOffice export only when no PDF processing follows. **Merge**, **Split**, and custom pipeline stages automatically move conformance to a final PDF remediation stage; selecting **Native LibreOffice export** alongside those stages reports an error. Use PDF validation to check actual conformance rather than relying on HTTP 200 or a successful native export.
 
+### Gotenberg 9.5 paper sizes and signature detection
+
+Gotenberg **9.5 or newer** accepts **A0, A1 and A2** in **Named paper size** for Chromium PDF and Office conversion, **Compose PDF pages**, and the JSON `compose` pipeline stage. Older Gotenberg 9 servers retain their existing paper sizes; the three new presets are disabled in the form and rejected before sending either a conversion or pipeline request. Custom page dimensions remain available on older versions.
+
+**PDF information** includes the `signed` field for each uploaded PDF on Gotenberg 9.5+. `true` means at least one digital signature is present; it does **not** mean the signature is valid or trusted. Earlier servers omit this property. The JSON response is displayed and downloaded unchanged.
+
 ### Gotenberg 9.4 stamp positioning
 
 On Gotenberg **9.4 or newer**, **Stamp PDFs** and **Watermark PDFs** offer an optional **Anchor position** setting for text, image and PDF overlays. Choose **center**, **top-left**, **top**, **top-right**, **left**, **right**, **bottom-left**, **bottom** or **bottom-right**. Gotenberg places the stamp in that part of each page as the viewer sees it, accounting for page rotation, even when a document contains different page sizes and orientations.
