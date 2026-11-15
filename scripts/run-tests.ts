@@ -1,4 +1,5 @@
 import { styleText } from 'node:util'
+import { GOTENBERG_TEST_VERSIONS } from '#scripts/gotenberg-test-versions'
 import { spawnVitest, type TestProcessResult } from '#scripts/test-process'
 
 export const TEST_SUITES = ['unit', 'v8', 'v9'] as const
@@ -8,7 +9,7 @@ type RunSuite = (suite: TestSuite) => TestProcessResult | Promise<TestProcessRes
 
 function spawnSuite(suite: TestSuite): Promise<TestProcessResult> {
   if (suite === 'unit') return spawnVitest('vitest.config.ts', 'unit')
-  const version = suite === 'v8' ? '8.40.0' : '9.5.0'
+  const version = GOTENBERG_TEST_VERSIONS[suite]
   return spawnVitest('vitest.integration.config.ts', suite, {
     ...process.env,
     GOTENBERG_TEST_VERSION: version,
@@ -48,7 +49,9 @@ export async function runTestSuites(
         return results
       })()
   if (passed.every(Boolean)) {
-    console.info('Unit and Gotenberg 8.40.0 / 9.5.0 integration tests passed.')
+    console.info(
+      `Unit and Gotenberg ${GOTENBERG_TEST_VERSIONS.v8} / ${GOTENBERG_TEST_VERSIONS.v9} integration tests passed.`,
+    )
     return 0
   }
   console.error(

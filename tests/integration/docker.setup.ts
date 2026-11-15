@@ -4,13 +4,19 @@ import { createServer, type Server } from 'node:http'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { promisify, styleText } from 'node:util'
 import type { TestProject } from 'vitest/node'
+import {
+  GOTENBERG_INTEGRATION_VERSIONS,
+  GOTENBERG_TEST_VERSIONS,
+} from '#scripts/gotenberg-test-versions'
 import { asyncFixtureHandler } from './async-fixture-server'
 import { REMOTE_OVERLAY_PNG } from './overlay-fixture'
 
 const exec = promisify(execFile)
-const testVersion = process.env.GOTENBERG_TEST_VERSION ?? '8.40.0'
-if (testVersion !== '8.40.0' && testVersion !== '9.5.0') {
-  throw new Error('Integration tests must use pinned Gotenberg 8.40.0 or 9.5.0 images.')
+const testVersion = process.env.GOTENBERG_TEST_VERSION ?? GOTENBERG_TEST_VERSIONS.v8
+if (!GOTENBERG_INTEGRATION_VERSIONS.some((version) => version === testVersion)) {
+  throw new Error(
+    `Integration tests must use pinned Gotenberg ${GOTENBERG_INTEGRATION_VERSIONS.join(' or ')} images.`,
+  )
 }
 const image = `gotenberg/gotenberg:${testVersion}`
 const startupTimeoutMs = 120_000

@@ -1,24 +1,33 @@
 import { styleText } from 'node:util'
+import {
+  GOTENBERG_INTEGRATION_VERSIONS,
+  GOTENBERG_TEST_VERSIONS,
+  type GotenbergIntegrationVersion,
+  integrationTestVersion,
+} from '#scripts/gotenberg-test-versions'
 import { spawnVitest, type TestProcessResult } from '#scripts/test-process'
 
-export const GOTENBERG_INTEGRATION_VERSIONS = ['8.40.0', '9.5.0'] as const
-export type GotenbergIntegrationVersion = (typeof GOTENBERG_INTEGRATION_VERSIONS)[number]
+export type { GotenbergIntegrationVersion } from '#scripts/gotenberg-test-versions'
+export { GOTENBERG_INTEGRATION_VERSIONS } from '#scripts/gotenberg-test-versions'
 
 export function integrationVersions(
   requested?: string,
   environment?: string,
 ): GotenbergIntegrationVersion[] {
-  if (requested && environment && requested !== environment) {
+  const version = requested || environment
+  if (!version) return [...GOTENBERG_INTEGRATION_VERSIONS]
+  const selected = integrationTestVersion(version)
+  if (!selected) {
+    throw new Error(
+      `Integration tests require Gotenberg ${GOTENBERG_INTEGRATION_VERSIONS.join(' or ')} (or v8/v9).`,
+    )
+  }
+  if (requested && environment && selected !== integrationTestVersion(environment)) {
     throw new Error(
       `Conflicting Gotenberg test versions: argument ${requested} and GOTENBERG_TEST_VERSION=${environment}.`,
     )
   }
-  const version = requested || environment
-  if (!version) return [...GOTENBERG_INTEGRATION_VERSIONS]
-  if (!GOTENBERG_INTEGRATION_VERSIONS.some((candidate) => candidate === version)) {
-    throw new Error('Integration tests require Gotenberg 8.40.0 or 9.5.0.')
-  }
-  return [version as GotenbergIntegrationVersion]
+  return [selected]
 }
 
 type RunVersion = (
@@ -26,10 +35,14 @@ type RunVersion = (
 ) => TestProcessResult | Promise<TestProcessResult>
 
 function runVitest(version: GotenbergIntegrationVersion): Promise<TestProcessResult> {
-  return spawnVitest('vitest.integration.config.ts', version === '8.40.0' ? 'v8' : 'v9', {
-    ...process.env,
-    GOTENBERG_TEST_VERSION: version,
-  })
+  return spawnVitest(
+    'vitest.integration.config.ts',
+    version === GOTENBERG_TEST_VERSIONS.v8 ? 'v8' : 'v9',
+    {
+      ...process.env,
+      GOTENBERG_TEST_VERSION: version,
+    },
+  )
 }
 
 /** Run separate Vitest processes concurrently; each provisions its own Docker container and fixture. */
@@ -39,7 +52,7 @@ export async function runIntegrationMatrix(
 ): Promise<number> {
   const outcomes = await Promise.all(
     versions.map(async (version) => {
-      const label = styleText('cyan', version === '8.40.0' ? '[v8]' : '[v9]')
+      const label = styleText('cyan', version === GOTENBERG_TEST_VERSIONS.v8 ? '[v8]' : '[v9]')
       console.info(`\n${label} Starting Gotenberg ${version} integration tests...`)
       try {
         const result = await runVersion(version)

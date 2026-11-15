@@ -33,9 +33,10 @@ test('native Node resolves extensionless source and script subpaths, including b
     "import { labelDynamicChunkGroups } from '#scripts/nitro-build-warnings'",
     "import { runTestSuites } from '#scripts/run-tests'",
     "import { integrationVersions } from '#scripts/run-integration-tests'",
+    "import { GOTENBERG_TEST_VERSIONS } from '#scripts/gotenberg-test-versions'",
     "import { vercelCommitSha } from '#/lib/app-version'",
     "if ([labelDynamicChunkGroups, runTestSuites, integrationVersions, vercelCommitSha].some((value) => typeof value !== 'function')) throw new Error('Invalid Node import aliases')",
-    "if (integrationVersions('9.5.0')[0] !== '9.5.0') throw new Error('Invalid integration version')",
+    "if (integrationVersions('v9')[0] !== GOTENBERG_TEST_VERSIONS.v9) throw new Error('Invalid integration version')",
   ].join('\n')
 
   expect(() =>

@@ -22,6 +22,7 @@ describe('Gotenberg major-version detection', () => {
     ['8.27.0', { major: 8, minor: 27, patch: 0 }],
     ['v8.39.0', { major: 8, minor: 39, patch: 0 }],
     ['9.0.0', { major: 9, minor: 0, patch: 0 }],
+    ['9.5.1', { major: 9, minor: 5, patch: 1 }],
     ['v9.2.1-rc.3+build.4', { major: 9, minor: 2, patch: 1 }],
     ['8.36', { major: 8, minor: 36, patch: 0 }],
     ['10.0.0', { major: 10, minor: 0, patch: 0 }],

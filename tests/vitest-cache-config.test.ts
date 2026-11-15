@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { GOTENBERG_TEST_VERSIONS } from '#scripts/gotenberg-test-versions'
 import { integrationTestCache, UNIT_TEST_CACHE } from '#scripts/test-cache'
 import unitConfig from '../vitest.config'
 import integrationConfig from '../vitest.integration.config'
 
 describe('parallel Vitest module caches', () => {
   it('uses distinct persistent caches for the unit, v8 and v9 suites', () => {
-    const paths = [UNIT_TEST_CACHE, integrationTestCache('8.40.0'), integrationTestCache('9.5.0')]
+    const paths = [
+      UNIT_TEST_CACHE,
+      integrationTestCache(GOTENBERG_TEST_VERSIONS.v8),
+      integrationTestCache(GOTENBERG_TEST_VERSIONS.v9),
+    ]
     expect(new Set(paths).size).toBe(3)
     expect(paths.every((path) => path.startsWith('node_modules/.vitest-cache-'))).toBe(true)
     expect(paths).not.toContain('node_modules/.vitest-cache')
@@ -21,6 +26,6 @@ describe('parallel Vitest module caches', () => {
   })
 
   it('defaults standalone integration runs to the v8 cache', () => {
-    expect(integrationTestCache(undefined)).toBe(integrationTestCache('8.40.0'))
+    expect(integrationTestCache(undefined)).toBe(integrationTestCache(GOTENBERG_TEST_VERSIONS.v8))
   })
 })

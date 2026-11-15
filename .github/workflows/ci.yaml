@@ -47,13 +47,13 @@ jobs:
         run: pnpm test:browser
 
   integration:
-    name: Integration tests (Gotenberg ${{ matrix.gotenberg-version }})
+    name: Integration tests (Gotenberg ${{ matrix.suite }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        gotenberg-version: ["8.40.0", "9.5.0"]
+        suite: [v8, v9]
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/setup@v3
@@ -65,7 +65,5 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Check Docker
         run: docker info
-      - name: Integration tests against Gotenberg ${{ matrix.gotenberg-version }}
-        env:
-          GOTENBERG_TEST_VERSION: ${{ matrix.gotenberg-version }}
-        run: pnpm test:integration
+      - name: Integration tests against Gotenberg ${{ matrix.suite }}
+        run: pnpm test:integration:${{ matrix.suite }}

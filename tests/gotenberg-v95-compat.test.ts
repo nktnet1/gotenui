@@ -109,7 +109,9 @@ describe('Gotenberg 9.5 paper sizes', () => {
         assert.doesNotMatch(render(version, 'A0'), /<select[^>]*disabled=""/)
       }
       for (const size of ['A0', 'A1', 'A2']) {
-        assert.doesNotMatch(render('9.5.0'), new RegExp(`<option value="${size}" disabled=""`))
+        for (const version of ['9.5.0', '9.5.1']) {
+          assert.doesNotMatch(render(version), new RegExp(`<option value="${size}" disabled=""`))
+        }
       }
     }
     assert.match(
@@ -130,7 +132,7 @@ describe('Gotenberg 9.5 paper sizes', () => {
   })
 
   it('checks version applicability without affecting smaller paper sizes or other majors', () => {
-    for (const version of ['8.40.0', '9.4.1', '9.5.0', '9.6.0']) {
+    for (const version of ['8.40.0', '9.4.1', '9.5.0', '9.5.1', '9.6.0']) {
       const parsed = parseGotenbergVersion(version)
       assert.ok(parsed)
       const requiresUpgrade = parsed.major === 9 && parsed.minor < 5
@@ -238,6 +240,8 @@ describe('Gotenberg 9.5 PDF information signature flag', () => {
     for (const [version, signed] of [
       ['9.5.0', true],
       ['9.5.0', false],
+      ['9.5.1', true],
+      ['9.5.1', false],
       ['9.4.1', undefined],
     ] as const) {
       const data = {
