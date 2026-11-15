@@ -49,17 +49,24 @@ jobs:
     permissions:
       contents: read
 
-  publish:
-    name: Publish container to GHCR
+  build:
+    name: Build container (${{ matrix.platform }})
     needs: [verify, ci]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
     permissions:
       contents: read
       packages: write
-    outputs:
-      image: ${{ steps.image.outputs.name }}
-      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -68,7 +75,73 @@ jobs:
         id: image
         shell: bash
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set OCI labels and annotations
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          flavor: latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.verify.outputs.prerelease == 'false' }}
+      - name: Build and push native image by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          provenance: mode=max
+          sbom: true
+      - name: Export image digest
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo '::error::Build did not return a valid sha256 image digest.'
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - name: Share image digest with publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish multi-platform image to GHCR
+    needs: [verify, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+      digest: ${{ steps.manifest.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Normalise container image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -85,24 +158,57 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}},enable=${{ needs.verify.outputs.prerelease == 'false' }}
-      - name: Build and push multi-platform image
-        id: build
-        uses: docker/build-push-action@v7
+      - name: Download native image digests
+        uses: actions/download-artifact@v4
         with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
-          provenance: mode=max
-          sbom: true
-      - name: Record the immutable image reference
+          pattern: digests-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - name: Create and verify multi-platform manifest
+        id: manifest
+        shell: bash
         env:
           IMAGE: ${{ steps.image.outputs.name }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: echo "Published \`${IMAGE}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          digest_files=("$RUNNER_TEMP/digests/"*)
+          if (( ${#digest_files[@]} != 2 )); then
+            echo "::error::Expected two native image digests, found ${#digest_files[@]}."
+            exit 1
+          fi
+          sources=()
+          for file in "${digest_files[@]}"; do
+            digest="${file##*/}"
+            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+              echo '::error::Invalid native image digest artifact.'
+              exit 1
+            fi
+            sources+=("${IMAGE}@sha256:${digest}")
+          done
+          tags=()
+          first_tag=''
+          while IFS= read -r tag; do
+            [[ -z "$tag" ]] && continue
+            tags+=(--tag "$tag")
+            if [[ -z "$first_tag" ]]; then
+              first_tag="$tag"
+            fi
+          done <<< "$TAGS"
+          if [[ -z "$first_tag" ]]; then
+            echo '::error::No version tags were generated for the release.'
+            exit 1
+          fi
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          manifest="$(docker buildx imagetools inspect "$first_tag" --format '{{json .Manifest}}')"
+          if ! jq -e '([.manifests[] | select(.platform.os == "linux" and (.platform.architecture == "amd64" or .platform.architecture == "arm64")) | .platform.architecture] | unique) == ["amd64", "arm64"]' <<< "$manifest" >/dev/null; then
+            echo '::error::Published manifest is missing amd64 or arm64.'
+            exit 1
+          fi
+          digest="$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<< "$manifest")"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Published \`${IMAGE}@${digest}\`" >> "$GITHUB_STEP_SUMMARY"
 
   release:
     name: Create draft GitHub Release

@@ -16,7 +16,7 @@ Gotenui publishes a **Docker container** to GitHub Packages (GitHub Container Re
    ```
 
 4. The **Release** GitHub Actions workflow verifies the tag, changelog and default-branch ancestry, then calls the existing full CI workflow. **Both quality and Gotenberg Docker integration jobs must pass** before publishing begins.
-5. After CI, Actions publishes a multi-platform Docker image (`linux/amd64` and `linux/arm64`) to GHCR, then creates an **unpublished draft GitHub Release**. The release body comes from `changelogs/v<version>.md`, followed by the immutable image digest. No automatically generated notes are added. If the image publish fails, no draft release is created.
+5. After CI, Actions builds `linux/amd64` and `linux/arm64` images on separate native GitHub-hosted runners (`ubuntu-24.04` and `ubuntu-24.04-arm`) without QEMU. Each architecture is pushed by immutable digest, then a publish job combines both into a multi-platform manifest and applies the same GHCR version tags as before. Only after both builds and the manifest check pass does it create an **unpublished draft GitHub Release**. The release body comes from `changelogs/v<version>.md`, followed by the immutable image digest. No automatically generated notes are added. If the image publish fails, no draft release is created.
 6. Review and edit the draft release in GitHub's **Releases** page, then select **Publish release** when ready. The GHCR image is already pushed at step 5 and may be available to users with package access before the GitHub Release is published.
 
 Use `vMAJOR.MINOR.PATCH` for stable releases, or `vMAJOR.MINOR.PATCH-rc.1` (or similar SemVer prerelease identifiers) for prereleases. Build metadata (`+something`) is not supported in release tags because Docker tag names cannot contain `+`. Prereleases remain marked as prereleases after you publish the draft.
@@ -45,7 +45,7 @@ A published Gotenui image contains the web application **only**. It still needs 
 - GitHub Actions must be enabled, and repository rulesets should restrict creation and modification of `v*` tags to authorised maintainers. Tags must point to a commit already merged into the default branch.
 - Publishing uses the built-in `GITHUB_TOKEN` with `packages: write`; creating the GitHub Release uses `contents: write`. No personal access token or third-party registry credentials are needed for a newly linked package.
 - GHCR packages are **private by default**. To allow public pulls, change the package's visibility in GitHub Packages settings. For an existing unlinked GHCR package with the same name, grant this repository access under the package's **Manage Actions access** settings.
-- Re-running a release workflow may repush the same image tags. Do not move or reuse Git release tags; protect them with a repository ruleset. An existing GitHub Release, including a manually edited draft, is left unchanged on a rerun.
+- Re-running a release workflow may repush the same image tags. A rerun of an old tag still uses the workflow from that tag's commit, not subsequent fixes on the default branch. Create a new release tag after merging workflow changes. Do not move or reuse Git release tags; protect them with a repository ruleset. An existing GitHub Release, including a manually edited draft, is left unchanged on a rerun.
 
 ## GHCR architecture labels
 

@@ -19,6 +19,7 @@ test('release reuses both CI jobs before it publishes any container', () => {
   assert.match(ci, /branches:\s+- ['"]\*\*['"]/)
   assert.match(release, /needs: verify\s+uses: \.\/\.github\/workflows\/ci\.yaml/)
   assert.match(release, /needs: \[verify, ci\]/)
+  assert.match(release, /needs: \[verify, build\]/)
   assert.match(release, /needs: \[verify, publish\]/)
 })
 
@@ -26,7 +27,7 @@ test('release publishes only to GHCR and requires scoped package permissions', (
   assert.match(release, /ghcr\.io\/\$\{GITHUB_REPOSITORY,,\}/)
   assert.match(release, /packages: write/)
   assert.match(release, /contents: write/)
-  assert.match(release, /platforms: linux\/amd64,linux\/arm64/)
+  assert.match(release, /platforms: \$\{\{ matrix\.platform \}\}/)
   assert.match(release, /provenance: mode=max/)
   assert.match(release, /sbom: true/)
   assert.match(release, /type=semver,pattern=\{\{version\}\}/)
@@ -38,6 +39,29 @@ test('release publishes only to GHCR and requires scoped package permissions', (
   assert.match(release, /--prerelease --latest=false/)
   assert.match(release, /gh release view "\$TAG"/)
   assert.match(release, /gh release create "\$TAG"/)
+})
+
+test('release builds on native architecture runners, then combines immutable digests', () => {
+  assert.match(release, /runner: ubuntu-24\.04\n\s+arch: amd64/)
+  assert.match(release, /runner: ubuntu-24\.04-arm\n\s+arch: arm64/)
+  assert.match(release, /runs-on: \$\{\{ matrix\.runner \}\}/)
+  assert.match(release, /platform: linux\/amd64/)
+  assert.match(release, /platform: linux\/arm64/)
+  assert.doesNotMatch(release, /docker\/setup-qemu-action/)
+  assert.match(release, /push-by-digest=true,name-canonical=true,push=true/)
+  assert.match(release, /actions\/upload-artifact@v4/)
+  assert.match(release, /name: digests-\$\{\{ matrix\.arch \}\}/)
+  assert.match(release, /actions\/download-artifact@v4/)
+  assert.match(release, /pattern: digests-\*/)
+  assert.match(release, /digest_files=\("\$RUNNER_TEMP\/digests\/"\*\)/)
+  assert.match(release, /\$\{#digest_files\[@\]\} != 2/)
+  assert.match(release, /docker buildx imagetools create/)
+  assert.match(
+    release,
+    /\.platform\.architecture == "amd64" or \.platform\.architecture == "arm64"/,
+  )
+  assert.match(release, /digest: \$\{\{ steps\.manifest\.outputs\.digest \}\}/)
+  assert.match(release, /DIGEST: \$\{\{ needs\.publish\.outputs\.digest \}\}/)
 })
 
 test('release fails early if its versioned changelog is missing or mismatched', () => {
