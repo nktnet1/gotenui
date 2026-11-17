@@ -36,6 +36,15 @@ export function validateFileBookmarks(value: unknown): asserts value is FileBook
   }
 }
 
+/** Before the first merge, only split and compose change current document names. */
+export function firstMergeKeepsInputNames(stages: readonly { op: string }[]): boolean {
+  const mergeIndex = stages.findIndex(({ op }) => op === 'merge')
+  return (
+    mergeIndex !== -1 &&
+    !stages.slice(0, mergeIndex).some(({ op }) => op === 'split' || op === 'compose')
+  )
+}
+
 /** The UI uses original upload names, while merge sends numbered names for stable ordering. */
 export function mapFileBookmarkLabels(
   bookmarks: FileBookmarks,

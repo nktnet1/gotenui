@@ -1,6 +1,6 @@
 import { mergeUploadFilenames } from '#/lib/merge-order'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
-import { mapFileBookmarkLabels } from '#/lib/pdf-file-bookmarks'
+import { firstMergeKeepsInputNames, mapFileBookmarkLabels } from '#/lib/pdf-file-bookmarks'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -92,9 +92,7 @@ export function adaptPdfPipeline(
   // Splitting changes document filenames, while composing leaves only a single
   // document. Labels for the original uploads would not name the PDFs that
   // reach merge in either case, and Gotenberg would reject the whole request.
-  const mergeUsesInitialNames =
-    firstMerge !== -1 &&
-    !stages.slice(0, firstMerge).some(({ op }) => op === 'split' || op === 'compose')
+  const mergeUsesInitialNames = firstMergeKeepsInputNames(stages)
   // Remap custom bookmark labels only while uploaded documents keep their
   // original identities. Later merges must use filenames at the merge stage.
   const bookmarksStages = stages.map((stage, index) => {

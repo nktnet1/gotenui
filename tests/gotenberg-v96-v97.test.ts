@@ -423,6 +423,95 @@ describe('Gotenberg 9.7 per-file merge bookmarks', () => {
     ])
   })
 
+  it('maps PDF pipeline custom labels after filename-preserving edits', async () => {
+    const beforeMerge = { op: 'rotate', angle: 90 }
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('annex.pdf')],
+        stages: [
+          beforeMerge,
+          {
+            op: 'merge',
+            fileBookmarks: { label: ['filename'], labels: { 'report.pdf': 'Report' } },
+          },
+        ],
+      },
+    )
+    assert.deepEqual(output.files, ['01_report.pdf', '02_annex.pdf'])
+    assert.deepEqual(output.stages, [
+      beforeMerge,
+      {
+        op: 'merge',
+        fileBookmarks: {
+          label: ['filename'],
+          labels: { '01_report.pdf': 'Report', '02_annex.pdf': 'annex' },
+        },
+      },
+    ])
+  })
+
+  it.each([{ op: 'rotate', angle: 90 }, { op: 'optimize' }, { op: 'select', pages: '1' }])(
+    'maps Office merge labels after a filename-preserving $op stage',
+    async (beforeMerge) => {
+      const output = await convert(
+        'office-pdf',
+        '9.7.0',
+        { merge: false },
+        {
+          files: [new File(['office'], 'report.docx'), new File(['office'], 'annex.docx')],
+          conversionStages: [
+            beforeMerge,
+            {
+              op: 'merge',
+              fileBookmarks: {
+                label: ['filename'],
+                labels: { 'report.docx.pdf': 'Office report' },
+              },
+            },
+          ],
+        },
+      )
+      assert.deepEqual(output.files, ['01_report.docx', '02_annex.docx'])
+      assert.deepEqual(output.stages, [
+        beforeMerge,
+        {
+          op: 'merge',
+          fileBookmarks: {
+            label: ['filename'],
+            labels: { '01_report.docx.pdf': 'Office report', '02_annex.docx.pdf': 'annex.docx' },
+          },
+        },
+      ])
+    },
+  )
+
+  it('preserves actual split output names in Office conversion merge labels', async () => {
+    const stages = [
+      { op: 'split', every: 1 },
+      {
+        op: 'merge',
+        fileBookmarks: {
+          label: ['filename'],
+          labels: { '01_report.docx_0.pdf': 'First part' },
+        },
+      },
+    ]
+    const output = await convert(
+      'office-pdf',
+      '9.7.0',
+      { merge: false },
+      {
+        files: [new File(['office'], 'report.docx'), new File(['office'], 'annex.docx')],
+        conversionStages: stages,
+      },
+    )
+    assert.deepEqual(output.files, ['01_report.docx', '02_annex.docx'])
+    assert.deepEqual(output.stages, stages)
+  })
+
   it('does not invent stale bookmark labels after split before merge', async () => {
     const stages = [
       { op: 'split', every: 1 },

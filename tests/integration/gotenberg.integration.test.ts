@@ -1767,6 +1767,46 @@ test.skipIf(!supportsV97)(
 )
 
 test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 Office conversion remaps per-file merge labels after rotation',
+  async () => {
+    const office = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!office) throw new Error('Missing Office conversion')
+    const result = await proxyConversionRequest(
+      request(
+        office,
+        {
+          conversionStages: JSON.stringify([
+            { op: 'rotate', angle: 90 },
+            {
+              op: 'merge',
+              fileBookmarks: {
+                label: ['filename'],
+                labels: { 'report.txt.pdf': 'Office report' },
+              },
+            },
+          ]),
+        },
+        [
+          new File(['Office report'], 'report.txt', { type: 'text/plain' }),
+          new File(['Office annex'], 'annex.txt', { type: 'text/plain' }),
+        ],
+      ),
+    )
+    if (!result.ok) {
+      throw new Error(`Office rotate then merge: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['Office report', 'annex.txt'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
   'Gotenberg 9.7 merge bookmarks after splitting refer to the actual split outputs',
   async () => {
     const result = await convertV9(
