@@ -423,6 +423,71 @@ describe('Gotenberg 9.7 per-file merge bookmarks', () => {
     ])
   })
 
+  it('does not invent stale bookmark labels after split before merge', async () => {
+    const stages = [
+      { op: 'split', every: 1 },
+      { op: 'merge', fileBookmarks: { label: ['filename'] } },
+    ]
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('annex.pdf')],
+        stages,
+      },
+    )
+    assert.deepEqual(output.files, ['01_report.pdf', '02_annex.pdf'])
+    assert.deepEqual(output.stages, stages)
+  })
+
+  it('retains merge-stage filenames for explicit labels after splitting', async () => {
+    const stages = [
+      { op: 'split', every: 1 },
+      {
+        op: 'merge',
+        fileBookmarks: {
+          label: ['filename'],
+          labels: { '01_report_0.pdf': 'First section' },
+        },
+      },
+    ]
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('annex.pdf')],
+        stages,
+      },
+    )
+    assert.deepEqual(output.stages, stages)
+  })
+
+  it('does not invent obsolete per-input labels after compose before merge', async () => {
+    const stages = [
+      {
+        op: 'compose',
+        paperSize: 'A4',
+        placements: [
+          { source: 'report.pdf', sourcePage: 1, page: 1, x: 0, y: 0 },
+          { source: 'annex.pdf', sourcePage: 1, page: 2, x: 0, y: 0 },
+        ],
+      },
+      { op: 'merge', fileBookmarks: { label: ['filename'] } },
+    ]
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('annex.pdf')],
+        stages,
+      },
+    )
+    assert.deepEqual(output.stages, stages)
+  })
+
   it('rejects unsupported server versions for standalone, PDF and conversion pipelines', async () => {
     const cases: [string, Record<string, string | boolean>, Parameters<typeof request>[2]][] = [
       ['merge', { v9FileBookmarks: true }, { files: [testPdf('a.pdf'), testPdf('b.pdf')] }],

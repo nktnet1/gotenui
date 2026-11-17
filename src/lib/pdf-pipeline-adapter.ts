@@ -89,10 +89,23 @@ export function adaptPdfPipeline(
       return remoteName && isInput(remoteName) ? [remoteName] : []
     }),
   ]
-  // Remap custom bookmark labels for the first merge when the adapter has
-  // numbered local inputs. The user writes labels using their original names.
+  // Splitting changes document filenames, while composing leaves only a single
+  // document. Labels for the original uploads would not name the PDFs that
+  // reach merge in either case, and Gotenberg would reject the whole request.
+  const mergeUsesInitialNames =
+    firstMerge !== -1 &&
+    !stages.slice(0, firstMerge).some(({ op }) => op === 'split' || op === 'compose')
+  // Remap custom bookmark labels only while uploaded documents keep their
+  // original identities. Later merges must use filenames at the merge stage.
   const bookmarksStages = stages.map((stage, index) => {
-    if (index !== firstMerge || stage.op !== 'merge' || !stage.fileBookmarks) return stage
+    if (
+      !mergeUsesInitialNames ||
+      index !== firstMerge ||
+      stage.op !== 'merge' ||
+      !stage.fileBookmarks
+    ) {
+      return stage
+    }
     return {
       ...stage,
       fileBookmarks: mapFileBookmarkLabels(

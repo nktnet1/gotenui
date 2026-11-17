@@ -1766,6 +1766,67 @@ test.skipIf(!supportsV97)(
   120_000,
 )
 
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 merge bookmarks after splitting refer to the actual split outputs',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'split', every: 1 },
+          { op: 'merge', fileBookmarks: { label: ['filename'] } },
+        ]),
+      },
+      [pdfFile('report.pdf'), pdfFile('annex.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`Split then merge bookmarks: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['01_report_0', '02_annex_0'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 merge bookmarks after composing do not reference obsolete sources',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          {
+            op: 'compose',
+            paperSize: 'A4',
+            placements: [
+              { source: 'report.pdf', sourcePage: 1, page: 1, x: 0, y: 0 },
+              { source: 'annex.pdf', sourcePage: 1, page: 2, x: 0, y: 0 },
+            ],
+          },
+          { op: 'merge', fileBookmarks: { label: ['filename'] } },
+        ]),
+      },
+      [pdfFile('report.pdf'), pdfFile('annex.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`Compose then merge bookmarks: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['annex'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1])
+  },
+  120_000,
+)
+
 test.skipIf(isV9)(
   'local merge preserves displayed page order with numeric and duplicate filenames',
   async () => {
