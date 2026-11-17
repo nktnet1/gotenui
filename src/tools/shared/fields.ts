@@ -548,3 +548,15 @@ export const sourceUrl: FieldDefinition = {
 export const pdfFiles = { input: 'pdf' as const, multiple: true }
 
 export const noFields: FieldDefinition[] = []
+
+/** Explicitly allow destruction of digital signatures by rewriting PDF contents (9.6+). */
+export const v9DropSignatures: FieldDefinition = {
+  name: 'v9DropSignatures',
+  label: 'Remove digital signatures when rewriting',
+  kind: 'toggle',
+  advanced: true,
+  supportedGotenbergMajors: [9],
+  minGotenbergMinor: 6,
+  description:
+    'Gotenberg 9.6+. Removing cryptographic signatures cannot be undone. Their visible appearance remains on the page, but the resulting PDF is not digitally signed.',
+}

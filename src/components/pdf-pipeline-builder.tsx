@@ -119,7 +119,10 @@ export function PdfPipelineBuilder({
         <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">
           Stages run from top to bottom. Use the arrows to change their order; the final stage
           determines whether Gotenberg returns PDFs, rendered images, text or attachments. Each
-          stage accepts the exact Gotenberg 9 option names as JSON.
+          stage accepts the exact Gotenberg 9 option names as JSON. On Gotenberg 9.6+, stages that
+          rewrite PDFs accept dropSignatures: true to intentionally remove digital signatures while
+          keeping their visible appearance. Merge accepts fileBookmarks: {} on Gotenberg 9.7+ to
+          group source documents under their own bookmarks.
         </p>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="min-w-52 flex-1 space-y-1">

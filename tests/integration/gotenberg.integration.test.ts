@@ -35,6 +35,8 @@ const supportsV92 = isV9 && minorVersion >= 2
 const supportsV93 = isV9 && minorVersion >= 3
 const supportsV94 = isV9 && minorVersion >= 4
 const supportsV95 = isV9 && minorVersion >= 5
+const supportsV96 = isV9 && minorVersion >= 6
+const supportsV97 = isV9 && minorVersion >= 7
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -1357,6 +1359,19 @@ test.skipIf(!isV9)(
           'verified.pdf': { signed: true },
         })
       }
+      if (supportsV96) {
+        const signedFile = new File([bytes], 'signed.pdf', { type: 'application/pdf' })
+        const refused = await convertV9('optimize', {}, [signedFile])
+        expect(refused.status).toBe(400)
+        expect(await refused.text()).toMatch(/dropSignatures/)
+        const unsigned = await convertV9('optimize', { v9DropSignatures: true }, [signedFile])
+        if (!unsigned.ok) {
+          throw new Error(`Remove signatures: ${unsigned.status} ${await unsigned.text()}`)
+        }
+        expect(await inspectV9Pdf('info', await unsigned.arrayBuffer())).toMatchObject({
+          'verified.pdf': { signed: false },
+        })
+      }
     } finally {
       rmSync(temporary, { recursive: true, force: true })
     }
@@ -1716,6 +1731,40 @@ async function bookmarkedPdf(marker: string, filename: string): Promise<File> {
   }
   return new File([await response.arrayBuffer()], filename, { type: 'application/pdf' })
 }
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 merges document bookmarks beneath custom per-file headings',
+  async () => {
+    const files = [
+      await bookmarkedPdf('Chapter one', 'report.pdf'),
+      await bookmarkedPdf('Chapter two', 'annex.pdf'),
+    ]
+    const result = await convertV9(
+      'merge',
+      {
+        v9FileBookmarks: true,
+        v9FileBookmarkSource: 'filename',
+        v9FileBookmarkLabels: '{"report.pdf":"Annual report","annex.pdf":"Appendix A"}',
+      },
+      files,
+    )
+    if (!result.ok) {
+      throw new Error(`Merge file bookmarks: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number; children?: { title: string; pageNumber: number }[] }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['Annual report', 'Appendix A'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+    expect(bookmarks.map(({ children }) => children?.[0]?.title)).toEqual([
+      'Chapter one',
+      'Chapter two',
+    ])
+  },
+  120_000,
+)
 
 test.skipIf(isV9)(
   'local merge preserves displayed page order with numeric and duplicate filenames',

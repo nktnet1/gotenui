@@ -1,5 +1,5 @@
 /** Definition for the encrypt Gotenberg operation. */
-import { pdfFiles } from '#/tools/shared/fields'
+import { pdfFiles, v9DropSignatures } from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
@@ -12,6 +12,7 @@ export const operation: Operation = {
   docs: 'manipulate-pdfs/encrypt-pdfs',
   ...pdfFiles,
   fields: [
+    v9DropSignatures,
     { name: 'userPassword', label: 'Open password', kind: 'password' },
     { name: 'ownerPassword', label: 'Owner password', kind: 'password' },
     {

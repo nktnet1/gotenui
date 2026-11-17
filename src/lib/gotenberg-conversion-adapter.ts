@@ -6,6 +6,7 @@ import {
 } from '#/lib/merge-order'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { type PdfComposeInput, reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
+import { mapFileBookmarkLabels } from '#/lib/pdf-file-bookmarks'
 import {
   normalizePdfStageAssets,
   type PdfPipelineStage,
@@ -458,7 +459,25 @@ export function adaptConversionForm(
           .getAll('files')
           .filter((file): file is File => file instanceof File)
           .map(({ name }) => ({ original: `${name}.pdf`, forwarded: `${name}.pdf` }))
-      const mergedStages = reconcilePdfComposeSources(stages as PdfPipelineStage[], {
+      const firstMerge = stages.findIndex(({ op }) => op === 'merge')
+      // Before a first-stage merge, Gotenberg has renamed the Office inputs.
+      // Custom labels supplied against original document names must follow the
+      // same mapping as PDF compose source references.
+      const bookmarkStages = stages.map((stage, index) =>
+        index === firstMerge && index === 0 && stage.fileBookmarks
+          ? {
+              ...stage,
+              fileBookmarks: mapFileBookmarkLabels(
+                stage.fileBookmarks as {
+                  label?: ('title' | 'filename')[]
+                  labels?: Record<string, string>
+                },
+                localSources,
+              ),
+            }
+          : stage,
+      )
+      const mergedStages = reconcilePdfComposeSources(bookmarkStages as PdfPipelineStage[], {
         inputs:
           operation.id === 'office-pdf'
             ? [

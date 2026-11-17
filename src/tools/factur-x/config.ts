@@ -1,5 +1,5 @@
 /** Definition for the factur-x Gotenberg operation. */
-import { pdfa, pdfFiles, pdfua, v9RemediationFields } from '#/tools/shared/fields'
+import { pdfa, pdfFiles, pdfua, v9DropSignatures, v9RemediationFields } from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
@@ -51,6 +51,7 @@ export const operation: Operation = {
     },
     pdfua,
     ...v9RemediationFields,
+    v9DropSignatures,
   ],
   auxiliary: {
     name: 'facturxXml',

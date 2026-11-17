@@ -35,11 +35,18 @@ export function activeOperationFields(
   values: Readonly<Record<string, string | boolean>>,
   backendVersion?: string,
 ): Record<string, string | boolean> {
+  const version = parseGotenbergVersion(backendVersion)
   return Object.fromEntries(
     operation.fields
       .filter(
         (field) =>
           fieldSupportsBackend(field, backendVersion) &&
+          (field.minGotenbergMinor === undefined ||
+            version?.major !== 9 ||
+            version.minor >= field.minGotenbergMinor ||
+            // Retain an already-selected unsupported option so the server
+            // returns an explicit version error rather than silently dropping it.
+            Boolean(values[field.name])) &&
           isFieldVisible(field, values) &&
           values[field.name] !== undefined,
       )

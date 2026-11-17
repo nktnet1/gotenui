@@ -1,5 +1,6 @@
 import { mergeUploadFilenames } from '#/lib/merge-order'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
+import { mapFileBookmarkLabels } from '#/lib/pdf-file-bookmarks'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -88,7 +89,25 @@ export function adaptPdfPipeline(
       return remoteName && isInput(remoteName) ? [remoteName] : []
     }),
   ]
-  const mappedStages = reconcilePdfComposeSources(stages, {
+  // Remap custom bookmark labels for the first merge when the adapter has
+  // numbered local inputs. The user writes labels using their original names.
+  const bookmarksStages = stages.map((stage, index) => {
+    if (index !== firstMerge || stage.op !== 'merge' || !stage.fileBookmarks) return stage
+    return {
+      ...stage,
+      fileBookmarks: mapFileBookmarkLabels(
+        stage.fileBookmarks as {
+          label?: ('title' | 'filename')[]
+          labels?: Record<string, string>
+        },
+        inputs.map((file, position) => ({
+          original: file instanceof File ? file.name : '',
+          forwarded: orderedNames[position] ?? (file instanceof File ? file.name : ''),
+        })),
+      ),
+    }
+  })
+  const mappedStages = reconcilePdfComposeSources(bookmarksStages, {
     inputs: [
       ...inputs.map((source, index) => {
         if (!(source instanceof File)) throw new InputError('Expected an uploaded PDF.')

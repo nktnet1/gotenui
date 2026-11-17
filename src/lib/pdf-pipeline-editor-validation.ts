@@ -5,6 +5,8 @@ import {
   requiresGotenberg92ForComposition,
   requiresGotenberg94ForStampPosition,
   requiresGotenberg95ForPaperSize,
+  requiresGotenberg96ForSignatureDrop,
+  requiresGotenberg97ForFileBookmarks,
 } from '#/lib/gotenberg-version'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
@@ -98,6 +100,12 @@ export function pdfPipelineEditorError(
       )
     ) {
       return 'A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.'
+    }
+    if (version && requiresGotenberg96ForSignatureDrop(version, parsed)) {
+      return 'Removing digital signatures requires Gotenberg 9.6 or newer.'
+    }
+    if (version && requiresGotenberg97ForFileBookmarks(version, parsed)) {
+      return 'Per-file merge bookmarks require Gotenberg 9.7 or newer.'
     }
     if (version?.major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(parsed)) {
       return 'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.'

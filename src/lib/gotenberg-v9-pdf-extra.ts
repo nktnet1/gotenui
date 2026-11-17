@@ -3,6 +3,7 @@
 import { filenameKey } from '#/lib/file-names'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { normalizePdfStageAssets, parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
@@ -93,7 +94,11 @@ export function adaptV9PdfExtra(
     const text = fields[name]
     return typeof text === 'string' && text !== '' ? text : undefined
   }
-  const allow = (...names: string[]) => validateFields(payload, names)
+  const allow = (...names: string[]) =>
+    validateFields(
+      payload,
+      PDF_REWRITING_TOOLS.has(operationId) ? [...names, 'v9DropSignatures'] : names,
+    )
   const onlyPdfInputs = () => {
     if (auxiliary.length) throw new InputError('This PDF tool does not accept additional files.')
   }
@@ -130,6 +135,7 @@ export function adaptV9PdfExtra(
         if (stage[name]) form.set(name, String(stage[name]))
       }
       form.set('placements', JSON.stringify(stage.placements))
+      if (fields.v9DropSignatures === true) form.set('dropSignatures', 'true')
       return { path: '/forms/pdf/compose', form }
     }
     case 'extract-attachments':
@@ -377,6 +383,11 @@ export function adaptV9PdfExtra(
     if (openPassword !== undefined) form.set('password', openPassword)
     return { path: route, form }
   }
-  form.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))
+  form.set(
+    'stages',
+    JSON.stringify(
+      normalizePdfStageAssets(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+    ),
+  )
   return { path: '/forms/pdf/pipe', form }
 }

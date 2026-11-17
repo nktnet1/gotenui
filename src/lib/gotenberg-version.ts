@@ -75,3 +75,29 @@ export function requiresGotenberg95ForPaperSize(
   }
   return false
 }
+
+/** `dropSignatures` exists only on rewriting PDF stages as of Gotenberg 9.6. */
+export function requiresGotenberg96ForSignatureDrop(
+  version: GotenbergVersion,
+  stages: Iterable<{ op: string; [key: string]: unknown }>,
+): boolean {
+  if (version.major !== 9 || version.minor >= 6) return false
+  for (const stage of stages) {
+    if (stage.dropSignatures !== undefined && stage.dropSignatures !== null) return true
+  }
+  return false
+}
+
+/** `fileBookmarks` is a merge-stage option added in Gotenberg 9.7. */
+export function requiresGotenberg97ForFileBookmarks(
+  version: GotenbergVersion,
+  stages: Iterable<{ op: string; fileBookmarks?: unknown }>,
+): boolean {
+  if (version.major !== 9 || version.minor >= 7) return false
+  for (const stage of stages) {
+    if (stage.op === 'merge' && stage.fileBookmarks !== undefined && stage.fileBookmarks !== null) {
+      return true
+    }
+  }
+  return false
+}
