@@ -6,7 +6,6 @@ import {
 } from '#/lib/merge-order'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { type PdfComposeInput, reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
-import { firstMergeKeepsInputNames, mapFileBookmarkLabels } from '#/lib/pdf-file-bookmarks'
 import {
   normalizePdfStageAssets,
   type PdfPipelineStage,
@@ -459,28 +458,7 @@ export function adaptConversionForm(
           .getAll('files')
           .filter((file): file is File => file instanceof File)
           .map(({ name }) => ({ original: `${name}.pdf`, forwarded: `${name}.pdf` }))
-      const firstMerge = stages.findIndex(({ op }) => op === 'merge')
-      // Office inputs retain their converted PDF filenames through per-document
-      // edits such as rotation and selection. Remap user labels to their
-      // numbered names until a split or compose changes document identities.
-      // Keep the existing first-stage mapping for other conversion routes.
-      const mapInitialNames =
-        firstMerge === 0 || (operation.id === 'office-pdf' && firstMergeKeepsInputNames(stages))
-      const bookmarkStages = stages.map((stage, index) =>
-        mapInitialNames && index === firstMerge && stage.fileBookmarks
-          ? {
-              ...stage,
-              fileBookmarks: mapFileBookmarkLabels(
-                stage.fileBookmarks as {
-                  label?: ('title' | 'filename')[]
-                  labels?: Record<string, string>
-                },
-                localSources,
-              ),
-            }
-          : stage,
-      )
-      const mergedStages = reconcilePdfComposeSources(bookmarkStages as PdfPipelineStage[], {
+      const mergedStages = reconcilePdfComposeSources(stages as PdfPipelineStage[], {
         inputs:
           operation.id === 'office-pdf'
             ? [
@@ -501,6 +479,7 @@ export function adaptConversionForm(
         unknownInputs:
           operation.id === 'office-pdf' &&
           (payload.downloadFrom ?? []).some(({ filename, name }) => !(filename ?? name)),
+        mapBookmarks: true,
       })
       parsePdfPipeline(JSON.stringify(mergedStages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],

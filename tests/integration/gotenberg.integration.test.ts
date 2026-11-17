@@ -1867,6 +1867,100 @@ test.skipIf(!supportsV97)(
   120_000,
 )
 
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 accepts custom bookmark labels on a later merge stage',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'merge' },
+          { op: 'rotate', angle: 90 },
+          { op: 'merge', fileBookmarks: { labels: { 'report.pdf': 'Combined report' } } },
+        ]),
+      },
+      [pdfFile('report.pdf'), pdfFile('annex.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`Later merge bookmarks: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['Combined report'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 accepts custom split-part bookmark labels in the original filename spelling',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'split', every: 1 },
+          { op: 'merge', fileBookmarks: { labels: { 'report_0.pdf': 'First section' } } },
+        ]),
+      },
+      [pdfFile('report.pdf'), pdfFile('annex.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`Split-part labels: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks[0]?.title).toBe('First section')
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 accepts Office labels after the built-in merge',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!operation) throw new Error('Missing Office conversion operation')
+    const result = await proxyConversionRequest(
+      request(
+        operation,
+        {
+          fields: { merge: true },
+          conversionStages: JSON.stringify([
+            {
+              op: 'merge',
+              fileBookmarks: { labels: { 'report.txt.pdf': 'Combined Office document' } },
+            },
+          ]),
+        },
+        [
+          new File(['Report'], 'report.txt', { type: 'text/plain' }),
+          new File(['Annex'], 'annex.txt', { type: 'text/plain' }),
+        ],
+      ),
+    )
+    if (!result.ok) {
+      throw new Error(`Office later merge: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    expect(
+      Object.values(inspected)
+        .flat()
+        .map(({ title }) => title),
+    ).toEqual(['Combined Office document'])
+  },
+  120_000,
+)
+
 test.skipIf(isV9)(
   'local merge preserves displayed page order with numeric and duplicate filenames',
   async () => {

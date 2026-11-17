@@ -1,3 +1,4 @@
+import { type FileBookmarks, mapFileBookmarkLabels } from '#/lib/pdf-file-bookmarks'
 import type { PdfPipelineStage } from '#/lib/pdf-pipeline'
 import { InputError } from '#/lib/validation'
 
@@ -84,6 +85,51 @@ function firstSource(sources: readonly SourceTemplate[] | null): SourceTemplate[
   ]
 }
 
+/** Resolve bookmark labels against the PDFs that exist at this merge stage.
+ * Split outputs are not known until Gotenberg counts their pages, but an
+ * explicit label such as report_0.pdf can still follow a numbered upload.
+ */
+function mapCurrentBookmarkLabels(
+  bookmarks: FileBookmarks,
+  sources: readonly SourceTemplate[],
+): FileBookmarks {
+  const staticSources = sources.filter(
+    ({ original, forwarded }) => !original.includes(partMarker) && !forwarded.includes(partMarker),
+  )
+  const dynamicSources = sources.filter(
+    ({ original, forwarded }) => original.includes(partMarker) || forwarded.includes(partMarker),
+  )
+  if (!dynamicSources.length) {
+    return sources.some(({ original, forwarded }) => original !== forwarded)
+      ? mapFileBookmarkLabels(bookmarks, sources)
+      : bookmarks
+  }
+
+  const labels: Record<string, string> = Object.create(null)
+  for (const [name, label] of Object.entries(bookmarks.labels ?? {})) {
+    const normalized = name.normalize('NFC')
+    const matches = dynamicSources.flatMap(({ original, forwarded }) => {
+      const parts = matchTemplate(normalized, original) ?? matchTemplate(normalized, forwarded)
+      return parts ? [materialize(forwarded, parts)] : []
+    })
+    for (const target of matches.length ? matches : [normalized]) {
+      if (Object.hasOwn(labels, target)) {
+        throw new InputError(`merge: duplicate fileBookmarks label for ${target}.`)
+      }
+      labels[target] = label
+    }
+  }
+  // A split may produce any number of parts. Do not invent labels for parts
+  // that have not yet been created, or send the internal template marker.
+  if (!staticSources.length) {
+    return bookmarks.labels ? { ...bookmarks, labels } : bookmarks
+  }
+  return mapFileBookmarkLabels(
+    bookmarks.labels ? { ...bookmarks, labels } : bookmarks,
+    staticSources,
+  )
+}
+
 /** Reconcile compose references against Gotenberg 9.2's document-name rules.
  * Merge/compose always leave one PDF (so source is optional); split appends a
  * zero-based suffix to the *current* filename, not a generic document name.
@@ -95,7 +141,13 @@ export function reconcilePdfComposeSources(
     inputs,
     unknownInputs = false,
     singleInput = false,
-  }: { inputs: readonly PdfComposeInput[]; unknownInputs?: boolean; singleInput?: boolean },
+    mapBookmarks = false,
+  }: {
+    inputs: readonly PdfComposeInput[]
+    unknownInputs?: boolean
+    singleInput?: boolean
+    mapBookmarks?: boolean
+  },
 ): PdfPipelineStage[] {
   const names = inputs.map(({ original, forwarded }) => ({
     original: original.normalize('NFC'),
@@ -108,15 +160,31 @@ export function reconcilePdfComposeSources(
       : names.sort((a, b) => compareSourceNames(a.forwarded, b.forwarded))
   let single = singleInput || (!unknownInputs && names.length === 1)
   let afterSplit = false
+  // Unknown remote names prevent predicting a later merge output, but they
+  // do not change the known local filenames before the first reshaping stage.
+  let initialNamesPreserved = true
 
   return stages.map((stage) => {
     if (stage.op === 'merge') {
+      const candidates = sources ?? (initialNamesPreserved ? names : null)
+      const mapped =
+        mapBookmarks && candidates?.length && stage.fileBookmarks
+          ? {
+              ...stage,
+              fileBookmarks: mapCurrentBookmarkLabels(
+                stage.fileBookmarks as FileBookmarks,
+                candidates,
+              ),
+            }
+          : stage
+      initialNamesPreserved = false
       sources = firstSource(sources)
       single = true
       afterSplit = false
-      return stage
+      return mapped
     }
     if (stage.op === 'split') {
+      initialNamesPreserved = false
       sources =
         sources?.map(({ original, forwarded }) => ({
           original: splitName(original),
@@ -170,6 +238,7 @@ export function reconcilePdfComposeSources(
       }
       return { ...entry, source: matches[0] }
     })
+    initialNamesPreserved = false
     sources = firstSource(sources)
     single = true
     afterSplit = false

@@ -1,6 +1,5 @@
 import { mergeUploadFilenames } from '#/lib/merge-order'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
-import { firstMergeKeepsInputNames, mapFileBookmarkLabels } from '#/lib/pdf-file-bookmarks'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -89,36 +88,7 @@ export function adaptPdfPipeline(
       return remoteName && isInput(remoteName) ? [remoteName] : []
     }),
   ]
-  // Splitting changes document filenames, while composing leaves only a single
-  // document. Labels for the original uploads would not name the PDFs that
-  // reach merge in either case, and Gotenberg would reject the whole request.
-  const mergeUsesInitialNames = firstMergeKeepsInputNames(stages)
-  // Remap custom bookmark labels only while uploaded documents keep their
-  // original identities. Later merges must use filenames at the merge stage.
-  const bookmarksStages = stages.map((stage, index) => {
-    if (
-      !mergeUsesInitialNames ||
-      index !== firstMerge ||
-      stage.op !== 'merge' ||
-      !stage.fileBookmarks
-    ) {
-      return stage
-    }
-    return {
-      ...stage,
-      fileBookmarks: mapFileBookmarkLabels(
-        stage.fileBookmarks as {
-          label?: ('title' | 'filename')[]
-          labels?: Record<string, string>
-        },
-        inputs.map((file, position) => ({
-          original: file instanceof File ? file.name : '',
-          forwarded: orderedNames[position] ?? (file instanceof File ? file.name : ''),
-        })),
-      ),
-    }
-  })
-  const mappedStages = reconcilePdfComposeSources(bookmarksStages, {
+  const mappedStages = reconcilePdfComposeSources(stages, {
     inputs: [
       ...inputs.map((source, index) => {
         if (!(source instanceof File)) throw new InputError('Expected an uploaded PDF.')
@@ -127,6 +97,7 @@ export function adaptPdfPipeline(
       ...external.map((name) => ({ original: name, forwarded: name })),
     ],
     unknownInputs: (payload.downloadFrom ?? []).some(({ filename, name }) => !(filename ?? name)),
+    mapBookmarks: true,
   })
   form.set('stages', JSON.stringify(mappedStages))
   return { path: '/forms/pdf/pipe', form }

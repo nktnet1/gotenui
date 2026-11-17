@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, it, vi } from 'vitest'
 import { capturePresetFields, reusableFieldNames } from '#/lib/conversion-presets'
 import { proxyConversionRequest } from '#/lib/gotenberg-proxy.server'
+import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { mapFileBookmarkLabels, validateFileBookmarks } from '#/lib/pdf-file-bookmarks'
 import { PDF_PIPELINE_STAGES, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { pdfPipelineEditorError } from '#/lib/pdf-pipeline-editor-validation'
@@ -575,6 +576,179 @@ describe('Gotenberg 9.7 per-file merge bookmarks', () => {
       },
     )
     assert.deepEqual(output.stages, stages)
+  })
+
+  it('maps labels for a second PDF merge after the first merge has renamed its output', async () => {
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('annex.pdf')],
+        stages: [
+          { op: 'merge' },
+          { op: 'rotate', angle: 90 },
+          {
+            op: 'merge',
+            fileBookmarks: {
+              label: ['filename'],
+              labels: { 'report.pdf': 'Combined report' },
+            },
+          },
+        ],
+      },
+    )
+    assert.deepEqual(output.files, ['01_report.pdf', '02_annex.pdf'])
+    assert.deepEqual(output.stages[2], {
+      op: 'merge',
+      fileBookmarks: {
+        label: ['filename'],
+        labels: { '01_report.pdf': 'Combined report' },
+      },
+    })
+  })
+
+  it('maps Office custom labels after the built-in merge', async () => {
+    const output = await convert(
+      'office-pdf',
+      '9.7.0',
+      { merge: true },
+      {
+        files: [new File(['office'], 'report.docx'), new File(['office'], 'annex.docx')],
+        conversionStages: [
+          {
+            op: 'merge',
+            fileBookmarks: {
+              label: ['filename'],
+              labels: { 'report.docx.pdf': 'Combined Office document' },
+            },
+          },
+        ],
+      },
+    )
+    assert.deepEqual(output.stages[0], { op: 'merge' })
+    assert.deepEqual(output.stages[1], {
+      op: 'merge',
+      fileBookmarks: {
+        label: ['filename'],
+        labels: { '01_report.docx.pdf': 'Combined Office document' },
+      },
+    })
+  })
+
+  it('maps original split-part labels to numbered filenames at a later merge', async () => {
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('annex.pdf')],
+        stages: [
+          { op: 'split', every: 1 },
+          { op: 'merge', fileBookmarks: { labels: { 'report_0.pdf': 'First section' } } },
+        ],
+      },
+    )
+    assert.deepEqual(output.stages[1], {
+      op: 'merge',
+      fileBookmarks: { labels: { '01_report_0.pdf': 'First section' } },
+    })
+  })
+
+  it('maps split-part aliases for Office inputs and after a prior merge', async () => {
+    const office = await convert(
+      'office-pdf',
+      '9.7.0',
+      { merge: false },
+      {
+        files: [new File(['office'], 'report.docx'), new File(['office'], 'annex.docx')],
+        conversionStages: [
+          { op: 'split', every: 1 },
+          { op: 'merge', fileBookmarks: { labels: { 'report.docx_0.pdf': 'First part' } } },
+        ],
+      },
+    )
+    assert.deepEqual(office.stages[1], {
+      op: 'merge',
+      fileBookmarks: { labels: { '01_report.docx_0.pdf': 'First part' } },
+    })
+
+    const pdf = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('annex.pdf')],
+        stages: [
+          { op: 'merge' },
+          { op: 'split', every: 1 },
+          { op: 'merge', fileBookmarks: { labels: { 'report_0.pdf': 'Part A' } } },
+        ],
+      },
+    )
+    assert.deepEqual(pdf.stages[2], {
+      op: 'merge',
+      fileBookmarks: { labels: { '01_report_0.pdf': 'Part A' } },
+    })
+  })
+
+  it('maps duplicate original split labels to each numbered document', async () => {
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('report.pdf')],
+        stages: [
+          { op: 'split', every: 1 },
+          { op: 'merge', fileBookmarks: { labels: { 'report_0.pdf': 'Shared heading' } } },
+        ],
+      },
+    )
+    assert.deepEqual(output.stages[1], {
+      op: 'merge',
+      fileBookmarks: {
+        labels: {
+          '01_report_0.pdf': 'Shared heading',
+          '02_report_0.pdf': 'Shared heading',
+        },
+      },
+    })
+  })
+
+  it('still maps known local labels if an unnamed remote prevents predicting merge output names', () => {
+    const stages = reconcilePdfComposeSources(
+      [
+        { op: 'rotate', angle: 90 },
+        {
+          op: 'merge',
+          fileBookmarks: { label: ['filename'], labels: { 'report.pdf': 'Report' } },
+        },
+      ],
+      {
+        inputs: [{ original: 'report.pdf', forwarded: '01_report.pdf' }],
+        unknownInputs: true,
+        mapBookmarks: true,
+      },
+    )
+    assert.deepEqual(JSON.parse(JSON.stringify(stages[1])), {
+      op: 'merge',
+      fileBookmarks: { label: ['filename'], labels: { '01_report.pdf': 'Report' } },
+    })
+    assert.deepEqual(
+      reconcilePdfComposeSources(
+        [
+          { op: 'split', every: 1 },
+          { op: 'merge', fileBookmarks: { labels: { 'report.pdf': 'Old name' } } },
+        ],
+        {
+          inputs: [{ original: 'report.pdf', forwarded: '01_report.pdf' }],
+          unknownInputs: true,
+          mapBookmarks: true,
+        },
+      )[1],
+      { op: 'merge', fileBookmarks: { labels: { 'report.pdf': 'Old name' } } },
+    )
   })
 
   it('rejects unsupported server versions for standalone, PDF and conversion pipelines', async () => {
