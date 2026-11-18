@@ -9,6 +9,7 @@ import { mapFileBookmarkLabels, validateFileBookmarks } from '#/lib/pdf-file-boo
 import { PDF_PIPELINE_STAGES, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { pdfPipelineEditorError } from '#/lib/pdf-pipeline-editor-validation'
 import { PDF_REWRITING_STAGES, PDF_REWRITING_TOOLS } from '#/lib/pdf-signature-removal'
+import type { ConversionPayload } from '#/lib/validation'
 import { activeOperationFields, OPERATION_BY_ID, operationDefaults } from '#/tools/registry'
 import { FieldControl } from '#/tools/shared/tool-fields'
 import type { FieldDefinition } from '#/tools/types'
@@ -25,6 +26,7 @@ function request(
     conversionStages?: unknown[]
     stages?: unknown[]
     sourceFiles?: File[]
+    downloadFrom?: ConversionPayload['downloadFrom']
   } = {},
 ): Request {
   const operation = OPERATION_BY_ID.get(id)
@@ -44,6 +46,7 @@ function request(
         ? { conversionStages: JSON.stringify(options.conversionStages) }
         : {}),
       ...(id === 'html-pdf' ? { source: '<!doctype html><h1>Example</h1>' } : {}),
+      ...(options.downloadFrom ? { downloadFrom: options.downloadFrom } : {}),
     }),
   )
   for (const file of options.files ?? (operation.input === 'pdf' ? [testPdf('input.pdf')] : [])) {
@@ -366,6 +369,48 @@ describe('Gotenberg 9.7 per-file merge bookmarks', () => {
       },
     )
     assert.deepEqual(stages[2], {
+      op: 'compose',
+      paperSize: 'A4',
+      placements: [
+        { source: '\uE000_0.pdf', sourcePage: 1, page: 1, x: 0, y: 0 },
+        { source: '\uE000_1.pdf', sourcePage: 1, page: 2, x: 0, y: 0 },
+      ],
+    })
+  })
+
+  it('forwards the Unicode remote input name and composed split sources together', async () => {
+    const downloadFrom = [
+      {
+        url: 'http://host.docker.internal:3210/gotenui-remote/pipeline.pdf',
+        filename: '\uE000.pdf',
+        extraHttpHeaders: { 'x-gotenui-remote-token': 'fixture-remote-key' },
+      },
+    ]
+    const result = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('😀.pdf')],
+        downloadFrom,
+        stages: [
+          { op: 'merge' },
+          { op: 'split', every: 1 },
+          {
+            op: 'compose',
+            paperSize: 'A4',
+            placements: [
+              { source: '\uE000_0.pdf', sourcePage: 1, page: 1, x: 0, y: 0 },
+              { source: '\uE000_1.pdf', sourcePage: 1, page: 2, x: 0, y: 0 },
+            ],
+          },
+        ],
+      },
+    )
+    assert.equal(result.path, '/forms/pdf/pipe')
+    assert.deepEqual(result.files, ['😀.pdf'])
+    assert.deepEqual(JSON.parse(String(result.form.get('downloadFrom'))), downloadFrom)
+    assert.deepEqual(result.stages[2], {
       op: 'compose',
       paperSize: 'A4',
       placements: [

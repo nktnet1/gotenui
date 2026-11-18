@@ -32,3 +32,14 @@ export async function retryTransientConversion(
     await pause(attempt)
   }
 }
+
+/** Retry transient smoke failures only for LibreOffice, not for unrelated operations. */
+export function smokeConversion(
+  path: string,
+  convert: () => Promise<Response>,
+  options: Parameters<typeof retryTransientConversion>[1] = {},
+): Promise<Response> {
+  return path === '/forms/libreoffice/convert'
+    ? retryTransientConversion(convert, options)
+    : convert()
+}

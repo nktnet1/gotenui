@@ -19,11 +19,11 @@ import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-
 import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import type { ConversionPayload } from '#/lib/validation'
 import { inspectZipResult } from '#/lib/zip-result-manifest'
-import type { CallbackReceipt } from './async-fixture-server'
+import { type CallbackReceipt, REMOTE_PDF_FIXTURE_PATH } from './async-fixture-server'
 import { integrationContainerLogs } from './container-logs'
 import { integrationSmokeOperations } from './operation-selection'
 import { REMOTE_OVERLAY_PNG } from './overlay-fixture'
-import { retryTransientConversion } from './transient-conversion'
+import { retryTransientConversion, smokeConversion } from './transient-conversion'
 
 const backendUrl = inject('gotenbergTestUrl')
 const testContainerName = inject('gotenbergTestContainerName')
@@ -377,10 +377,25 @@ function zipEntries(bytes: Uint8Array): Map<string, Uint8Array> {
 test.each(integrationSmokeOperations(isV9 ? 9 : 8))(
   '$id - $path',
   async (operation) => {
-    const response = await convert(operation)
+    let attempts = 1
+    const response = await smokeConversion(operation.path, () => convert(operation), {
+      onRetry: ({ attempt, status, body, trace }) => {
+        attempts = attempt + 1
+        console.warn(
+          `${operation.id} smoke attempt ${attempt} returned HTTP ${status}` +
+            `${trace ? ` (trace: ${trace})` : ''}: ${body}`,
+        )
+      },
+    })
     if (!response.ok) {
+      const trace = response.headers.get('gotenberg-trace')
+      const logs =
+        operation.path === '/forms/libreoffice/convert'
+          ? `\nRecent ${testVersion} Gotenberg container logs:\n${await integrationContainerLogs(testContainerName)}`
+          : ''
       throw new Error(
-        `${operation.id}: Gotenberg returned ${response.status}: ${await response.text()}`,
+        `${operation.id}: Gotenberg returned ${response.status} after ${attempts} attempt(s)` +
+          `${trace ? ` (trace: ${trace})` : ''}: ${await response.text()}${logs}`,
       )
     }
     const type = response.headers.get('content-type')?.split(';')[0]
@@ -1042,7 +1057,7 @@ test.skipIf(!isV9)(
   async () => {
     const operation = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
     if (!operation) throw new Error('Missing PDF pipeline')
-    const remoteUrl = new URL('/gotenui-remote/pipeline.pdf', fixtureUrl).toString()
+    const remoteUrl = new URL(REMOTE_PDF_FIXTURE_PATH, fixtureUrl).toString()
     const setupUrl = new URL(remoteUrl)
     setupUrl.hostname = '127.0.0.1'
     const prepared = await fetch(setupUrl, {
@@ -1938,7 +1953,7 @@ test.skipIf(!supportsV97)(
   async () => {
     const operation = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
     if (!operation) throw new Error('Missing PDF pipeline')
-    const remoteUrl = new URL('/gotenui-remote/unicode-order.pdf', fixtureUrl).toString()
+    const remoteUrl = new URL(REMOTE_PDF_FIXTURE_PATH, fixtureUrl).toString()
     const setupUrl = new URL(remoteUrl)
     setupUrl.hostname = '127.0.0.1'
     const prepared = await fetch(setupUrl, {
@@ -2648,7 +2663,7 @@ test('real downloadFrom still rejects a source without a header, URL extension o
 test.skipIf(!supportsV92)(
   'Gotenberg 9.2 uses downloadFrom.filename over the response Content-Disposition in PDF composition',
   async () => {
-    const remoteUrl = new URL('/gotenui-remote/pipeline.pdf', fixtureUrl)
+    const remoteUrl = new URL(REMOTE_PDF_FIXTURE_PATH, fixtureUrl)
     const setupUrl = new URL(remoteUrl)
     setupUrl.hostname = '127.0.0.1'
     const prepared = await fetch(setupUrl, {
