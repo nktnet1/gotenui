@@ -19,11 +19,11 @@ import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-
 import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import type { ConversionPayload } from '#/lib/validation'
 import { inspectZipResult } from '#/lib/zip-result-manifest'
-import type { CallbackReceipt } from './async-fixture-server'
+import { type CallbackReceipt, REMOTE_PDF_FIXTURE_PATH } from './async-fixture-server'
 import { integrationContainerLogs } from './container-logs'
 import { integrationSmokeOperations } from './operation-selection'
 import { REMOTE_OVERLAY_PNG } from './overlay-fixture'
-import { retryTransientConversion } from './transient-conversion'
+import { retryTransientConversion, smokeConversion } from './transient-conversion'
 
 const backendUrl = inject('gotenbergTestUrl')
 const testContainerName = inject('gotenbergTestContainerName')
@@ -35,6 +35,8 @@ const supportsV92 = isV9 && minorVersion >= 2
 const supportsV93 = isV9 && minorVersion >= 3
 const supportsV94 = isV9 && minorVersion >= 4
 const supportsV95 = isV9 && minorVersion >= 5
+const supportsV96 = isV9 && minorVersion >= 6
+const supportsV97 = isV9 && minorVersion >= 7
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -375,10 +377,25 @@ function zipEntries(bytes: Uint8Array): Map<string, Uint8Array> {
 test.each(integrationSmokeOperations(isV9 ? 9 : 8))(
   '$id - $path',
   async (operation) => {
-    const response = await convert(operation)
+    let attempts = 1
+    const response = await smokeConversion(operation.path, () => convert(operation), {
+      onRetry: ({ attempt, status, body, trace }) => {
+        attempts = attempt + 1
+        console.warn(
+          `${operation.id} smoke attempt ${attempt} returned HTTP ${status}` +
+            `${trace ? ` (trace: ${trace})` : ''}: ${body}`,
+        )
+      },
+    })
     if (!response.ok) {
+      const trace = response.headers.get('gotenberg-trace')
+      const logs =
+        operation.path === '/forms/libreoffice/convert'
+          ? `\nRecent ${testVersion} Gotenberg container logs:\n${await integrationContainerLogs(testContainerName)}`
+          : ''
       throw new Error(
-        `${operation.id}: Gotenberg returned ${response.status}: ${await response.text()}`,
+        `${operation.id}: Gotenberg returned ${response.status} after ${attempts} attempt(s)` +
+          `${trace ? ` (trace: ${trace})` : ''}: ${await response.text()}${logs}`,
       )
     }
     const type = response.headers.get('content-type')?.split(';')[0]
@@ -1040,7 +1057,7 @@ test.skipIf(!isV9)(
   async () => {
     const operation = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
     if (!operation) throw new Error('Missing PDF pipeline')
-    const remoteUrl = new URL('/gotenui-remote/pipeline.pdf', fixtureUrl).toString()
+    const remoteUrl = new URL(REMOTE_PDF_FIXTURE_PATH, fixtureUrl).toString()
     const setupUrl = new URL(remoteUrl)
     setupUrl.hostname = '127.0.0.1'
     const prepared = await fetch(setupUrl, {
@@ -1355,6 +1372,19 @@ test.skipIf(!isV9)(
       if (supportsV95) {
         expect(await inspectV9Pdf('info', bytes.buffer as ArrayBuffer)).toMatchObject({
           'verified.pdf': { signed: true },
+        })
+      }
+      if (supportsV96) {
+        const signedFile = new File([bytes], 'signed.pdf', { type: 'application/pdf' })
+        const refused = await convertV9('optimize', {}, [signedFile])
+        expect(refused.status).toBe(400)
+        expect(await refused.text()).toMatch(/dropSignatures/)
+        const unsigned = await convertV9('optimize', { v9DropSignatures: true }, [signedFile])
+        if (!unsigned.ok) {
+          throw new Error(`Remove signatures: ${unsigned.status} ${await unsigned.text()}`)
+        }
+        expect(await inspectV9Pdf('info', await unsigned.arrayBuffer())).toMatchObject({
+          'verified.pdf': { signed: false },
         })
       }
     } finally {
@@ -1716,6 +1746,355 @@ async function bookmarkedPdf(marker: string, filename: string): Promise<File> {
   }
   return new File([await response.arrayBuffer()], filename, { type: 'application/pdf' })
 }
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 merges document bookmarks beneath custom per-file headings',
+  async () => {
+    const files = [
+      await bookmarkedPdf('Chapter one', 'report.pdf'),
+      await bookmarkedPdf('Chapter two', 'annex.pdf'),
+    ]
+    const result = await convertV9(
+      'merge',
+      {
+        v9FileBookmarks: true,
+        v9FileBookmarkSource: 'filename',
+        v9FileBookmarkLabels: '{"report.pdf":"Annual report","annex.pdf":"Appendix A"}',
+      },
+      files,
+    )
+    if (!result.ok) {
+      throw new Error(`Merge file bookmarks: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number; children?: { title: string; pageNumber: number }[] }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['Annual report', 'Appendix A'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+    expect(bookmarks.map(({ children }) => children?.[0]?.title)).toEqual([
+      'Chapter one',
+      'Chapter two',
+    ])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 Office conversion remaps per-file merge labels after rotation',
+  async () => {
+    const office = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!office) throw new Error('Missing Office conversion')
+    const result = await proxyConversionRequest(
+      request(
+        office,
+        {
+          conversionStages: JSON.stringify([
+            { op: 'rotate', angle: 90 },
+            {
+              op: 'merge',
+              fileBookmarks: {
+                label: ['filename'],
+                labels: { 'report.txt.pdf': 'Office report' },
+              },
+            },
+          ]),
+        },
+        [
+          new File(['Office report'], 'report.txt', { type: 'text/plain' }),
+          new File(['Office annex'], 'annex.txt', { type: 'text/plain' }),
+        ],
+      ),
+    )
+    if (!result.ok) {
+      throw new Error(`Office rotate then merge: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['Office report', 'annex.txt'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 merge bookmarks after splitting refer to the actual split outputs',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'split', every: 1 },
+          { op: 'merge', fileBookmarks: { label: ['filename'] } },
+        ]),
+      },
+      [pdfFile('report.pdf'), pdfFile('annex.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`Split then merge bookmarks: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['01_report_0', '02_annex_0'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 preserves distinct labels when current filenames overlap original aliases',
+  async () => {
+    for (const split of [false, true]) {
+      const labels = split
+        ? {
+            '01_report_0.pdf': 'First current PDF',
+            '02_01_report_0.pdf': 'Second current PDF',
+          }
+        : {
+            '01_report.pdf': 'First current PDF',
+            '02_01_report.pdf': 'Second current PDF',
+          }
+      const stages = [
+        ...(split ? [{ op: 'split', every: 1 }] : []),
+        { op: 'merge', fileBookmarks: { labels } },
+      ]
+      const result = await convertV9('pdf-pipeline', { stages: JSON.stringify(stages) }, [
+        pdfFile('report.pdf'),
+        pdfFile('01_report.pdf'),
+      ])
+      if (!result.ok) {
+        throw new Error(
+          `Overlapping merge names (split=${split}): ${result.status} ${await result.text()}`,
+        )
+      }
+      const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+        string,
+        { title: string; pageNumber: number }[]
+      >
+      const bookmarks = Object.values(inspected).flat()
+      expect(bookmarks.map(({ title }) => title)).toEqual([
+        'First current PDF',
+        'Second current PDF',
+      ])
+      expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+    }
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 merge bookmarks after composing do not reference obsolete sources',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          {
+            op: 'compose',
+            paperSize: 'A4',
+            placements: [
+              { source: 'report.pdf', sourcePage: 1, page: 1, x: 0, y: 0 },
+              { source: 'annex.pdf', sourcePage: 1, page: 2, x: 0, y: 0 },
+            ],
+          },
+          { op: 'merge', fileBookmarks: { label: ['filename'] } },
+        ]),
+      },
+      [pdfFile('report.pdf'), pdfFile('annex.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`Compose then merge bookmarks: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['annex'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 accepts NFC-normalized bookmark label keys without renaming uploads',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'merge', fileBookmarks: { labels: { 'Cafe\u0301.pdf': 'Normalized title' } } },
+        ]),
+      },
+      [pdfFile('Caf\u00e9.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`NFC bookmark label: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['Normalized title'])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 tracks Unicode remote filenames through merge, split and compose',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
+    if (!operation) throw new Error('Missing PDF pipeline')
+    const remoteUrl = new URL(REMOTE_PDF_FIXTURE_PATH, fixtureUrl).toString()
+    const setupUrl = new URL(remoteUrl)
+    setupUrl.hostname = '127.0.0.1'
+    const prepared = await fetch(setupUrl, {
+      method: 'PUT',
+      headers: { 'x-gotenui-remote-token': 'fixture-remote-key' },
+      body: pdfBytes,
+    })
+    expect(prepared.status).toBe(204)
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        {
+          fields: {
+            stages: JSON.stringify([
+              { op: 'merge' },
+              { op: 'split', every: 1 },
+              {
+                op: 'compose',
+                paperSize: 'A4',
+                placements: [
+                  { source: '\uE000_0.pdf', sourcePage: 1, page: 1, x: 0, y: 0 },
+                  { source: '\uE000_1.pdf', sourcePage: 1, page: 2, x: 0, y: 0 },
+                ],
+              },
+            ]),
+          },
+          downloadFrom: [
+            {
+              url: remoteUrl,
+              filename: '\uE000.pdf',
+              extraHttpHeaders: { 'x-gotenui-remote-token': 'fixture-remote-key' },
+            },
+          ],
+        },
+        [pdfFile('😀.pdf')],
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(`Unicode source order: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(await inspectV9Pdf('info', await response.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 2 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 accepts custom bookmark labels on a later merge stage',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'merge' },
+          { op: 'rotate', angle: 90 },
+          { op: 'merge', fileBookmarks: { labels: { 'report.pdf': 'Combined report' } } },
+        ]),
+      },
+      [pdfFile('report.pdf'), pdfFile('annex.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`Later merge bookmarks: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['Combined report'])
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 accepts custom split-part bookmark labels in the original filename spelling',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'split', every: 1 },
+          { op: 'merge', fileBookmarks: { labels: { 'report_0.pdf': 'First section' } } },
+        ]),
+      },
+      [pdfFile('report.pdf'), pdfFile('annex.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`Split-part labels: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks[0]?.title).toBe('First section')
+    expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 accepts Office labels after the built-in merge',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'office-pdf')
+    if (!operation) throw new Error('Missing Office conversion operation')
+    const result = await proxyConversionRequest(
+      request(
+        operation,
+        {
+          fields: { merge: true },
+          conversionStages: JSON.stringify([
+            {
+              op: 'merge',
+              fileBookmarks: { labels: { 'report.txt.pdf': 'Combined Office document' } },
+            },
+          ]),
+        },
+        [
+          new File(['Report'], 'report.txt', { type: 'text/plain' }),
+          new File(['Annex'], 'annex.txt', { type: 'text/plain' }),
+        ],
+      ),
+    )
+    if (!result.ok) {
+      throw new Error(`Office later merge: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    expect(
+      Object.values(inspected)
+        .flat()
+        .map(({ title }) => title),
+    ).toEqual(['Combined Office document'])
+  },
+  120_000,
+)
 
 test.skipIf(isV9)(
   'local merge preserves displayed page order with numeric and duplicate filenames',
@@ -2284,7 +2663,7 @@ test('real downloadFrom still rejects a source without a header, URL extension o
 test.skipIf(!supportsV92)(
   'Gotenberg 9.2 uses downloadFrom.filename over the response Content-Disposition in PDF composition',
   async () => {
-    const remoteUrl = new URL('/gotenui-remote/pipeline.pdf', fixtureUrl)
+    const remoteUrl = new URL(REMOTE_PDF_FIXTURE_PATH, fixtureUrl)
     const setupUrl = new URL(remoteUrl)
     setupUrl.hostname = '127.0.0.1'
     const prepared = await fetch(setupUrl, {

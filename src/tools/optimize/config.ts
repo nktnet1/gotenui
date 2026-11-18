@@ -1,5 +1,5 @@
 /** Definition for the optimize Gotenberg operation. */
-import { pdfFiles } from '#/tools/shared/fields'
+import { pdfFiles, v9DropSignatures } from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
@@ -13,6 +13,7 @@ export const operation: Operation = {
   docs: 'manipulate-pdfs/optimize-pdfs',
   ...pdfFiles,
   fields: [
+    v9DropSignatures,
     {
       name: 'imageQuality',
       supportedGotenbergMajors: [8],

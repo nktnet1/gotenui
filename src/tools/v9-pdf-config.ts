@@ -1,5 +1,7 @@
 /** Gotenberg 9-only PDF tools. v8 tools remain in their original configurations. */
 import { PDF_PAPER_SIZES } from '#/lib/pdf-paper-sizes'
+import { PDF_REWRITING_TOOLS } from '#/lib/pdf-signature-removal'
+import { v9DropSignatures } from '#/tools/shared/fields'
 import type { FieldDefinition, Operation } from '#/tools/types'
 
 const pages: FieldDefinition = {
@@ -57,7 +59,7 @@ const tool = (
   ...pdfEdit,
   path: '/forms/pdf/pipe',
   docs: 'manipulate-pdfs',
-  fields,
+  fields: PDF_REWRITING_TOOLS.has(id) ? [...fields, v9DropSignatures] : fields,
   ...options,
 })
 

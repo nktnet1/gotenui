@@ -2,11 +2,17 @@ import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
 import { filenameKey } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
-import { reservePrefixedMergeUploadNames } from '#/lib/merge-order'
+import { mergeUploadFilename, reservePrefixedMergeUploadNames } from '#/lib/merge-order'
+import {
+  type FileBookmarks,
+  mapFileBookmarkLabels,
+  validateFileBookmarks,
+} from '#/lib/pdf-file-bookmarks'
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
+import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
 import { isPdfStampPosition } from '#/lib/pdf-stamp-position'
 import { metadataObject } from '#/lib/pdf-structure-editors'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -202,6 +208,7 @@ export function adaptPdfForm(
     output.append('files', file, file.name)
   }
 
+  if (PDF_REWRITING_TOOLS.has(operation.id)) permitted('v9DropSignatures')
   switch (operation.id) {
     case 'merge': {
       permitted('autoIndexBookmarks', 'titleBookmarks', 'bookmarks', 'metadata')
@@ -216,7 +223,42 @@ export function adaptPdfForm(
           'Gotenberg 9 merge cannot translate the v8 bookmark/index and metadata settings without changing their meaning. Apply them in a separate PDF step.',
         )
       }
-      stages.push({ op: 'merge' })
+      permitted('v9FileBookmarks', 'v9FileBookmarkSource', 'v9FileBookmarkLabels')
+      if (
+        !fields.v9FileBookmarks &&
+        (optional('v9FileBookmarkSource') || optional('v9FileBookmarkLabels'))
+      ) {
+        throw new InputError('Enable per-file merge bookmarks before specifying their labels.')
+      }
+      let fileBookmarks: FileBookmarks | undefined
+      if (fields.v9FileBookmarks === true) {
+        const label = optional('v9FileBookmarkSource')
+        let labels: unknown
+        const rawLabels = optional('v9FileBookmarkLabels')
+        if (rawLabels) {
+          try {
+            labels = JSON.parse(rawLabels)
+          } catch {
+            throw new InputError('Custom bookmark labels must be valid JSON.')
+          }
+        }
+        const candidate: unknown = {
+          ...(label ? { label: [label] } : {}),
+          ...(labels !== undefined ? { labels } : {}),
+        }
+        validateFileBookmarks(candidate)
+        fileBookmarks = mapFileBookmarkLabels(
+          candidate,
+          sources.map((source, index) => ({
+            original:
+              source instanceof File
+                ? source.name.slice(mergeUploadFilename('', index, sources.length).length)
+                : '',
+            forwarded: numberedNames[index] ?? (source instanceof File ? source.name : ''),
+          })),
+        )
+      }
+      stages.push({ op: 'merge', ...(fileBookmarks ? { fileBookmarks } : {}) })
       pdfaStage()
       break
     }
@@ -549,7 +591,12 @@ export function adaptPdfForm(
     throw new InputError(`Gotenberg 9 does not support the '${name}' field on ${operation.title}.`)
   }
   if (!readRoutes[operation.id])
-    output.set('stages', JSON.stringify(normalizePdfStageAssets(stages)))
+    output.set(
+      'stages',
+      JSON.stringify(
+        normalizePdfStageAssets(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+      ),
+    )
   return { path: readRoutes[operation.id] ?? '/forms/pdf/pipe', form: output }
 }
 

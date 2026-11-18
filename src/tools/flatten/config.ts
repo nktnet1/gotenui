@@ -1,5 +1,5 @@
 /** Definition for the flatten Gotenberg operation. */
-import { noFields, pdfFiles } from '#/tools/shared/fields'
+import { noFields, pdfFiles, v9DropSignatures } from '#/tools/shared/fields'
 import type { Operation } from '#/tools/types'
 
 export const operation: Operation = {
@@ -14,6 +14,7 @@ export const operation: Operation = {
   ...pdfFiles,
   fields: [
     ...noFields,
+    v9DropSignatures,
     {
       name: 'v9FlattenFormsOnly',
       label: 'I understand that Gotenberg 9 flattens form fields only, not annotations',

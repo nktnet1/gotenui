@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { test } from 'vitest'
-import { asyncFixtureHandler } from './integration/async-fixture-server'
+import { asyncFixtureHandler, REMOTE_PDF_FIXTURE_PATH } from './integration/async-fixture-server'
 
 test('disposable receiver enforces download header and records retries/events without secrets', async () => {
   const handle = asyncFixtureHandler()
@@ -25,7 +25,7 @@ test('disposable receiver enforces download header and records retries/events wi
     assert.equal(remote.status, 200)
     assert.match(remote.headers.get('content-disposition') ?? '', /filename="remote-input.txt"/)
     assert.match(await remote.text(), /Gotenberg downloadFrom/)
-    const pipelineUrl = `${base}/gotenui-remote/pipeline.pdf`
+    const pipelineUrl = `${base}${REMOTE_PDF_FIXTURE_PATH}`
     const auth = { 'X-Gotenui-Remote-Token': 'fixture-remote-key' }
     assert.equal((await fetch(pipelineUrl)).status, 403)
     assert.equal((await fetch(pipelineUrl, { headers: auth })).status, 404)

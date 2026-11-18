@@ -479,6 +479,7 @@ export function adaptConversionForm(
         unknownInputs:
           operation.id === 'office-pdf' &&
           (payload.downloadFrom ?? []).some(({ filename, name }) => !(filename ?? name)),
+        mapBookmarks: true,
       })
       parsePdfPipeline(JSON.stringify(mergedStages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],

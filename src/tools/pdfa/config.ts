@@ -3,6 +3,7 @@ import {
   pdfa,
   pdfFiles,
   pdfua,
+  v9DropSignatures,
   v9PdfaProfile,
   v9PdfuaProfile,
   v9RemediationFields,
@@ -24,6 +25,7 @@ export const operation: Operation = {
     { ...v9PdfaProfile, advanced: false },
     { ...v9PdfuaProfile, advanced: false },
     ...v9RemediationFields,
+    v9DropSignatures,
   ],
   output: 'pdf',
 }

@@ -1,5 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
+/** Writable remote PDF shared by the integration fixture and its consumers. */
+export const REMOTE_PDF_FIXTURE_PATH = '/gotenui-remote/pipeline.pdf'
+
 export type CallbackReceipt = {
   kind: string
   method: string
@@ -52,7 +55,7 @@ export function asyncFixtureHandler(): (req: IncomingMessage, res: ServerRespons
       )
       return true
     }
-    if (path === '/gotenui-remote/pipeline.pdf') {
+    if (path === REMOTE_PDF_FIXTURE_PATH) {
       if (req.headers['x-gotenui-remote-token'] !== 'fixture-remote-key') {
         res.writeHead(403).end()
         return true

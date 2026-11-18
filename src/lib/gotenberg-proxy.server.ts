@@ -12,6 +12,8 @@ import {
   requiresGotenberg92ForComposition,
   requiresGotenberg94ForStampPosition,
   requiresGotenberg95ForPaperSize,
+  requiresGotenberg96ForSignatureDrop,
+  requiresGotenberg97ForFileBookmarks,
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import {
@@ -578,6 +580,18 @@ export async function proxyConversionRequest(
   if (requiresGotenberg95ForPaperSize(version, [payload.fields.paperSize])) {
     throw new InputError('A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.', 409)
   }
+  if (major === 9 && payload.fields.v9DropSignatures === true && version.minor < 6) {
+    throw new InputError('Removing digital signatures requires Gotenberg 9.6 or newer.', 409)
+  }
+  if (
+    major === 9 &&
+    version.minor < 7 &&
+    (payload.fields.v9FileBookmarks === true ||
+      Boolean(payload.fields.v9FileBookmarkSource) ||
+      Boolean(payload.fields.v9FileBookmarkLabels))
+  ) {
+    throw new InputError('Per-file merge bookmarks require Gotenberg 9.7 or newer.', 409)
+  }
   if (
     (operation.id === 'stamp' || operation.id === 'watermark') &&
     requiresGotenberg94ForStampPosition(version, [
@@ -646,6 +660,12 @@ export async function proxyConversionRequest(
       )
     ) {
       throw new InputError('A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.', 409)
+    }
+    if (requiresGotenberg96ForSignatureDrop(version, stages)) {
+      throw new InputError('Removing digital signatures requires Gotenberg 9.6 or newer.', 409)
+    }
+    if (requiresGotenberg97ForFileBookmarks(version, stages)) {
+      throw new InputError('Per-file merge bookmarks require Gotenberg 9.7 or newer.', 409)
     }
     if (major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(stages)) {
       throw new InputError(

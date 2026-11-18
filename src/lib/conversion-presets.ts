@@ -44,6 +44,7 @@ export function reusableFieldNames(operation: Operation): string[] {
       (field) =>
         !field.name.startsWith('v9OverlayAcknowledged') &&
         field.name !== 'v9FlattenFormsOnly' &&
+        field.name !== 'v9DropSignatures' &&
         (field.kind === 'toggle' ||
           field.kind === 'select' ||
           field.kind === 'number' ||

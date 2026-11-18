@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { retryTransientConversion } from './integration/transient-conversion'
+import { retryTransientConversion, smokeConversion } from './integration/transient-conversion'
 
-describe('transient PDF/A integration failures', () => {
+describe('transient Gotenberg integration failures', () => {
   it('retries a temporary HTTP 500 using a new request, then validates the successful response', async () => {
     const convert = vi
       .fn()
@@ -63,6 +63,44 @@ describe('transient PDF/A integration failures', () => {
     const response = await retryTransientConversion(convert, { pause })
     expect(response.status).toBe(503)
     expect(await response.text()).toBe('Still failing')
+    expect(convert).toHaveBeenCalledTimes(3)
+    expect(pause).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries only the LibreOffice route in the integration smoke matrix', async () => {
+    const pause = vi.fn().mockResolvedValue(undefined)
+    const officeConvert = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('LibreOffice temporarily unavailable', { status: 500 }))
+      .mockResolvedValueOnce(new Response('%PDF-', { status: 200 }))
+    const office = await smokeConversion('/forms/libreoffice/convert', officeConvert, { pause })
+    expect(await office.text()).toBe('%PDF-')
+    expect(officeConvert).toHaveBeenCalledTimes(2)
+    expect(pause).toHaveBeenCalledOnce()
+
+    const pdfConvert = vi
+      .fn()
+      .mockResolvedValue(new Response('PDF processing failed', { status: 500 }))
+    const pdf = await smokeConversion('/forms/pdfengines/convert', pdfConvert, { pause })
+    expect(pdf.status).toBe(500)
+    expect(pdfConvert).toHaveBeenCalledOnce()
+    expect(pause).toHaveBeenCalledOnce()
+  })
+
+  it('does not retry a LibreOffice smoke request rejected with HTTP 4xx', async () => {
+    const convert = vi.fn().mockResolvedValue(new Response('Invalid form', { status: 422 }))
+    const pause = vi.fn().mockResolvedValue(undefined)
+    const response = await smokeConversion('/forms/libreoffice/convert', convert, { pause })
+    expect(response.status).toBe(422)
+    expect(convert).toHaveBeenCalledOnce()
+    expect(pause).not.toHaveBeenCalled()
+  })
+
+  it('still fails after persistent LibreOffice server errors', async () => {
+    const convert = vi.fn().mockResolvedValue(new Response('Persistent error', { status: 500 }))
+    const pause = vi.fn().mockResolvedValue(undefined)
+    const response = await smokeConversion('/forms/libreoffice/convert', convert, { pause })
+    expect(response.status).toBe(500)
     expect(convert).toHaveBeenCalledTimes(3)
     expect(pause).toHaveBeenCalledTimes(2)
   })

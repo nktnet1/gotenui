@@ -3,6 +3,7 @@
  */
 
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
+import { validateFileBookmarks } from '#/lib/pdf-file-bookmarks'
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { PDF_PAPER_SIZES } from '#/lib/pdf-paper-sizes'
@@ -14,9 +15,10 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'merge',
     label: 'Merge documents',
-    description: 'Join all input PDFs in order.',
+    description:
+      'Join PDFs in order. Gotenberg 9.7+ supports fileBookmarks to group each document under its own bookmark.',
     options: {},
-    fields: [],
+    fields: ['fileBookmarks', 'dropSignatures'],
   },
   {
     op: 'compose',
@@ -24,35 +26,35 @@ export const PDF_PIPELINE_STAGES = [
     description:
       'Place source pages on new sheets (Gotenberg 9.2+). A0/A1/A2 paper sizes require 9.5+. sourcePage and page are one-based (0 also means first); page 2 creates the second sheet. Each input PDF must be placed; coordinates are in points.',
     options: { paperSize: 'A4', placements: [{ sourcePage: 1, page: 1, x: 0, y: 0 }] },
-    fields: ['paperSize', 'paperWidth', 'paperHeight', 'placements'],
+    fields: ['paperSize', 'paperWidth', 'paperHeight', 'placements', 'dropSignatures'],
   },
   {
     op: 'split',
     label: 'Split documents',
     description: 'Split by a page interval or named ranges.',
     options: { every: 1 },
-    fields: ['every', 'ranges'],
+    fields: ['every', 'ranges', 'dropSignatures'],
   },
   {
     op: 'select',
     label: 'Select pages',
     description: 'Keep specified pages in the given order.',
     options: { pages: '1' },
-    fields: ['pages'],
+    fields: ['pages', 'dropSignatures'],
   },
   {
     op: 'delete',
     label: 'Delete pages',
     description: 'Remove selected pages.',
     options: { pages: '1' },
-    fields: ['pages'],
+    fields: ['pages', 'dropSignatures'],
   },
   {
     op: 'insert',
     label: 'Insert pages',
     description: 'Insert pages from an additional uploaded PDF.',
     options: { source: 'insert.pdf', at: 0 },
-    fields: ['source', 'at', 'sourcePages'],
+    fields: ['source', 'at', 'sourcePages', 'dropSignatures'],
   },
   {
     op: 'rotate',
@@ -132,28 +134,28 @@ export const PDF_PIPELINE_STAGES = [
     label: 'Flatten form',
     description: 'Burn completed form fields into page content.',
     options: {},
-    fields: [],
+    fields: ['dropSignatures'],
   },
   {
     op: 'flatten-transparency',
     label: 'Flatten transparency',
     description: 'Remove transparency from content.',
     options: {},
-    fields: [],
+    fields: ['dropSignatures'],
   },
   {
     op: 'convert-colors',
     label: 'Convert colours',
     description: 'Convert to RGB, CMYK or grayscale.',
     options: { target: 'rgb' },
-    fields: ['target'],
+    fields: ['target', 'dropSignatures'],
   },
   {
     op: 'redact',
     label: 'Redact content',
     description: 'Permanently remove content in rectangles; omitted x/y coordinates default to 0.',
     options: { regions: [{ page: 1, x: 50, y: 50, width: 100, height: 30 }] },
-    fields: ['regions'],
+    fields: ['regions', 'dropSignatures'],
   },
   {
     op: 'autotag',
@@ -195,28 +197,37 @@ export const PDF_PIPELINE_STAGES = [
     label: 'Optimise',
     description: 'Losslessly optimise PDF contents.',
     options: {},
-    fields: ['objectStreams', 'dedup', 'recompressImages', 'subsetFonts'],
+    fields: ['objectStreams', 'dedup', 'recompressImages', 'subsetFonts', 'dropSignatures'],
   },
   {
     op: 'encrypt',
     label: 'Encrypt',
     description: 'Password-protect a PDF and set permissions.',
     options: { userPassword: '' },
-    fields: ['userPassword', 'ownerPassword', 'algorithm', 'permissions'],
+    fields: ['userPassword', 'ownerPassword', 'algorithm', 'permissions', 'dropSignatures'],
   },
   {
     op: 'decrypt',
     label: 'Decrypt',
     description: 'Open and decrypt a password-protected PDF. Must be first.',
     options: { password: '' },
-    fields: ['password'],
+    fields: ['password', 'dropSignatures'],
   },
   {
     op: 'remediate',
     label: 'Remediate PDF',
     description: 'Repair PDF/A, PDF/UA or Factur-X conformance.',
     options: { profile: 'PDF/A-2b' },
-    fields: ['profile', 'language', 'aggressive', 'figureAltText', 'xml', 'level', 'documentType'],
+    fields: [
+      'profile',
+      'language',
+      'aggressive',
+      'figureAltText',
+      'xml',
+      'level',
+      'documentType',
+      'dropSignatures',
+    ],
   },
   {
     op: 'sign',
@@ -412,6 +423,7 @@ function validateStage(stage: PdfPipelineStage): void {
     'subsetFonts',
     'aggressive',
     'pades',
+    'dropSignatures',
   ]) {
     if (!absent(stage[key]) && typeof stage[key] !== 'boolean') {
       throw new InputError(`${name}: "${key}" must be true or false.`)
@@ -443,6 +455,9 @@ function validateStage(stage: PdfPipelineStage): void {
     }
   }
   switch (name) {
+    case 'merge':
+      if (!absent(stage.fileBookmarks)) validateFileBookmarks(stage.fileBookmarks)
+      break
     case 'set-metadata':
       for (const key of ['creationDate', 'modDate'] as const) {
         if (!absent(stage[key]) && !isPdfMetadataDate(stage[key] as string)) {

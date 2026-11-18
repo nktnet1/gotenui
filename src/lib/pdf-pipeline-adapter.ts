@@ -97,6 +97,7 @@ export function adaptPdfPipeline(
       ...external.map((name) => ({ original: name, forwarded: name })),
     ],
     unknownInputs: (payload.downloadFrom ?? []).some(({ filename, name }) => !(filename ?? name)),
+    mapBookmarks: true,
   })
   form.set('stages', JSON.stringify(mappedStages))
   return { path: '/forms/pdf/pipe', form }
