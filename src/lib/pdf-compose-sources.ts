@@ -9,19 +9,50 @@ type SourceTemplate = PdfComposeInput
 
 const partMarker = '\u0001'
 
+const maxGoInt = '9223372036854775807'
+
+/** strconv.Atoi accepts leading zeros but refuses values outside signed int64. */
+function goInteger(value: string): bigint | null {
+  const digits = value.replace(/^0+(?=\d)/, '')
+  if (digits.length > maxGoInt.length || (digits.length === maxGoInt.length && digits > maxGoInt)) {
+    return null
+  }
+  return BigInt(digits)
+}
+
 function numberPart(name: string): { number: bigint; rest: string; prefix: boolean } | null {
   const prefix = /^(\d+)(.*)$/.exec(name)
-  const suffix = prefix ? null : /^(.*?)(\d+)(\.[^.]+)$/.exec(name)
-  const trailing = prefix || suffix ? null : /^(.*?)(\d+)$/.exec(name)
-  const number = prefix?.[1] ?? suffix?.[2] ?? trailing?.[2]
-  if (number === undefined) return null
-  const numeric = BigInt(number)
-  // Go's strconv.Atoi uses a signed 64-bit int on Gotenberg's platforms.
-  if (numeric > 9_223_372_036_854_775_807n) return null
-  return {
-    number: numeric,
-    rest: prefix ? prefix[2] : suffix ? suffix[1] + suffix[3] : (trailing?.[1] ?? ''),
-    prefix: Boolean(prefix),
+  if (prefix) {
+    const number = goInteger(prefix[1] as string)
+    if (number !== null) return { number, rest: prefix[2] as string, prefix: true }
+  }
+  const suffix = /^(.*?)(\d+)(\.[^.]+)$/.exec(name)
+  if (suffix) {
+    const number = goInteger(suffix[2] as string)
+    if (number !== null) {
+      return { number, rest: `${suffix[1]}${suffix[3]}`, prefix: false }
+    }
+  }
+  const trailing = /^(.*?)(\d+)$/.exec(name)
+  if (trailing) {
+    const number = goInteger(trailing[2] as string)
+    if (number !== null) return { number, rest: trailing[1] as string, prefix: false }
+  }
+  return null
+}
+
+/** Go compares UTF-8 bytes lexicographically, which follows Unicode codepoint order. */
+function compareGoStrings(left: string, right: string): number {
+  const a = left[Symbol.iterator]()
+  const b = right[Symbol.iterator]()
+  while (true) {
+    const x = a.next()
+    const y = b.next()
+    if (x.done) return y.done ? 0 : -1
+    if (y.done) return 1
+    const l = x.value.codePointAt(0) as number
+    const r = y.value.codePointAt(0) as number
+    if (l !== r) return l < r ? -1 : 1
   }
 }
 
@@ -32,21 +63,20 @@ function compareSourceNames(left: string, right: string): number {
   if (a && b) {
     if (a.prefix && b.prefix) {
       if (a.number !== b.number) return a.number < b.number ? -1 : 1
-      return a.rest < b.rest ? -1 : a.rest > b.rest ? 1 : 0
+      return compareGoStrings(a.rest, b.rest)
     }
     if (!a.prefix && !b.prefix) {
-      if (a.rest !== b.rest) return a.rest < b.rest ? -1 : 1
+      const compared = compareGoStrings(a.rest, b.rest)
+      if (compared !== 0) return compared
       if (a.number !== b.number) return a.number < b.number ? -1 : 1
       // Gotenberg breaks equal suffix numbers by the original filename.
-      return left < right ? -1 : left > right ? 1 : 0
-    } else {
-      if (a.rest !== b.rest) return a.rest < b.rest ? -1 : 1
-      return a.prefix ? -1 : 1
+      return compareGoStrings(left, right)
     }
-  } else if (a || b) {
-    return a ? -1 : 1
+    const compared = compareGoStrings(a.rest, b.rest)
+    return compared !== 0 ? compared : a.prefix ? -1 : 1
   }
-  return left < right ? -1 : left > right ? 1 : 0
+  if (a || b) return a ? -1 : 1
+  return compareGoStrings(left, right)
 }
 
 function splitName(name: string): string {
@@ -100,7 +130,9 @@ function mapCurrentBookmarkLabels(
     ({ original, forwarded }) => original.includes(partMarker) || forwarded.includes(partMarker),
   )
   if (!dynamicSources.length) {
-    return sources.some(({ original, forwarded }) => original !== forwarded)
+    // Even unchanged filenames need NFC-normalized label keys. Gotenberg
+    // normalizes uploads but does not normalize keys in the JSON options.
+    return bookmarks.labels || sources.some(({ original, forwarded }) => original !== forwarded)
       ? mapFileBookmarkLabels(bookmarks, sources)
       : bookmarks
   }

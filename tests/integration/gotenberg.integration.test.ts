@@ -1868,6 +1868,85 @@ test.skipIf(!supportsV97)(
 )
 
 test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 accepts NFC-normalized bookmark label keys without renaming uploads',
+  async () => {
+    const result = await convertV9(
+      'pdf-pipeline',
+      {
+        stages: JSON.stringify([
+          { op: 'merge', fileBookmarks: { labels: { 'Cafe\u0301.pdf': 'Normalized title' } } },
+        ]),
+      },
+      [pdfFile('Caf\u00e9.pdf')],
+    )
+    if (!result.ok) {
+      throw new Error(`NFC bookmark label: ${result.status} ${await result.text()}`)
+    }
+    const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+      string,
+      { title: string; pageNumber: number }[]
+    >
+    const bookmarks = Object.values(inspected).flat()
+    expect(bookmarks.map(({ title }) => title)).toEqual(['Normalized title'])
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 tracks Unicode remote filenames through merge, split and compose',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'pdf-pipeline')
+    if (!operation) throw new Error('Missing PDF pipeline')
+    const remoteUrl = new URL('/gotenui-remote/unicode-order.pdf', fixtureUrl).toString()
+    const setupUrl = new URL(remoteUrl)
+    setupUrl.hostname = '127.0.0.1'
+    const prepared = await fetch(setupUrl, {
+      method: 'PUT',
+      headers: { 'x-gotenui-remote-token': 'fixture-remote-key' },
+      body: pdfBytes,
+    })
+    expect(prepared.status).toBe(204)
+    const response = await proxyConversionRequest(
+      request(
+        operation,
+        {
+          fields: {
+            stages: JSON.stringify([
+              { op: 'merge' },
+              { op: 'split', every: 1 },
+              {
+                op: 'compose',
+                paperSize: 'A4',
+                placements: [
+                  { source: '\uE000_0.pdf', sourcePage: 1, page: 1, x: 0, y: 0 },
+                  { source: '\uE000_1.pdf', sourcePage: 1, page: 2, x: 0, y: 0 },
+                ],
+              },
+            ]),
+          },
+          downloadFrom: [
+            {
+              url: remoteUrl,
+              filename: '\uE000.pdf',
+              extraHttpHeaders: { 'x-gotenui-remote-token': 'fixture-remote-key' },
+            },
+          ],
+        },
+        [pdfFile('😀.pdf')],
+      ),
+    )
+    if (!response.ok) {
+      throw new Error(`Unicode source order: ${response.status} ${await response.text()}`)
+    }
+    expect(response.headers.get('content-type')).toContain('application/pdf')
+    expect(await inspectV9Pdf('info', await response.arrayBuffer())).toMatchObject({
+      'verified.pdf': { pages: 2 },
+    })
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
   'Gotenberg 9.7 accepts custom bookmark labels on a later merge stage',
   async () => {
     const result = await convertV9(

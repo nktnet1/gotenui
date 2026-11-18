@@ -322,6 +322,81 @@ describe('Gotenberg 9.7 per-file merge bookmarks', () => {
     )
   })
 
+  it('normalizes custom bookmark label keys even without upload renaming', async () => {
+    const original = 'Caf\u00e9.pdf'
+    const decomposed = 'Cafe\u0301.pdf'
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf(original)],
+        stages: [{ op: 'merge', fileBookmarks: { labels: { [decomposed]: 'Cafe heading' } } }],
+      },
+    )
+    assert.deepEqual(output.files, [original])
+    assert.deepEqual(output.stages, [
+      { op: 'merge', fileBookmarks: { labels: { [original]: 'Cafe heading' } } },
+    ])
+  })
+
+  it('tracks Go UTF-8 filename order through an unnumbered merge, split and compose', () => {
+    // A ZIP or named remote may introduce multiple PDFs without numbered local
+    // uploads. Go sorts UTF-8 bytes, not JavaScript UTF-16 code units.
+    const goFirst = '\uE000.pdf'
+    const jsFirst = '😀.pdf'
+    const stages = reconcilePdfComposeSources(
+      [
+        { op: 'merge' },
+        { op: 'split', every: 1 },
+        {
+          op: 'compose',
+          paperSize: 'A4',
+          placements: [
+            { source: '\uE000_0.pdf', sourcePage: 1, page: 1, x: 0, y: 0 },
+            { source: '\uE000_1.pdf', sourcePage: 1, page: 2, x: 0, y: 0 },
+          ],
+        },
+      ],
+      {
+        inputs: [
+          { original: jsFirst, forwarded: jsFirst },
+          { original: goFirst, forwarded: goFirst },
+        ],
+      },
+    )
+    assert.deepEqual(stages[2], {
+      op: 'compose',
+      paperSize: 'A4',
+      placements: [
+        { source: '\uE000_0.pdf', sourcePage: 1, page: 1, x: 0, y: 0 },
+        { source: '\uE000_1.pdf', sourcePage: 1, page: 2, x: 0, y: 0 },
+      ],
+    })
+  })
+
+  it('falls back to Go suffix sorting when a numeric prefix exceeds int64', () => {
+    const overflow = '9223372036854775808a2.pdf'
+    const second = '1a.pdf'
+    const stages = reconcilePdfComposeSources(
+      [{ op: 'merge' }, { op: 'merge', fileBookmarks: { label: ['filename'] } }],
+      {
+        inputs: [
+          { original: `original_${second}`, forwarded: second },
+          { original: `original_${overflow}`, forwarded: overflow },
+        ],
+        mapBookmarks: true,
+      },
+    )
+    assert.deepEqual(JSON.parse(JSON.stringify(stages[1])), {
+      op: 'merge',
+      fileBookmarks: {
+        label: ['filename'],
+        labels: { [overflow]: `original_${overflow.replace(/\.pdf$/, '')}` },
+      },
+    })
+  })
+
   it('preserves per-file labels across prefix renaming and duplicate originals', () => {
     const mapped = mapFileBookmarkLabels(
       { label: ['filename'], labels: { 'report.pdf': 'Report', 'remote.pdf': 'Remote' } },
