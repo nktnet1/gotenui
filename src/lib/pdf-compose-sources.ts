@@ -97,6 +97,21 @@ function materialize(template: string, parts: readonly string[]): string {
   return template.replaceAll(partMarker, () => parts[index++] ?? '')
 }
 
+/** Current Gotenberg filenames take precedence over convenient original-name
+ * aliases when a numbered upload has the same spelling as another input.
+ */
+function currentFileMatches(name: string, sources: readonly SourceTemplate[]): string[] {
+  const forwarded = sources.flatMap(({ forwarded }) => {
+    const parts = matchTemplate(name, forwarded)
+    return parts ? [materialize(forwarded, parts)] : []
+  })
+  if (forwarded.length) return forwarded
+  return sources.flatMap(({ original, forwarded }) => {
+    const parts = matchTemplate(name, original)
+    return parts ? [materialize(forwarded, parts)] : []
+  })
+}
+
 function firstSource(sources: readonly SourceTemplate[] | null): SourceTemplate[] | null {
   if (!sources?.length) return null
   const first = sources[0]
@@ -133,17 +148,14 @@ function mapCurrentBookmarkLabels(
     // Even unchanged filenames need NFC-normalized label keys. Gotenberg
     // normalizes uploads but does not normalize keys in the JSON options.
     return bookmarks.labels || sources.some(({ original, forwarded }) => original !== forwarded)
-      ? mapFileBookmarkLabels(bookmarks, sources)
+      ? mapFileBookmarkLabels(bookmarks, sources, { preferForwarded: true })
       : bookmarks
   }
 
   const labels: Record<string, string> = Object.create(null)
   for (const [name, label] of Object.entries(bookmarks.labels ?? {})) {
     const normalized = name.normalize('NFC')
-    const matches = dynamicSources.flatMap(({ original, forwarded }) => {
-      const parts = matchTemplate(normalized, original) ?? matchTemplate(normalized, forwarded)
-      return parts ? [materialize(forwarded, parts)] : []
-    })
+    const matches = currentFileMatches(normalized, dynamicSources)
     for (const target of matches.length ? matches : [normalized]) {
       if (Object.hasOwn(labels, target)) {
         throw new InputError(`merge: duplicate fileBookmarks label for ${target}.`)
@@ -159,6 +171,7 @@ function mapCurrentBookmarkLabels(
   return mapFileBookmarkLabels(
     bookmarks.labels ? { ...bookmarks, labels } : bookmarks,
     staticSources,
+    { preferForwarded: true },
   )
 }
 
@@ -256,10 +269,7 @@ export function reconcilePdfComposeSources(
         }
         return entry
       }
-      const matches = sources.flatMap(({ original, forwarded }) => {
-        const parts = matchTemplate(name, original) ?? matchTemplate(name, forwarded)
-        return parts ? [materialize(forwarded, parts)] : []
-      })
+      const matches = currentFileMatches(name, sources)
       if (matches.length !== 1) {
         const example = materialize(sources[0]?.forwarded ?? 'report_0.pdf', ['0'])
         throw new InputError(

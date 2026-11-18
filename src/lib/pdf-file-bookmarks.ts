@@ -40,6 +40,7 @@ export function validateFileBookmarks(value: unknown): asserts value is FileBook
 export function mapFileBookmarkLabels(
   bookmarks: FileBookmarks,
   inputs: readonly { original: string; forwarded: string }[],
+  { preferForwarded = false }: { preferForwarded?: boolean } = {},
 ): FileBookmarks {
   const filenameOnly = bookmarks.label?.[0] === 'filename'
   if (!bookmarks.labels && !filenameOnly) return bookmarks
@@ -54,9 +55,13 @@ export function mapFileBookmarkLabels(
   }
   const assigned = new Set<string>()
   for (const [original, label] of Object.entries(bookmarks.labels ?? {})) {
-    const matched = inputs.filter(
-      (item) => item.original.normalize('NFC') === original.normalize('NFC'),
-    )
+    const normalized = original.normalize('NFC')
+    const forwardedMatches = preferForwarded
+      ? inputs.filter((item) => item.forwarded.normalize('NFC') === normalized)
+      : []
+    const matched = forwardedMatches.length
+      ? forwardedMatches
+      : inputs.filter((item) => item.original.normalize('NFC') === normalized)
     const targets = matched.length
       ? matched.map(({ forwarded }) => forwarded.normalize('NFC'))
       : [original.normalize('NFC')]

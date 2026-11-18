@@ -767,6 +767,106 @@ describe('Gotenberg 9.7 per-file merge bookmarks', () => {
     })
   })
 
+  it('keeps distinct current split filenames when an original alias has the same spelling', async () => {
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('01_report.pdf')],
+        stages: [
+          { op: 'split', every: 1 },
+          {
+            op: 'merge',
+            fileBookmarks: {
+              labels: {
+                '01_report_0.pdf': 'First current PDF',
+                '02_01_report_0.pdf': 'Second current PDF',
+              },
+            },
+          },
+        ],
+      },
+    )
+    assert.deepEqual(output.files, ['01_report.pdf', '02_01_report.pdf'])
+    assert.deepEqual(output.stages[1], {
+      op: 'merge',
+      fileBookmarks: {
+        labels: {
+          '01_report_0.pdf': 'First current PDF',
+          '02_01_report_0.pdf': 'Second current PDF',
+        },
+      },
+    })
+  })
+
+  it('prioritizes exact current filenames over overlapping original aliases on the first merge', async () => {
+    const output = await convert(
+      'pdf-pipeline',
+      '9.7.0',
+      {},
+      {
+        files: [testPdf('report.pdf'), testPdf('01_report.pdf')],
+        stages: [
+          {
+            op: 'merge',
+            fileBookmarks: {
+              labels: {
+                '01_report.pdf': 'First current PDF',
+                '02_01_report.pdf': 'Second current PDF',
+              },
+            },
+          },
+        ],
+      },
+    )
+    assert.deepEqual(output.stages[0], {
+      op: 'merge',
+      fileBookmarks: {
+        labels: {
+          '01_report.pdf': 'First current PDF',
+          '02_01_report.pdf': 'Second current PDF',
+        },
+      },
+    })
+  })
+
+  it('preserves the original-name convention for standalone merge labels', () => {
+    const mapped = mapFileBookmarkLabels(
+      { labels: { '01_report.pdf': 'Second original upload' } },
+      [
+        { original: 'report.pdf', forwarded: '01_report.pdf' },
+        { original: '01_report.pdf', forwarded: '02_01_report.pdf' },
+      ],
+    )
+    assert.deepEqual({ ...mapped.labels }, { '02_01_report.pdf': 'Second original upload' })
+  })
+
+  it('prefers exact current compose filenames over aliases of other inputs', () => {
+    const stages = reconcilePdfComposeSources(
+      [
+        {
+          op: 'compose',
+          paperSize: 'A4',
+          placements: [
+            { source: '01_report.pdf', sourcePage: 1, page: 1 },
+            { source: '02_01_report.pdf', sourcePage: 1, page: 2 },
+          ],
+        },
+      ],
+      {
+        inputs: [
+          { original: 'report.pdf', forwarded: '01_report.pdf' },
+          { original: '01_report.pdf', forwarded: '02_01_report.pdf' },
+        ],
+      },
+    )
+    assert.deepEqual(stages[0]?.placements, [
+      { source: '01_report.pdf', sourcePage: 1, page: 1 },
+      { source: '02_01_report.pdf', sourcePage: 1, page: 2 },
+    ])
+  })
+
   it('maps duplicate original split labels to each numbered document', async () => {
     const output = await convert(
       'pdf-pipeline',

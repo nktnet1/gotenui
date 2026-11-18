@@ -1834,6 +1834,47 @@ test.skipIf(!supportsV97)(
 )
 
 test.skipIf(!supportsV97)(
+  'Gotenberg 9.7 preserves distinct labels when current filenames overlap original aliases',
+  async () => {
+    for (const split of [false, true]) {
+      const labels = split
+        ? {
+            '01_report_0.pdf': 'First current PDF',
+            '02_01_report_0.pdf': 'Second current PDF',
+          }
+        : {
+            '01_report.pdf': 'First current PDF',
+            '02_01_report.pdf': 'Second current PDF',
+          }
+      const stages = [
+        ...(split ? [{ op: 'split', every: 1 }] : []),
+        { op: 'merge', fileBookmarks: { labels } },
+      ]
+      const result = await convertV9('pdf-pipeline', { stages: JSON.stringify(stages) }, [
+        pdfFile('report.pdf'),
+        pdfFile('01_report.pdf'),
+      ])
+      if (!result.ok) {
+        throw new Error(
+          `Overlapping merge names (split=${split}): ${result.status} ${await result.text()}`,
+        )
+      }
+      const inspected = (await inspectV9Pdf('bookmarks', await result.arrayBuffer())) as Record<
+        string,
+        { title: string; pageNumber: number }[]
+      >
+      const bookmarks = Object.values(inspected).flat()
+      expect(bookmarks.map(({ title }) => title)).toEqual([
+        'First current PDF',
+        'Second current PDF',
+      ])
+      expect(bookmarks.map(({ pageNumber }) => pageNumber)).toEqual([1, 2])
+    }
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV97)(
   'Gotenberg 9.7 merge bookmarks after composing do not reference obsolete sources',
   async () => {
     const result = await convertV9(
