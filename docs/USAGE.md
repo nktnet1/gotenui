@@ -26,6 +26,18 @@ With **Gotenberg 9.1 or later**, **Extract PDF text** produces a `.txt` file for
 
 For Gotenberg 9 **Office to PDF**, a requested PDF/A or PDF/UA profile uses native LibreOffice export only when no PDF processing follows. **Merge**, **Split**, and custom pipeline stages automatically move conformance to a final PDF remediation stage; selecting **Native LibreOffice export** alongside those stages reports an error. Use PDF validation to check actual conformance rather than relying on HTTP 200 or a successful native export.
 
+### Gotenberg 9.9 Office locale and PDF stream compression
+
+On **Gotenberg 9.9+**, **Office to PDF** has a **Document locale (BCP 47)** field, such as `en-AU`, `de-DE` or `zh-Hans-CN`. It controls locale-dependent date, number and currency formatting, plus fallback paper size for documents that set none. A document's own language remains unchanged. Leaving it empty retains the server default. The form validates the subset of BCP 47 tags accepted by Gotenberg 9.9 and rejects this field on earlier servers.
+
+**Optimize PDFs** adds **Compress streams**, enabled by Gotenberg by default. It compresses previously uncompressed page-content and font streams without compressing XMP metadata. Use the advanced select to override this option, or set `"compressStreams": false`/`true` on the `optimize` PDF pipeline stage. Both forms require Gotenberg 9.9+; omission preserves the upstream default. Gotenberg 9.9 also fixes excessively large unsigned remediation output and a PDF/A-1 plus PDF/UA-1 colour-compliance issue. Signed remediation continues to append repairs to preserve signatures. No extra frontend setting is needed for those fixes.
+
+### Gotenberg 9.8 Markdown extraction
+
+On **Gotenberg 9.8+**, **Extract PDF text** can return **Markdown (.md)** as well as the previous plain-text `.txt`. Markdown extraction reconstructs headings, paragraphs, lists, tables, emphasis, code and links from a tagged PDF's structure tree (or estimates layout from untagged PDFs). In the PDF pipeline or the conversion-time PDF stage editor, use `{"op":"extract-text","format":"markdown"}` as the final stage. Chromium and LibreOffice automatically produce tagged PDFs when this extraction stage is requested. A standalone single-file extraction downloads `.md`, while a conversion followed by extraction returns a ZIP containing the generated PDF and Markdown. No OCR is performed. The option is rejected on versions before 9.8; leaving it unset retains `.txt` extraction on older servers.
+
+Gotenberg 9.8 also publishes an [OpenAPI 3.1 description](https://gotenberg.dev/openapi.yaml) for client generation and fixes another symbolic TrueType font remediation edge case. These require no frontend options.
+
 ### Gotenberg 9.7 per-document merge bookmarks
 
 On **Gotenberg 9.7+**, **Merge PDFs** offers **Add a bookmark for each input PDF**. Each input becomes a top-level bookmark at its first page, with any existing bookmarks nested underneath. By default Gotenberg chooses the source PDF's title metadata, falling back to its filename. Select **Filename only** to label every local upload using its original filename without the extension, rather than Gotenui's internal upload-order prefix. **Custom document labels (JSON)** accepts an object mapping original filenames to desired headings, for example `{"report.pdf":"Annual report","annex.pdf":"Appendix"}`. For duplicate uploaded filenames, one entry labels all matching files. Remotes and archive entries can be labelled using the name Gotenberg sees.

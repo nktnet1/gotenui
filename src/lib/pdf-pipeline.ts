@@ -188,16 +188,25 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'extract-text',
     label: 'Extract text',
-    description: 'Save text as .txt. Scanned pages need external OCR. Final stage (9.1+).',
+    description:
+      'Save UTF-8 text (.txt) or structured Markdown (.md, Gotenberg 9.8+). Scanned pages need external OCR. Final stage (9.1+).',
     options: {},
-    fields: ['pages', 'invisible', 'artifacts', 'annotations'],
+    fields: ['pages', 'format', 'invisible', 'artifacts', 'annotations'],
   },
   {
     op: 'optimize',
     label: 'Optimise',
-    description: 'Losslessly optimise PDF contents.',
+    description:
+      'Losslessly optimise PDF contents. Gotenberg 9.9+ compressStreams controls compression of uncompressed PDF streams (enabled by default).',
     options: {},
-    fields: ['objectStreams', 'dedup', 'recompressImages', 'subsetFonts', 'dropSignatures'],
+    fields: [
+      'objectStreams',
+      'dedup',
+      'recompressImages',
+      'compressStreams',
+      'subsetFonts',
+      'dropSignatures',
+    ],
   },
   {
     op: 'encrypt',
@@ -420,6 +429,7 @@ function validateStage(stage: PdfPipelineStage): void {
     'objectStreams',
     'dedup',
     'recompressImages',
+    'compressStreams',
     'subsetFonts',
     'aggressive',
     'pades',
@@ -645,6 +655,11 @@ function validateStage(stage: PdfPipelineStage): void {
       break
     case 'extract-attachments':
       // A missing or empty name extracts every attachment; non-empty names match exactly.
+      break
+    case 'extract-text':
+      if (!absent(stage.format) && !['', 'text', 'markdown'].includes(String(stage.format))) {
+        throw new InputError('extract-text: format must be text or markdown.')
+      }
       break
     case 'encrypt':
       if (!stage.userPassword && !stage.ownerPassword)
@@ -884,7 +899,9 @@ export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): read
   // A sole extraction returns extracted files only; combined stages also return
   // the processed PDF(s) alongside the extracted files, always as a ZIP.
   if (render?.op === 'extract-text')
-    return stages.length === 1 ? ['text/plain', 'application/zip'] : ['application/zip']
+    return stages.length === 1
+      ? [render.format === 'markdown' ? 'text/markdown' : 'text/plain', 'application/zip']
+      : ['application/zip']
   if (render?.op === 'extract-attachments')
     return stages.length === 1 ? ['*', 'application/zip'] : ['application/zip']
   // Merge collapses all current documents into exactly one. Subsequent edits

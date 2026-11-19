@@ -904,6 +904,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
   const chromiumPdfOnly = ['singlePage', 'preferCssPageSize', 'generateDocumentOutline']
   const officeOnly = [
     'password',
+    'locale',
     'exportOnlyNotesPages',
     'exportNotesPages',
     'exportHiddenSlides',

@@ -161,9 +161,20 @@ export const V9_PDF_OPERATIONS: readonly Operation[] = [
   tool(
     'extract-text',
     'Extract PDF text',
-    'Save page text as UTF-8 .txt files (multiple documents return a ZIP). No OCR.',
+    'Save PDF text as UTF-8 .txt or structured Markdown .md files (Gotenberg 9.8+). No OCR.',
     [
       { ...pages, required: false },
+      {
+        name: 'format',
+        label: 'Extraction format',
+        kind: 'select',
+        options: ['text', 'markdown'],
+        optionLabels: { text: 'Plain text (.txt)', markdown: 'Markdown (.md)' },
+        supportedGotenbergMajors: [9],
+        minGotenbergMinor: 8,
+        description:
+          'Markdown preserves headings, lists, tables and links where possible. Requires Gotenberg 9.8+.',
+      },
       { name: 'invisible', label: 'Include invisible text', kind: 'toggle', advanced: true },
       {
         name: 'artifacts',

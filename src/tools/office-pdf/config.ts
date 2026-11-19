@@ -26,6 +26,16 @@ export const operation: Operation = {
   multiple: true,
   fields: [
     paperSize,
+    {
+      name: 'locale',
+      label: 'Document locale (BCP 47)',
+      kind: 'text',
+      placeholder: 'en-AU or de-DE',
+      supportedGotenbergMajors: [9],
+      minGotenbergMinor: 9,
+      description:
+        'Gotenberg 9.9+ uses this locale for number, date, currency, and fallback paper-size formatting. Leave blank to preserve the server default.',
+    },
     ...officePaperDimensions,
     { name: 'landscape', label: 'Landscape orientation', kind: 'toggle' },
     { name: 'singlePageSheets', label: 'Single page per sheet', kind: 'toggle' },

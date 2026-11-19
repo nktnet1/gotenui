@@ -14,6 +14,8 @@ import {
   requiresGotenberg95ForPaperSize,
   requiresGotenberg96ForSignatureDrop,
   requiresGotenberg97ForFileBookmarks,
+  requiresGotenberg98ForExtractTextFormat,
+  requiresGotenberg99ForCompressStreams,
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import {
@@ -373,7 +375,11 @@ function allowedConversionContentTypes(
   archives: readonly File[] = [],
 ): readonly string[] {
   if (operation.id === 'extract-attachments') return ['*', 'application/zip']
-  if (operation.id === 'extract-text') return ['text/plain', 'application/zip']
+  if (operation.id === 'extract-text')
+    return [
+      payload.fields.format === 'markdown' ? 'text/markdown' : 'text/plain',
+      'application/zip',
+    ]
   if (operation.id === 'pdf-pipeline') {
     return pipelineResponseTypes(
       parsePdfPipeline(String(payload.fields.stages ?? ''), {
@@ -580,6 +586,21 @@ export async function proxyConversionRequest(
   if (requiresGotenberg95ForPaperSize(version, [payload.fields.paperSize])) {
     throw new InputError('A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.', 409)
   }
+  if (operation.id === 'extract-text' && payload.fields.format) {
+    if (major === 9 && version.minor < 8) {
+      throw new InputError('Extraction formats require Gotenberg 9.8 or newer.', 409)
+    }
+  }
+  if (operation.id === 'office-pdf' && payload.fields.locale) {
+    if (major !== 9 || version.minor < 9) {
+      throw new InputError('LibreOffice locale requires Gotenberg 9.9 or newer.', 409)
+    }
+  }
+  if (operation.id === 'optimize' && payload.fields.v9CompressStreams) {
+    if (major === 9 && version.minor < 9) {
+      throw new InputError('PDF stream compression control requires Gotenberg 9.9 or newer.', 409)
+    }
+  }
   if (major === 9 && payload.fields.v9DropSignatures === true && version.minor < 6) {
     throw new InputError('Removing digital signatures requires Gotenberg 9.6 or newer.', 409)
   }
@@ -666,6 +687,12 @@ export async function proxyConversionRequest(
     }
     if (requiresGotenberg97ForFileBookmarks(version, stages)) {
       throw new InputError('Per-file merge bookmarks require Gotenberg 9.7 or newer.', 409)
+    }
+    if (requiresGotenberg98ForExtractTextFormat(version, stages)) {
+      throw new InputError('Extraction formats require Gotenberg 9.8 or newer.', 409)
+    }
+    if (requiresGotenberg99ForCompressStreams(version, stages)) {
+      throw new InputError('PDF stream compression control requires Gotenberg 9.9 or newer.', 409)
     }
     if (major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(stages)) {
       throw new InputError(
@@ -833,8 +860,8 @@ export async function proxyConversionRequest(
     extractsAttachment && wildcardAllowed && returnedType !== 'application/zip'
   const allowEmptyResponse =
     arbitraryAttachment ||
-    (returnedType === 'text/plain' &&
-      (operation.id === 'extract-text' || allowedTypes.includes('text/plain')))
+    ((returnedType === 'text/plain' || returnedType === 'text/markdown') &&
+      allowedTypes.includes(returnedType))
   let declaredLength: number | undefined
   try {
     // Fetch decodes compressed upstream responses but leaves their compressed

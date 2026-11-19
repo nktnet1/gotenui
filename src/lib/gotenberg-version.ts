@@ -101,3 +101,27 @@ export function requiresGotenberg97ForFileBookmarks(
   }
   return false
 }
+
+/** 9.8 adds a `format` option to extract-text (including explicit "text"). */
+export function requiresGotenberg98ForExtractTextFormat(
+  version: GotenbergVersion,
+  stages: Iterable<{ op: string; format?: unknown }>,
+): boolean {
+  if (version.major !== 9 || version.minor >= 8) return false
+  for (const stage of stages) {
+    if (stage.op === 'extract-text' && Object.hasOwn(stage, 'format')) return true
+  }
+  return false
+}
+
+/** 9.9 adds an optional `compressStreams` switch to optimize stages. */
+export function requiresGotenberg99ForCompressStreams(
+  version: GotenbergVersion,
+  stages: Iterable<{ op: string; compressStreams?: unknown }>,
+): boolean {
+  if (version.major !== 9 || version.minor >= 9) return false
+  for (const stage of stages) {
+    if (stage.op === 'optimize' && Object.hasOwn(stage, 'compressStreams')) return true
+  }
+  return false
+}

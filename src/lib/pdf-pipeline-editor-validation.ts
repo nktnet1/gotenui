@@ -7,6 +7,8 @@ import {
   requiresGotenberg95ForPaperSize,
   requiresGotenberg96ForSignatureDrop,
   requiresGotenberg97ForFileBookmarks,
+  requiresGotenberg98ForExtractTextFormat,
+  requiresGotenberg99ForCompressStreams,
 } from '#/lib/gotenberg-version'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
@@ -106,6 +108,12 @@ export function pdfPipelineEditorError(
     }
     if (version && requiresGotenberg97ForFileBookmarks(version, parsed)) {
       return 'Per-file merge bookmarks require Gotenberg 9.7 or newer.'
+    }
+    if (version && requiresGotenberg98ForExtractTextFormat(version, parsed)) {
+      return 'Extraction formats require Gotenberg 9.8 or newer.'
+    }
+    if (version && requiresGotenberg99ForCompressStreams(version, parsed)) {
+      return 'PDF stream compression control requires Gotenberg 9.9 or newer.'
     }
     if (version?.major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(parsed)) {
       return 'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.'

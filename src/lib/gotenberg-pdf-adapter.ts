@@ -292,7 +292,14 @@ export function adaptPdfForm(
       if (!stages.length) throw new InputError('Choose PDF/A or PDF/UA remediation.')
       break
     case 'optimize': {
-      permitted('imageQuality', 'v9ObjectStreams', 'v9Dedup', 'v9RecompressImages', 'v9SubsetFonts')
+      permitted(
+        'imageQuality',
+        'v9ObjectStreams',
+        'v9Dedup',
+        'v9RecompressImages',
+        'v9SubsetFonts',
+        'v9CompressStreams',
+      )
       if (optional('imageQuality')) {
         throw new InputError(
           'Gotenberg 9 optimization is lossless; its PDF pipeline has no image quality slider.',
@@ -303,6 +310,7 @@ export function adaptPdfForm(
         v9ObjectStreams: 'objectStreams',
         v9Dedup: 'dedup',
         v9RecompressImages: 'recompressImages',
+        v9CompressStreams: 'compressStreams',
         v9SubsetFonts: 'subsetFonts',
       })) {
         if (fields[name] === 'enabled') options[option] = true

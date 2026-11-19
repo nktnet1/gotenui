@@ -212,6 +212,14 @@ function validateV9OfficePaper(form: FormData): void {
 
 function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
   validateV9OfficePaper(form)
+  const locale = form.get('locale')
+  if (
+    locale !== null &&
+    (typeof locale !== 'string' ||
+      !/^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?$/.test(locale))
+  ) {
+    throw new InputError('LibreOffice locale must be a BCP 47 tag such as en-AU or de-DE.')
+  }
   const bookmarks = form.get('openBookmarkLevels')
   if (typeof bookmarks === 'string' && bookmarks !== '') {
     const count = Number(bookmarks)

@@ -37,6 +37,7 @@ export function responseExtension(contentType: string | null): string {
   if (type === 'application/zip') return 'zip'
   if (type === 'application/json') return 'json'
   if (type === 'text/plain') return 'txt'
+  if (type === 'text/markdown') return 'md'
   if (type === 'image/png') return 'png'
   if (type === 'image/jpeg') return 'jpeg'
   if (type === 'image/webp') return 'webp'
