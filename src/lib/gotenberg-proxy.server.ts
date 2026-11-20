@@ -14,6 +14,8 @@ import {
   requiresGotenberg95ForPaperSize,
   requiresGotenberg96ForSignatureDrop,
   requiresGotenberg97ForFileBookmarks,
+  requiresGotenberg98ForExtractTextFormat,
+  requiresGotenberg99ForCompressStreams,
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import {
@@ -22,7 +24,11 @@ import {
 } from '#/lib/oauth2-client-credentials.server'
 import { canWebhookForOperation } from '#/lib/operation-availability'
 import { hasGotenberg92PageSyntax, stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
-import { parsePdfPipeline, pipelineResponseTypes } from '#/lib/pdf-pipeline'
+import {
+  isStandaloneAttachmentExtraction,
+  parsePdfPipeline,
+  pipelineResponseTypes,
+} from '#/lib/pdf-pipeline'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
@@ -35,7 +41,7 @@ import {
   requireSameOrigin,
 } from '#/lib/proxy-policy'
 import { verifyConversionSignature } from '#/lib/response-signature'
-import { safeAttachmentDisposition } from '#/lib/security'
+import { hasAttachmentFilename, safeAttachmentDisposition } from '#/lib/security'
 import {
   parseServerConnections,
   publicServerConnections,
@@ -220,6 +226,15 @@ function fetchOptions(request: Request): Pick<RequestInit, 'signal' | 'redirect'
   }
 }
 
+/** Fetch Headers expects a ByteString, while Go reads these header values as UTF-8. */
+function utf8HeaderValue(value: string): string {
+  let encoded = ''
+  for (const byte of new TextEncoder().encode(value)) {
+    encoded += String.fromCharCode(byte)
+  }
+  return encoded
+}
+
 function upstreamConversionHeaders(
   auth: HeadersInit | undefined,
   payload: ConversionPayload,
@@ -228,22 +243,26 @@ function upstreamConversionHeaders(
 ): Headers {
   const headers = new Headers(auth)
   if (acceptsOutputFilename && payload.outputName) {
-    headers.set('Gotenberg-Output-Filename', payload.outputName)
+    headers.set('Gotenberg-Output-Filename', utf8HeaderValue(payload.outputName))
   }
   if (payload.requestTrace) headers.set('Gotenberg-Trace', payload.requestTrace)
   if (payload.traceparent) headers.set('traceparent', payload.traceparent)
   if (payload.tracestate) headers.set('tracestate', payload.tracestate)
   const webhook = payload.webhook
   if (webhook) {
-    headers.set('Gotenberg-Webhook-Url', webhook.url)
+    headers.set('Gotenberg-Webhook-Url', new URL(webhook.url).href)
     if (webhook.method) headers.set('Gotenberg-Webhook-Method', webhook.method)
     if (version === 8 && webhook.errorUrl)
-      headers.set('Gotenberg-Webhook-Error-Url', webhook.errorUrl)
+      headers.set('Gotenberg-Webhook-Error-Url', new URL(webhook.errorUrl).href)
     if (version === 8 && webhook.errorMethod)
       headers.set('Gotenberg-Webhook-Error-Method', webhook.errorMethod)
-    if (webhook.eventsUrl) headers.set('Gotenberg-Webhook-Events-Url', webhook.eventsUrl)
+    if (webhook.eventsUrl)
+      headers.set('Gotenberg-Webhook-Events-Url', new URL(webhook.eventsUrl).href)
     if (webhook.extraHttpHeaders) {
-      headers.set('Gotenberg-Webhook-Extra-Http-Headers', JSON.stringify(webhook.extraHttpHeaders))
+      headers.set(
+        'Gotenberg-Webhook-Extra-Http-Headers',
+        utf8HeaderValue(JSON.stringify(webhook.extraHttpHeaders)),
+      )
     }
   }
   return headers
@@ -371,9 +390,14 @@ function allowedConversionContentTypes(
   payload: ConversionPayload,
   files: readonly File[],
   archives: readonly File[] = [],
+  archiveEntryNames: readonly string[] = [],
 ): readonly string[] {
   if (operation.id === 'extract-attachments') return ['*', 'application/zip']
-  if (operation.id === 'extract-text') return ['text/plain', 'application/zip']
+  if (operation.id === 'extract-text')
+    return [
+      payload.fields.format === 'markdown' ? 'text/markdown' : 'text/plain',
+      'application/zip',
+    ]
   if (operation.id === 'pdf-pipeline') {
     return pipelineResponseTypes(
       parsePdfPipeline(String(payload.fields.stages ?? ''), {
@@ -415,8 +439,14 @@ function allowedConversionContentTypes(
   const remoteDocuments = (payload.downloadFrom ?? []).filter(
     (file) => !file.embedded && !file.field,
   ).length
+  // ZIP inputs have already been inspected by validateZipInputs. Count their
+  // source PDFs as well as direct/remote uploads, without treating unrelated
+  // archive resources as documents. Gotenberg returns ZIP for multiple
+  // independent PDF results.
+  const archivedPdfDocuments =
+    operation.input === 'pdf' ? archiveEntryNames.filter((name) => /\.pdf$/i.test(name)).length : 0
   const multipleDocuments =
-    files.length + remoteDocuments > 1 &&
+    files.length + remoteDocuments + archivedPdfDocuments > 1 &&
     ((operation.input === 'office' && payload.fields.merge !== true) ||
       (operation.input === 'pdf' && operation.id !== 'merge'))
   const splitMode = payload.fields.splitMode ?? payload.advanced.splitMode
@@ -580,6 +610,21 @@ export async function proxyConversionRequest(
   if (requiresGotenberg95ForPaperSize(version, [payload.fields.paperSize])) {
     throw new InputError('A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.', 409)
   }
+  if (operation.id === 'extract-text' && payload.fields.format) {
+    if (major === 9 && version.minor < 8) {
+      throw new InputError('Extraction formats require Gotenberg 9.8 or newer.', 409)
+    }
+  }
+  if (operation.id === 'office-pdf' && payload.fields.locale) {
+    if (major !== 9 || version.minor < 9) {
+      throw new InputError('LibreOffice locale requires Gotenberg 9.9 or newer.', 409)
+    }
+  }
+  if (operation.id === 'optimize' && payload.fields.v9CompressStreams) {
+    if (major === 9 && version.minor < 9) {
+      throw new InputError('PDF stream compression control requires Gotenberg 9.9 or newer.', 409)
+    }
+  }
   if (major === 9 && payload.fields.v9DropSignatures === true && version.minor < 6) {
     throw new InputError('Removing digital signatures requires Gotenberg 9.6 or newer.', 409)
   }
@@ -667,6 +712,12 @@ export async function proxyConversionRequest(
     if (requiresGotenberg97ForFileBookmarks(version, stages)) {
       throw new InputError('Per-file merge bookmarks require Gotenberg 9.7 or newer.', 409)
     }
+    if (requiresGotenberg98ForExtractTextFormat(version, stages)) {
+      throw new InputError('Extraction formats require Gotenberg 9.8 or newer.', 409)
+    }
+    if (requiresGotenberg99ForCompressStreams(version, stages)) {
+      throw new InputError('PDF stream compression control requires Gotenberg 9.9 or newer.', 409)
+    }
     if (major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(stages)) {
       throw new InputError(
         'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.',
@@ -725,6 +776,8 @@ export async function proxyConversionRequest(
     archives,
     major,
     version,
+    stageFiles,
+    archiveEntryNames,
   )
   const { path, form } =
     operation.input === 'pdf'
@@ -741,11 +794,23 @@ export async function proxyConversionRequest(
             archiveEntryNames,
           ),
         }
+  const extractsAttachment = isStandaloneAttachmentExtraction(
+    operation.id,
+    payload.fields.stages,
+    payload.fields.acknowledgedRedaction === true,
+  )
   const upstream = await fetcher(joinURL(url, path), {
     method: 'POST',
     ...fetchOptions(request),
     body: form,
-    headers: upstreamConversionHeaders(authHeaders, payload, operation.output !== 'json', major),
+    // Gotenberg's output filename override also renames a lone extracted
+    // attachment. Keep its original name and only override generated outputs.
+    headers: upstreamConversionHeaders(
+      authHeaders,
+      payload,
+      operation.output !== 'json' && !extractsAttachment,
+      major,
+    ),
     credentials: 'omit',
   })
   // A deployment can be upgraded or its load balancer can switch backends after
@@ -796,19 +861,18 @@ export async function proxyConversionRequest(
     }
     return new Response(null, { status: upstream.status, headers })
   }
-  const allowedTypes = allowedConversionContentTypes(operation, payload, files, archives)
+  const allowedTypes = allowedConversionContentTypes(
+    operation,
+    payload,
+    files,
+    archives,
+    archiveEntryNames,
+  )
   const upstreamContentType = upstream.headers.get('content-type')
   const returnedType = upstreamContentType?.split(';')[0]?.trim().toLowerCase()
   // An extracted attachment has its own MIME type, which may be anything.
   // Require an actual filename-bearing attachment response before accepting it,
   // so an HTML SPA fallback can never be mistaken for a successful extraction.
-  const extractsAttachment =
-    operation.id === 'extract-attachments' ||
-    (operation.id === 'pdf-pipeline' &&
-      (() => {
-        const stages = parsePdfPipeline(String(payload.fields.stages ?? ''))
-        return stages.length === 1 && stages[0]?.op === 'extract-attachments'
-      })())
   const attachmentDisposition = upstream.headers.get('content-disposition')
   const wildcardAllowed =
     allowedTypes.includes('*') &&
@@ -816,7 +880,7 @@ export async function proxyConversionRequest(
     /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(returnedType) &&
     // Filename is required for arbitrary content; don't accept inline responses.
     /^attachment\s*;/i.test(attachmentDisposition ?? '') &&
-    /(?:^|;)\s*filename\*?=/i.test(attachmentDisposition ?? '')
+    hasAttachmentFilename(attachmentDisposition)
   if (
     upstream.status !== 200 ||
     !returnedType ||
@@ -826,15 +890,15 @@ export async function proxyConversionRequest(
     await upstream.body?.cancel().catch(() => {})
     throw new ProxyInputError('Gotenberg returned an unexpected conversion response.', 502)
   }
-  // A scanned PDF may contain no extractable text. Embedded files can also be
-  // empty or have a misleading MIME type; preserve their exact bytes rather
-  // than requiring a document signature or manufacturing a nonempty body.
-  const arbitraryAttachment =
-    extractsAttachment && wildcardAllowed && returnedType !== 'application/zip'
+  // A scanned PDF may contain no extractable text. A single extracted file
+  // can itself have a .zip extension, without containing ZIP-format bytes.
+  // Only the filename-bearing attachment response may bypass the signature
+  // and nonempty-body checks. Other ZIP responses still require a signature.
+  const arbitraryAttachment = extractsAttachment && wildcardAllowed
   const allowEmptyResponse =
     arbitraryAttachment ||
-    (returnedType === 'text/plain' &&
-      (operation.id === 'extract-text' || allowedTypes.includes('text/plain')))
+    ((returnedType === 'text/plain' || returnedType === 'text/markdown') &&
+      allowedTypes.includes(returnedType))
   let declaredLength: number | undefined
   try {
     // Fetch decodes compressed upstream responses but leaves their compressed
@@ -855,6 +919,30 @@ export async function proxyConversionRequest(
     upstream.body,
     arbitraryAttachment ? 'application/octet-stream' : returnedType,
     declaredLength,
+    {
+      // A one-document v9 merge without per-file bookmarks returns the
+      // original PDF bytes. Its readable header need not start at byte zero.
+      allowPdfPreamble:
+        major === 9 &&
+        returnedType === 'application/pdf' &&
+        path === '/forms/pdf/pipe' &&
+        (() => {
+          const rawStages = form.get('stages')
+          if (typeof rawStages !== 'string') return false
+          // The form was validated by the adapter. Inspect only the merge
+          // operation here, without revalidating unrelated stage file assets.
+          const stages: unknown = JSON.parse(rawStages)
+          if (!Array.isArray(stages) || stages.length !== 1) return false
+          const stage: unknown = stages[0]
+          return (
+            stage !== null &&
+            typeof stage === 'object' &&
+            'op' in stage &&
+            stage.op === 'merge' &&
+            (!('fileBookmarks' in stage) || stage.fileBookmarks == null)
+          )
+        })(),
+    },
   )
   headers.set('Content-Type', upstreamContentType ?? returnedType)
   headers.set(
@@ -864,7 +952,7 @@ export async function proxyConversionRequest(
       operation.id,
       returnedType,
       payload.outputName,
-      extractsAttachment && returnedType !== 'application/zip',
+      arbitraryAttachment,
     ),
   )
   return new Response(

@@ -126,3 +126,36 @@ test('normalizes Unicode, forbidden filename characters and device names for ext
   assert.ok([...sanitized].length <= 140)
   assert.ok(sanitized.endsWith('.xml'))
 })
+
+test('reads Gotenberg quoted filenames containing semicolons and escaped quotes', () => {
+  assert.equal(
+    downloadFilename('attachment; filename="invoice;Q1.pdf"', 'fallback.pdf'),
+    'invoice;Q1.pdf',
+  )
+  assert.equal(
+    safeAttachmentDisposition('attachment; filename="invoice;Q1.pdf"', 'merge', 'application/pdf'),
+    'attachment; filename="invoice;Q1.pdf"',
+  )
+  assert.equal(
+    downloadFilename('attachment; filename="report \\"final\\";2026.pdf"', 'fallback.pdf'),
+    'report _final_;2026.pdf',
+  )
+  assert.equal(
+    downloadFilename('attachment; filename="report\\\\backup.pdf"', 'fallback.pdf'),
+    'backup.pdf',
+  )
+})
+
+test('ignores parameter lookalikes inside quoted disposition values', () => {
+  assert.equal(
+    downloadFilename(
+      'attachment; comment="decoy; filename*=UTF-8\'\'fake.pdf"; filename="real.pdf"',
+      'fallback.pdf',
+    ),
+    'real.pdf',
+  )
+  assert.equal(
+    downloadFilename('attachment; filename="safe; filename*=UTF-8\'\'fake.pdf"', 'fallback.pdf'),
+    "safe; filename_=UTF-8''fake.pdf",
+  )
+})

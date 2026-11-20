@@ -37,6 +37,8 @@ const supportsV94 = isV9 && minorVersion >= 4
 const supportsV95 = isV9 && minorVersion >= 5
 const supportsV96 = isV9 && minorVersion >= 6
 const supportsV97 = isV9 && minorVersion >= 7
+const supportsV98 = isV9 && minorVersion >= 8
+const supportsV99 = isV9 && minorVersion >= 9
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -753,6 +755,67 @@ test.skipIf(!supportsV91)(
     const text = [...entries.entries()].find(([name]) => name.endsWith('.txt'))?.[1]
     if (!text) throw new Error('Conversion-time extraction did not include a text file')
     expect(new TextDecoder().decode(text)).toContain('Conversion-stage text verified')
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV98)(
+  'Gotenberg 9.8 extracts PDF text as Markdown with .md content type and filename',
+  async () => {
+    const result = await convertV9('extract-text', { format: 'markdown' }, [pdfFile('report.pdf')])
+    if (!result.ok) throw new Error(`Markdown extraction: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')).toContain('text/markdown')
+    expect(result.headers.get('content-disposition')).toMatch(/\.md/i)
+    expect(await result.text()).toContain('Local PDF fixture')
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV98)(
+  'Gotenberg 9.8 exports tagged Chromium conversion as PDF plus Markdown in a ZIP',
+  async () => {
+    const operation = OPERATIONS.find(({ id }) => id === 'html-pdf')
+    if (!operation) throw new Error('Missing HTML PDF converter')
+    const response = await proxyConversionRequest(
+      request(operation, {
+        source: '<html><body><h1>Conversion-stage Markdown verified</h1></body></html>',
+        conversionStages: JSON.stringify([{ op: 'extract-text', format: 'markdown' }]),
+      }),
+    )
+    if (!response.ok)
+      throw new Error(`Markdown conversion: ${response.status} ${await response.text()}`)
+    expect(response.headers.get('content-type')).toContain('application/zip')
+    const entries = zipEntries(new Uint8Array(await response.arrayBuffer()))
+    expect([...entries.keys()].some((name) => name.endsWith('.pdf'))).toBe(true)
+    const markdown = [...entries.entries()].find(([name]) => name.endsWith('.md'))?.[1]
+    if (!markdown) throw new Error('Conversion did not include a .md file')
+    expect(new TextDecoder().decode(markdown)).toContain('Conversion-stage Markdown verified')
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV99)(
+  'Gotenberg 9.9 accepts a LibreOffice locale for document conversion',
+  async () => {
+    const result = await convertV9('office-pdf', { locale: 'en-AU' }, [
+      new File(['Locale conversion fixture'], 'locale.txt'),
+    ])
+    if (!result.ok) throw new Error(`Locale conversion: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')).toContain('application/pdf')
+    const bytes = new Uint8Array(await result.arrayBuffer())
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV99)(
+  'Gotenberg 9.9 optimizes PDFs with the explicit compressStreams option',
+  async () => {
+    const result = await convertV9('optimize', { v9CompressStreams: 'disabled' })
+    if (!result.ok) throw new Error(`Stream compression: ${result.status} ${await result.text()}`)
+    expect(result.headers.get('content-type')).toContain('application/pdf')
+    const bytes = new Uint8Array(await result.arrayBuffer())
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
   },
   120_000,
 )

@@ -105,6 +105,31 @@ const compose = (source?: string) => ({
 })
 
 describe('Gotenberg 9.2 compose source reconciliation', () => {
+  it('uses a nonempty remote name hint when the official filename override is empty', async () => {
+    const office = await forwarded({
+      names: ['local.docx'],
+      stages: [compose('remote.docx.pdf')],
+      remotes: [{ url: 'https://files.example.test/object', name: 'remote.docx', filename: '' }],
+    })
+    assert.equal(office.status, 200, office.error)
+    assert.deepEqual(office.remotes, [
+      { url: 'https://files.example.test/object', filename: 'remote.docx' },
+    ])
+    assert.deepEqual(office.stages, [compose('remote.docx.pdf')])
+
+    const pdf = await forwarded({
+      operation: 'pdf-pipeline',
+      names: ['local.pdf'],
+      stages: [compose('remote.pdf')],
+      remotes: [{ url: 'https://files.example.test/object', name: 'remote.pdf', filename: '' }],
+    })
+    assert.equal(pdf.status, 200, pdf.error)
+    assert.deepEqual(pdf.remotes, [
+      { url: 'https://files.example.test/object', filename: 'remote.pdf' },
+    ])
+    assert.deepEqual(pdf.stages, [compose('remote.pdf')])
+  })
+
   it('uses source omission for merge and compose stages with a single current PDF', async () => {
     const result = await forwarded({
       names: ['z.docx', 'a.docx'],
@@ -234,6 +259,45 @@ describe('Gotenberg 9.2 compose source reconciliation', () => {
     ])
   })
 
+  it('forwards explicit split references when ZIP PDFs share a sanitized filename', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      names: [],
+      archives: [
+        zipFixture({ 'first/report.pdf': '%PDF-1.7\n', 'second/report.pdf': '%PDF-1.7\n' }),
+      ],
+      stages: [
+        { op: 'split', ranges: ['1'] },
+        {
+          op: 'compose',
+          paperSize: 'A4',
+          placements: [{ source: 'report_0.pdf' }, { source: 'report (2)_0.pdf' }],
+        },
+      ],
+    })
+    // Gotenberg's uniqueFilename numbers the second ZIP entry before split.
+    // The server can validate the explicit names, even though the client has
+    // ambiguous names in its ZIP preflight summary.
+    assert.equal(result.status, 200, result.error)
+    assert.equal(result.calls, 1)
+    assert.deepEqual(result.stages[1], {
+      op: 'compose',
+      paperSize: 'A4',
+      placements: [{ source: 'report_0.pdf' }, { source: 'report (2)_0.pdf' }],
+    })
+  })
+
+  it('forwards explicit split references when directly uploaded PDFs have the same name', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      names: ['same.pdf', 'same.pdf'],
+      stages: [{ op: 'split', ranges: ['1'] }, compose('same (2)_0.pdf')],
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.equal(result.calls, 1)
+    assert.deepEqual(result.stages[1], compose('same (2)_0.pdf'))
+  })
+
   it('keeps genuine multi-PDF compose references before a merge', async () => {
     const result = await forwarded({
       operation: 'pdf-pipeline',
@@ -297,6 +361,24 @@ describe('compose stage filename validation', () => {
         editor,
       ),
       null,
+    )
+  })
+
+  it('allows an explicit numbered duplicate PDF name after split while still requiring sources', () => {
+    const duplicated = { ...editor, documentNames: ['same.pdf', 'same.pdf'] }
+    assert.equal(
+      pdfPipelineEditorError(
+        JSON.stringify([{ op: 'split', ranges: ['1'] }, compose('same (2)_0.pdf')]),
+        duplicated,
+      ),
+      null,
+    )
+    assert.match(
+      pdfPipelineEditorError(
+        JSON.stringify([{ op: 'split', ranges: ['1'] }, compose()]),
+        duplicated,
+      ) ?? '',
+      /needs a source after split/,
     )
   })
 

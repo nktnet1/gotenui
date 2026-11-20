@@ -217,3 +217,75 @@ test('complete PDF 1.x and PDF 2.0 version headers remain supported', async () =
     assert.equal(await new Response(verified).text(), header)
   }
 })
+
+test('a source PDF with a short preamble is allowed only for pass-through responses', async () => {
+  for (const preamble of ['\n', '% PDF producer comment\r\n', 'MZ\n']) {
+    const pdf = `${preamble}%PDF-1.7\nsource document`
+    await assert.rejects(
+      verifyConversionSignature(new Blob([pdf]).stream(), 'application/pdf'),
+      /does not match its declared file type/,
+    )
+    const verified = await verifyConversionSignature(
+      new Blob([pdf]).stream(),
+      'application/pdf',
+      new TextEncoder().encode(pdf).byteLength,
+      { allowPdfPreamble: true },
+    )
+    assert.equal(await new Response(verified).text(), pdf)
+  }
+})
+
+test('preamble verification recognizes PDF headers split across chunks and streams the rest', async () => {
+  let deliverTail: (() => void) | undefined
+  const ready = new Promise<void>((resolve) => {
+    deliverTail = resolve
+  })
+  let tailDelivered = false
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('comment\n%PD'))
+      controller.enqueue(new TextEncoder().encode('F-2.0\n'))
+    },
+    async pull(controller) {
+      await ready
+      tailDelivered = true
+      controller.enqueue(new TextEncoder().encode('body'))
+      controller.close()
+    },
+  })
+  const verified = await verifyConversionSignature(source, 'application/pdf', undefined, {
+    allowPdfPreamble: true,
+  })
+  assert.equal(tailDelivered, false)
+  deliverTail?.()
+  assert.equal(await new Response(verified).text(), 'comment\n%PDF-2.0\nbody')
+})
+
+test('preamble verification permits a header beginning at the last allowed byte', async () => {
+  const pdf = `${' '.repeat(1023)}%PDF-1.7\n`
+  const verified = await verifyConversionSignature(
+    new Blob([pdf]).stream(),
+    'application/pdf',
+    undefined,
+    {
+      allowPdfPreamble: true,
+    },
+  )
+  assert.equal(await new Response(verified).text(), pdf)
+})
+
+test('preamble verification still rejects HTML fallbacks and headers too far into a PDF', async () => {
+  for (const body of [
+    '<html><body>%PDF-1.7</body></html>',
+    '<!doctype html><p>%PDF-1.7</p>',
+    `${' '.repeat(1024)}%PDF-1.7\n`,
+    'prefix %PDF-9.9 invalid version',
+  ]) {
+    await assert.rejects(
+      verifyConversionSignature(new Blob([body]).stream(), 'application/pdf', undefined, {
+        allowPdfPreamble: true,
+      }),
+      /does not match its declared file type/,
+    )
+  }
+})

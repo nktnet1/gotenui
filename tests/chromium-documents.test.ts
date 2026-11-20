@@ -100,10 +100,20 @@ describe('Chromium PDF headers and footers', () => {
     },
   )
 
-  test('rejects reserved header/footer asset names even if the HTML fields were not supplied', () => {
-    for (const fileName of ['header.html', 'footer.html', 'index.html']) {
+  test('reserves only generated Chromium filenames and permits external header templates', () => {
+    assert.throws(
+      () => validateAssets('html-pdf', {}, [new File(['file content'], 'index.html')]),
+      /Duplicate filename/,
+    )
+    for (const fileName of ['header.html', 'footer.html']) {
+      assert.doesNotThrow(() =>
+        validateAssets('html-pdf', {}, [new File(['file content'], fileName)]),
+      )
       assert.throws(
-        () => validateAssets('html-pdf', {}, [new File(['file content'], fileName)]),
+        () =>
+          validateAssets('html-pdf', { [`${fileName.split('.')[0]}Html`]: '<p>generated</p>' }, [
+            new File(['file content'], fileName),
+          ]),
         /Duplicate filename/,
       )
     }

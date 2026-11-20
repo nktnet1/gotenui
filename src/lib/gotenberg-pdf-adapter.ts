@@ -1,5 +1,5 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
-import { filenameKey } from '#/lib/file-names'
+import { effectiveRemoteFilename, filenameKey } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeUploadFilename, reservePrefixedMergeUploadNames } from '#/lib/merge-order'
@@ -120,9 +120,10 @@ export function adaptPdfForm(
   const sources = legacy.getAll('files')
   const reservedNames = [
     ...archiveEntryNames,
-    ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
-      filename || name ? [filename ?? name ?? ''] : [],
-    ),
+    ...(payload.downloadFrom ?? []).flatMap((remote) => {
+      const filename = effectiveRemoteFilename(remote)
+      return filename ? [filename] : []
+    }),
   ]
   const numberedNames =
     operation.id === 'merge'
@@ -292,7 +293,14 @@ export function adaptPdfForm(
       if (!stages.length) throw new InputError('Choose PDF/A or PDF/UA remediation.')
       break
     case 'optimize': {
-      permitted('imageQuality', 'v9ObjectStreams', 'v9Dedup', 'v9RecompressImages', 'v9SubsetFonts')
+      permitted(
+        'imageQuality',
+        'v9ObjectStreams',
+        'v9Dedup',
+        'v9RecompressImages',
+        'v9SubsetFonts',
+        'v9CompressStreams',
+      )
       if (optional('imageQuality')) {
         throw new InputError(
           'Gotenberg 9 optimization is lossless; its PDF pipeline has no image quality slider.',
@@ -303,6 +311,7 @@ export function adaptPdfForm(
         v9ObjectStreams: 'objectStreams',
         v9Dedup: 'dedup',
         v9RecompressImages: 'recompressImages',
+        v9CompressStreams: 'compressStreams',
         v9SubsetFonts: 'subsetFonts',
       })) {
         if (fields[name] === 'enabled') options[option] = true

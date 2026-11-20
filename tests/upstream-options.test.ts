@@ -308,6 +308,32 @@ test('Office compression has separate controls from post-conversion image optimi
   assert.equal(isFieldVisible(quality, {}), true)
 })
 
+test('Screenshot JPEG quality is shown and sent only for JPEG output', () => {
+  for (const id of ['url-shot', 'html-shot', 'markdown-shot']) {
+    const spec = operation(id)
+    const quality = spec.fields.find((field) => field.name === 'quality')
+    assert.ok(quality)
+    assert.equal(quality.min, 0)
+    assert.equal(quality.minGotenberg9, 1)
+
+    for (const format of ['png', 'webp']) {
+      const values = { format, quality: '80' }
+      assert.equal(isFieldVisible(quality, values), false, `${id} ${format}`)
+      assert.equal(activeOperationFields(spec, values, '9.9.0').quality, undefined)
+      assert.throws(
+        () => validatePayload(request(id, values)),
+        /JPEG quality requires its related option to be enabled/,
+      )
+    }
+
+    const values = { format: 'jpeg', quality: '80' }
+    assert.equal(isFieldVisible(quality, values), true)
+    assert.equal(activeOperationFields(spec, values, '9.9.0').quality, '80')
+    const validated = validatePayload(request(id, values))
+    assert.equal(createGotenbergForm(spec, validated.payload, [], []).get('quality'), '80')
+  }
+})
+
 test('Office merging preserves ordered uploads and repeated local filenames', async () => {
   const spec = operation('office-pdf')
   const docs = [doc('z.docx', 'first'), doc('same.docx', 'second'), doc('same.docx', 'third')]

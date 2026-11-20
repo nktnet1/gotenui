@@ -167,13 +167,7 @@ function FieldControl({
                     ? 'url'
                     : 'text'
           }
-          min={
-            field.name === 'quality' &&
-            field.min === 0 &&
-            parseGotenbergVersion(backendVersion)?.major === 9
-              ? 1
-              : field.min
-          }
+          min={parsedVersion?.major === 9 ? (field.minGotenberg9 ?? field.min) : field.min}
           max={field.max}
           step={field.kind === 'number' ? (field.integer ? 1 : 'any') : undefined}
           autoComplete={field.kind === 'password' ? 'new-password' : undefined}

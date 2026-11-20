@@ -51,6 +51,35 @@ test('accepts ZIPs with a trailing stub after the end record or ZIP comment', as
   ])
 })
 
+test('accepts signed ZIP central directories without ignoring unexpected trailing records', async () => {
+  const original = new Uint8Array(await zipFixture({ 'input.pdf': '%PDF-1.7' }).arrayBuffer())
+  const endOffset = original.length - 22
+  const signature = new Uint8Array(10)
+  const header = new DataView(signature.buffer)
+  header.setUint32(0, 0x05054b50, true)
+  header.setUint16(4, 4, true)
+  signature.set([1, 2, 3, 4], 6)
+
+  const signed = new Uint8Array(original.length + signature.length)
+  signed.set(original.subarray(0, endOffset))
+  signed.set(signature, endOffset)
+  signed.set(original.subarray(endOffset), endOffset + signature.length)
+  const view = new DataView(signed.buffer)
+  view.setUint32(
+    signed.length - 10,
+    new DataView(original.buffer).getUint32(original.length - 10, true) + signature.length,
+    true,
+  )
+  assert.deepEqual(await check('pdf-pipeline', [new File([signed], 'signed.zip')]), ['input.pdf'])
+
+  const invalid = signed.slice()
+  new DataView(invalid.buffer).setUint16(endOffset + 4, 5, true)
+  await assert.rejects(
+    check('pdf-pipeline', [new File([invalid], 'invalid-signature.zip')]),
+    /trailing data/,
+  )
+})
+
 test('accepts empty ZIPs when other source inputs are available', async () => {
   const empty = zipFixture({})
   const input = new File(['%PDF-1.7'], 'original.pdf')
@@ -105,6 +134,36 @@ test('ignores macOS metadata, directory entries and Unix symlinks like Gotenberg
   directory.setUint16(directoryOffset + 4, 0x0314, true)
   directory.setUint32(directoryOffset + 38, 0o120777 << 16, true)
   assert.deepEqual(await check('pdf-pipeline', [new File([symlink], 'linked.zip')]), ['input.pdf'])
+})
+
+test('ignores DOS directory attributes and macOS symlinks when inspecting ZIP entries', async () => {
+  const makeArchive = async (creator: number, attributes: number): Promise<File> => {
+    const data = new Uint8Array(
+      await zipFixture({ 'index.html': '', 'theme.css': 'body {}' }).arrayBuffer(),
+    )
+    const directory = new DataView(data.buffer)
+    const firstEntry = directory.getUint32(data.length - 6, true)
+    // ZIP central headers encode creator OS in the top byte of version-made-by.
+    directory.setUint16(firstEntry + 4, (creator << 8) | 20, true)
+    directory.setUint32(firstEntry + 38, attributes, true)
+    return new File([data], `creator-${creator}.zip`)
+  }
+
+  // FAT, NTFS and VFAT creators recognise the DOS directory bit, even without
+  // a trailing slash. Gotenberg skips the entry before checking index.html.
+  for (const creator of [0, 11, 14]) {
+    assert.deepEqual(await check('html-pdf', [await makeArchive(creator, 0x10)]), ['theme.css'])
+  }
+  // Unix and macOS use the type encoded in the upper 16 attribute bits.
+  for (const creator of [3, 19]) {
+    assert.deepEqual(await check('html-pdf', [await makeArchive(creator, 0o120777 << 16)]), [
+      'theme.css',
+    ])
+    await assert.rejects(
+      check('html-pdf', [await makeArchive(creator, (0o100644 << 16) | 0x10)]),
+      /duplicate or reserved filename: index.html/,
+    )
+  }
 })
 
 test('normalises effective ZIP names like Gotenberg and prevents Unicode filename collisions', async () => {
@@ -235,6 +294,16 @@ test('recognises Gotenberg 9.2 downloadFrom.filename as a stage asset when check
     }),
     /at least one source PDF/,
   )
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'notes.txt': 'unrelated' })], {
+      payload: {
+        ...payload,
+        fields: { stages },
+        downloadFrom: [{ url: 'https://example.com/object', name: 'attachment.pdf', filename: '' }],
+      },
+    }),
+    /at least one source PDF/,
+  )
   assert.deepEqual(
     await check('pdf-pipeline', [zipFixture({ 'notes.txt': 'unrelated' })], {
       payload: {
@@ -329,9 +398,16 @@ test('accepts same-name source documents within ZIPs and alongside local PDFs', 
 })
 
 test('rejects archive assets that could shadow generated HTML or Markdown sources', async () => {
-  for (const name of ['index.html', 'header.html', 'footer.html']) {
+  await assert.rejects(
+    check('html-pdf', [zipFixture({ 'index.html': 'shadow' })]),
+    /duplicate or reserved filename/,
+  )
+  for (const name of ['header.html', 'footer.html']) {
+    assert.deepEqual(await check('html-pdf', [zipFixture({ [name]: 'template' })]), [name])
     await assert.rejects(
-      check('html-pdf', [zipFixture({ [name]: 'shadow' })]),
+      check('html-pdf', [zipFixture({ [name]: 'shadow' })], {
+        payload: { ...payload, [`${name.split('.')[0]}Html`]: 'generated' },
+      }),
       /duplicate or reserved filename/,
     )
   }
@@ -423,6 +499,16 @@ test('accepts a valid ZIP64 end record and rejects an overlapping central direct
     ]),
     ['source.pdf'],
   )
+
+  // ZIP64 locator is 20 bytes before the end record. A maximum-length ZIP
+  // comment can push it outside the bounded first tail read.
+  const maxComment = new Uint8Array(bytes.length + 65_535)
+  maxComment.set(bytes)
+  new DataView(maxComment.buffer).setUint16(bytes.length - 2, 65_535, true)
+  maxComment.fill(65, bytes.length)
+  assert.deepEqual(await check('pdf-pipeline', [new File([maxComment], 'zip64-max-comment.zip')]), [
+    'source.pdf',
+  ])
 
   // A directory cannot overlap the ZIP64 EOCD, even when it finishes before the locator.
   zip64.setBigUint64(40, BigInt(directorySize + 4), true)

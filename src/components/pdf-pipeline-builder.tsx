@@ -122,7 +122,9 @@ export function PdfPipelineBuilder({
           stage accepts the exact Gotenberg 9 option names as JSON. On Gotenberg 9.6+, stages that
           rewrite PDFs accept dropSignatures: true to intentionally remove digital signatures while
           keeping their visible appearance. Merge accepts fileBookmarks: {} on Gotenberg 9.7+ to
-          group source documents under their own bookmarks.
+          group source documents under their own bookmarks. Gotenberg 9.8+ supports extract-text
+          format: "markdown" for structured .md files. Gotenberg 9.9+ accepts compressStreams on
+          optimize stages (true by default).
         </p>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div className="min-w-52 flex-1 space-y-1">

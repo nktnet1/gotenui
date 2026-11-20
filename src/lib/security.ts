@@ -16,19 +16,78 @@ function cleanDownloadName(candidate: string, fallback: string): string {
   return /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(stem) ? `file-${name}` : name
 }
 
-/** Return a harmless Unicode filename even when Gotenberg sends a hostile disposition header. */
-export function downloadFilename(header: string | null, fallback: string): string {
-  let candidate = fallback
-  if (header) {
-    const extended = header.match(/filename\*=UTF-8''([^;]+)/i)
-    const ordinary = header.match(/filename="?([^";]+)"?/i)
+/** Read only actual Content-Disposition parameters, not lookalikes inside quoted values. */
+function dispositionFilename(header: string | null): string | undefined {
+  if (!header) return undefined
+  let index = header.indexOf(';')
+  if (index === -1) return undefined
+
+  let filename: string | undefined
+  let extendedFilename: string | undefined
+  while (index < header.length) {
+    // Move past the preceding separator and any optional whitespace.
+    while (header.charAt(index) === ';' || /[ \t]/.test(header.charAt(index))) index++
+    const nameStart = index
+    while (index < header.length && !/[=;]/.test(header.charAt(index))) index++
+    if (header.charAt(index) !== '=') continue
+    const name = header.slice(nameStart, index).trim().toLowerCase()
+    index++
+    while (/[ \t]/.test(header.charAt(index)) && index < header.length) index++
+
+    let value = ''
+    if (header.charAt(index) === '"') {
+      index++
+      let closed = false
+      while (index < header.length) {
+        const char = header.charAt(index++)
+        if (char === '\\' && index < header.length) {
+          value += header.charAt(index++)
+        } else if (char === '"') {
+          closed = true
+          break
+        } else {
+          value += char
+        }
+      }
+      if (!closed) break
+      while (index < header.length && /[ \t]/.test(header.charAt(index))) index++
+      if (index < header.length && header.charAt(index) !== ';') {
+        const next = header.indexOf(';', index)
+        index = next === -1 ? header.length : next
+        continue
+      }
+    } else {
+      const next = header.indexOf(';', index)
+      value = header.slice(index, next === -1 ? header.length : next).trim()
+      index = next === -1 ? header.length : next
+    }
+
+    if (value && name === 'filename' && filename === undefined) filename = value
+    if (value && name === 'filename*' && extendedFilename === undefined) extendedFilename = value
+  }
+
+  const encoded = extendedFilename?.match(/^UTF-8'[^']*'(.*)$/i)?.[1]
+  if (encoded) {
     try {
-      candidate = extended ? decodeURIComponent(extended[1] ?? '') : (ordinary?.[1] ?? fallback)
+      return decodeURIComponent(encoded)
     } catch {
-      candidate = fallback
+      // An invalid extended parameter must not override a valid ASCII filename.
     }
   }
-  return cleanDownloadName(candidate, cleanDownloadName(fallback, 'download'))
+  return filename
+}
+
+/** Require a real filename parameter for arbitrary extracted attachment responses. */
+export function hasAttachmentFilename(header: string | null): boolean {
+  return dispositionFilename(header) !== undefined
+}
+
+/** Return a harmless Unicode filename even when Gotenberg sends a hostile disposition header. */
+export function downloadFilename(header: string | null, fallback: string): string {
+  return cleanDownloadName(
+    dispositionFilename(header) ?? fallback,
+    cleanDownloadName(fallback, 'download'),
+  )
 }
 
 export function responseExtension(contentType: string | null): string {
@@ -37,6 +96,7 @@ export function responseExtension(contentType: string | null): string {
   if (type === 'application/zip') return 'zip'
   if (type === 'application/json') return 'json'
   if (type === 'text/plain') return 'txt'
+  if (type === 'text/markdown') return 'md'
   if (type === 'image/png') return 'png'
   if (type === 'image/jpeg') return 'jpeg'
   if (type === 'image/webp') return 'webp'

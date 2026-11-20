@@ -1,3 +1,4 @@
+import { effectiveRemoteFilename } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
   mergeUploadFilename,
@@ -212,6 +213,14 @@ function validateV9OfficePaper(form: FormData): void {
 
 function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
   validateV9OfficePaper(form)
+  const locale = form.get('locale')
+  if (
+    locale !== null &&
+    (typeof locale !== 'string' ||
+      !/^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?$/.test(locale))
+  ) {
+    throw new InputError('LibreOffice locale must be a BCP 47 tag such as en-AU or de-DE.')
+  }
   const bookmarks = form.get('openBookmarkLevels')
   if (typeof bookmarks === 'string' && bookmarks !== '') {
     const count = Number(bookmarks)
@@ -279,9 +288,10 @@ function orderOfficeMergeInputs(
   const reserved = [
     ...stageFiles.map(({ name }) => name),
     ...archiveEntryNames,
-    ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
-      filename || name ? [filename ?? name ?? ''] : [],
-    ),
+    ...(payload.downloadFrom ?? []).flatMap((remote) => {
+      const filename = effectiveRemoteFilename(remote)
+      return filename ? [filename] : []
+    }),
   ]
   // The v8 form builder already prefixes documents for its Merge switch.
   const ordered = builtInMerge
@@ -369,8 +379,13 @@ export function adaptConversionForm(
     }
     if (operation.output === 'image') {
       const quality = form.get('quality')
-      if (typeof quality === 'string' && quality !== '' && Number(quality) < 1) {
-        throw new InputError('Gotenberg 9 screenshot quality must be between 1 and 100.')
+      if (typeof quality === 'string' && quality !== '') {
+        if (Number(quality) < 1) {
+          throw new InputError('Gotenberg 9 screenshot quality must be between 1 and 100.')
+        }
+        if (form.get('format') !== 'jpeg') {
+          throw new InputError('Gotenberg 9 screenshot JPEG quality requires JPEG output.')
+        }
       }
     }
     renameFields(form, chromiumNames)
@@ -448,8 +463,8 @@ export function adaptConversionForm(
       const isOfficeSource = (name: string): boolean =>
         OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase()) &&
         !referenced.has(name.normalize('NFC'))
-      const remoteSources = (payload.downloadFrom ?? []).flatMap(({ filename, name }) => {
-        const remoteName = filename ?? name
+      const remoteSources = (payload.downloadFrom ?? []).flatMap((remote) => {
+        const remoteName = effectiveRemoteFilename(remote)
         return remoteName && isOfficeSource(remoteName) ? [remoteName] : []
       })
       const localSources =
@@ -478,7 +493,7 @@ export function adaptConversionForm(
         singleInput: operation.id !== 'office-pdf',
         unknownInputs:
           operation.id === 'office-pdf' &&
-          (payload.downloadFrom ?? []).some(({ filename, name }) => !(filename ?? name)),
+          (payload.downloadFrom ?? []).some((remote) => !effectiveRemoteFilename(remote)),
         mapBookmarks: true,
       })
       parsePdfPipeline(JSON.stringify(mergedStages), {

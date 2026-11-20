@@ -37,6 +37,11 @@ export const operation: Operation = {
           'Losslessly recompress images without changing their quality.',
         ],
         ['v9SubsetFonts', 'Subset fonts', 'Keep only the glyphs used in embedded fonts.'],
+        [
+          'v9CompressStreams',
+          'Compress streams',
+          'Compress uncompressed PDF streams such as page content and fonts (Gotenberg 9.9+).',
+        ],
       ] as const
     ).map(([name, label, description]) => ({
       name,
@@ -46,6 +51,7 @@ export const operation: Operation = {
       options: ['enabled', 'disabled'],
       optionLabels: { enabled: 'Enabled', disabled: 'Disabled' },
       supportedGotenbergMajors: [9] as const,
+      ...(name === 'v9CompressStreams' ? { minGotenbergMinor: 9 } : {}),
       advanced: true,
     })),
   ],

@@ -64,6 +64,8 @@ test('Gotenberg 9 screenshots expose the upstream quality minimum without changi
   const modern = markup('html-shot', 'quality', '1', '9.0.0')
   assert.match(old, /min="0"/)
   assert.match(modern, /min="1"/)
+  assert.match(modern, /JPEG quality/)
+  assert.doesNotMatch(modern, /WebP quality/)
   // Office native JPEG quality is already bounded by 1 on both versions.
   assert.match(markup('office-pdf', 'quality', '90', '8.40.0'), /min="1"/)
   assert.match(markup('office-pdf', 'quality', '90', '9.0.0'), /min="1"/)

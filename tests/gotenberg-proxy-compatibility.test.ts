@@ -298,6 +298,195 @@ test('v9 accepts a ZIP response when Office archives expand to several output do
   assert.equal(response.headers.get('content-type'), 'application/zip')
 })
 
+const archivedPdfZipCases: {
+  name: string
+  operation: string
+  fields: Record<string, string | boolean>
+  files: File[]
+  archives: File[]
+  extra: Record<string, unknown>
+}[] = [
+  {
+    name: 'two source PDFs in one archive',
+    operation: 'rotate',
+    fields: { rotateAngle: '90' },
+    files: [],
+    archives: [zipFixture({ 'one.pdf': '%PDF-1.7\n', 'nested/two.PDF': '%PDF-1.7\n' })],
+    extra: {},
+  },
+  {
+    name: 'one local PDF and one archived PDF',
+    operation: 'optimize',
+    fields: {},
+    files: [new File(['%PDF-1.7\n'], 'local.pdf')],
+    archives: [zipFixture({ 'remote.pdf': '%PDF-1.7\n', 'readme.txt': 'notes' })],
+    extra: {},
+  },
+  {
+    name: 'one remote PDF and one archived PDF',
+    operation: 'rotate',
+    fields: { rotateAngle: '90' },
+    files: [],
+    archives: [zipFixture({ 'archived.pdf': '%PDF-1.7\n' })],
+    extra: { downloadFrom: [{ url: 'https://files.example.test/remote.pdf' }] },
+  },
+  {
+    name: 'source PDFs spread across archives',
+    operation: 'optimize',
+    fields: {},
+    files: [],
+    archives: [
+      zipFixture({ 'a.pdf': '%PDF-1.7\n' }, 'first.zip'),
+      zipFixture({ 'b.pdf': '%PDF-1.7\n' }, 'second.zip'),
+    ],
+    extra: {},
+  },
+  {
+    name: 'v9-only form filling with two archived PDFs',
+    operation: 'fill-form',
+    fields: { formValues: '{"Name":"Example"}' },
+    files: [],
+    archives: [zipFixture({ 'first.pdf': '%PDF-1.7\n', 'second.pdf': '%PDF-1.7\n' })],
+    extra: {},
+  },
+]
+
+test.each(archivedPdfZipCases)(
+  'v9 accepts a ZIP response for $name',
+  async ({ operation, fields, files, archives, extra }) => {
+    const output = zipFixture({ 'first.pdf': '%PDF-1.7\n', 'second.pdf': '%PDF-1.7\n' })
+    let conversions = 0
+    const fetcher: typeof fetch = async (input, options) => {
+      if (String(input) === `${upstream}/version`) return new Response('9.9.0')
+      conversions++
+      assert.equal(String(input), `${upstream}/forms/pdf/pipe`)
+      assert.ok(options?.body instanceof FormData)
+      assert.equal(options.body.getAll('archives').length, archives.length)
+      assert.equal(options.body.getAll('files').length, files.length)
+      return new Response(await output.arrayBuffer(), {
+        headers: { 'Content-Type': 'application/zip' },
+      })
+    }
+    const response = await proxyConversionRequest(
+      requestFor(operation, fields, extra, files, [], [], archives),
+      fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), 'application/zip')
+    assert.deepEqual(
+      Buffer.from(await response.arrayBuffer()),
+      Buffer.from(await output.arrayBuffer()),
+    )
+    assert.equal(conversions, 1)
+  },
+)
+
+test('v9 keeps single-source ZIP uploads PDF-only and rejects unrelated ZIP responses', async () => {
+  const source = zipFixture({
+    'document.pdf': '%PDF-1.7\n',
+    'readme.txt': 'not a PDF',
+    '__MACOSX/._ignored.pdf': 'macOS metadata',
+  })
+  const request = () => requestFor('rotate', { rotateAngle: '90' }, {}, [], [], [], [source])
+  const unexpectedZip: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.9.0')
+      : new Response(await source.arrayBuffer(), {
+          headers: { 'Content-Type': 'application/zip' },
+        })
+  await assert.rejects(
+    proxyConversionRequest(request(), unexpectedZip),
+    /unexpected conversion response/,
+  )
+
+  const expectedPdf: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.9.0')
+      : new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+  const response = await proxyConversionRequest(request(), expectedPdf)
+  assert.equal(response.headers.get('content-type'), 'application/pdf')
+  assert.equal(await response.text(), '%PDF-1.7\n')
+})
+
+test('v9 merge still rejects ZIP output with multiple archived source PDFs', async () => {
+  const source = zipFixture({ 'first.pdf': '%PDF-1.7\n', 'second.pdf': '%PDF-1.7\n' })
+  const fetcher: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.9.0')
+      : new Response(await source.arrayBuffer(), {
+          headers: { 'Content-Type': 'application/zip' },
+        })
+  await assert.rejects(
+    proxyConversionRequest(requestFor('merge', {}, {}, [], [], [], [source]), fetcher),
+    /unexpected conversion response/,
+  )
+})
+
+type ZipResponseCase = { operation: string; fields: Record<string, string | boolean> }
+
+const attachmentExtractionCases: ZipResponseCase[] = [
+  { operation: 'extract-attachments', fields: {} },
+  { operation: 'pdf-pipeline', fields: { stages: '[{"op":"extract-attachments"}]' } },
+]
+
+test.each(attachmentExtractionCases)(
+  '$operation preserves single extracted ZIP attachments even when their bytes are not a ZIP archive',
+  async ({ operation, fields }) => {
+    const source = new File(['%PDF-1.7\n'], 'source.pdf')
+    for (const contents of ['', 'This is an arbitrary embedded attachment']) {
+      const fetcher: typeof fetch = async (input) =>
+        String(input) === `${upstream}/version`
+          ? new Response('9.9.0')
+          : new Response(contents, {
+              headers: {
+                'Content-Type': 'application/zip',
+                'Content-Disposition': 'attachment; filename="source_backup.zip"',
+                'Content-Length': String(Buffer.byteLength(contents)),
+              },
+            })
+      const response = await proxyConversionRequest(
+        requestFor(operation, fields, {}, [source]),
+        fetcher,
+      )
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('content-type'), 'application/zip')
+      assert.match(
+        response.headers.get('content-disposition') ?? '',
+        /filename="source_backup\.zip"/,
+      )
+      assert.equal(await response.text(), contents)
+    }
+  },
+)
+
+const zipSignatureCases: ZipResponseCase[] = [
+  { operation: 'rotate', fields: { rotateAngle: '90' } },
+  {
+    operation: 'pdf-pipeline',
+    fields: { stages: '[{"op":"optimize"},{"op":"extract-attachments"}]' },
+  },
+]
+
+test.each(zipSignatureCases)(
+  'non-extraction $operation ZIP results still require a real ZIP signature',
+  async ({ operation, fields }) => {
+    const source = [new File(['%PDF-1.7\n'], 'one.pdf'), new File(['%PDF-1.7\n'], 'two.pdf')]
+    const fetcher: typeof fetch = async (input) =>
+      String(input) === `${upstream}/version`
+        ? new Response('9.9.0')
+        : new Response('not a ZIP', {
+            headers: {
+              'Content-Type': 'application/zip',
+              'Content-Disposition': 'attachment; filename="result.zip"',
+            },
+          })
+    await assert.rejects(
+      proxyConversionRequest(requestFor(operation, fields, {}, source), fetcher),
+      /does not match its declared file type/,
+    )
+  },
+)
+
 test('v9 PDF pipeline forwards remote PDF URLs and uploaded source ZIPs, but v8 never forwards them', async () => {
   const archive = zipFixture({ 'source.pdf': '%PDF-1.7\n' }, 'source-pdfs.zip')
   const remote = [
@@ -1052,6 +1241,57 @@ test('v9 proxy forwards large PDF pipeline JSON below the configured byte budget
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
 })
 
+test.each(['r\u00e9sum\u00e9', '\u5831\u544a', 'report \ud83c\udf0d'])(
+  'v9 output filename forwards UTF-8 bytes to Gotenberg: %s',
+  async (name) => {
+    const fixture = upstreamFixture('9.9.0', (_form, headers) => {
+      const bytes = headers.get('Gotenberg-Output-Filename')
+      assert.ok(bytes)
+      assert.equal(Buffer.from(bytes, 'latin1').toString('utf8'), name)
+    })
+    const reply = await proxyConversionRequest(
+      requestFor('html-pdf', {}, { outputName: name }),
+      fixture.fetcher,
+    )
+    assert.equal(reply.status, 200)
+    assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+  },
+)
+
+test('v9 webhook serializes Unicode callback URLs and UTF-8 extra header values', async () => {
+  const url = 'https://example.test/\u901a\u77e5'
+  const eventsUrl = 'https://m\u00fcnich.example/\u5b8c\u4e86'
+  const extraHttpHeaders = { 'X-Locale': '\u65e5\u672c\u8a9e' }
+  const fixture = upstreamFixture('9.9.0', (_form, headers) => {
+    assert.equal(headers.get('Gotenberg-Webhook-Url'), new URL(url).href)
+    assert.equal(headers.get('Gotenberg-Webhook-Events-Url'), new URL(eventsUrl).href)
+    const raw = headers.get('Gotenberg-Webhook-Extra-Http-Headers')
+    assert.ok(raw)
+    assert.deepEqual(JSON.parse(Buffer.from(raw, 'latin1').toString('utf8')), extraHttpHeaders)
+  })
+  const reply = await proxyConversionRequest(
+    requestFor('html-pdf', {}, { webhook: { url, eventsUrl, extraHttpHeaders } }),
+    fixture.fetcher,
+  )
+  assert.equal(reply.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
+test('v8 webhook serializes Unicode success and error URLs', async () => {
+  const url = 'https://m\u00fcnich.example/\u901a\u77e5'
+  const errorUrl = 'https://example.test/\u5931\u6557'
+  const fixture = upstreamFixture('8.40.0', (_form, headers) => {
+    assert.equal(headers.get('Gotenberg-Webhook-Url'), new URL(url).href)
+    assert.equal(headers.get('Gotenberg-Webhook-Error-Url'), new URL(errorUrl).href)
+  })
+  const reply = await proxyConversionRequest(
+    requestFor('html-pdf', {}, { webhook: { url, errorUrl } }),
+    fixture.fetcher,
+  )
+  assert.equal(reply.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
 test('v9 proxy forwards punctuation in the Gotenberg output filename header', async () => {
   const name = 'Q4 & FY26 (approved)'
   const fixture = upstreamFixture('9.1.0', (_form, headers) => {
@@ -1064,4 +1304,39 @@ test('v9 proxy forwards punctuation in the Gotenberg output filename header', as
   assert.equal(result.status, 200)
   assert.match(result.headers.get('content-disposition') ?? '', /Q4 & FY26 \(approved\)\.pdf/)
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
+test.each<{ operation: string; fields: Record<string, string | boolean> }>([
+  { operation: 'merge', fields: {} },
+  { operation: 'pdf-pipeline', fields: { stages: '[{"op":"merge"}]' } },
+])(
+  'v9 $operation accepts single-source PDF merge output with a preamble',
+  async ({ operation, fields }) => {
+    const source = '\n%PDF-1.7\noriginal source bytes'
+    const fetcher: typeof fetch = async (input) =>
+      String(input) === `${upstream}/version`
+        ? new Response('9.9.0')
+        : new Response(source, { headers: { 'Content-Type': 'application/pdf' } })
+    const response = await proxyConversionRequest(
+      requestFor(operation, fields, {}, [new File([source], 'input.pdf')]),
+      fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), source)
+  },
+)
+
+test('a rewritten PDF still requires an immediate version header', async () => {
+  const source = '\n%PDF-1.7\noriginal source bytes'
+  const fetcher: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.9.0')
+      : new Response(source, { headers: { 'Content-Type': 'application/pdf' } })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('rotate', { rotateAngle: '90' }, {}, [new File([source], 'input.pdf')]),
+      fetcher,
+    ),
+    /does not match its declared file type/,
+  )
 })

@@ -4,14 +4,23 @@ import {
   isAttachmentMimeType,
   parseAttachmentMetadata,
 } from '#/lib/attachment-metadata'
-import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
+import {
+  DEFAULT_MARKDOWN_NAME,
+  defaultMarkdownTemplate,
+  generatedChromiumFilenames,
+} from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
 import {
   hasAmbiguousChromiumScope,
   isAllowedChromiumResourceHeader,
   isChromiumCredentialHeader,
 } from '#/lib/chromium-network'
-import { safeFilename as checkFilename, filenameKey } from '#/lib/file-names'
+import {
+  safeFilename as checkFilename,
+  effectiveRemoteFilename,
+  filenameKey,
+  possibleRemoteFilename,
+} from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
@@ -105,6 +114,13 @@ export class InputError extends Error {
 
 const extension = /\.[a-z0-9]+$/i
 const fieldNamePattern = /^[a-z][a-zA-Z0-9]{0,63}$/
+const decimalIntegerPattern = /^[+-]?\d+$/
+const decimalNumberPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
+const minGoInt = -(1n << 63n)
+const maxGoInt = (1n << 63n) - 1n
+// Go strings.TrimSpace uses Unicode White_Space, unlike JavaScript \s (which
+// also matches U+FEFF and omits U+0085).
+const goWhitespaceOnly = /^\p{White_Space}+$/u
 const forbiddenAdvanced = new Set([
   'files',
   'payload',
@@ -195,8 +211,16 @@ function validateHeaderMap(headers: Record<string, string> | undefined): void {
 function validateAsyncInputs(payload: ConversionPayload): void {
   for (const remote of payload.downloadFrom ?? []) {
     requireHttpUrl(remote.url, 'downloadFrom URL')
-    if (remote.name !== undefined) safeFilename(remote.name)
-    if (remote.filename) safeFilename(remote.filename)
+    if (remote.name) {
+      safeFilename(remote.name)
+      if (goWhitespaceOnly.test(remote.name))
+        throw new InputError('Remote filename must not be blank.')
+    }
+    if (remote.filename) {
+      safeFilename(remote.filename)
+      if (goWhitespaceOnly.test(remote.filename))
+        throw new InputError('Remote filename must not be blank.')
+    }
     if (remote.name && remote.filename && remote.name !== remote.filename) {
       throw new InputError('Specify one remote filename, not two conflicting names.')
     }
@@ -547,13 +571,10 @@ export function validateFiles(
           }),
         ),
       )
-      remote.input -= payload.downloadFrom.filter(
-        (file) =>
-          !file.field &&
-          !file.embedded &&
-          (file.filename !== undefined || file.name !== undefined) &&
-          stageAssets.has((file.filename ?? file.name ?? '').normalize('NFC')),
-      ).length
+      remote.input -= payload.downloadFrom.filter((file) => {
+        const filename = effectiveRemoteFilename(file)
+        return !file.field && !file.embedded && !!filename && stageAssets.has(filenameKey(filename))
+      }).length
     }
   }
   // Gotenberg 9's merge stage reads (and returns) a single input PDF too.
@@ -608,14 +629,8 @@ export function validateFiles(
   if (operation.auxiliary?.required && auxiliary.length + remoteAux === 0) {
     throw new InputError(`${operation.auxiliary.label} is required.`)
   }
-  const names = new Set<string>()
-  if (operation.input === 'html' || operation.input === 'markdown') {
-    for (const name of ['index.html', 'header.html', 'footer.html']) names.add(name)
-    if (operation.input === 'markdown') {
-      names.add(filenameKey(payload?.markdownName ?? DEFAULT_MARKDOWN_NAME))
-      for (const file of payload?.markdownFiles ?? []) names.add(filenameKey(file.name))
-    }
-  }
+  const generatedNames = generatedChromiumFilenames(operation.input, payload)
+  const names = new Set(generatedNames.map(filenameKey))
   const generatedTemplate =
     operation.input === 'markdown'
       ? (payload?.markdownTemplate ??
@@ -716,6 +731,22 @@ export function validateFiles(
       !new Set(['.pdf', '.png', '.jpeg', '.jpg', '.gif', '.webp', '.tiff']).has(ext ?? '')
     ) {
       throw new InputError('Stamp and watermark files must be images or PDFs.')
+    }
+  }
+  if (major === 9 && payload?.downloadFrom?.length) {
+    // Remote downloads are registered before local stage assets on every v9
+    // route. Keep ordinary duplicate PDF/Office sources allowed, since Gotenberg
+    // numbers them, but protect resources referenced by their exact filenames.
+    const localNames = new Set([
+      ...generatedNames.map(filenameKey),
+      ...auxiliary.map(({ name }) => filenameKey(name)),
+      ...stageFiles.map(({ name }) => filenameKey(name)),
+    ])
+    for (const remote of payload?.downloadFrom ?? []) {
+      const name = possibleRemoteFilename(remote)
+      if (name && localNames.has(filenameKey(name))) {
+        throw new InputError(`Remote filename collides with a local document or asset: ${name}`)
+      }
     }
   }
   if (
@@ -904,6 +935,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
   const chromiumPdfOnly = ['singlePage', 'preferCssPageSize', 'generateDocumentOutline']
   const officeOnly = [
     'password',
+    'locale',
     'exportOnlyNotesPages',
     'exportNotesPages',
     'exportHiddenSlides',
@@ -1064,12 +1096,18 @@ export function validatePayload(input: unknown): {
         throw new InputError('Enter an absolute http or https URL.')
       }
       if (field.kind === 'number' && value) {
+        // Gotenberg binds these form fields with strconv.Atoi or strconv.ParseFloat.
+        // Number() additionally accepts hex, whitespace and exponent notation for ints.
+        const integer = field.integer === true
+        const validSpelling = (integer ? decimalIntegerPattern : decimalNumberPattern).test(value)
         const n = Number(value)
+        const goInt = integer && validSpelling ? BigInt(value) : undefined
         if (
+          !validSpelling ||
           !Number.isFinite(n) ||
           (field.min !== undefined && n < field.min) ||
           (field.max !== undefined && n > field.max) ||
-          (field.integer === true && !Number.isInteger(n))
+          (goInt !== undefined && (goInt < minGoInt || goInt > maxGoInt))
         ) {
           throw new InputError(`${field.label} is outside its permitted range.`)
         }

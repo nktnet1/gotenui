@@ -271,7 +271,6 @@ describe('PDF pipeline catalogue and stage contract', () => {
       ],
       [{ op: 'set-metadata', author: null, creationDate: null, modDate: null }],
       [{ op: 'set-bookmarks', bookmarks: [{ title: 'Intro', pageNumber: 1, children: null }] }],
-      [{ op: 'set-form', fields: { customer: null, choices: ['Yes', null] } }],
       [{ op: 'redact', regions: [{ page: 1, x: null, y: null, width: 100, height: 25 }] }],
       [{ op: 'attach', file: 'receipt.txt', relationship: null, mimeType: null }],
       [{ op: 'extract-text', pages: null, invisible: null, artifacts: null, annotations: null }],
@@ -301,7 +300,6 @@ describe('PDF pipeline catalogue and stage contract', () => {
     // encoding rather than being coerced into string "null" or dropped.
     for (const stages of [
       [{ op: 'set-metadata', author: null, modDate: null }],
-      [{ op: 'set-form', fields: { customer: null, choices: ['Yes', null] } }],
       [{ op: 'render', format: 'png', quality: null }],
       [{ op: 'optimize', dedup: null }],
     ]) {
@@ -826,7 +824,14 @@ describe('PDF pipeline rejects unsafe or invalid sequences', () => {
     assert.deepEqual(parsePdfPipeline('[{"op":"set-form","fields":{" ":"Yes"}}]'), [
       { op: 'set-form', fields: { ' ': 'Yes' } },
     ])
+    assert.deepEqual(
+      parsePdfPipeline('[{"op":"set-form","fields":{"empty":"","choices":["Yes",""]}}]'),
+      [{ op: 'set-form', fields: { empty: '', choices: ['Yes', ''] } }],
+    )
     error([{ op: 'set-form', fields: { bad: [5] } }], /fields must map/)
+    error([{ op: 'set-form', fields: { empty: null } }], /fields must map/)
+    error([{ op: 'set-form', fields: { choices: [null] } }], /fields must map/)
+    error([{ op: 'set-form', fields: { choices: ['Yes', null] } }], /fields must map/)
     error([{ op: 'redact', regions: [] }], /at least one rectangle/)
   })
   it('enforces positions and duplicate singleton stages', () => {

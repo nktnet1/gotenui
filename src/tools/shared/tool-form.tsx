@@ -1031,7 +1031,7 @@ export function Workbench({
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {operation.output === 'json'
                   ? 'Names the browser download. Gotenberg metadata responses do not support the output filename header.'
-                  : 'Sets Gotenberg-Output-Filename and the browser download name. Gotenberg adds the extension automatically; leave blank for its default.'}
+                  : 'Names generated downloads using Gotenberg-Output-Filename, with the extension added automatically. Individually extracted attachments keep their original filenames instead.'}
               </p>
             </div>
             <details
@@ -1054,9 +1054,7 @@ export function Workbench({
                         field={
                           isV9 && operation.id === 'factur-x' && field.name === 'pdfa'
                             ? { ...field, options: ['PDF/A-3b'] }
-                            : isV9 && operation.output === 'image' && field.name === 'quality'
-                              ? { ...field, min: 1 }
-                              : field
+                            : field
                         }
                         value={fields[field.name]}
                         onChange={(value) => updateField(field.name, value)}

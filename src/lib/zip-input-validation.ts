@@ -1,5 +1,5 @@
-import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
-import { filenameKey } from '#/lib/file-names'
+import { generatedChromiumFilenames } from '#/lib/chromium-documents'
+import { effectiveRemoteFilename, filenameKey, possibleRemoteFilename } from '#/lib/file-names'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -68,16 +68,31 @@ async function zipEntryNames(archive: File): Promise<string[]> {
   // ZIP64 extends the classic EOCD with a locator and a 64-bit end record.
   // Read only its fixed header, then the bounded central directory itself.
   const locatorAt = end - 20
-  const zip64 = locatorAt >= 0 && view.getUint32(locatorAt, true) === 0x07064b50
+  // The maximum ZIP comment fills the entire tail buffer. When an end record
+  // requests ZIP64 and its locator falls just before that buffer, read only
+  // the 20 missing bytes instead of rejecting a valid archive.
+  const needsZip64 = count === 0xffff || length === 0xffffffff || offset === 0xffffffff
+  const locatorBytes =
+    locatorAt >= 0
+      ? tail.subarray(locatorAt, end)
+      : needsZip64 && endOffset >= 20
+        ? new Uint8Array(await archive.slice(endOffset - 20, endOffset).arrayBuffer())
+        : new Uint8Array(0)
+  const locator = new DataView(
+    locatorBytes.buffer,
+    locatorBytes.byteOffset,
+    locatorBytes.byteLength,
+  )
+  const zip64 = locatorBytes.length === 20 && locator.getUint32(0, true) === 0x07064b50
   let directoryEnd = endOffset
   if (zip64) {
-    if (view.getUint32(locatorAt + 4, true) !== 0 || view.getUint32(locatorAt + 16, true) !== 1) {
+    if (locator.getUint32(4, true) !== 0 || locator.getUint32(16, true) !== 1) {
       invalidArchive(archive.name, 'multi-volume ZIP64 archives are not supported.')
     }
     // ZIP64 locator offsets may be relative to an executable preamble, just
     // like the ordinary central-directory offset. For the standard fixed-size
     // end record, its physical location is immediately before the locator.
-    const declaredOffset = safeZip64Integer(view.getBigUint64(locatorAt + 8, true), archive.name)
+    const declaredOffset = safeZip64Integer(locator.getBigUint64(8, true), archive.name)
     const beforeLocator = endOffset - 20
     let zip64Offset = declaredOffset
     let recordBytes = new Uint8Array(
@@ -153,13 +168,24 @@ async function zipEntryNames(archive: File): Promise<string[]> {
     const next = cursor + 46 + nameLength + extraLength + commentLength
     if (next > length) invalidArchive(archive.name, 'the ZIP index contains a truncated entry.')
     const name = decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLength))
-    // Gotenberg ignores directories, Unix symlinks and macOS resource forks.
-    // Do not let skipped entries shadow or constrain actual uploaded files.
-    const unixMode = directory.getUint32(cursor + 38, true) >>> 16
-    const unixType = unixMode & 0o170000
+    // Gotenberg skips anything for which Go archive/zip's Mode().IsRegular()
+    // is false. Unix and macOS creators use Unix file types, while FAT, NTFS
+    // and VFAT creators use the DOS directory attribute, even when the entry
+    // name has no trailing slash.
+    const creator = directory.getUint16(cursor + 4, true) >>> 8
+    const externalAttributes = directory.getUint32(cursor + 38, true)
+    const unixType = (externalAttributes >>> 16) & 0o170000
     const unixNonRegular =
-      directory.getUint16(cursor + 4, true) >>> 8 === 3 && unixType !== 0 && unixType !== 0o100000
-    if (name.endsWith('/') || name.endsWith('\\') || unixNonRegular || ignoredArchiveEntry(name)) {
+      (creator === 3 || creator === 19) && unixType !== 0 && unixType !== 0o100000
+    const dosDirectory =
+      (creator === 0 || creator === 11 || creator === 14) && (externalAttributes & 0x10) !== 0
+    if (
+      name.endsWith('/') ||
+      name.endsWith('\\') ||
+      unixNonRegular ||
+      dosDirectory ||
+      ignoredArchiveEntry(name)
+    ) {
       cursor = next
       continue
     }
@@ -189,7 +215,19 @@ async function zipEntryNames(archive: File): Promise<string[]> {
     names.push(name)
     cursor = next
   }
-  if (cursor !== length) invalidArchive(archive.name, 'the ZIP index has trailing data.')
+  // ZIP central directories may end with a single digital-signature
+  // record. Go's archive/zip accepts it, but arbitrary trailing bytes are
+  // still invalid here to avoid ambiguous archive metadata.
+  if (cursor !== length) {
+    const remaining = length - cursor
+    if (
+      remaining < 6 ||
+      directory.getUint32(cursor, true) !== 0x05054b50 ||
+      6 + directory.getUint16(cursor + 4, true) !== remaining
+    ) {
+      invalidArchive(archive.name, 'the ZIP index has trailing data.')
+    }
+  }
   // An empty archive (or one containing only skipped directory/metadata
   // entries) is valid in Gotenberg when other request inputs are provided.
   return names
@@ -214,21 +252,16 @@ export async function validateZipInputs(
     ...stageFiles.map(({ name }) => filenameKey(name)),
   ])
   const expected = new Set<string>([...localSources, ...protectedNames])
-  if (operation.input === 'html' || operation.input === 'markdown') {
-    for (const name of ['index.html', 'header.html', 'footer.html']) {
-      expected.add(name)
-      protectedNames.add(name)
-    }
-    if (operation.input === 'markdown') {
-      for (const name of [
-        payload.markdownName ?? DEFAULT_MARKDOWN_NAME,
-        ...(payload.markdownFiles ?? []).map((source) => source.name),
-      ]) {
-        expected.add(filenameKey(name))
-        protectedNames.add(filenameKey(name))
-      }
-    }
+  for (const name of generatedChromiumFilenames(operation.input, payload)) {
+    expected.add(filenameKey(name))
+    protectedNames.add(filenameKey(name))
   }
+  const remoteNames = new Set(
+    (payload.downloadFrom ?? []).flatMap((remote) => {
+      const name = possibleRemoteFilename(remote)
+      return name ? [filenameKey(name)] : []
+    }),
+  )
   const extensions = officeExtensionSetForMajor(9)
   const stages =
     operation.id === 'pdf-pipeline'
@@ -243,7 +276,7 @@ export async function validateZipInputs(
         : []
   const stageAssets = new Set(pdfStageAssetNames(stages))
   const remoteAssets = (payload.downloadFrom ?? []).filter((remote) => {
-    const name = remote.filename ?? remote.name
+    const name = effectiveRemoteFilename(remote)
     return (
       !remote.embedded &&
       !remote.field &&
@@ -263,9 +296,18 @@ export async function validateZipInputs(
       const normalizedName = basename(name).normalize('NFC')
       const flatName = filenameKey(normalizedName)
       const label = normalizedName.slice(0, 120)
+      // A remote file can claim an archive entry's name before ZIP extraction.
+      // Protect all Chromium resources and named PDF-stage assets, but keep
+      // duplicate PDF/Office source documents eligible for auto-numbering.
+      const isStageAsset = stageAssets.has(normalizedName)
+      if (
+        remoteNames.has(flatName) &&
+        (operation.path.startsWith('/forms/chromium/') || isStageAsset)
+      ) {
+        invalidArchive(archive.name, `filename collides with a remote asset: ${label}.`)
+      }
       // Gotenberg resolves entries as named input files; compare basenames
       // by exact NFC spelling, including across separate archives and uploads.
-      const isStageAsset = stageAssets.has(normalizedName)
       const suffix = flatName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? ''
       const isSourceDocument =
         !isStageAsset &&

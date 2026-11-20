@@ -211,13 +211,20 @@ describe('Gotenberg 9 PDF stages', () => {
     assert.deepEqual(adapted('fill-form', { formValues: values }).stages, [
       { op: 'set-form', fields: { 'Address.City': 'Sydney', 'Choices.List': ['one', 'two'] } },
     ])
-    for (const input of ['{}', '[]', '{"empty":4}', '{"items":[5]}']) {
+    for (const input of [
+      '{}',
+      '[]',
+      '{"empty":4}',
+      '{"items":[5]}',
+      '{"empty":null}',
+      '{"items":[null]}',
+      '{"items":["Yes",null]}',
+    ]) {
       assert.throws(() => adapted('fill-form', { formValues: input }), /Form (field names|values)/)
     }
-    // json.Unmarshal turns null into the empty string for a string-valued field.
     assert.deepEqual(
-      adapted('fill-form', { formValues: '{"empty":null,"choices":[null,"Yes"]}' }).stages,
-      [{ op: 'set-form', fields: { empty: null, choices: [null, 'Yes'] } }],
+      adapted('fill-form', { formValues: '{"empty":"","choices":["","Yes"]}' }).stages,
+      [{ op: 'set-form', fields: { empty: '', choices: ['', 'Yes'] } }],
     )
     // Gotenberg's set-form parser uses exact field-name keys, including
     // whitespace-only names when a PDF form defines them.

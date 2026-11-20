@@ -144,8 +144,9 @@ export function adaptV9PdfExtra(
       if (typeof fields.name === 'string' && fields.name) form.set('name', fields.name)
       return { path: '/forms/pdf/extract-attachments', form }
     case 'extract-text':
-      allow('pages', 'invisible', 'artifacts', 'annotations')
+      allow('pages', 'format', 'invisible', 'artifacts', 'annotations')
       onlyPdfInputs()
+      if (value('format')) form.set('format', value('format'))
       if (value('pages')) form.set('pages', requirePages('pages'))
       for (const name of ['invisible', 'artifacts', 'annotations'] as const) {
         if (fields[name] === true) form.set(name, 'true')
@@ -222,9 +223,7 @@ export function adaptV9PdfExtra(
         if (
           !(
             typeof field === 'string' ||
-            field === null ||
-            (Array.isArray(field) &&
-              field.every((entry) => entry === null || typeof entry === 'string'))
+            (Array.isArray(field) && field.every((entry) => typeof entry === 'string'))
           )
         ) {
           throw new InputError('Form values must be strings or arrays of strings.')

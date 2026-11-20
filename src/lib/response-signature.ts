@@ -4,6 +4,9 @@ const PDF_SIGNATURE = new TextEncoder().encode('%PDF-')
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
 const RIFF_SIGNATURE = new TextEncoder().encode('RIFF')
 const WEBP_SIGNATURE = new TextEncoder().encode('WEBP')
+// PDF readers may locate the header within the first 1,024 bytes. Gotenberg 9
+// preserves those original bytes for a one-document merge without bookmarks.
+const PDF_PREAMBLE_LIMIT = 1024
 
 function beginsWith(value: Uint8Array, signature: Uint8Array, offset = 0): boolean {
   return signature.every((byte, index) => value[offset + index] === byte)
@@ -57,7 +60,7 @@ function matchesSignature(type: string, prefix: Uint8Array): boolean {
   }
 }
 
-/** Inspect only the binary file signature before returning HTTP 200 to the browser.
+/** Inspect only a bounded binary file signature before returning HTTP 200 to the browser.
  * Replay the consumed chunks without buffering the document; preserve backpressure,
  * streaming errors, and downstream cancellation of the original upstream reader.
  */
@@ -65,6 +68,7 @@ export async function verifyConversionSignature(
   body: ReadableStream<Uint8Array>,
   contentType: string,
   declaredLength?: number,
+  options: { allowPdfPreamble?: boolean } = {},
 ): Promise<ReadableStream<Uint8Array>> {
   const size = requiredBytes(contentType)
   if (declaredLength !== undefined && declaredLength < size) {
@@ -73,13 +77,18 @@ export async function verifyConversionSignature(
   }
   if (size === 0) return body
 
+  const allowPdfPreamble = contentType === 'application/pdf' && options.allowPdfPreamble === true
+  // The header may start at any offset before byte 1,024. Reserve seven
+  // additional bytes so a header that straddles that boundary is complete.
+  const maxPrefix = allowPdfPreamble ? PDF_PREAMBLE_LIMIT + size - 1 : size
   const reader = body.getReader()
   const buffered: Uint8Array[] = []
-  const prefix = new Uint8Array(size)
+  const prefix = new Uint8Array(maxPrefix)
   let offset = 0
   let bufferedBytes = 0
+  let validPreamblePdf = false
   try {
-    while (offset < size) {
+    while (offset < maxPrefix && !validPreamblePdf) {
       const { done, value } = await reader.read()
       if (done) break
       if (value.byteLength === 0) continue
@@ -88,19 +97,43 @@ export async function verifyConversionSignature(
       if (declaredLength !== undefined && bufferedBytes > declaredLength) {
         throw new ProxyInputError('Gotenberg returned an inconsistent response length.', 502)
       }
-      const portion = Math.min(size - offset, value.byteLength)
+      const previousOffset = offset
+      const portion = Math.min(maxPrefix - offset, value.byteLength)
       prefix.set(value.subarray(0, portion), offset)
       offset += portion
-      // An HTML fallback can be rejected as soon as its first five bytes
-      // disagree with %PDF-, without waiting for the full version header.
-      if (contentType === 'application/pdf' && offset >= 5 && !beginsWith(prefix, PDF_SIGNATURE)) {
+      if (allowPdfPreamble) {
+        // A gateway HTML fallback must not pass merely because its error text
+        // includes a PDF version string.
+        const opening = new TextDecoder().decode(prefix.subarray(0, Math.min(offset, 80)))
+        if (/^\s*<(?:html[\s>]|!doctype\s+html[\s>])/i.test(opening)) {
+          throw new ProxyInputError(
+            'Gotenberg returned content that does not match its declared file type.',
+            502,
+          )
+        }
+        // Revisit seven previous bytes in case the header crosses a chunk.
+        for (let start = Math.max(0, previousOffset - 7); start + size <= offset; start++) {
+          if (start >= PDF_PREAMBLE_LIMIT) break
+          if (matchesSignature('application/pdf', prefix.subarray(start, start + size))) {
+            validPreamblePdf = true
+            break
+          }
+        }
+      } else if (
+        // An HTML fallback on a rewritten PDF can be rejected immediately.
+        contentType === 'application/pdf' &&
+        offset >= 5 &&
+        !beginsWith(prefix, PDF_SIGNATURE)
+      ) {
         throw new ProxyInputError(
           'Gotenberg returned content that does not match its declared file type.',
           502,
         )
       }
     }
-    if (offset < size || !matchesSignature(contentType, prefix)) {
+    if (
+      allowPdfPreamble ? !validPreamblePdf : offset < size || !matchesSignature(contentType, prefix)
+    ) {
       throw new ProxyInputError(
         'Gotenberg returned content that does not match its declared file type.',
         502,

@@ -262,9 +262,14 @@ export function reconcilePdfComposeSources(
         )
       }
       if (!sources?.length) {
-        if (afterSplit) {
+        // Gotenberg auto-numbers colliding uploads (including ZIP entries), so
+        // the current name may be "report (2)_0.pdf" after a split. The preflight
+        // cannot predict which upload gets the suffix when fields collide.
+        // Forward an explicitly supplied current name for Gotenberg to check,
+        // rather than rejecting a valid reference to a numbered source.
+        if (afterSplit && !(duplicateInputs && !unknownInputs)) {
           throw new InputError(
-            'compose: cannot resolve filenames after split when source filenames are unknown or collide. Set a Chromium output filename, downloadFrom filename overrides for remotes, or use separately named PDF inputs.',
+            'compose: cannot resolve filenames after split when source filenames are unknown. Set a Chromium output filename, downloadFrom filename overrides for remotes, or use separately named PDF inputs.',
           )
         }
         return entry

@@ -188,16 +188,25 @@ export const PDF_PIPELINE_STAGES = [
   {
     op: 'extract-text',
     label: 'Extract text',
-    description: 'Save text as .txt. Scanned pages need external OCR. Final stage (9.1+).',
+    description:
+      'Save UTF-8 text (.txt) or structured Markdown (.md, Gotenberg 9.8+). Scanned pages need external OCR. Final stage (9.1+).',
     options: {},
-    fields: ['pages', 'invisible', 'artifacts', 'annotations'],
+    fields: ['pages', 'format', 'invisible', 'artifacts', 'annotations'],
   },
   {
     op: 'optimize',
     label: 'Optimise',
-    description: 'Losslessly optimise PDF contents.',
+    description:
+      'Losslessly optimise PDF contents. Gotenberg 9.9+ compressStreams controls compression of uncompressed PDF streams (enabled by default).',
     options: {},
-    fields: ['objectStreams', 'dedup', 'recompressImages', 'subsetFonts', 'dropSignatures'],
+    fields: [
+      'objectStreams',
+      'dedup',
+      'recompressImages',
+      'compressStreams',
+      'subsetFonts',
+      'dropSignatures',
+    ],
   },
   {
     op: 'encrypt',
@@ -420,6 +429,7 @@ function validateStage(stage: PdfPipelineStage): void {
     'objectStreams',
     'dedup',
     'recompressImages',
+    'compressStreams',
     'subsetFonts',
     'aggressive',
     'pades',
@@ -592,9 +602,7 @@ function validateStage(stage: PdfPipelineStage): void {
           ([_key, value]) =>
             !(
               typeof value === 'string' ||
-              value === null ||
-              (Array.isArray(value) &&
-                value.every((item) => item === null || typeof item === 'string'))
+              (Array.isArray(value) && value.every((item) => typeof item === 'string'))
             ),
         )
       )
@@ -645,6 +653,11 @@ function validateStage(stage: PdfPipelineStage): void {
       break
     case 'extract-attachments':
       // A missing or empty name extracts every attachment; non-empty names match exactly.
+      break
+    case 'extract-text':
+      if (!absent(stage.format) && !['', 'text', 'markdown'].includes(String(stage.format))) {
+        throw new InputError('extract-text: format must be text or markdown.')
+      }
       break
     case 'encrypt':
       if (!stage.userPassword && !stage.ownerPassword)
@@ -874,6 +887,20 @@ export function parsePdfPipeline(
   return stages
 }
 
+/** Only a standalone extraction can return an individual embedded attachment.
+ * Conversion-time extraction and multi-stage pipelines return generated ZIPs.
+ */
+export function isStandaloneAttachmentExtraction(
+  operationId: string,
+  rawStages: string | boolean | undefined,
+  acknowledgedRedaction = false,
+): boolean {
+  if (operationId === 'extract-attachments') return true
+  if (operationId !== 'pdf-pipeline' || typeof rawStages !== 'string') return false
+  const stages = parsePdfPipeline(rawStages, { acknowledgedRedaction })
+  return stages.length === 1 && stages[0]?.op === 'extract-attachments'
+}
+
 /** Narrow accepted response media types to the actual stages requested. */
 export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): readonly string[] {
   const render = stages.at(-1)
@@ -884,7 +911,9 @@ export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): read
   // A sole extraction returns extracted files only; combined stages also return
   // the processed PDF(s) alongside the extracted files, always as a ZIP.
   if (render?.op === 'extract-text')
-    return stages.length === 1 ? ['text/plain', 'application/zip'] : ['application/zip']
+    return stages.length === 1
+      ? [render.format === 'markdown' ? 'text/markdown' : 'text/plain', 'application/zip']
+      : ['application/zip']
   if (render?.op === 'extract-attachments')
     return stages.length === 1 ? ['*', 'application/zip'] : ['application/zip']
   // Merge collapses all current documents into exactly one. Subsequent edits
