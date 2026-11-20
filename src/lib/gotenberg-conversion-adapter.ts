@@ -1,3 +1,4 @@
+import { effectiveRemoteFilename } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
   mergeUploadFilename,
@@ -287,9 +288,10 @@ function orderOfficeMergeInputs(
   const reserved = [
     ...stageFiles.map(({ name }) => name),
     ...archiveEntryNames,
-    ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
-      filename || name ? [filename ?? name ?? ''] : [],
-    ),
+    ...(payload.downloadFrom ?? []).flatMap((remote) => {
+      const filename = effectiveRemoteFilename(remote)
+      return filename ? [filename] : []
+    }),
   ]
   // The v8 form builder already prefixes documents for its Merge switch.
   const ordered = builtInMerge
@@ -461,8 +463,8 @@ export function adaptConversionForm(
       const isOfficeSource = (name: string): boolean =>
         OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase()) &&
         !referenced.has(name.normalize('NFC'))
-      const remoteSources = (payload.downloadFrom ?? []).flatMap(({ filename, name }) => {
-        const remoteName = filename ?? name
+      const remoteSources = (payload.downloadFrom ?? []).flatMap((remote) => {
+        const remoteName = effectiveRemoteFilename(remote)
         return remoteName && isOfficeSource(remoteName) ? [remoteName] : []
       })
       const localSources =
@@ -491,7 +493,7 @@ export function adaptConversionForm(
         singleInput: operation.id !== 'office-pdf',
         unknownInputs:
           operation.id === 'office-pdf' &&
-          (payload.downloadFrom ?? []).some(({ filename, name }) => !(filename ?? name)),
+          (payload.downloadFrom ?? []).some((remote) => !effectiveRemoteFilename(remote)),
         mapBookmarks: true,
       })
       parsePdfPipeline(JSON.stringify(mergedStages), {

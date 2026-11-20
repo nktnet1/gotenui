@@ -1,4 +1,4 @@
-import { filenameKey } from '#/lib/file-names'
+import { effectiveRemoteFilename, filenameKey } from '#/lib/file-names'
 import type { RemoteFile } from '#/lib/validation'
 import { InputError } from '#/lib/validation'
 
@@ -17,7 +17,7 @@ export function remoteStageAssets(
   const assets: string[] = []
   for (const remote of remotes) {
     if (remote.field || remote.embedded) continue // Legacy v8 destinations are handled elsewhere.
-    const name = remote.filename ?? remote.name
+    const name = effectiveRemoteFilename(remote)
     if (!name) continue
     const key = filenameKey(name)
     const isStageAsset = referenced.has(key)

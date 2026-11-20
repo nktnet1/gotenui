@@ -105,6 +105,31 @@ const compose = (source?: string) => ({
 })
 
 describe('Gotenberg 9.2 compose source reconciliation', () => {
+  it('uses a nonempty remote name hint when the official filename override is empty', async () => {
+    const office = await forwarded({
+      names: ['local.docx'],
+      stages: [compose('remote.docx.pdf')],
+      remotes: [{ url: 'https://files.example.test/object', name: 'remote.docx', filename: '' }],
+    })
+    assert.equal(office.status, 200, office.error)
+    assert.deepEqual(office.remotes, [
+      { url: 'https://files.example.test/object', filename: 'remote.docx' },
+    ])
+    assert.deepEqual(office.stages, [compose('remote.docx.pdf')])
+
+    const pdf = await forwarded({
+      operation: 'pdf-pipeline',
+      names: ['local.pdf'],
+      stages: [compose('remote.pdf')],
+      remotes: [{ url: 'https://files.example.test/object', name: 'remote.pdf', filename: '' }],
+    })
+    assert.equal(pdf.status, 200, pdf.error)
+    assert.deepEqual(pdf.remotes, [
+      { url: 'https://files.example.test/object', filename: 'remote.pdf' },
+    ])
+    assert.deepEqual(pdf.stages, [compose('remote.pdf')])
+  })
+
   it('uses source omission for merge and compose stages with a single current PDF', async () => {
     const result = await forwarded({
       names: ['z.docx', 'a.docx'],

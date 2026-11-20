@@ -20,6 +20,16 @@ export function safeFilename(name: string): string {
 /** Gotenberg NFC-normalises filenames, but resolves them case-sensitively. */
 export const filenameKey = (name: string): string => name.normalize('NFC')
 
+/** An empty official filename override means "not set". Match the name that
+ * the v9 multipart adapter sends, including when a legacy name hint exists.
+ */
+export function effectiveRemoteFilename(remote: {
+  filename?: string
+  name?: string
+}): string | undefined {
+  return remote.filename || remote.name || undefined
+}
+
 /** Preserve upload arrival order. Gotenberg compares NFC-normalised filenames
  * case-sensitively and auto-renames repeated source documents in major 9.
  */

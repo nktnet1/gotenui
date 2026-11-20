@@ -105,6 +105,13 @@ export class InputError extends Error {
 
 const extension = /\.[a-z0-9]+$/i
 const fieldNamePattern = /^[a-z][a-zA-Z0-9]{0,63}$/
+const decimalIntegerPattern = /^[+-]?\d+$/
+const decimalNumberPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
+const minGoInt = -(1n << 63n)
+const maxGoInt = (1n << 63n) - 1n
+// Go strings.TrimSpace uses Unicode White_Space, unlike JavaScript \s (which
+// also matches U+FEFF and omits U+0085).
+const goWhitespaceOnly = /^\p{White_Space}+$/u
 const forbiddenAdvanced = new Set([
   'files',
   'payload',
@@ -195,8 +202,16 @@ function validateHeaderMap(headers: Record<string, string> | undefined): void {
 function validateAsyncInputs(payload: ConversionPayload): void {
   for (const remote of payload.downloadFrom ?? []) {
     requireHttpUrl(remote.url, 'downloadFrom URL')
-    if (remote.name !== undefined) safeFilename(remote.name)
-    if (remote.filename) safeFilename(remote.filename)
+    if (remote.name) {
+      safeFilename(remote.name)
+      if (goWhitespaceOnly.test(remote.name))
+        throw new InputError('Remote filename must not be blank.')
+    }
+    if (remote.filename) {
+      safeFilename(remote.filename)
+      if (goWhitespaceOnly.test(remote.filename))
+        throw new InputError('Remote filename must not be blank.')
+    }
     if (remote.name && remote.filename && remote.name !== remote.filename) {
       throw new InputError('Specify one remote filename, not two conflicting names.')
     }
@@ -1065,12 +1080,18 @@ export function validatePayload(input: unknown): {
         throw new InputError('Enter an absolute http or https URL.')
       }
       if (field.kind === 'number' && value) {
+        // Gotenberg binds these form fields with strconv.Atoi or strconv.ParseFloat.
+        // Number() additionally accepts hex, whitespace and exponent notation for ints.
+        const integer = field.integer === true
+        const validSpelling = (integer ? decimalIntegerPattern : decimalNumberPattern).test(value)
         const n = Number(value)
+        const goInt = integer && validSpelling ? BigInt(value) : undefined
         if (
+          !validSpelling ||
           !Number.isFinite(n) ||
           (field.min !== undefined && n < field.min) ||
           (field.max !== undefined && n > field.max) ||
-          (field.integer === true && !Number.isInteger(n))
+          (goInt !== undefined && (goInt < minGoInt || goInt > maxGoInt))
         ) {
           throw new InputError(`${field.label} is outside its permitted range.`)
         }

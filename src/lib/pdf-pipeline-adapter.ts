@@ -1,3 +1,4 @@
+import { effectiveRemoteFilename } from '#/lib/file-names'
 import { mergeUploadFilenames } from '#/lib/merge-order'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
@@ -63,9 +64,10 @@ export function adaptPdfPipeline(
           [
             ...auxiliary.map(({ name }) => name),
             ...archiveEntryNames,
-            ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
-              filename || name ? [filename ?? name ?? ''] : [],
-            ),
+            ...(payload.downloadFrom ?? []).flatMap((remote) => {
+              const filename = effectiveRemoteFilename(remote)
+              return filename ? [filename] : []
+            }),
           ],
         )
       : []
@@ -83,8 +85,8 @@ export function adaptPdfPipeline(
     /\.pdf$/i.test(name) && !references.includes(name.normalize('NFC'))
   const external = [
     ...archiveEntryNames.filter(isInput),
-    ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) => {
-      const remoteName = filename ?? name
+    ...(payload.downloadFrom ?? []).flatMap((remote) => {
+      const remoteName = effectiveRemoteFilename(remote)
       return remoteName && isInput(remoteName) ? [remoteName] : []
     }),
   ]
@@ -96,7 +98,7 @@ export function adaptPdfPipeline(
       }),
       ...external.map((name) => ({ original: name, forwarded: name })),
     ],
-    unknownInputs: (payload.downloadFrom ?? []).some(({ filename, name }) => !(filename ?? name)),
+    unknownInputs: (payload.downloadFrom ?? []).some((remote) => !effectiveRemoteFilename(remote)),
     mapBookmarks: true,
   })
   form.set('stages', JSON.stringify(mappedStages))

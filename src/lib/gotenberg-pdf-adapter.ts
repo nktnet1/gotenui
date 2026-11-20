@@ -1,5 +1,5 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
-import { filenameKey } from '#/lib/file-names'
+import { effectiveRemoteFilename, filenameKey } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeUploadFilename, reservePrefixedMergeUploadNames } from '#/lib/merge-order'
@@ -120,9 +120,10 @@ export function adaptPdfForm(
   const sources = legacy.getAll('files')
   const reservedNames = [
     ...archiveEntryNames,
-    ...(payload.downloadFrom ?? []).flatMap(({ filename, name }) =>
-      filename || name ? [filename ?? name ?? ''] : [],
-    ),
+    ...(payload.downloadFrom ?? []).flatMap((remote) => {
+      const filename = effectiveRemoteFilename(remote)
+      return filename ? [filename] : []
+    }),
   ]
   const numberedNames =
     operation.id === 'merge'

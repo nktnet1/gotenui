@@ -3,6 +3,7 @@ import { normalizeBackendUrl } from '#/lib/backend-url'
 import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { CHROMIUM_MEDIA_OPTIONS, encodeChromiumMediaFeatures } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
+import { effectiveRemoteFilename } from '#/lib/file-names'
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
@@ -224,9 +225,10 @@ export function createGotenbergForm(
               409,
             )
           }
+          const effectiveFilename = effectiveRemoteFilename({ filename, name })
           return {
             ...remote,
-            ...(supportsFilename && (filename || name) ? { filename: filename ?? name } : {}),
+            ...(supportsFilename && effectiveFilename ? { filename: effectiveFilename } : {}),
           }
         }),
       ),

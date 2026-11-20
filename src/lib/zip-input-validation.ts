@@ -1,5 +1,5 @@
 import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
-import { filenameKey } from '#/lib/file-names'
+import { effectiveRemoteFilename, filenameKey } from '#/lib/file-names'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -168,13 +168,24 @@ async function zipEntryNames(archive: File): Promise<string[]> {
     const next = cursor + 46 + nameLength + extraLength + commentLength
     if (next > length) invalidArchive(archive.name, 'the ZIP index contains a truncated entry.')
     const name = decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLength))
-    // Gotenberg ignores directories, Unix symlinks and macOS resource forks.
-    // Do not let skipped entries shadow or constrain actual uploaded files.
-    const unixMode = directory.getUint32(cursor + 38, true) >>> 16
-    const unixType = unixMode & 0o170000
+    // Gotenberg skips anything for which Go archive/zip's Mode().IsRegular()
+    // is false. Unix and macOS creators use Unix file types, while FAT, NTFS
+    // and VFAT creators use the DOS directory attribute, even when the entry
+    // name has no trailing slash.
+    const creator = directory.getUint16(cursor + 4, true) >>> 8
+    const externalAttributes = directory.getUint32(cursor + 38, true)
+    const unixType = (externalAttributes >>> 16) & 0o170000
     const unixNonRegular =
-      directory.getUint16(cursor + 4, true) >>> 8 === 3 && unixType !== 0 && unixType !== 0o100000
-    if (name.endsWith('/') || name.endsWith('\\') || unixNonRegular || ignoredArchiveEntry(name)) {
+      (creator === 3 || creator === 19) && unixType !== 0 && unixType !== 0o100000
+    const dosDirectory =
+      (creator === 0 || creator === 11 || creator === 14) && (externalAttributes & 0x10) !== 0
+    if (
+      name.endsWith('/') ||
+      name.endsWith('\\') ||
+      unixNonRegular ||
+      dosDirectory ||
+      ignoredArchiveEntry(name)
+    ) {
       cursor = next
       continue
     }
@@ -270,7 +281,7 @@ export async function validateZipInputs(
         : []
   const stageAssets = new Set(pdfStageAssetNames(stages))
   const remoteAssets = (payload.downloadFrom ?? []).filter((remote) => {
-    const name = remote.filename ?? remote.name
+    const name = effectiveRemoteFilename(remote)
     return (
       !remote.embedded &&
       !remote.field &&

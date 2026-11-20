@@ -136,6 +136,36 @@ test('ignores macOS metadata, directory entries and Unix symlinks like Gotenberg
   assert.deepEqual(await check('pdf-pipeline', [new File([symlink], 'linked.zip')]), ['input.pdf'])
 })
 
+test('ignores DOS directory attributes and macOS symlinks when inspecting ZIP entries', async () => {
+  const makeArchive = async (creator: number, attributes: number): Promise<File> => {
+    const data = new Uint8Array(
+      await zipFixture({ 'index.html': '', 'theme.css': 'body {}' }).arrayBuffer(),
+    )
+    const directory = new DataView(data.buffer)
+    const firstEntry = directory.getUint32(data.length - 6, true)
+    // ZIP central headers encode creator OS in the top byte of version-made-by.
+    directory.setUint16(firstEntry + 4, (creator << 8) | 20, true)
+    directory.setUint32(firstEntry + 38, attributes, true)
+    return new File([data], `creator-${creator}.zip`)
+  }
+
+  // FAT, NTFS and VFAT creators recognise the DOS directory bit, even without
+  // a trailing slash. Gotenberg skips the entry before checking index.html.
+  for (const creator of [0, 11, 14]) {
+    assert.deepEqual(await check('html-pdf', [await makeArchive(creator, 0x10)]), ['theme.css'])
+  }
+  // Unix and macOS use the type encoded in the upper 16 attribute bits.
+  for (const creator of [3, 19]) {
+    assert.deepEqual(await check('html-pdf', [await makeArchive(creator, 0o120777 << 16)]), [
+      'theme.css',
+    ])
+    await assert.rejects(
+      check('html-pdf', [await makeArchive(creator, (0o100644 << 16) | 0x10)]),
+      /duplicate or reserved filename: index.html/,
+    )
+  }
+})
+
 test('normalises effective ZIP names like Gotenberg and prevents Unicode filename collisions', async () => {
   assert.deepEqual(await check('pdf-pipeline', [zipFixture({ 'cafe\u0301.pdf': '%PDF' })]), [
     'café.pdf',
@@ -260,6 +290,16 @@ test('recognises Gotenberg 9.2 downloadFrom.filename as a stage asset when check
         ...payload,
         fields: { stages },
         downloadFrom: [{ url: 'https://example.com/object', filename: 'attachment.pdf' }],
+      },
+    }),
+    /at least one source PDF/,
+  )
+  await assert.rejects(
+    check('pdf-pipeline', [zipFixture({ 'notes.txt': 'unrelated' })], {
+      payload: {
+        ...payload,
+        fields: { stages },
+        downloadFrom: [{ url: 'https://example.com/object', name: 'attachment.pdf', filename: '' }],
       },
     }),
     /at least one source PDF/,
