@@ -298,6 +298,130 @@ test('v9 accepts a ZIP response when Office archives expand to several output do
   assert.equal(response.headers.get('content-type'), 'application/zip')
 })
 
+const archivedPdfZipCases: {
+  name: string
+  operation: string
+  fields: Record<string, string | boolean>
+  files: File[]
+  archives: File[]
+  extra: Record<string, unknown>
+}[] = [
+  {
+    name: 'two source PDFs in one archive',
+    operation: 'rotate',
+    fields: { rotateAngle: '90' },
+    files: [],
+    archives: [zipFixture({ 'one.pdf': '%PDF-1.7\n', 'nested/two.PDF': '%PDF-1.7\n' })],
+    extra: {},
+  },
+  {
+    name: 'one local PDF and one archived PDF',
+    operation: 'optimize',
+    fields: {},
+    files: [new File(['%PDF-1.7\n'], 'local.pdf')],
+    archives: [zipFixture({ 'remote.pdf': '%PDF-1.7\n', 'readme.txt': 'notes' })],
+    extra: {},
+  },
+  {
+    name: 'one remote PDF and one archived PDF',
+    operation: 'rotate',
+    fields: { rotateAngle: '90' },
+    files: [],
+    archives: [zipFixture({ 'archived.pdf': '%PDF-1.7\n' })],
+    extra: { downloadFrom: [{ url: 'https://files.example.test/remote.pdf' }] },
+  },
+  {
+    name: 'source PDFs spread across archives',
+    operation: 'optimize',
+    fields: {},
+    files: [],
+    archives: [
+      zipFixture({ 'a.pdf': '%PDF-1.7\n' }, 'first.zip'),
+      zipFixture({ 'b.pdf': '%PDF-1.7\n' }, 'second.zip'),
+    ],
+    extra: {},
+  },
+  {
+    name: 'v9-only form filling with two archived PDFs',
+    operation: 'fill-form',
+    fields: { formValues: '{"Name":"Example"}' },
+    files: [],
+    archives: [zipFixture({ 'first.pdf': '%PDF-1.7\n', 'second.pdf': '%PDF-1.7\n' })],
+    extra: {},
+  },
+]
+
+test.each(archivedPdfZipCases)(
+  'v9 accepts a ZIP response for $name',
+  async ({ operation, fields, files, archives, extra }) => {
+    const output = zipFixture({ 'first.pdf': '%PDF-1.7\n', 'second.pdf': '%PDF-1.7\n' })
+    let conversions = 0
+    const fetcher: typeof fetch = async (input, options) => {
+      if (String(input) === `${upstream}/version`) return new Response('9.9.0')
+      conversions++
+      assert.equal(String(input), `${upstream}/forms/pdf/pipe`)
+      assert.ok(options?.body instanceof FormData)
+      assert.equal(options.body.getAll('archives').length, archives.length)
+      assert.equal(options.body.getAll('files').length, files.length)
+      return new Response(await output.arrayBuffer(), {
+        headers: { 'Content-Type': 'application/zip' },
+      })
+    }
+    const response = await proxyConversionRequest(
+      requestFor(operation, fields, extra, files, [], [], archives),
+      fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), 'application/zip')
+    assert.deepEqual(
+      Buffer.from(await response.arrayBuffer()),
+      Buffer.from(await output.arrayBuffer()),
+    )
+    assert.equal(conversions, 1)
+  },
+)
+
+test('v9 keeps single-source ZIP uploads PDF-only and rejects unrelated ZIP responses', async () => {
+  const source = zipFixture({
+    'document.pdf': '%PDF-1.7\n',
+    'readme.txt': 'not a PDF',
+    '__MACOSX/._ignored.pdf': 'macOS metadata',
+  })
+  const request = () => requestFor('rotate', { rotateAngle: '90' }, {}, [], [], [], [source])
+  const unexpectedZip: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.9.0')
+      : new Response(await source.arrayBuffer(), {
+          headers: { 'Content-Type': 'application/zip' },
+        })
+  await assert.rejects(
+    proxyConversionRequest(request(), unexpectedZip),
+    /unexpected conversion response/,
+  )
+
+  const expectedPdf: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.9.0')
+      : new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+  const response = await proxyConversionRequest(request(), expectedPdf)
+  assert.equal(response.headers.get('content-type'), 'application/pdf')
+  assert.equal(await response.text(), '%PDF-1.7\n')
+})
+
+test('v9 merge still rejects ZIP output with multiple archived source PDFs', async () => {
+  const source = zipFixture({ 'first.pdf': '%PDF-1.7\n', 'second.pdf': '%PDF-1.7\n' })
+  const fetcher: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.9.0')
+      : new Response(await source.arrayBuffer(), {
+          headers: { 'Content-Type': 'application/zip' },
+        })
+  await assert.rejects(
+    proxyConversionRequest(requestFor('merge', {}, {}, [], [], [], [source]), fetcher),
+    /unexpected conversion response/,
+  )
+})
+
 test('v9 PDF pipeline forwards remote PDF URLs and uploaded source ZIPs, but v8 never forwards them', async () => {
   const archive = zipFixture({ 'source.pdf': '%PDF-1.7\n' }, 'source-pdfs.zip')
   const remote = [

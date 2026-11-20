@@ -373,6 +373,7 @@ function allowedConversionContentTypes(
   payload: ConversionPayload,
   files: readonly File[],
   archives: readonly File[] = [],
+  archiveEntryNames: readonly string[] = [],
 ): readonly string[] {
   if (operation.id === 'extract-attachments') return ['*', 'application/zip']
   if (operation.id === 'extract-text')
@@ -421,8 +422,14 @@ function allowedConversionContentTypes(
   const remoteDocuments = (payload.downloadFrom ?? []).filter(
     (file) => !file.embedded && !file.field,
   ).length
+  // ZIP inputs have already been inspected by validateZipInputs. Count their
+  // source PDFs as well as direct/remote uploads, without treating unrelated
+  // archive resources as documents. Gotenberg returns ZIP for multiple
+  // independent PDF results.
+  const archivedPdfDocuments =
+    operation.input === 'pdf' ? archiveEntryNames.filter((name) => /\.pdf$/i.test(name)).length : 0
   const multipleDocuments =
-    files.length + remoteDocuments > 1 &&
+    files.length + remoteDocuments + archivedPdfDocuments > 1 &&
     ((operation.input === 'office' && payload.fields.merge !== true) ||
       (operation.input === 'pdf' && operation.id !== 'merge'))
   const splitMode = payload.fields.splitMode ?? payload.advanced.splitMode
@@ -823,7 +830,13 @@ export async function proxyConversionRequest(
     }
     return new Response(null, { status: upstream.status, headers })
   }
-  const allowedTypes = allowedConversionContentTypes(operation, payload, files, archives)
+  const allowedTypes = allowedConversionContentTypes(
+    operation,
+    payload,
+    files,
+    archives,
+    archiveEntryNames,
+  )
   const upstreamContentType = upstream.headers.get('content-type')
   const returnedType = upstreamContentType?.split(';')[0]?.trim().toLowerCase()
   // An extracted attachment has its own MIME type, which may be anything.
