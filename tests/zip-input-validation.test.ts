@@ -398,9 +398,16 @@ test('accepts same-name source documents within ZIPs and alongside local PDFs', 
 })
 
 test('rejects archive assets that could shadow generated HTML or Markdown sources', async () => {
-  for (const name of ['index.html', 'header.html', 'footer.html']) {
+  await assert.rejects(
+    check('html-pdf', [zipFixture({ 'index.html': 'shadow' })]),
+    /duplicate or reserved filename/,
+  )
+  for (const name of ['header.html', 'footer.html']) {
+    assert.deepEqual(await check('html-pdf', [zipFixture({ [name]: 'template' })]), [name])
     await assert.rejects(
-      check('html-pdf', [zipFixture({ [name]: 'shadow' })]),
+      check('html-pdf', [zipFixture({ [name]: 'shadow' })], {
+        payload: { ...payload, [`${name.split('.')[0]}Html`]: 'generated' },
+      }),
       /duplicate or reserved filename/,
     )
   }

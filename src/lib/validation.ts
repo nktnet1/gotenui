@@ -4,7 +4,11 @@ import {
   isAttachmentMimeType,
   parseAttachmentMetadata,
 } from '#/lib/attachment-metadata'
-import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
+import {
+  DEFAULT_MARKDOWN_NAME,
+  defaultMarkdownTemplate,
+  generatedChromiumFilenames,
+} from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
 import {
   hasAmbiguousChromiumScope,
@@ -15,6 +19,7 @@ import {
   safeFilename as checkFilename,
   effectiveRemoteFilename,
   filenameKey,
+  possibleRemoteFilename,
 } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
@@ -624,14 +629,8 @@ export function validateFiles(
   if (operation.auxiliary?.required && auxiliary.length + remoteAux === 0) {
     throw new InputError(`${operation.auxiliary.label} is required.`)
   }
-  const names = new Set<string>()
-  if (operation.input === 'html' || operation.input === 'markdown') {
-    for (const name of ['index.html', 'header.html', 'footer.html']) names.add(name)
-    if (operation.input === 'markdown') {
-      names.add(filenameKey(payload?.markdownName ?? DEFAULT_MARKDOWN_NAME))
-      for (const file of payload?.markdownFiles ?? []) names.add(filenameKey(file.name))
-    }
-  }
+  const generatedNames = generatedChromiumFilenames(operation.input, payload)
+  const names = new Set(generatedNames.map(filenameKey))
   const generatedTemplate =
     operation.input === 'markdown'
       ? (payload?.markdownTemplate ??
@@ -732,6 +731,21 @@ export function validateFiles(
       !new Set(['.pdf', '.png', '.jpeg', '.jpg', '.gif', '.webp', '.tiff']).has(ext ?? '')
     ) {
       throw new InputError('Stamp and watermark files must be images or PDFs.')
+    }
+  }
+  if (major === 9 && operation.path.startsWith('/forms/chromium/')) {
+    // Gotenberg downloads remote assets before registering multipart uploads.
+    // A remote override or URL-inferred name can otherwise take index.html,
+    // a Markdown source, or an uploaded resource's name.
+    const localNames = new Set([
+      ...generatedNames.map(filenameKey),
+      ...auxiliary.map(({ name }) => filenameKey(name)),
+    ])
+    for (const remote of payload?.downloadFrom ?? []) {
+      const name = possibleRemoteFilename(remote)
+      if (name && localNames.has(filenameKey(name))) {
+        throw new InputError(`Remote filename collides with a local document or asset: ${name}`)
+      }
     }
   }
   if (

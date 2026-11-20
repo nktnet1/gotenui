@@ -1,5 +1,5 @@
-import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
-import { effectiveRemoteFilename, filenameKey } from '#/lib/file-names'
+import { generatedChromiumFilenames } from '#/lib/chromium-documents'
+import { effectiveRemoteFilename, filenameKey, possibleRemoteFilename } from '#/lib/file-names'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -252,21 +252,18 @@ export async function validateZipInputs(
     ...stageFiles.map(({ name }) => filenameKey(name)),
   ])
   const expected = new Set<string>([...localSources, ...protectedNames])
-  if (operation.input === 'html' || operation.input === 'markdown') {
-    for (const name of ['index.html', 'header.html', 'footer.html']) {
-      expected.add(name)
-      protectedNames.add(name)
-    }
-    if (operation.input === 'markdown') {
-      for (const name of [
-        payload.markdownName ?? DEFAULT_MARKDOWN_NAME,
-        ...(payload.markdownFiles ?? []).map((source) => source.name),
-      ]) {
-        expected.add(filenameKey(name))
-        protectedNames.add(filenameKey(name))
-      }
-    }
+  for (const name of generatedChromiumFilenames(operation.input, payload)) {
+    expected.add(filenameKey(name))
+    protectedNames.add(filenameKey(name))
   }
+  const chromiumRemoteNames = new Set(
+    operation.path.startsWith('/forms/chromium/')
+      ? (payload.downloadFrom ?? []).flatMap((remote) => {
+          const name = possibleRemoteFilename(remote)
+          return name ? [filenameKey(name)] : []
+        })
+      : [],
+  )
   const extensions = officeExtensionSetForMajor(9)
   const stages =
     operation.id === 'pdf-pipeline'
@@ -301,6 +298,9 @@ export async function validateZipInputs(
       const normalizedName = basename(name).normalize('NFC')
       const flatName = filenameKey(normalizedName)
       const label = normalizedName.slice(0, 120)
+      if (chromiumRemoteNames.has(flatName)) {
+        invalidArchive(archive.name, `filename collides with a remote asset: ${label}.`)
+      }
       // Gotenberg resolves entries as named input files; compare basenames
       // by exact NFC spelling, including across separate archives and uploads.
       const isStageAsset = stageAssets.has(normalizedName)

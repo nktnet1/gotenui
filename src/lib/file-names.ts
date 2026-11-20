@@ -30,6 +30,36 @@ export function effectiveRemoteFilename(remote: {
   return remote.filename || remote.name || undefined
 }
 
+/** Gotenberg 9 can also infer the filename from the URL path if no override
+ * or Content-Disposition filename is present. Use this only when checking for
+ * potential name collisions, not when resolving an exact stage asset.
+ */
+export function possibleRemoteFilename(remote: {
+  url: string
+  filename?: string
+  name?: string
+}): string | undefined {
+  const explicit = effectiveRemoteFilename(remote)
+  if (explicit) return explicit
+  try {
+    // Go's url.Parse decodes Path, then path.Base strips trailing slashes.
+    // SanitizeFilename subsequently strips backslashes and control characters.
+    const pathname = decodeURIComponent(new URL(remote.url).pathname)
+    const base = pathname.replace(/\/+$/u, '').split('/').at(-1) ?? ''
+    const filename = [...(base.split('\\').at(-1) ?? '')]
+      .filter((character) => {
+        const code = character.codePointAt(0) ?? 0
+        return code >= 32 && code !== 127
+      })
+      .join('')
+      .normalize('NFC')
+    const extension = filename.slice(filename.lastIndexOf('.'))
+    return extension.length >= 2 && extension !== filename ? filename : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Preserve upload arrival order. Gotenberg compares NFC-normalised filenames
  * case-sensitively and auto-renames repeated source documents in major 9.
  */
