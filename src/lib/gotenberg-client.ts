@@ -11,7 +11,11 @@ import { effectiveRemoteFilename, possibleRemoteFilename } from '#/lib/file-name
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
-import { isStandaloneAttachmentExtraction } from '#/lib/pdf-pipeline'
+import {
+  isStandaloneAttachmentExtraction,
+  parsePdfPipeline,
+  pdfStageAssetNames,
+} from '#/lib/pdf-pipeline'
 import {
   OVERLAY_KINDS,
   orderedOverlayUploads,
@@ -182,8 +186,20 @@ export function createGotenbergForm(
   archives: readonly File[] = [],
   major?: SupportedGotenbergMajor,
   version?: GotenbergVersion,
+  stageFiles: readonly File[] = [],
+  archiveEntryNames: readonly string[] = [],
 ): FormData {
-  validateFiles(operation, files, auxiliary, maxBytes, payload, postFiles, [], archives, major)
+  validateFiles(
+    operation,
+    files,
+    auxiliary,
+    maxBytes,
+    payload,
+    postFiles,
+    stageFiles,
+    archives,
+    major,
+  )
   const form = new FormData()
   const isChromium = operation.path.startsWith('/forms/chromium/')
   const mediaFieldNames = new Set<string>(CHROMIUM_MEDIA_OPTIONS.map((feature) => feature.name))
@@ -219,10 +235,11 @@ export function createGotenbergForm(
     // 9.2 adds filename to the official downloadFrom descriptor. The previous
     // name hint remains client-only on older servers, preserving their API.
     const supportsFilename = major === 9 && version?.major === 9 && version.minor >= 2
-    // Gotenberg gives a remote Content-Disposition filename priority over the
-    // URL basename, then registers remote downloads before local uploads.
-    // Pin those remote names when they could shadow a generated/uploaded file.
-    const mustPinChromiumNames =
+    // Gotenberg registers remote downloads before local files, ZIP entries,
+    // and conversion-stage assets. Pin names that can shadow local assets on
+    // v9.2+. Older PDF/Office workflows must retain their existing remote
+    // semantics because 9.1 does not support the filename override.
+    const chromiumNamesAtRisk =
       major === 9 &&
       isChromium &&
       (generatedChromiumFilenames(operation.input, payload).length > 0 ||
@@ -230,7 +247,26 @@ export function createGotenbergForm(
         auxiliary.length > 0 ||
         archives.length > 0 ||
         payload.conversionStages !== undefined)
-    if (mustPinChromiumNames && !supportsFilename) {
+    const stagesJson =
+      operation.id === 'pdf-pipeline' ? payload.fields.stages : payload.conversionStages
+    const namedArchiveAssets =
+      archives.length > 0 &&
+      archiveEntryNames.length > 0 &&
+      typeof stagesJson === 'string' &&
+      pdfStageAssetNames(
+        parsePdfPipeline(stagesJson, {
+          allowEmpty: operation.id !== 'pdf-pipeline',
+          acknowledgedRedaction:
+            operation.id === 'pdf-pipeline'
+              ? payload.fields.acknowledgedRedaction === true
+              : payload.acknowledgedConversionRedaction,
+        }),
+      ).some((name) => archiveEntryNames.includes(name))
+    const mustPinRemoteNames =
+      major === 9 &&
+      supportsFilename &&
+      (chromiumNamesAtRisk || auxiliary.length > 0 || stageFiles.length > 0 || namedArchiveAssets)
+    if (chromiumNamesAtRisk && !supportsFilename) {
       throw new InputError(
         'Chromium remote downloads alongside local assets require Gotenberg 9.2 or newer to pin their filenames.',
         409,
@@ -247,11 +283,15 @@ export function createGotenbergForm(
             )
           }
           let effectiveFilename = effectiveRemoteFilename({ filename, name })
-          if (mustPinChromiumNames && !effectiveFilename) {
+          if (
+            !effectiveFilename &&
+            supportsFilename &&
+            (mustPinRemoteNames || files.length > 0 || archives.length > 0)
+          ) {
             effectiveFilename = possibleRemoteFilename(remote)
-            if (!effectiveFilename) {
+            if (!effectiveFilename && mustPinRemoteNames) {
               throw new InputError(
-                'Specify a remote filename for Chromium downloads whose URL has no file extension.',
+                'Specify a remote filename for downloads whose URL has no file extension when local assets are present.',
               )
             }
           }

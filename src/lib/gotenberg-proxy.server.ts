@@ -776,6 +776,8 @@ export async function proxyConversionRequest(
     archives,
     major,
     version,
+    stageFiles,
+    archiveEntryNames,
   )
   const { path, form } =
     operation.input === 'pdf'

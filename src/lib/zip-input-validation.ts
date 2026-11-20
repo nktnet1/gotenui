@@ -256,13 +256,11 @@ export async function validateZipInputs(
     expected.add(filenameKey(name))
     protectedNames.add(filenameKey(name))
   }
-  const chromiumRemoteNames = new Set(
-    operation.path.startsWith('/forms/chromium/')
-      ? (payload.downloadFrom ?? []).flatMap((remote) => {
-          const name = possibleRemoteFilename(remote)
-          return name ? [filenameKey(name)] : []
-        })
-      : [],
+  const remoteNames = new Set(
+    (payload.downloadFrom ?? []).flatMap((remote) => {
+      const name = possibleRemoteFilename(remote)
+      return name ? [filenameKey(name)] : []
+    }),
   )
   const extensions = officeExtensionSetForMajor(9)
   const stages =
@@ -298,12 +296,18 @@ export async function validateZipInputs(
       const normalizedName = basename(name).normalize('NFC')
       const flatName = filenameKey(normalizedName)
       const label = normalizedName.slice(0, 120)
-      if (chromiumRemoteNames.has(flatName)) {
+      // A remote file can claim an archive entry's name before ZIP extraction.
+      // Protect all Chromium resources and named PDF-stage assets, but keep
+      // duplicate PDF/Office source documents eligible for auto-numbering.
+      const isStageAsset = stageAssets.has(normalizedName)
+      if (
+        remoteNames.has(flatName) &&
+        (operation.path.startsWith('/forms/chromium/') || isStageAsset)
+      ) {
         invalidArchive(archive.name, `filename collides with a remote asset: ${label}.`)
       }
       // Gotenberg resolves entries as named input files; compare basenames
       // by exact NFC spelling, including across separate archives and uploads.
-      const isStageAsset = stageAssets.has(normalizedName)
       const suffix = flatName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? ''
       const isSourceDocument =
         !isStageAsset &&

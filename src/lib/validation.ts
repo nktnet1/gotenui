@@ -733,10 +733,10 @@ export function validateFiles(
       throw new InputError('Stamp and watermark files must be images or PDFs.')
     }
   }
-  if (major === 9 && operation.path.startsWith('/forms/chromium/')) {
-    // Gotenberg downloads remote assets before registering multipart uploads.
-    // A remote override or URL-inferred name can otherwise take index.html,
-    // a Markdown source, or an uploaded resource's name.
+  if (major === 9 && payload?.downloadFrom?.length) {
+    // Remote downloads are registered before local stage assets on every v9
+    // route. Keep ordinary duplicate PDF/Office sources allowed, since Gotenberg
+    // numbers them, but protect resources referenced by their exact filenames.
     const localNames = new Set([
       ...generatedNames.map(filenameKey),
       ...auxiliary.map(({ name }) => filenameKey(name)),
