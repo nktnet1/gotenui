@@ -292,6 +292,69 @@ test('download filename uses upstream response when unspecified and the local ov
   }
 })
 
+test.each([
+  ['extract-attachments', {}],
+  ['pdf-pipeline', { stages: '[{"op":"extract-attachments"}]' }],
+] as const)(
+  'keeps the extracted ZIP attachment filename for %s even with an output override',
+  async (operation, fields) => {
+    const original = globalThis.fetch
+    globalThis.fetch = async () =>
+      new Response('not ZIP-format bytes', {
+        headers: {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': 'attachment; filename="backup;Q1.zip"',
+        },
+      })
+    try {
+      const result = await convertWithGotenberg(
+        'http://127.0.0.1:3000',
+        { operation, fields, advanced: {}, outputName: 'report' },
+        [new File(['%PDF-1.7'], 'source.pdf', { type: 'application/pdf' })],
+        [],
+        new AbortController().signal,
+      )
+      assert.equal(result.mode, 'download')
+      if (result.mode !== 'download') throw new Error('Expected attachment download')
+      assert.equal(result.name, 'backup;Q1.zip')
+      assert.equal(result.type, 'application/zip')
+      assert.equal(await result.blob.text(), 'not ZIP-format bytes')
+    } finally {
+      globalThis.fetch = original
+    }
+  },
+)
+
+test('retains explicit output names for ordinary generated ZIP archives', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () =>
+    new Response(new Uint8Array([0x50, 0x4b, 0x05, 0x06, ...new Array<number>(18).fill(0)]), {
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': 'attachment; filename="rendered.zip"',
+      },
+    })
+  try {
+    const result = await convertWithGotenberg(
+      'http://127.0.0.1:3000',
+      {
+        operation: 'pdf-pipeline',
+        fields: { stages: '[{"op":"render"}]' },
+        advanced: {},
+        outputName: 'report',
+      },
+      [new File(['%PDF-1.7'], 'source.pdf', { type: 'application/pdf' })],
+      [],
+      new AbortController().signal,
+    )
+    assert.equal(result.mode, 'download')
+    if (result.mode !== 'download') throw new Error('Expected generated ZIP download')
+    assert.equal(result.name, 'report.zip')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
 test('client reports upstream correlation IDs on rejected conversions', async () => {
   const original = globalThis.fetch
   globalThis.fetch = async () =>

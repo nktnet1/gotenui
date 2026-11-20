@@ -380,11 +380,12 @@ export async function convertWithGotenberg(
       operation.id,
       type,
       payload.outputName,
-      (operation.id === 'extract-attachments' ||
+      // An individually extracted attachment may itself be a ZIP. Preserve
+      // the filename already approved by the proxy, including ZIP responses.
+      operation.id === 'extract-attachments' ||
         (operation.id === 'pdf-pipeline' &&
           String(payload.fields.stages ?? '').includes('extract-attachments')) ||
-        (payload.conversionStages?.includes('extract-attachments') ?? false)) &&
-        type !== 'application/zip',
+        (payload.conversionStages?.includes('extract-attachments') ?? false),
     ),
     fallback,
   )
