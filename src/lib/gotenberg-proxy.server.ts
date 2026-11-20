@@ -895,6 +895,30 @@ export async function proxyConversionRequest(
     upstream.body,
     arbitraryAttachment ? 'application/octet-stream' : returnedType,
     declaredLength,
+    {
+      // A one-document v9 merge without per-file bookmarks returns the
+      // original PDF bytes. Its readable header need not start at byte zero.
+      allowPdfPreamble:
+        major === 9 &&
+        returnedType === 'application/pdf' &&
+        path === '/forms/pdf/pipe' &&
+        (() => {
+          const rawStages = form.get('stages')
+          if (typeof rawStages !== 'string') return false
+          // The form was validated by the adapter. Inspect only the merge
+          // operation here, without revalidating unrelated stage file assets.
+          const stages: unknown = JSON.parse(rawStages)
+          if (!Array.isArray(stages) || stages.length !== 1) return false
+          const stage: unknown = stages[0]
+          return (
+            stage !== null &&
+            typeof stage === 'object' &&
+            'op' in stage &&
+            stage.op === 'merge' &&
+            (!('fileBookmarks' in stage) || stage.fileBookmarks == null)
+          )
+        })(),
+    },
   )
   headers.set('Content-Type', upstreamContentType ?? returnedType)
   headers.set(

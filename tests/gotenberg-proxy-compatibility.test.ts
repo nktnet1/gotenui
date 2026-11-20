@@ -1254,3 +1254,38 @@ test('v9 proxy forwards punctuation in the Gotenberg output filename header', as
   assert.match(result.headers.get('content-disposition') ?? '', /Q4 & FY26 \(approved\)\.pdf/)
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
 })
+
+test.each<{ operation: string; fields: Record<string, string | boolean> }>([
+  { operation: 'merge', fields: {} },
+  { operation: 'pdf-pipeline', fields: { stages: '[{"op":"merge"}]' } },
+])(
+  'v9 $operation accepts single-source PDF merge output with a preamble',
+  async ({ operation, fields }) => {
+    const source = '\n%PDF-1.7\noriginal source bytes'
+    const fetcher: typeof fetch = async (input) =>
+      String(input) === `${upstream}/version`
+        ? new Response('9.9.0')
+        : new Response(source, { headers: { 'Content-Type': 'application/pdf' } })
+    const response = await proxyConversionRequest(
+      requestFor(operation, fields, {}, [new File([source], 'input.pdf')]),
+      fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), source)
+  },
+)
+
+test('a rewritten PDF still requires an immediate version header', async () => {
+  const source = '\n%PDF-1.7\noriginal source bytes'
+  const fetcher: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.9.0')
+      : new Response(source, { headers: { 'Content-Type': 'application/pdf' } })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('rotate', { rotateAngle: '90' }, {}, [new File([source], 'input.pdf')]),
+      fetcher,
+    ),
+    /does not match its declared file type/,
+  )
+})
