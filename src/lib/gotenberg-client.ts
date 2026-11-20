@@ -6,6 +6,7 @@ import type { ConnectionChoice } from '#/lib/connection-profiles'
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
+import { isStandaloneAttachmentExtraction } from '#/lib/pdf-pipeline'
 import {
   OVERLAY_KINDS,
   orderedOverlayUploads,
@@ -380,12 +381,13 @@ export async function convertWithGotenberg(
       operation.id,
       type,
       payload.outputName,
-      // An individually extracted attachment may itself be a ZIP. Preserve
-      // the filename already approved by the proxy, including ZIP responses.
-      operation.id === 'extract-attachments' ||
-        (operation.id === 'pdf-pipeline' &&
-          String(payload.fields.stages ?? '').includes('extract-attachments')) ||
-        (payload.conversionStages?.includes('extract-attachments') ?? false),
+      // Only direct attachment results retain their upstream filenames.
+      // Multi-stage and conversion-time extraction return generated archives.
+      isStandaloneAttachmentExtraction(
+        operation.id,
+        payload.fields.stages,
+        payload.fields.acknowledgedRedaction === true,
+      ),
     ),
     fallback,
   )

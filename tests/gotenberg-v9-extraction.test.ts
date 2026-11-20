@@ -508,3 +508,79 @@ test('rejects attachment responses without real filename parameters', async () =
   )
   assert.equal(upstream.calls(), 1)
 })
+
+test.each([
+  ['extract-attachments', undefined],
+  ['pdf-pipeline', '[{"op":"extract-attachments"}]'],
+] as const)(
+  'preserves the upstream attachment filename with an output override for %s',
+  async (operation, stages) => {
+    let forwarded = 0
+    const fetcher: typeof fetch = async (url, options) => {
+      if (String(url) === `${upstream}/version`) return new Response('9.9.0')
+      forwarded++
+      const override = new Headers(options?.headers).get('Gotenberg-Output-Filename')
+      // Gotenberg's Context.OutputFilename replaces any single output name
+      // when this header is set, even if the output is an embedded attachment.
+      const filename = override ? `${override}.zip` : 'invoice_backup.zip'
+      return new Response('embedded ZIP attachment, not an archive', {
+        headers: {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+        },
+      })
+    }
+    const response = await proxyConversionRequest(
+      requestFor(operation, {}, { stages, outputName: 'report' }),
+      fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(forwarded, 1)
+    assert.equal(
+      downloadFilename(response.headers.get('Content-Disposition'), 'fallback.zip'),
+      'invoice_backup.zip',
+    )
+    assert.equal(await response.text(), 'embedded ZIP attachment, not an archive')
+  },
+)
+
+test.each([
+  ['pdf-pipeline', '[{"op":"optimize"},{"op":"extract-attachments"}]', undefined],
+  ['html-pdf', undefined, '[{"op":"extract-attachments"}]'],
+] as const)(
+  'still forwards the output filename for generated extraction archives from %s',
+  async (operation, stages, conversionStages) => {
+    let forwarded = 0
+    const fetcher: typeof fetch = async (url, options) => {
+      if (String(url) === `${upstream}/version`) return new Response('9.9.0')
+      forwarded++
+      assert.equal(new Headers(options?.headers).get('Gotenberg-Output-Filename'), 'report')
+      return new Response(zipBytes, {
+        headers: {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': 'attachment; filename="report.zip"',
+        },
+      })
+    }
+    const response = await proxyConversionRequest(
+      requestFor(
+        operation,
+        {},
+        {
+          stages,
+          outputName: 'report',
+          conversionStages,
+          files: operation === 'html-pdf' ? [] : [pdf()],
+        },
+      ),
+      fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(forwarded, 1)
+    assert.equal(
+      downloadFilename(response.headers.get('Content-Disposition'), 'fallback.zip'),
+      'report.zip',
+    )
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), zipBytes)
+  },
+)

@@ -24,7 +24,11 @@ import {
 } from '#/lib/oauth2-client-credentials.server'
 import { canWebhookForOperation } from '#/lib/operation-availability'
 import { hasGotenberg92PageSyntax, stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
-import { parsePdfPipeline, pipelineResponseTypes } from '#/lib/pdf-pipeline'
+import {
+  isStandaloneAttachmentExtraction,
+  parsePdfPipeline,
+  pipelineResponseTypes,
+} from '#/lib/pdf-pipeline'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { isPrometheusMetrics } from '#/lib/prometheus-metrics'
 import {
@@ -775,11 +779,23 @@ export async function proxyConversionRequest(
             archiveEntryNames,
           ),
         }
+  const extractsAttachment = isStandaloneAttachmentExtraction(
+    operation.id,
+    payload.fields.stages,
+    payload.fields.acknowledgedRedaction === true,
+  )
   const upstream = await fetcher(joinURL(url, path), {
     method: 'POST',
     ...fetchOptions(request),
     body: form,
-    headers: upstreamConversionHeaders(authHeaders, payload, operation.output !== 'json', major),
+    // Gotenberg's output filename override also renames a lone extracted
+    // attachment. Keep its original name and only override generated outputs.
+    headers: upstreamConversionHeaders(
+      authHeaders,
+      payload,
+      operation.output !== 'json' && !extractsAttachment,
+      major,
+    ),
     credentials: 'omit',
   })
   // A deployment can be upgraded or its load balancer can switch backends after
@@ -842,13 +858,6 @@ export async function proxyConversionRequest(
   // An extracted attachment has its own MIME type, which may be anything.
   // Require an actual filename-bearing attachment response before accepting it,
   // so an HTML SPA fallback can never be mistaken for a successful extraction.
-  const extractsAttachment =
-    operation.id === 'extract-attachments' ||
-    (operation.id === 'pdf-pipeline' &&
-      (() => {
-        const stages = parsePdfPipeline(String(payload.fields.stages ?? ''))
-        return stages.length === 1 && stages[0]?.op === 'extract-attachments'
-      })())
   const attachmentDisposition = upstream.headers.get('content-disposition')
   const wildcardAllowed =
     allowedTypes.includes('*') &&

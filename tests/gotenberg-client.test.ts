@@ -552,3 +552,66 @@ test('client treats incomplete remediation diagnostics as a review warning, not 
     globalThis.fetch = original
   }
 })
+
+test.each([
+  {
+    name: 'multi-stage attachment extraction',
+    operation: 'pdf-pipeline',
+    fields: { stages: '[{"op":"optimize"},{"op":"extract-attachments"}]' },
+    contentType: 'application/zip',
+    upstreamName: 'generated.zip',
+    bytes: new Uint8Array([0x50, 0x4b, 0x05, 0x06, ...new Array<number>(18).fill(0)]),
+    expected: 'report.zip',
+  },
+  {
+    name: 'literal attachment-stage text in metadata',
+    operation: 'pdf-pipeline',
+    fields: { stages: '[{"op":"set-metadata","title":"extract-attachments"}]' },
+    contentType: 'application/pdf',
+    upstreamName: 'untitled.pdf',
+    bytes: new TextEncoder().encode('%PDF-1.7\n'),
+    expected: 'report.pdf',
+  },
+  {
+    name: 'conversion-time attachment extraction',
+    operation: 'html-pdf',
+    fields: {},
+    conversionStages: '[{"op":"extract-attachments"}]',
+    contentType: 'application/zip',
+    upstreamName: 'generated.zip',
+    bytes: new Uint8Array([0x50, 0x4b, 0x05, 0x06, ...new Array<number>(18).fill(0)]),
+    expected: 'report.zip',
+  },
+])('uses output override for $name rather than preserving generated names', async (case_) => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () =>
+    new Response(case_.bytes, {
+      headers: {
+        'Content-Type': case_.contentType,
+        'Content-Disposition': `attachment; filename="${case_.upstreamName}"`,
+      },
+    })
+  try {
+    const result = await convertWithGotenberg(
+      'http://127.0.0.1:3000',
+      {
+        operation: case_.operation,
+        fields: case_.fields,
+        advanced: {},
+        outputName: 'report',
+        ...(case_.operation === 'html-pdf' ? { source: '<p>PDF</p>' } : {}),
+        ...(case_.conversionStages ? { conversionStages: case_.conversionStages } : {}),
+      },
+      case_.operation === 'pdf-pipeline'
+        ? [new File(['%PDF-1.7'], 'source.pdf', { type: 'application/pdf' })]
+        : [],
+      [],
+      new AbortController().signal,
+    )
+    assert.equal(result.mode, 'download')
+    if (result.mode !== 'download') throw new Error('Expected a download')
+    assert.equal(result.name, case_.expected)
+  } finally {
+    globalThis.fetch = original
+  }
+})

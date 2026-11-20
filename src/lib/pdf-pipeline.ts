@@ -887,6 +887,20 @@ export function parsePdfPipeline(
   return stages
 }
 
+/** Only a standalone extraction can return an individual embedded attachment.
+ * Conversion-time extraction and multi-stage pipelines return generated ZIPs.
+ */
+export function isStandaloneAttachmentExtraction(
+  operationId: string,
+  rawStages: string | boolean | undefined,
+  acknowledgedRedaction = false,
+): boolean {
+  if (operationId === 'extract-attachments') return true
+  if (operationId !== 'pdf-pipeline' || typeof rawStages !== 'string') return false
+  const stages = parsePdfPipeline(rawStages, { acknowledgedRedaction })
+  return stages.length === 1 && stages[0]?.op === 'extract-attachments'
+}
+
 /** Narrow accepted response media types to the actual stages requested. */
 export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): readonly string[] {
   const render = stages.at(-1)
