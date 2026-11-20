@@ -51,6 +51,35 @@ test('accepts ZIPs with a trailing stub after the end record or ZIP comment', as
   ])
 })
 
+test('accepts signed ZIP central directories without ignoring unexpected trailing records', async () => {
+  const original = new Uint8Array(await zipFixture({ 'input.pdf': '%PDF-1.7' }).arrayBuffer())
+  const endOffset = original.length - 22
+  const signature = new Uint8Array(10)
+  const header = new DataView(signature.buffer)
+  header.setUint32(0, 0x05054b50, true)
+  header.setUint16(4, 4, true)
+  signature.set([1, 2, 3, 4], 6)
+
+  const signed = new Uint8Array(original.length + signature.length)
+  signed.set(original.subarray(0, endOffset))
+  signed.set(signature, endOffset)
+  signed.set(original.subarray(endOffset), endOffset + signature.length)
+  const view = new DataView(signed.buffer)
+  view.setUint32(
+    signed.length - 10,
+    new DataView(original.buffer).getUint32(original.length - 10, true) + signature.length,
+    true,
+  )
+  assert.deepEqual(await check('pdf-pipeline', [new File([signed], 'signed.zip')]), ['input.pdf'])
+
+  const invalid = signed.slice()
+  new DataView(invalid.buffer).setUint16(endOffset + 4, 5, true)
+  await assert.rejects(
+    check('pdf-pipeline', [new File([invalid], 'invalid-signature.zip')]),
+    /trailing data/,
+  )
+})
+
 test('accepts empty ZIPs when other source inputs are available', async () => {
   const empty = zipFixture({})
   const input = new File(['%PDF-1.7'], 'original.pdf')
@@ -423,6 +452,16 @@ test('accepts a valid ZIP64 end record and rejects an overlapping central direct
     ]),
     ['source.pdf'],
   )
+
+  // ZIP64 locator is 20 bytes before the end record. A maximum-length ZIP
+  // comment can push it outside the bounded first tail read.
+  const maxComment = new Uint8Array(bytes.length + 65_535)
+  maxComment.set(bytes)
+  new DataView(maxComment.buffer).setUint16(bytes.length - 2, 65_535, true)
+  maxComment.fill(65, bytes.length)
+  assert.deepEqual(await check('pdf-pipeline', [new File([maxComment], 'zip64-max-comment.zip')]), [
+    'source.pdf',
+  ])
 
   // A directory cannot overlap the ZIP64 EOCD, even when it finishes before the locator.
   zip64.setBigUint64(40, BigInt(directorySize + 4), true)
