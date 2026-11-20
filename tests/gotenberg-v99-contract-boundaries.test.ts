@@ -6,7 +6,7 @@ import { FieldControl } from '#/components/gotenui-app'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { proxyConversionRequest } from '#/lib/gotenberg-proxy.server'
 import { OPERATION_BY_ID } from '#/lib/operations'
-import { validatePayload } from '#/lib/validation'
+import { validateFiles, validatePayload } from '#/lib/validation'
 
 function request(
   operation: string,
@@ -147,4 +147,19 @@ test('proxy rejects unsupported numeric spelling and blank remote names before f
     await assert.rejects(proxyConversionRequest(incoming, fetcher), { name: 'InputError' })
   }
   assert.equal(outgoingRequests, 0)
+})
+
+test('a remote PDF stage asset with an empty filename override is not an input document', () => {
+  const source = 'https://files.example.test/object'
+  const { operation, payload } = validatePayload({
+    ...request(
+      'pdf-pipeline',
+      { stages: JSON.stringify([{ op: 'insert', source: 'insert.pdf', at: 0 }]) },
+      [{ url: source, name: 'insert.pdf', filename: '' }],
+    ),
+  })
+  assert.throws(
+    () => validateFiles(operation, [], [], 16_000_000, payload),
+    /Upload at least 1 input file/,
+  )
 })

@@ -11,7 +11,11 @@ import {
   isAllowedChromiumResourceHeader,
   isChromiumCredentialHeader,
 } from '#/lib/chromium-network'
-import { safeFilename as checkFilename, filenameKey } from '#/lib/file-names'
+import {
+  safeFilename as checkFilename,
+  effectiveRemoteFilename,
+  filenameKey,
+} from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
@@ -562,13 +566,10 @@ export function validateFiles(
           }),
         ),
       )
-      remote.input -= payload.downloadFrom.filter(
-        (file) =>
-          !file.field &&
-          !file.embedded &&
-          (file.filename !== undefined || file.name !== undefined) &&
-          stageAssets.has((file.filename ?? file.name ?? '').normalize('NFC')),
-      ).length
+      remote.input -= payload.downloadFrom.filter((file) => {
+        const filename = effectiveRemoteFilename(file)
+        return !file.field && !file.embedded && !!filename && stageAssets.has(filenameKey(filename))
+      }).length
     }
   }
   // Gotenberg 9's merge stage reads (and returns) a single input PDF too.

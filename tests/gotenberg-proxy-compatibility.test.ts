@@ -1241,6 +1241,57 @@ test('v9 proxy forwards large PDF pipeline JSON below the configured byte budget
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
 })
 
+test.each(['r\u00e9sum\u00e9', '\u5831\u544a', 'report \ud83c\udf0d'])(
+  'v9 output filename forwards UTF-8 bytes to Gotenberg: %s',
+  async (name) => {
+    const fixture = upstreamFixture('9.9.0', (_form, headers) => {
+      const bytes = headers.get('Gotenberg-Output-Filename')
+      assert.ok(bytes)
+      assert.equal(Buffer.from(bytes, 'latin1').toString('utf8'), name)
+    })
+    const reply = await proxyConversionRequest(
+      requestFor('html-pdf', {}, { outputName: name }),
+      fixture.fetcher,
+    )
+    assert.equal(reply.status, 200)
+    assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+  },
+)
+
+test('v9 webhook serializes Unicode callback URLs and UTF-8 extra header values', async () => {
+  const url = 'https://example.test/\u901a\u77e5'
+  const eventsUrl = 'https://m\u00fcnich.example/\u5b8c\u4e86'
+  const extraHttpHeaders = { 'X-Locale': '\u65e5\u672c\u8a9e' }
+  const fixture = upstreamFixture('9.9.0', (_form, headers) => {
+    assert.equal(headers.get('Gotenberg-Webhook-Url'), new URL(url).href)
+    assert.equal(headers.get('Gotenberg-Webhook-Events-Url'), new URL(eventsUrl).href)
+    const raw = headers.get('Gotenberg-Webhook-Extra-Http-Headers')
+    assert.ok(raw)
+    assert.deepEqual(JSON.parse(Buffer.from(raw, 'latin1').toString('utf8')), extraHttpHeaders)
+  })
+  const reply = await proxyConversionRequest(
+    requestFor('html-pdf', {}, { webhook: { url, eventsUrl, extraHttpHeaders } }),
+    fixture.fetcher,
+  )
+  assert.equal(reply.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
+test('v8 webhook serializes Unicode success and error URLs', async () => {
+  const url = 'https://m\u00fcnich.example/\u901a\u77e5'
+  const errorUrl = 'https://example.test/\u5931\u6557'
+  const fixture = upstreamFixture('8.40.0', (_form, headers) => {
+    assert.equal(headers.get('Gotenberg-Webhook-Url'), new URL(url).href)
+    assert.equal(headers.get('Gotenberg-Webhook-Error-Url'), new URL(errorUrl).href)
+  })
+  const reply = await proxyConversionRequest(
+    requestFor('html-pdf', {}, { webhook: { url, errorUrl } }),
+    fixture.fetcher,
+  )
+  assert.equal(reply.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
 test('v9 proxy forwards punctuation in the Gotenberg output filename header', async () => {
   const name = 'Q4 & FY26 (approved)'
   const fixture = upstreamFixture('9.1.0', (_form, headers) => {

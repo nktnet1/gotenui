@@ -226,6 +226,15 @@ function fetchOptions(request: Request): Pick<RequestInit, 'signal' | 'redirect'
   }
 }
 
+/** Fetch Headers expects a ByteString, while Go reads these header values as UTF-8. */
+function utf8HeaderValue(value: string): string {
+  let encoded = ''
+  for (const byte of new TextEncoder().encode(value)) {
+    encoded += String.fromCharCode(byte)
+  }
+  return encoded
+}
+
 function upstreamConversionHeaders(
   auth: HeadersInit | undefined,
   payload: ConversionPayload,
@@ -234,22 +243,26 @@ function upstreamConversionHeaders(
 ): Headers {
   const headers = new Headers(auth)
   if (acceptsOutputFilename && payload.outputName) {
-    headers.set('Gotenberg-Output-Filename', payload.outputName)
+    headers.set('Gotenberg-Output-Filename', utf8HeaderValue(payload.outputName))
   }
   if (payload.requestTrace) headers.set('Gotenberg-Trace', payload.requestTrace)
   if (payload.traceparent) headers.set('traceparent', payload.traceparent)
   if (payload.tracestate) headers.set('tracestate', payload.tracestate)
   const webhook = payload.webhook
   if (webhook) {
-    headers.set('Gotenberg-Webhook-Url', webhook.url)
+    headers.set('Gotenberg-Webhook-Url', new URL(webhook.url).href)
     if (webhook.method) headers.set('Gotenberg-Webhook-Method', webhook.method)
     if (version === 8 && webhook.errorUrl)
-      headers.set('Gotenberg-Webhook-Error-Url', webhook.errorUrl)
+      headers.set('Gotenberg-Webhook-Error-Url', new URL(webhook.errorUrl).href)
     if (version === 8 && webhook.errorMethod)
       headers.set('Gotenberg-Webhook-Error-Method', webhook.errorMethod)
-    if (webhook.eventsUrl) headers.set('Gotenberg-Webhook-Events-Url', webhook.eventsUrl)
+    if (webhook.eventsUrl)
+      headers.set('Gotenberg-Webhook-Events-Url', new URL(webhook.eventsUrl).href)
     if (webhook.extraHttpHeaders) {
-      headers.set('Gotenberg-Webhook-Extra-Http-Headers', JSON.stringify(webhook.extraHttpHeaders))
+      headers.set(
+        'Gotenberg-Webhook-Extra-Http-Headers',
+        utf8HeaderValue(JSON.stringify(webhook.extraHttpHeaders)),
+      )
     }
   }
   return headers
