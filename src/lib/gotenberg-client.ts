@@ -1,9 +1,13 @@
 import * as v from 'valibot'
 import { normalizeBackendUrl } from '#/lib/backend-url'
-import { DEFAULT_MARKDOWN_NAME, defaultMarkdownTemplate } from '#/lib/chromium-documents'
+import {
+  DEFAULT_MARKDOWN_NAME,
+  defaultMarkdownTemplate,
+  generatedChromiumFilenames,
+} from '#/lib/chromium-documents'
 import { CHROMIUM_MEDIA_OPTIONS, encodeChromiumMediaFeatures } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
-import { effectiveRemoteFilename } from '#/lib/file-names'
+import { effectiveRemoteFilename, possibleRemoteFilename } from '#/lib/file-names'
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
@@ -215,6 +219,23 @@ export function createGotenbergForm(
     // 9.2 adds filename to the official downloadFrom descriptor. The previous
     // name hint remains client-only on older servers, preserving their API.
     const supportsFilename = major === 9 && version?.major === 9 && version.minor >= 2
+    // Gotenberg gives a remote Content-Disposition filename priority over the
+    // URL basename, then registers remote downloads before local uploads.
+    // Pin those remote names when they could shadow a generated/uploaded file.
+    const mustPinChromiumNames =
+      major === 9 &&
+      isChromium &&
+      (generatedChromiumFilenames(operation.input, payload).length > 0 ||
+        files.length > 0 ||
+        auxiliary.length > 0 ||
+        archives.length > 0 ||
+        payload.conversionStages !== undefined)
+    if (mustPinChromiumNames && !supportsFilename) {
+      throw new InputError(
+        'Chromium remote downloads alongside local assets require Gotenberg 9.2 or newer to pin their filenames.',
+        409,
+      )
+    }
     form.set(
       'downloadFrom',
       JSON.stringify(
@@ -225,7 +246,15 @@ export function createGotenbergForm(
               409,
             )
           }
-          const effectiveFilename = effectiveRemoteFilename({ filename, name })
+          let effectiveFilename = effectiveRemoteFilename({ filename, name })
+          if (mustPinChromiumNames && !effectiveFilename) {
+            effectiveFilename = possibleRemoteFilename(remote)
+            if (!effectiveFilename) {
+              throw new InputError(
+                'Specify a remote filename for Chromium downloads whose URL has no file extension.',
+              )
+            }
+          }
           return {
             ...remote,
             ...(supportsFilename && effectiveFilename ? { filename: effectiveFilename } : {}),

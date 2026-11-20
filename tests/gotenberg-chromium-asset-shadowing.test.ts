@@ -235,3 +235,146 @@ test('proxy forwards archived header templates when the frontend generated none'
   assert.equal(response.status, 200)
   assert.equal(conversionCalls, 1)
 })
+
+// Gotenberg gives a downloaded Content-Disposition filename priority over the
+// URL basename. Unless the proxy pins the filename, the remote response can
+// shadow index.html or a named stage resource after preflight has passed.
+test.each([
+  ['html-pdf', 'https://assets.example.test/assets/theme.css'],
+  ['markdown-pdf', 'https://assets.example.test/assets/theme.css'],
+  ['html-shot', 'https://assets.example.test/assets/theme.css'],
+] as const)('v9.9 pins URL-derived Chromium download filenames for %s', (id, url) => {
+  const { operation, payload } = sourcePayload(id, { downloadFrom: [{ url }] })
+  const form = createGotenbergForm(operation, payload, [], [], 4_000_000, {}, [], 9, {
+    major: 9,
+    minor: 9,
+    patch: 0,
+  })
+  assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), [{ url, filename: 'theme.css' }])
+})
+
+test('v9.9 cannot trust unknown remote Chromium filenames to avoid shadowing generated HTML', () => {
+  const { operation, payload } = sourcePayload('html-pdf', {
+    downloadFrom: [{ url: 'https://assets.example.test/download?id=123' }],
+  })
+  assert.throws(
+    () =>
+      createGotenbergForm(operation, payload, [], [], 4_000_000, {}, [], 9, {
+        major: 9,
+        minor: 9,
+        patch: 0,
+      }),
+    /filename.*remote|remote.*filename/i,
+  )
+})
+
+test('v9.9 pins inferred names when Chromium has ZIP assets or generated headers', () => {
+  const { operation, payload } = sourcePayload('url-pdf', {
+    downloadFrom: [{ url: 'https://assets.example.test/asset.css' }],
+    headerHtml: '<p>Header</p>',
+  })
+  const form = createGotenbergForm(operation, payload, [], [], 4_000_000, {}, [], 9, {
+    major: 9,
+    minor: 9,
+    patch: 0,
+  })
+  assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), [
+    { url: 'https://assets.example.test/asset.css', filename: 'asset.css' },
+  ])
+})
+
+test('v9.9 leaves URL screenshot remote names unchanged when no local file can be shadowed', () => {
+  const { operation, payload } = sourcePayload('url-pdf', {
+    downloadFrom: [{ url: 'https://assets.example.test/download?id=123' }],
+  })
+  const form = createGotenbergForm(operation, payload, [], [], 4_000_000, {}, [], 9, {
+    major: 9,
+    minor: 9,
+    patch: 0,
+  })
+  assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), [
+    { url: 'https://assets.example.test/download?id=123' },
+  ])
+})
+
+test('v9.1 cannot protect locally generated Chromium filenames with a remote override', () => {
+  const { operation, payload } = sourcePayload('html-pdf', {
+    downloadFrom: [{ url: 'https://assets.example.test/theme.css', name: 'theme.css' }],
+  })
+  assert.throws(
+    () =>
+      createGotenbergForm(operation, payload, [], [], 4_000_000, {}, [], 9, {
+        major: 9,
+        minor: 1,
+        patch: 0,
+      }),
+    /9\.2|remote.*filenames/i,
+  )
+})
+
+test('Chromium rejects inferred remote collisions with named conversion stage assets', () => {
+  const { operation, payload } = sourcePayload('url-pdf', {
+    conversionStages: JSON.stringify([{ op: 'attach', file: 'contract.txt' }]),
+    downloadFrom: [{ url: 'https://assets.example.test/contract.txt' }],
+  })
+  assert.throws(
+    () =>
+      validateFiles(
+        operation,
+        [],
+        [],
+        4_000_000,
+        payload,
+        {},
+        [new File(['contract'], 'contract.txt')],
+        [],
+        9,
+      ),
+    /remote.*filename|shadow|collid/i,
+  )
+})
+
+test('proxy pins Chromium remote filenames before sending the multipart request to Gotenberg', async () => {
+  const fetcher: typeof fetch = async (input, init) => {
+    if (String(input).endsWith('/version')) return new Response('9.9.0')
+    assert.ok(init?.body instanceof FormData)
+    assert.deepEqual(JSON.parse(String(init.body.get('downloadFrom'))), [
+      { url: 'https://assets.example.test/theme.css', filename: 'theme.css' },
+    ])
+    return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+  }
+  const response = await proxyConversionRequest(
+    proxyRequest({
+      operation: 'html-pdf',
+      source: '<h1>Local content</h1>',
+      fields: {},
+      advanced: {},
+      downloadFrom: [{ url: 'https://assets.example.test/theme.css' }],
+    }),
+    fetcher,
+  )
+  assert.equal(response.status, 200)
+})
+
+test('proxy rejects unpredictable Chromium remote filenames before conversion', async () => {
+  let conversionCalls = 0
+  const fetcher: typeof fetch = async (input) => {
+    if (String(input).endsWith('/version')) return new Response('9.9.0')
+    conversionCalls++
+    throw new Error('Conversion must not be called with an unpinned remote name')
+  }
+  await assert.rejects(
+    proxyConversionRequest(
+      proxyRequest({
+        operation: 'html-pdf',
+        source: '<h1>Local content</h1>',
+        fields: {},
+        advanced: {},
+        downloadFrom: [{ url: 'https://assets.example.test/download?id=123' }],
+      }),
+      fetcher,
+    ),
+    /Specify a remote filename/,
+  )
+  assert.equal(conversionCalls, 0)
+})

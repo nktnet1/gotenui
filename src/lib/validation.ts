@@ -740,6 +740,7 @@ export function validateFiles(
     const localNames = new Set([
       ...generatedNames.map(filenameKey),
       ...auxiliary.map(({ name }) => filenameKey(name)),
+      ...stageFiles.map(({ name }) => filenameKey(name)),
     ])
     for (const remote of payload?.downloadFrom ?? []) {
       const name = possibleRemoteFilename(remote)
