@@ -422,6 +422,71 @@ test('v9 merge still rejects ZIP output with multiple archived source PDFs', asy
   )
 })
 
+type ZipResponseCase = { operation: string; fields: Record<string, string | boolean> }
+
+const attachmentExtractionCases: ZipResponseCase[] = [
+  { operation: 'extract-attachments', fields: {} },
+  { operation: 'pdf-pipeline', fields: { stages: '[{"op":"extract-attachments"}]' } },
+]
+
+test.each(attachmentExtractionCases)(
+  '$operation preserves single extracted ZIP attachments even when their bytes are not a ZIP archive',
+  async ({ operation, fields }) => {
+    const source = new File(['%PDF-1.7\n'], 'source.pdf')
+    for (const contents of ['', 'This is an arbitrary embedded attachment']) {
+      const fetcher: typeof fetch = async (input) =>
+        String(input) === `${upstream}/version`
+          ? new Response('9.9.0')
+          : new Response(contents, {
+              headers: {
+                'Content-Type': 'application/zip',
+                'Content-Disposition': 'attachment; filename="source_backup.zip"',
+                'Content-Length': String(Buffer.byteLength(contents)),
+              },
+            })
+      const response = await proxyConversionRequest(
+        requestFor(operation, fields, {}, [source]),
+        fetcher,
+      )
+      assert.equal(response.status, 200)
+      assert.equal(response.headers.get('content-type'), 'application/zip')
+      assert.match(
+        response.headers.get('content-disposition') ?? '',
+        /filename="source_backup\.zip"/,
+      )
+      assert.equal(await response.text(), contents)
+    }
+  },
+)
+
+const zipSignatureCases: ZipResponseCase[] = [
+  { operation: 'rotate', fields: { rotateAngle: '90' } },
+  {
+    operation: 'pdf-pipeline',
+    fields: { stages: '[{"op":"optimize"},{"op":"extract-attachments"}]' },
+  },
+]
+
+test.each(zipSignatureCases)(
+  'non-extraction $operation ZIP results still require a real ZIP signature',
+  async ({ operation, fields }) => {
+    const source = [new File(['%PDF-1.7\n'], 'one.pdf'), new File(['%PDF-1.7\n'], 'two.pdf')]
+    const fetcher: typeof fetch = async (input) =>
+      String(input) === `${upstream}/version`
+        ? new Response('9.9.0')
+        : new Response('not a ZIP', {
+            headers: {
+              'Content-Type': 'application/zip',
+              'Content-Disposition': 'attachment; filename="result.zip"',
+            },
+          })
+    await assert.rejects(
+      proxyConversionRequest(requestFor(operation, fields, {}, source), fetcher),
+      /does not match its declared file type/,
+    )
+  },
+)
+
 test('v9 PDF pipeline forwards remote PDF URLs and uploaded source ZIPs, but v8 never forwards them', async () => {
   const archive = zipFixture({ 'source.pdf': '%PDF-1.7\n' }, 'source-pdfs.zip')
   const remote = [

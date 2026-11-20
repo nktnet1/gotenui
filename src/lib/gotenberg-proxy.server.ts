@@ -866,11 +866,11 @@ export async function proxyConversionRequest(
     await upstream.body?.cancel().catch(() => {})
     throw new ProxyInputError('Gotenberg returned an unexpected conversion response.', 502)
   }
-  // A scanned PDF may contain no extractable text. Embedded files can also be
-  // empty or have a misleading MIME type; preserve their exact bytes rather
-  // than requiring a document signature or manufacturing a nonempty body.
-  const arbitraryAttachment =
-    extractsAttachment && wildcardAllowed && returnedType !== 'application/zip'
+  // A scanned PDF may contain no extractable text. A single extracted file
+  // can itself have a .zip extension, without containing ZIP-format bytes.
+  // Only the filename-bearing attachment response may bypass the signature
+  // and nonempty-body checks. Other ZIP responses still require a signature.
+  const arbitraryAttachment = extractsAttachment && wildcardAllowed
   const allowEmptyResponse =
     arbitraryAttachment ||
     ((returnedType === 'text/plain' || returnedType === 'text/markdown') &&
@@ -904,7 +904,7 @@ export async function proxyConversionRequest(
       operation.id,
       returnedType,
       payload.outputName,
-      extractsAttachment && returnedType !== 'application/zip',
+      arbitraryAttachment,
     ),
   )
   return new Response(
