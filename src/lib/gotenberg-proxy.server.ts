@@ -37,7 +37,7 @@ import {
   requireSameOrigin,
 } from '#/lib/proxy-policy'
 import { verifyConversionSignature } from '#/lib/response-signature'
-import { safeAttachmentDisposition } from '#/lib/security'
+import { hasAttachmentFilename, safeAttachmentDisposition } from '#/lib/security'
 import {
   parseServerConnections,
   publicServerConnections,
@@ -856,7 +856,7 @@ export async function proxyConversionRequest(
     /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(returnedType) &&
     // Filename is required for arbitrary content; don't accept inline responses.
     /^attachment\s*;/i.test(attachmentDisposition ?? '') &&
-    /(?:^|;)\s*filename\*?=/i.test(attachmentDisposition ?? '')
+    hasAttachmentFilename(attachmentDisposition)
   if (
     upstream.status !== 200 ||
     !returnedType ||

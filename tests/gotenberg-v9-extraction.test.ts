@@ -487,3 +487,24 @@ test('validates both extraction options and terminal-only rules', () => {
     assert.deepEqual(validatePayload(payload).operation, operation)
   }
 })
+
+test('rejects attachment responses without real filename parameters', async () => {
+  const upstream = fixture(
+    '9.9.0',
+    () =>
+      new Response('<html>gateway fallback</html>', {
+        headers: {
+          'Content-Type': 'text/html',
+          'Content-Disposition': 'attachment; comment="decoy; filename=fictional.html"',
+        },
+      }),
+  )
+  await assert.rejects(
+    proxyConversionRequest(requestFor('extract-attachments'), upstream.fetcher),
+    {
+      status: 502,
+      message: /unexpected conversion response/,
+    },
+  )
+  assert.equal(upstream.calls(), 1)
+})
