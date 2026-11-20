@@ -377,8 +377,13 @@ export function adaptConversionForm(
     }
     if (operation.output === 'image') {
       const quality = form.get('quality')
-      if (typeof quality === 'string' && quality !== '' && Number(quality) < 1) {
-        throw new InputError('Gotenberg 9 screenshot quality must be between 1 and 100.')
+      if (typeof quality === 'string' && quality !== '') {
+        if (Number(quality) < 1) {
+          throw new InputError('Gotenberg 9 screenshot quality must be between 1 and 100.')
+        }
+        if (form.get('format') !== 'jpeg') {
+          throw new InputError('Gotenberg 9 screenshot JPEG quality requires JPEG output.')
+        }
       }
     }
     renameFields(form, chromiumNames)

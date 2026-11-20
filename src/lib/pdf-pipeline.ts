@@ -602,9 +602,7 @@ function validateStage(stage: PdfPipelineStage): void {
           ([_key, value]) =>
             !(
               typeof value === 'string' ||
-              value === null ||
-              (Array.isArray(value) &&
-                value.every((item) => item === null || typeof item === 'string'))
+              (Array.isArray(value) && value.every((item) => typeof item === 'string'))
             ),
         )
       )

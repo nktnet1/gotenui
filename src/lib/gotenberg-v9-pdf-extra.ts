@@ -223,9 +223,7 @@ export function adaptV9PdfExtra(
         if (
           !(
             typeof field === 'string' ||
-            field === null ||
-            (Array.isArray(field) &&
-              field.every((entry) => entry === null || typeof entry === 'string'))
+            (Array.isArray(field) && field.every((entry) => typeof entry === 'string'))
           )
         ) {
           throw new InputError('Form values must be strings or arrays of strings.')

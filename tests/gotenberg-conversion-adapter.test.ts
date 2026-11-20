@@ -783,10 +783,23 @@ test('Gotenberg 9 validates Chromium transparency and screenshot quality at the 
   )
 
   assert.throws(
-    () => adapt('html-shot', { fields: { quality: '0' } }, 9),
+    () => adapt('html-shot', { fields: { format: 'jpeg', quality: '0' } }, 9),
     /screenshot quality must be between 1 and 100/,
   )
-  assert.equal(adapt('html-shot', { fields: { quality: '1' } }, 9).get('quality'), '1')
+  assert.equal(
+    adapt('html-shot', { fields: { format: 'jpeg', quality: '1' } }, 9).get('quality'),
+    '1',
+  )
+  for (const format of ['png', 'webp']) {
+    assert.throws(
+      () => adapt('html-shot', { fields: { format, quality: '80' } }, 9),
+      /screenshot JPEG quality requires JPEG output/,
+    )
+  }
+  assert.throws(
+    () => adapt('html-shot', { fields: { format: 'webp' }, advanced: { quality: 80 } }, 9),
+    /screenshot JPEG quality requires JPEG output/,
+  )
   assert.equal(adapt('html-shot', { fields: { quality: '0' } }, 8).get('quality'), '0')
 })
 

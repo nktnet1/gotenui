@@ -1054,9 +1054,7 @@ export function Workbench({
                         field={
                           isV9 && operation.id === 'factur-x' && field.name === 'pdfa'
                             ? { ...field, options: ['PDF/A-3b'] }
-                            : isV9 && operation.output === 'image' && field.name === 'quality'
-                              ? { ...field, min: 1 }
-                              : field
+                            : field
                         }
                         value={fields[field.name]}
                         onChange={(value) => updateField(field.name, value)}

@@ -28,6 +28,7 @@ export type FieldDefinition = {
   defaultValue?: string | boolean
   options?: readonly string[]
   min?: number
+  minGotenberg9?: number
   max?: number
   integer?: boolean
   optionLabels?: Readonly<Record<string, string>>

@@ -514,12 +514,14 @@ export const screenshot: FieldDefinition[] = [
   },
   {
     name: 'quality',
-    label: 'JPEG/WebP quality',
+    label: 'JPEG quality',
     kind: 'number',
     min: 0,
+    minGotenberg9: 1,
     max: 100,
     advanced: true,
-    description: 'Image compression quality for JPEG and WebP screenshots.',
+    when: { name: 'format', equals: 'jpeg' },
+    description: 'Image compression quality for JPEG screenshots.',
   },
   {
     name: 'optimizeForSpeed',
