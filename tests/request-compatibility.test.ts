@@ -263,3 +263,24 @@ test('raw native profiles remain usable on their own and supported aliases stay 
     }),
   ).toEqual([])
 })
+
+test('Office singlePage is a v9 native alias, not a Chromium-only setting', () => {
+  const advanced = '{"singlePage":true}'
+  expect(
+    draftOutboundIssues(operation('office-pdf'), {}, '9.10.0', { ...draft, advanced }),
+  ).toEqual([])
+  expect(
+    draftOutboundIssues(operation('office-pdf'), {}, '8.40.0', { ...draft, advanced }),
+  ).toEqual([
+    'Advanced field singlePage requires Gotenberg 9. Use the corresponding tool setting instead.',
+  ])
+  expect(
+    draftOutboundIssues(operation('office-pdf'), { singlePageSheets: true }, '9.10.0', {
+      ...draft,
+      advanced,
+    }),
+  ).toEqual(['Use either singlePageSheets or singlePage, not both.'])
+  expect(draftOutboundIssues(operation('html-shot'), {}, '9.10.0', { ...draft, advanced })).toEqual(
+    ['Advanced field singlePage is not supported for HTML screenshot.'],
+  )
+})

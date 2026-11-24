@@ -1555,3 +1555,52 @@ test('raw Office conformance aliases cannot be overwritten by generated profiles
   await response.body?.cancel()
   assert.deepEqual(fixture.counts(), { probes: 2, conversions: 1 })
 })
+
+test('standalone optimization is blocked before Gotenberg 8.36 even with default settings', async () => {
+  const file = new File(['%PDF-1.7\n'], 'document.pdf', { type: 'application/pdf' })
+  const unsupported = upstreamFixture('8.35.9', () => {
+    assert.fail('Gotenberg 8.35 does not have the standalone optimize route.')
+  })
+  await assert.rejects(
+    proxyConversionRequest(requestFor('optimize', {}, {}, [file]), unsupported.fetcher),
+    { status: 409, message: /Optimize PDFs requires Gotenberg 8\.36/ },
+  )
+  assert.deepEqual(unsupported.counts(), { probes: 1, conversions: 0 })
+  const supported = upstreamFixture('8.36.0', (form) => {
+    assert.equal((form.get('files') as File).name, file.name)
+  })
+  assert.equal(
+    (await proxyConversionRequest(requestFor('optimize', {}, {}, [file]), supported.fetcher))
+      .status,
+    200,
+  )
+  assert.deepEqual(supported.counts(), { probes: 1, conversions: 1 })
+})
+
+test('the native LibreOffice singlePage alias is forwarded only on Gotenberg 9', async () => {
+  const file = new File(['Spreadsheet'], 'report.xlsx')
+  const v9 = upstreamFixture('9.10.0', (form) => {
+    assert.equal(form.get('singlePage'), 'true')
+    assert.equal(form.has('singlePageSheets'), false)
+  })
+  const candidate = () => requestFor('office-pdf', {}, { advanced: { singlePage: true } }, [file])
+  assert.equal((await proxyConversionRequest(candidate(), v9.fetcher)).status, 200)
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('office-pdf', { singlePageSheets: false }, { advanced: { singlePage: true } }, [
+        file,
+      ]),
+      v9.fetcher,
+    ),
+    /Use either singlePageSheets or singlePage, not both/,
+  )
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 1 })
+  const v8 = upstreamFixture('8.40.0', () => {
+    assert.fail('The native alias must not be sent to Gotenberg 8.')
+  })
+  await assert.rejects(
+    proxyConversionRequest(candidate(), v8.fetcher),
+    /singlePage requires Gotenberg 9/,
+  )
+  assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
+})

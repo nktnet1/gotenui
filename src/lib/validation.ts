@@ -1055,6 +1055,9 @@ export function validateAdvancedParameters(
     'maxImageResolution',
   ]
   for (const name of Object.keys(advanced)) {
+    // The v9 Office alias for singlePageSheets shares its name with the
+    // Chromium PDF field. The authenticated version gate checks the alias.
+    if (office && name === 'singlePage') continue
     if (
       (!chromium && chromiumOnly.includes(name)) ||
       (!chromiumPdf && chromiumPdfOnly.includes(name)) ||

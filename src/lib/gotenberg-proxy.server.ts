@@ -23,6 +23,7 @@ import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
+import { operationMinimumVersionReason } from '#/lib/operation-availability'
 import { hasGotenberg92PageSyntax, stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import {
   isStandaloneAttachmentExtraction,
@@ -611,13 +612,8 @@ export async function proxyConversionRequest(
       409,
     )
   }
-  // These extraction routes and stages were introduced in Gotenberg 9.1.
-  if (requiresGotenberg91ForExtraction(version, [operation.id])) {
-    throw new InputError('PDF text and attachment extraction require Gotenberg 9.1 or newer.', 409)
-  }
-  if (requiresGotenberg92ForComposition(version, [operation.id])) {
-    throw new InputError('PDF page composition requires Gotenberg 9.2 or newer.', 409)
-  }
+  const versionReason = operationMinimumVersionReason(version, operation)
+  if (versionReason) throw new InputError(versionReason, 409)
   const fieldReason = requestFieldCompatibilityReason(operation, version, payload.fields)
   if (fieldReason) throw new InputError(fieldReason, 409)
   const outboundReason = outboundCompatibilityReasons(operation, version, payload)[0]

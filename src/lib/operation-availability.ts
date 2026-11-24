@@ -1,5 +1,6 @@
 import type { ServerStatus } from '#/lib/gotenberg-client'
 import {
+  type GotenbergVersion,
   parseGotenbergVersion,
   requiresGotenberg91ForExtraction,
   requiresGotenberg92ForComposition,
@@ -27,6 +28,23 @@ export function confirmedBackendVersion(
   return version && (version.major === 8 || version.major === 9) ? status.version : undefined
 }
 
+/** Route availability is shared by the workbench and the authenticated conversion proxy. */
+export function operationMinimumVersionReason(
+  version: GotenbergVersion,
+  operation: Operation,
+): string | null {
+  if (requiresGotenberg91ForExtraction(version, [operation.id])) {
+    return 'PDF text and attachment extraction require Gotenberg 9.1 or newer.'
+  }
+  if (requiresGotenberg92ForComposition(version, [operation.id])) {
+    return 'PDF page composition requires Gotenberg 9.2 or newer.'
+  }
+  if (operation.id === 'optimize' && version.major === 8 && version.minor < 36) {
+    return 'Optimize PDFs requires Gotenberg 8.36 or newer.'
+  }
+  return null
+}
+
 /** The selected instance decides availability; unknown/unsupported majors must not be treated as v8. */
 export function unavailableOperationReason(
   status: ServerStatus | null,
@@ -45,12 +63,8 @@ export function unavailableOperationReason(
       ? 'This tool requires Gotenberg 9. Select a Gotenberg 9 connection for this workflow.'
       : 'This tool has not been migrated to Gotenberg 9 yet. Select a Gotenberg 8 connection for this workflow.'
   }
-  if (requiresGotenberg91ForExtraction(version, [operation.id])) {
-    return 'PDF text and attachment extraction require Gotenberg 9.1 or newer.'
-  }
-  if (requiresGotenberg92ForComposition(version, [operation.id])) {
-    return 'PDF page composition requires Gotenberg 9.2 or newer.'
-  }
+  const versionReason = operationMinimumVersionReason(version, operation)
+  if (versionReason) return versionReason
   const healthModules = status.modules.filter((module) =>
     ['chromium', 'libreoffice'].includes(module.name.toLowerCase()),
   )
@@ -68,9 +82,6 @@ export function unavailableOperationReason(
     )
   ) {
     return `The selected Gotenberg instance does not have a healthy ${required === 'chromium' ? 'Chromium' : 'LibreOffice'} module.`
-  }
-  if (operation.id === 'optimize' && versionAtLeast(status.version, 36) === false) {
-    return 'Optimize PDFs requires Gotenberg 8.36 or newer.'
   }
   return null
 }

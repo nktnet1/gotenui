@@ -124,13 +124,16 @@ export function draftOutboundIssues(
   } catch (error) {
     issues.push(error instanceof Error ? error.message : 'Invalid webhook settings.')
   }
+  // Route validation and version validation can report the same invalid alias.
   return [
-    ...issues,
-    ...outboundCompatibilityReasons(operation, version, {
-      advanced,
-      downloadFrom,
-      webhook,
-      fields: activeOperationFields(operation, fields, backendVersion),
-    }),
+    ...new Set([
+      ...issues,
+      ...outboundCompatibilityReasons(operation, version, {
+        advanced,
+        downloadFrom,
+        webhook,
+        fields: activeOperationFields(operation, fields, backendVersion),
+      }),
+    ]),
   ]
 }

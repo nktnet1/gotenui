@@ -548,9 +548,14 @@ test('validates Chromium typed printing, waiting and tag/outline controls', () =
     () => validatePayload(request('url-pdf', { userAgent: 'client\r\nHeader: secret' })),
     /userAgent/,
   )
-  for (const advanced of [{ singlePage: true }, { cookies: '[]' }]) {
+  for (const advanced of [{ preferCssPageSize: true }, { cookies: '[]' }]) {
     assert.throws(() => validatePayload({ ...request('office-pdf'), advanced }), /not supported/)
   }
+  // Gotenberg 9 also binds singlePage on the Office route. Its version is
+  // checked by the authenticated proxy, not the version-independent schema.
+  assert.doesNotThrow(() =>
+    validatePayload({ ...request('office-pdf'), advanced: { singlePage: true } }),
+  )
   assert.throws(
     () => validatePayload({ ...request('url-shot'), advanced: { generateTaggedPdf: true } }),
     /not supported/,
