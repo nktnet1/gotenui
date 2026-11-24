@@ -620,6 +620,13 @@ export async function proxyConversionRequest(
       throw new InputError('LibreOffice locale requires Gotenberg 9.9 or newer.', 409)
     }
   }
+  if (
+    operation.id === 'office-pdf' &&
+    payload.fields.showTrackedChanges !== undefined &&
+    (major !== 9 || version.minor < 10)
+  ) {
+    throw new InputError('Showing tracked changes requires Gotenberg 9.10 or newer.', 409)
+  }
   if (operation.id === 'optimize' && payload.fields.v9CompressStreams) {
     if (major === 9 && version.minor < 9) {
       throw new InputError('PDF stream compression control requires Gotenberg 9.9 or newer.', 409)

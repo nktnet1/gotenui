@@ -26,6 +26,10 @@ With **Gotenberg 9.1 or later**, **Extract PDF text** produces a `.txt` file for
 
 For Gotenberg 9 **Office to PDF**, a requested PDF/A or PDF/UA profile uses native LibreOffice export only when no PDF processing follows. **Merge**, **Split**, and custom pipeline stages automatically move conformance to a final PDF remediation stage; selecting **Native LibreOffice export** alongside those stages reports an error. Use PDF validation to check actual conformance rather than relying on HTTP 200 or a successful native export.
 
+### Gotenberg 9.10 tracked changes in Office documents
+
+On **Gotenberg 9.10+**, **Office to PDF** offers **Show tracked changes** under advanced settings. Enable it to preserve the visible markup for recorded insertions and deletions, including revision indicators in the margins, as supported by LibreOffice. Leave it off to accept changes for the purpose of the PDF export, retaining Gotenberg's default behaviour without modifying the original document. The setting is available only on Gotenberg 9.10+ and is rejected by the proxy on older versions. Gotenberg 9.10 also fixes macro execution when administrators enable LibreOffice macros on the server, which does not require a frontend setting.
+
 ### Gotenberg 9.9 Office locale and PDF stream compression
 
 On **Gotenberg 9.9+**, **Office to PDF** has a **Document locale (BCP 47)** field, such as `en-AU`, `de-DE` or `zh-Hans-CN`. It controls locale-dependent date, number and currency formatting, plus fallback paper size for documents that set none. A document's own language remains unchanged. Leaving it empty retains the server default. The form validates the subset of BCP 47 tags accepted by Gotenberg 9.9 and rejects this field on earlier servers.

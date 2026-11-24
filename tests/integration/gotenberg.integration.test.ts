@@ -19,6 +19,7 @@ import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-
 import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import type { ConversionPayload } from '#/lib/validation'
 import { inspectZipResult } from '#/lib/zip-result-manifest'
+import { zipFixture } from '../fixtures/zip'
 import { type CallbackReceipt, REMOTE_PDF_FIXTURE_PATH } from './async-fixture-server'
 import { integrationContainerLogs } from './container-logs'
 import { integrationSmokeOperations } from './operation-selection'
@@ -39,6 +40,7 @@ const supportsV96 = isV9 && minorVersion >= 6
 const supportsV97 = isV9 && minorVersion >= 7
 const supportsV98 = isV9 && minorVersion >= 8
 const supportsV99 = isV9 && minorVersion >= 9
+const supportsV910 = isV9 && minorVersion >= 10
 const fixtureUrl = inject('gotenbergFixtureUrl')
 const testUsername = inject('gotenbergTestUsername')
 const testPassword = inject('gotenbergTestPassword')
@@ -804,6 +806,58 @@ test.skipIf(!supportsV99)(
     expect(result.headers.get('content-type')).toContain('application/pdf')
     const bytes = new Uint8Array(await result.arrayBuffer())
     expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe('%PDF-')
+  },
+  120_000,
+)
+
+test.skipIf(!supportsV910)(
+  'Gotenberg 9.10 exports tracked Office deletions only when explicitly requested',
+  async () => {
+    // The same three-part OOXML structure used by the Gotenberg 9.10 upstream fixture.
+    const tracked = zipFixture(
+      {
+        '[Content_Types].xml':
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+          '<Default Extension="xml" ContentType="application/xml"/>' +
+          '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+          '</Types>',
+        '_rels/.rels':
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+          '</Relationships>',
+        'word/document.xml':
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>' +
+          '<w:r><w:t xml:space="preserve">Unchanged text. </w:t></w:r>' +
+          '<w:del w:id="1" w:author="Gotenberg" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">Deleted text. </w:delText></w:r></w:del>' +
+          '<w:ins w:id="2" w:author="Gotenberg" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Inserted text.</w:t></w:r></w:ins>' +
+          '</w:p></w:body></w:document>',
+      },
+      'tracked-changes.docx',
+    )
+
+    for (const showTrackedChanges of [undefined, true] as const) {
+      const result = await retryTransientConversion(() =>
+        convertV9('office-pdf', showTrackedChanges ? { showTrackedChanges } : {}, [tracked]),
+      )
+      if (!result.ok) {
+        throw new Error(`Tracked-change conversion: ${result.status} ${await result.text()}`)
+      }
+      expect(result.headers.get('content-type')).toContain('application/pdf')
+      const extracted = await convertV9('extract-text', {}, [
+        new File([await result.arrayBuffer()], 'converted.pdf', { type: 'application/pdf' }),
+      ])
+      if (!extracted.ok) {
+        throw new Error(`Tracked-change extraction: ${extracted.status} ${await extracted.text()}`)
+      }
+      const text = await extracted.text()
+      expect(text).toContain('Inserted text.')
+      if (showTrackedChanges) expect(text).toContain('Deleted text.')
+      else expect(text).not.toContain('Deleted text.')
+    }
   },
   120_000,
 )

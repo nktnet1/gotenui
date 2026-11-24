@@ -1,7 +1,7 @@
 /** The only pinned Gotenberg Docker versions used by local tests and CI. */
 export const GOTENBERG_TEST_VERSIONS = {
   v8: '8.40.0',
-  v9: '9.9.0',
+  v9: '9.10.0',
 } as const
 
 export const GOTENBERG_INTEGRATION_VERSIONS = [
