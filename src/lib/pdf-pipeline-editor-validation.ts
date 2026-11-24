@@ -13,7 +13,7 @@ import {
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
-import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import { parsePdfPipeline, pdfStageAssetNames, validatePdfStageUploads } from '#/lib/pdf-pipeline'
 
 /** Preflight the same asset names as the request adapter, including remote
  * filename hints. Gotenberg still verifies the actual downloaded filenames.
@@ -66,12 +66,14 @@ export function pdfPipelineEditorError(
         : []
       assetNames = [...localAssetNames, ...remoteAssetNames]
     }
+    const conversionMode = documentKind === 'office' || documentKind === 'single'
     const parsed = parsePdfPipeline(stages, {
       assetNames,
       allowUnresolvedAssets,
-      allowEmpty: documentKind === 'office' || documentKind === 'single',
+      allowEmpty: conversionMode,
       acknowledgedRedaction,
     })
+    validatePdfStageUploads(parsed, localAssetNames, conversionMode)
     const version = parseGotenbergVersion(backendVersion)
     if (
       version &&

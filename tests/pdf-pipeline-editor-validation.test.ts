@@ -110,3 +110,46 @@ describe('PDF pipeline editor remote asset preflight', () => {
     )
   })
 })
+
+it('rejects local stage files left behind when a stage is removed, even with archives', () => {
+  for (const documentKind of ['pdf', 'office', 'single'] as const) {
+    for (const archivesPresent of [false, true]) {
+      assert.match(
+        pdfPipelineEditorError('[{"op":"merge"}]', {
+          ...base,
+          documentKind,
+          archivesPresent,
+          localAssetNames: ['removed-insert.pdf'],
+        }) ?? '',
+        /Unused .*stage file: removed-insert\.pdf/,
+      )
+    }
+  }
+  assert.match(
+    pdfPipelineEditorError('', {
+      ...base,
+      documentKind: 'office',
+      localAssetNames: ['removed-insert.pdf'],
+    }) ?? '',
+    /Unused .*stage file: removed-insert\.pdf/,
+  )
+  assert.equal(
+    pdfPipelineEditorError('[{"op":"attach","file":"caf\u00e9.pdf"}]', {
+      ...base,
+      documentKind: 'pdf',
+      localAssetNames: ['cafe\u0301.pdf'],
+    }),
+    null,
+  )
+})
+
+it('rejects raw decryption stages in conversion-time editors only', () => {
+  const stages = '[{"op":"decrypt","password":"secret"}]'
+  for (const documentKind of ['office', 'single'] as const) {
+    assert.match(
+      pdfPipelineEditorError(stages, { ...base, documentKind }) ?? '',
+      /Decryption is only available for uploaded PDFs/,
+    )
+  }
+  assert.equal(pdfPipelineEditorError(stages, { ...base, documentKind: 'pdf' }), null)
+})

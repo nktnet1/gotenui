@@ -1,7 +1,7 @@
 import { effectiveRemoteFilename } from '#/lib/file-names'
 import { mergeUploadFilenames } from '#/lib/merge-order'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
-import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import { parsePdfPipeline, pdfStageAssetNames, validatePdfStageUploads } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 
@@ -50,6 +50,10 @@ export function adaptPdfPipeline(
     ),
     acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
   })
+  validatePdfStageUploads(
+    stages,
+    auxiliary.map(({ name }) => name),
+  )
   const form = new FormData()
   const inputs = legacy.getAll('files')
   // Gotenberg 9 sorts PDFs by their received filenames, regardless of the

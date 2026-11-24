@@ -393,19 +393,20 @@ export function Workbench({
           documentKind: 'pdf',
         })
       : null
-  const conversionPipelineError = conversionStages
-    ? pdfPipelineEditorError(conversionStages, {
-        ...remotePipelineInputs,
-        localAssetNames: conversionStageFiles.map(({ name }) => name),
-        archivesPresent: archives.length > 0,
-        acknowledgedRedaction: acknowledgedConversionRedaction,
-        backendVersion,
-        documentNames: files.map(({ name }) => name),
-        documentKind: operation.id === 'office-pdf' ? 'office' : 'single',
-        builtInMerge: operation.id === 'office-pdf' && fields.merge === true,
-        outputName: outputName.trim() || undefined,
-      })
-    : null
+  const conversionPipelineError =
+    conversionStages || conversionStageFiles.length
+      ? pdfPipelineEditorError(conversionStages, {
+          ...remotePipelineInputs,
+          localAssetNames: conversionStageFiles.map(({ name }) => name),
+          archivesPresent: archives.length > 0,
+          acknowledgedRedaction: acknowledgedConversionRedaction,
+          backendVersion,
+          documentNames: files.map(({ name }) => name),
+          documentKind: operation.id === 'office-pdf' ? 'office' : 'single',
+          builtInMerge: operation.id === 'office-pdf' && fields.merge === true,
+          outputName: outputName.trim() || undefined,
+        })
+      : null
   const docsUrl =
     isV9 && operation.input === 'pdf'
       ? `https://gotenberg.dev/docs/pdf/${operation.id === 'extract-attachments' ? 'attachments' : operation.id === 'extract-text' ? 'pages' : operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`

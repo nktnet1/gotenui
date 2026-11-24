@@ -1633,3 +1633,48 @@ test('Office watermark rotation precision is checked against the verified backen
   assert.equal((await proxyConversionRequest(candidate('12.34'), v9.fetcher)).status, 200)
   assert.deepEqual(v9.counts(), { probes: 1, conversions: 1 })
 })
+
+test('rejects an unused pipeline upload instead of forwarding it as another input PDF', async () => {
+  const fixture = upstreamFixture('9.10.0', () => {})
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'pdf-pipeline',
+        { stages: '[{"op":"merge"}]' },
+        {},
+        [new File(['%PDF-1.7\n'], 'report.pdf')],
+        [new File(['%PDF-1.7\n'], 'removed-insert.pdf')],
+      ),
+      fixture.fetcher,
+    ),
+    /Unused PDF pipeline stage file: removed-insert\.pdf/,
+  )
+  assert.equal(fixture.counts().conversions, 0)
+})
+
+test.each(['8.40.0', '9.10.0'])(
+  'allows duplicate Office form field names with the default exportFormFields on %s',
+  async (version) => {
+    const fixture = upstreamFixture(version, (form) => {
+      assert.equal(form.get('allowDuplicateFieldNames'), 'true')
+      assert.equal(form.has('exportFormFields'), false)
+    })
+    const file = new File(['Document'], 'document.txt')
+    const response = await proxyConversionRequest(
+      requestFor('office-pdf', { allowDuplicateFieldNames: true }, {}, [file]),
+      fixture.fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(fixture.counts().conversions, 1)
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('office-pdf', { allowDuplicateFieldNames: true, exportFormFields: false }, {}, [
+          file,
+        ]),
+        fixture.fetcher,
+      ),
+      /requires its related option to be enabled/,
+    )
+    assert.equal(fixture.counts().conversions, 1)
+  },
+)

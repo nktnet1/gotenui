@@ -39,7 +39,12 @@ import {
   pdfPostProcessSchema,
 } from '#/lib/pdf-post-processing'
 import { metadataObject, validateBookmarkDocument } from '#/lib/pdf-structure-editors'
-import { isFieldVisible, OPERATION_BY_ID, type Operation } from '#/tools/registry'
+import {
+  isFieldVisible,
+  OPERATION_BY_ID,
+  type Operation,
+  operationDefaults,
+} from '#/tools/registry'
 
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
@@ -1214,13 +1219,16 @@ export function validatePayload(input: unknown): {
       }
     }
   }
+  // Missing controlling fields retain their defaults. Do not inject those
+  // defaults into the outgoing multipart request or override explicit values.
+  const effectiveFields = { ...operationDefaults(operation), ...payload.fields }
   for (const field of operation.fields) {
     const value = payload.fields[field.name]
     if (
       value !== undefined &&
       value !== '' &&
       value !== false &&
-      !isFieldVisible(field, payload.fields) &&
+      !isFieldVisible(field, effectiveFields) &&
       !(operation.id === 'split' && field.name === 'splitUnify')
     ) {
       throw new InputError(`${field.label} requires its related option to be enabled.`)

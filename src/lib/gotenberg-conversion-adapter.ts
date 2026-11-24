@@ -12,6 +12,7 @@ import {
   type PdfPipelineStage,
   parsePdfPipeline,
   pdfStageAssetNames,
+  validatePdfStageUploads,
 } from '#/lib/pdf-pipeline'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
@@ -432,17 +433,11 @@ export function adaptConversionForm(
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
-    if (userStages.some((stage) => stage.op === 'decrypt')) {
-      throw new InputError(
-        'Decryption is only available for uploaded PDFs, not newly converted PDFs.',
-      )
-    }
-    const referenced = new Set(pdfStageAssetNames(userStages))
-    for (const file of stageFiles) {
-      if (!referenced.has(file.name.normalize('NFC'))) {
-        throw new InputError(`Unused conversion stage file: ${file.name}.`)
-      }
-    }
+    validatePdfStageUploads(
+      userStages,
+      stageFiles.map(({ name }) => name),
+      true,
+    )
     // Remediation must follow page/content edits but precede encryption,
     // signing, document timestamps and final readers. Placing it after a
     // signature would rewrite signed bytes; placing it after encryption would

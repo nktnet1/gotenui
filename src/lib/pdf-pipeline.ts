@@ -759,6 +759,28 @@ export function pdfStageAssetNames(stages: readonly PdfPipelineStage[]): string[
   return [...new Set(stages.flatMap(stageFileReferences))]
 }
 
+/** Stage uploads are separate from source documents. Never let an unused PDF
+ * asset become a source document when Gotenberg excludes only referenced files.
+ */
+export function validatePdfStageUploads(
+  stages: readonly PdfPipelineStage[],
+  localAssetNames: readonly string[],
+  conversionMode = false,
+): void {
+  if (conversionMode && stages.some(({ op }) => op === 'decrypt')) {
+    throw new InputError(
+      'Decryption is only available for uploaded PDFs, not newly converted PDFs.',
+    )
+  }
+  const referenced = new Set(pdfStageAssetNames(stages))
+  for (const name of localAssetNames) {
+    if (!referenced.has(name.normalize('NFC'))) {
+      const kind = conversionMode ? 'conversion' : 'PDF pipeline'
+      throw new InputError(`Unused ${kind} stage file: ${name}.`)
+    }
+  }
+}
+
 export type PdfPipelineValidation = {
   assetNames?: readonly string[]
   /** An unnamed remote download may supply a stage asset; Gotenberg checks its actual filename. */
