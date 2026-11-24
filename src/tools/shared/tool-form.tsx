@@ -10,7 +10,7 @@ import {
   Settings2,
   ShieldCheck,
 } from 'lucide-react'
-import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { RemoteInputsEditor, WebhookEditor } from '#/components/async-inputs-editor'
 import { AttachmentMetadataEditor } from '#/components/attachment-metadata-editor'
@@ -55,7 +55,7 @@ import {
 } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { officeAcceptForVersion } from '#/lib/office-formats'
-import { canWebhookForOperation, versionAtLeast } from '#/lib/operation-availability'
+import { canWebhookForOperation } from '#/lib/operation-availability'
 import { DEFAULT_PDF_PIPELINE } from '#/lib/pdf-pipeline'
 import { pdfPipelineEditorError } from '#/lib/pdf-pipeline-editor-validation'
 import {
@@ -82,6 +82,7 @@ import {
   type Operation,
   operationDefaults,
 } from '#/tools/registry'
+import { draftCompatibility } from '#/tools/shared/draft-compatibility'
 import { JobPanel } from '#/tools/shared/job-panel'
 import { FieldControl } from '#/tools/shared/tool-fields'
 import type { AcceptedWebhook, Download, Job } from '#/tools/shared/tool-jobs'
@@ -116,8 +117,8 @@ Turn plain text into beautiful, portable documents.
 export function Workbench({
   operation,
   unavailableReason,
-  supportsOptimization,
   backendVersion,
+  connectionKey,
   recent,
   onCompleted,
   connection,
@@ -125,8 +126,8 @@ export function Workbench({
 }: {
   operation: Operation
   unavailableReason: string | null
-  supportsOptimization: boolean
   backendVersion?: string
+  connectionKey: string
   recent: Job[]
   onCompleted: (job: Job) => void
   connection: ConnectionChoice
@@ -186,6 +187,20 @@ export function Workbench({
     },
     [],
   )
+  // Keep the draft across connections, but never publish a previous connection's
+  // in-flight result in the new workspace. Queued jobs retain their own targets.
+  const previousConnectionKey = useRef(connectionKey)
+  useLayoutEffect(() => {
+    if (previousConnectionKey.current === connectionKey) return
+    previousConnectionKey.current = connectionKey
+    requestAbort.current?.abort()
+    requestAbort.current = null
+    readAbort.current?.abort()
+    readAbort.current = null
+    setPending(false)
+    setReadingStructure(false)
+    clearResult()
+  }, [connectionKey, clearResult])
   useEffect(() => {
     setFields(operationDefaults(operation))
     setSource(operation.input === 'markdown' ? EXAMPLE_MARKDOWN : EXAMPLE_HTML)
@@ -298,6 +313,47 @@ export function Workbench({
   const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && !isV9
   const supportsConversionPipeline = isV9 && operation.output === 'pdf' && operation.input !== 'pdf'
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
+  const compatibility = draftCompatibility(operation, fields, backendVersion, {
+    legacyStandaloneOverlay: v8StandaloneOverlay,
+    acceptsPostProcess: v8StandaloneOverlay || hasPostProcessing,
+    postProcess,
+    postFiles,
+    acceptsArchives: canUploadArchives,
+    archives,
+    acceptsWebhook: canWebhook,
+    webhookConfigured: webhookSettings.enabled || Boolean(webhookInput.trim()),
+    acceptsConversionStages: supportsConversionPipeline,
+    conversionStages,
+    conversionStageFiles,
+    auxiliary: auxFiles,
+  })
+  const discardIncompatibleSettings = () => {
+    setFields((current) => {
+      const next = { ...current }
+      const defaults = operationDefaults(operation)
+      for (const { name } of compatibility.fieldConflicts) {
+        const defaultValue = defaults[name]
+        if (defaultValue === undefined) delete next[name]
+        else next[name] = defaultValue
+      }
+      return next
+    })
+    if (compatibility.discardPostProcess) {
+      setPostProcess({})
+      setPostFiles({})
+    }
+    if (compatibility.discardArchives) setArchives([])
+    if (compatibility.discardWebhook) {
+      setWebhookSettings(emptyWebhook)
+      setWebhookInput('')
+    }
+    if (compatibility.discardStages) {
+      setConversionStages('')
+      setConversionStageFiles([])
+      setAcknowledgedConversionRedaction(false)
+    }
+    if (compatibility.discardAuxiliary) setAuxFiles([])
+  }
   const remotePipelineInputs = { remoteRows, remoteJson: remoteInput }
   const pipelineError =
     operation.id === 'pdf-pipeline'
@@ -373,6 +429,7 @@ export function Workbench({
       if (result.blob.size > 2_000_000)
         throw new Error('The PDF structure response is too large to edit.')
       const content: unknown = JSON.parse(await result.blob.text())
+      if (signal.aborted) return
       const editable = metadata
         ? importReadableMetadata(content, files[0]?.name ?? '', { standardOnly: isV9 })
         : importReadableBookmarks(
@@ -394,9 +451,8 @@ export function Workbench({
   }
 
   const buildCandidate = () => {
+    if (compatibility.reasons.length) throw new InputError(compatibility.reasons.join(' '))
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
-    // JSON inspection routes answer synchronously in v9. Preserve the v8
-    // webhook draft for a connection switch, but never send it on this route.
     const webhook = !canWebhook
       ? undefined
       : (webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined)
@@ -408,27 +464,7 @@ export function Workbench({
     }
     if (pipelineError) throw new InputError(pipelineError)
     if (conversionPipelineError) throw new InputError(conversionPipelineError)
-    if (conversionStages && !supportsConversionPipeline) {
-      throw new InputError('The configured conversion PDF stages require Gotenberg 9.')
-    }
     const selectedFields = activeOperationFields(operation, fields, backendVersion)
-    if (selectedFields.pdfa === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false) {
-      throw new Error('PDF/A-4 requires Gotenberg 8.39 or newer.')
-    }
-    if (selectedFields.failOnConsoleMessageTypes && versionAtLeast(backendVersion, 39) === false) {
-      throw new Error('Console message checks require Gotenberg 8.39 or newer.')
-    }
-    if (
-      operation.id === 'office-pdf' &&
-      selectedFields.generateTaggedPdf === true &&
-      versionAtLeast(backendVersion, 38) === false
-    ) {
-      throw new Error('LibreOffice PDF tagging requires Gotenberg 8.38 or newer.')
-    }
-    if (!supportsOptimization) {
-      delete selectedFields.optimizeImages
-      delete selectedFields.imageQuality
-    }
     const candidate = {
       operation: operation.id,
       fields: v8StandaloneOverlay
@@ -490,19 +526,19 @@ export function Workbench({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (pending) return
+    if (pending || requestAbort.current) return
     if (unavailableReason) {
       toast.error(unavailableReason)
       return
     }
+    const controller = new AbortController()
+    requestAbort.current = controller
     setPending(true)
     setAcceptedWebhook(null)
     try {
       const candidate = buildCandidate()
       const webhook = candidate.webhook
       const start = performance.now()
-      const controller = new AbortController()
-      requestAbort.current = controller
       const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       const signal = AbortSignal.any([controller.signal, deadline])
       const result = await convertWithGotenberg(
@@ -535,9 +571,6 @@ export function Workbench({
         return
       }
       const { blob, type, name, trace, remediation } = result
-      const url = URL.createObjectURL(blob)
-      if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
-      fileUrl.current = url
       const preview = ['application/json', 'text/plain'].includes(type)
         ? await blob.slice(0, 16_000).text()
         : undefined
@@ -545,6 +578,10 @@ export function Workbench({
         operation.id === 'pdf-validate'
           ? ((await summarisePdfValidationBlob(blob)) ?? undefined)
           : undefined
+      if (signal.aborted) return
+      const url = URL.createObjectURL(blob)
+      if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
+      fileUrl.current = url
       setLastDownload({
         name,
         size: blob.size,
@@ -586,6 +623,7 @@ export function Workbench({
         toast.warning(`Gotenberg generated ${name}, but ${remediationReviewNotice(remediation)}`)
       } else toast.success(`${name} is ready to download`)
     } catch (error) {
+      if (requestAbort.current !== controller) return
       if (error instanceof Error && error.name === 'AbortError') {
         toast.message('Conversion cancelled.')
         return
@@ -600,8 +638,10 @@ export function Workbench({
           : 'Something went wrong.'
       toast.error(message)
     } finally {
-      requestAbort.current = null
-      setPending(false)
+      if (requestAbort.current === controller) {
+        requestAbort.current = null
+        setPending(false)
+      }
     }
   }
   return (
@@ -641,6 +681,34 @@ export function Workbench({
               >
                 {unavailableReason} Choose another tool or connection.
               </p>
+            )}
+            {compatibility.reasons.length > 0 && (
+              <div
+                role="alert"
+                className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+              >
+                <p className="font-medium">
+                  The selected connection cannot run all configured settings.
+                </p>
+                <ul className="list-disc space-y-1 pl-5">
+                  {compatibility.reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+                <p>
+                  Switch back to a compatible connection or discard only the incompatible settings
+                  before running or queuing this operation.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pending}
+                  onClick={discardIncompatibleSettings}
+                >
+                  Discard incompatible settings
+                </Button>
+              </div>
             )}
             {hasUpload && (
               <UploadZone
@@ -935,23 +1003,6 @@ export function Workbench({
                 )}
               </section>
             )}
-            {!isV9 && conversionStages && (
-              <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
-                The configured PDF pipeline requires Gotenberg 9. Return to a v9 connection or{' '}
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={() => {
-                    setConversionStages('')
-                    setConversionStageFiles([])
-                    setAcknowledgedConversionRedaction(false)
-                  }}
-                >
-                  discard the stages
-                </button>
-                .
-              </p>
-            )}
             {hasPostProcessing && (
               <PdfConversionPostProcessing
                 mode={
@@ -989,13 +1040,6 @@ export function Workbench({
                     <ChevronDown className="size-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180" />
                   </summary>
                   <div className="space-y-4 border-t border-slate-200 px-4 py-4 dark:border-slate-700">
-                    {key === 'compression' && !supportsOptimization && (
-                      <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
-                        {isV9
-                          ? 'Gotenberg 9 only supports lossless PDF optimisation. Native LibreOffice image compression remains available.'
-                          : 'PDF image optimization needs Gotenberg 8.36+. Native LibreOffice compression is still available.'}
-                      </p>
-                    )}
                     <div className="grid gap-4 sm:grid-cols-2">
                       {items
                         .filter((field) => isFieldVisible(field, fields))
@@ -1006,10 +1050,6 @@ export function Workbench({
                             value={fields[field.name]}
                             onChange={(value) => updateField(field.name, value)}
                             backendVersion={backendVersion}
-                            disabled={
-                              !supportsOptimization &&
-                              ['optimizeImages', 'imageQuality'].includes(field.name)
-                            }
                           />
                         ))}
                     </div>
@@ -1190,6 +1230,7 @@ export function Workbench({
               disabled={
                 pending ||
                 Boolean(unavailableReason) ||
+                compatibility.reasons.length > 0 ||
                 Boolean(pipelineError || conversionPipelineError)
               }
               onClick={queueCurrent}
@@ -1202,6 +1243,7 @@ export function Workbench({
               disabled={
                 pending ||
                 Boolean(unavailableReason) ||
+                compatibility.reasons.length > 0 ||
                 Boolean(pipelineError || conversionPipelineError)
               }
               className="min-w-44"

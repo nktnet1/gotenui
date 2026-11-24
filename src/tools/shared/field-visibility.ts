@@ -1,5 +1,6 @@
 /** Centralised conditional field visibility for rendering and multipart payload construction. */
-import { parseGotenbergVersion } from '#/lib/gotenberg-version'
+import { type GotenbergVersion, parseGotenbergVersion } from '#/lib/gotenberg-version'
+import { isGotenberg95PaperSize } from '#/lib/pdf-paper-sizes'
 import type { FieldDefinition, Operation } from '#/tools/types'
 
 export function isFieldVisible(
@@ -19,7 +20,9 @@ export function isFieldVisible(
   if (!condition) return true
   const actual = values[condition.name]
   if (field.name === 'splitSpan') return actual === 'pages' || actual === 'intervals'
-  if (field.name === 'ignoreResourceHttpStatusDomains') return Boolean(actual)
+  if (field.name === 'ignoreResourceHttpStatusDomains') {
+    return typeof actual === 'string' && actual.trim() !== '' && !/^\[\s*\]$/.test(actual.trim())
+  }
   // An omitted toggle has the same meaning as the upstream false default.
   return actual === condition.equals || (actual === undefined && condition.equals === false)
 }
@@ -30,23 +33,98 @@ export function fieldSupportsBackend(field: FieldDefinition, version?: string): 
   return field.supportedGotenbergMajors.some((supported) => supported === major)
 }
 
+/** A minor gate belongs to a single major, even when a field is shared. */
+export function fieldMinimumVersion(
+  field: FieldDefinition,
+): { major: 8 | 9; minor: number } | undefined {
+  if (field.minGotenbergMinor === undefined) return undefined
+  return {
+    major:
+      field.supportedGotenbergMajors?.length === 1 && field.supportedGotenbergMajors[0] === 9
+        ? 9
+        : 8,
+    minor: field.minGotenbergMinor,
+  }
+}
+
+/** Shared by the control, request builder and authenticated proxy preflight. */
+export function fieldMinimumVersionReason(
+  field: FieldDefinition,
+  version: GotenbergVersion | null,
+  value?: string | boolean,
+): string | null {
+  if (!version) return null
+  const minimum = fieldMinimumVersion(field)
+  if (
+    minimum &&
+    ((version.major === minimum.major && version.minor < minimum.minor) ||
+      (minimum.major === 9 && version.major === 8))
+  ) {
+    return `${field.label} requires Gotenberg ${minimum.major}.${minimum.minor} or newer.`
+  }
+  if (field.name === 'pdfa' && value === 'PDF/A-4' && version.major === 8 && version.minor < 39) {
+    return 'PDF/A-4 requires Gotenberg 8.39 or newer.'
+  }
+  if (
+    field.name === 'paperSize' &&
+    isGotenberg95PaperSize(value) &&
+    version.major === 9 &&
+    version.minor < 5
+  ) {
+    return 'A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.'
+  }
+  return null
+}
+
+export function fieldCompatibilityReason(
+  field: FieldDefinition,
+  backendVersion?: string,
+  value?: string | boolean,
+): string | null {
+  const version = parseGotenbergVersion(backendVersion)
+  const minimum = fieldMinimumVersionReason(field, version, value)
+  if (minimum) return minimum
+  if (!fieldSupportsBackend(field, backendVersion)) {
+    return `${field.label} requires Gotenberg ${field.supportedGotenbergMajors?.join(' or ')}.`
+  }
+  return null
+}
+
+/** A blank or disabled opt-in is not a configured feature. Ignore untouched defaults. */
+export function isConfiguredField(
+  field: FieldDefinition,
+  value: string | boolean | undefined,
+): boolean {
+  return value !== undefined && value !== '' && value !== (field.defaultValue ?? false)
+}
+
+export function incompatibleOperationFields(
+  operation: Operation,
+  values: Readonly<Record<string, string | boolean>>,
+  backendVersion?: string,
+  legacyStandaloneOverlay = false,
+): { name: string; reason: string }[] {
+  return operation.fields.flatMap((field) => {
+    const value = values[field.name]
+    if (!isFieldVisible(field, values) || !isConfiguredField(field, value)) return []
+    const reason = legacyStandaloneOverlay
+      ? `${field.label} belongs to the Gotenberg 9 overlay editor.`
+      : fieldCompatibilityReason(field, backendVersion, value)
+    return reason ? [{ name: field.name, reason }] : []
+  })
+}
+
+/** Project the compatible, visible fields only after checking for conflicts. */
 export function activeOperationFields(
   operation: Operation,
   values: Readonly<Record<string, string | boolean>>,
   backendVersion?: string,
 ): Record<string, string | boolean> {
-  const version = parseGotenbergVersion(backendVersion)
   return Object.fromEntries(
     operation.fields
       .filter(
         (field) =>
-          fieldSupportsBackend(field, backendVersion) &&
-          (field.minGotenbergMinor === undefined ||
-            version?.major !== 9 ||
-            version.minor >= field.minGotenbergMinor ||
-            // Retain an already-selected unsupported option so the server
-            // returns an explicit version error rather than silently dropping it.
-            Boolean(values[field.name])) &&
+          !fieldCompatibilityReason(field, backendVersion, values[field.name]) &&
           isFieldVisible(field, values) &&
           values[field.name] !== undefined,
       )

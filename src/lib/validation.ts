@@ -9,7 +9,7 @@ import {
   defaultMarkdownTemplate,
   generatedChromiumFilenames,
 } from '#/lib/chromium-documents'
-import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
+import { encodeChromiumMediaFeatures, normalizeAdvancedMediaFeatures } from '#/lib/chromium-media'
 import {
   hasAmbiguousChromiumScope,
   isAllowedChromiumResourceHeader,
@@ -1225,7 +1225,7 @@ export function validatePayload(input: unknown): {
       throw new InputError('emulatedMediaFeatures must contain JSON text.')
     }
     try {
-      validateAdvancedMediaFeatures(payload.advanced.emulatedMediaFeatures)
+      normalizeAdvancedMediaFeatures(payload.advanced.emulatedMediaFeatures)
     } catch (error) {
       throw new InputError(error instanceof Error ? error.message : 'Invalid media features.')
     }

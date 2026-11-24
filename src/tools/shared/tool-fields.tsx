@@ -10,9 +10,8 @@ import {
   parseConsoleMessageTypes,
   updateConsoleMessageTypes,
 } from '#/lib/official-form-fields'
-import { versionAtLeast } from '#/lib/operation-availability'
-import { isGotenberg95PaperSize } from '#/lib/pdf-paper-sizes'
 import type { FieldDefinition } from '#/tools/registry'
+import { fieldCompatibilityReason } from '#/tools/shared/field-visibility'
 
 const v9BookmarkLevels = ['-1', ...Array.from({ length: 10 }, (_, index) => String(index + 1))]
 
@@ -31,13 +30,7 @@ function FieldControl({
 }) {
   const id = useId()
   const parsedVersion = parseGotenbergVersion(backendVersion)
-  const v9Only =
-    field.supportedGotenbergMajors?.length === 1 && field.supportedGotenbergMajors[0] === 9
-  const unsupported =
-    field.minGotenbergMinor !== undefined &&
-    (v9Only
-      ? parsedVersion?.major === 9 && parsedVersion.minor < field.minGotenbergMinor
-      : versionAtLeast(backendVersion, field.minGotenbergMinor) === false)
+  const unsupported = Boolean(fieldCompatibilityReason(field, backendVersion))
   const inactive = disabled || unsupported
   const isV9BookmarkLevels =
     field.name === 'openBookmarkLevels' &&
@@ -124,14 +117,7 @@ function FieldControl({
               <option
                 key={option}
                 value={option}
-                disabled={
-                  unsupported ||
-                  (field.name === 'paperSize' &&
-                    isGotenberg95PaperSize(option) &&
-                    parsedVersion?.major === 9 &&
-                    parsedVersion.minor < 5) ||
-                  (option === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false)
-                }
+                disabled={Boolean(fieldCompatibilityReason(field, backendVersion, option))}
               >
                 {isV9BookmarkLevels && option === '-1'
                   ? 'All levels (-1)'
@@ -177,6 +163,26 @@ function FieldControl({
           required={field.required}
           disabled={inactive}
         />
+      )}
+      {field.kind === 'http-codes' && (
+        <div className="flex flex-wrap gap-3 text-xs">
+          <button
+            type="button"
+            className="underline"
+            disabled={inactive}
+            onClick={() => onChange('')}
+          >
+            Use server default
+          </button>
+          <button
+            type="button"
+            className="underline"
+            disabled={inactive}
+            onClick={() => onChange('[]')}
+          >
+            Disable checks
+          </button>
+        </div>
       )}
       {field.description && (
         <p className="text-xs text-slate-500 dark:text-slate-400">{field.description}</p>

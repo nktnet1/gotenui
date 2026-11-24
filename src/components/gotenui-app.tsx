@@ -42,11 +42,9 @@ import {
 } from '#/lib/connection-profiles'
 import { type ObservedConnectionStatus, statusForConnection } from '#/lib/connection-status'
 import { getGotenbergStatus, type ServerStatus } from '#/lib/gotenberg-client'
-import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import {
   backendCompatibilityNotice,
   unavailableOperationReason,
-  versionAtLeast,
 } from '#/lib/operation-availability'
 import { isSearchShortcut } from '#/lib/operation-search'
 import { cn } from '#/lib/utils'
@@ -430,10 +428,6 @@ function Workspace({
   const unavailableReason = status
     ? unavailableOperationReason(status, operation)
     : 'Checking the selected Gotenberg version…'
-  const supportsOptimization =
-    !status?.online ||
-    (parseGotenbergVersion(status.version)?.major !== 9 &&
-      versionAtLeast(status.version, 36) !== false)
   const compatibilityNotice = backendCompatibilityNotice(status)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -746,10 +740,10 @@ function Workspace({
                 })}
               </div>
               <Workbench
-                key={`${operation.id}:${selectedConnection}:${connectionEpoch}`}
+                key={operation.id}
+                connectionKey={statusKey}
                 operation={operation}
                 unavailableReason={unavailableReason}
-                supportsOptimization={supportsOptimization}
                 backendVersion={status?.online ? status.version : undefined}
                 recent={recent}
                 onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}

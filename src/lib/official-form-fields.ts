@@ -35,9 +35,12 @@ export function updateConsoleMessageTypes(
 }
 
 export function parseStatusCodes(input: string): number[] {
+  if (/^\[\s*\]$/.test(input.trim())) return []
   const parts = input.split(',').map((value) => value.trim())
   if (parts.some((value) => !/^[1-5]\d\d$/.test(value))) {
-    throw new Error('Enter HTTP status codes (100–599) separated by commas.')
+    throw new Error(
+      'Enter HTTP status codes (100–599) separated by commas, or [] to disable checks.',
+    )
   }
   return [...new Set(parts.map(Number))]
 }

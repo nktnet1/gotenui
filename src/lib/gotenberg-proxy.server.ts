@@ -56,6 +56,7 @@ import {
 } from '#/lib/validation'
 import { validateZipInputs } from '#/lib/zip-input-validation'
 import type { Operation } from '#/tools/registry'
+import { fieldMinimumVersionReason } from '#/tools/shared/field-visibility'
 
 const serverEnvSchema = v.object({
   GOTENBERG_ALLOWED_URLS: v.optional(v.pipe(v.string(), v.maxLength(20_000))),
@@ -607,50 +608,18 @@ export async function proxyConversionRequest(
   if (requiresGotenberg92ForComposition(version, [operation.id])) {
     throw new InputError('PDF page composition requires Gotenberg 9.2 or newer.', 409)
   }
-  if (requiresGotenberg95ForPaperSize(version, [payload.fields.paperSize])) {
-    throw new InputError('A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.', 409)
-  }
-  if (operation.id === 'extract-text' && payload.fields.format) {
-    if (major === 9 && version.minor < 8) {
-      throw new InputError('Extraction formats require Gotenberg 9.8 or newer.', 409)
-    }
-  }
-  if (operation.id === 'office-pdf' && payload.fields.locale) {
-    if (major !== 9 || version.minor < 9) {
-      throw new InputError('LibreOffice locale requires Gotenberg 9.9 or newer.', 409)
-    }
-  }
-  if (
-    operation.id === 'office-pdf' &&
-    payload.fields.showTrackedChanges !== undefined &&
-    (major !== 9 || version.minor < 10)
-  ) {
-    throw new InputError('Showing tracked changes requires Gotenberg 9.10 or newer.', 409)
-  }
-  if (operation.id === 'optimize' && payload.fields.v9CompressStreams) {
-    if (major === 9 && version.minor < 9) {
-      throw new InputError('PDF stream compression control requires Gotenberg 9.9 or newer.', 409)
-    }
-  }
-  if (major === 9 && payload.fields.v9DropSignatures === true && version.minor < 6) {
-    throw new InputError('Removing digital signatures requires Gotenberg 9.6 or newer.', 409)
-  }
-  if (
-    major === 9 &&
-    version.minor < 7 &&
-    (payload.fields.v9FileBookmarks === true ||
-      Boolean(payload.fields.v9FileBookmarkSource) ||
-      Boolean(payload.fields.v9FileBookmarkLabels))
-  ) {
-    throw new InputError('Per-file merge bookmarks require Gotenberg 9.7 or newer.', 409)
-  }
-  if (
-    (operation.id === 'stamp' || operation.id === 'watermark') &&
-    requiresGotenberg94ForStampPosition(version, [
-      { op: 'stamp-text', position: payload.fields.v9OverlayPosition },
-    ])
-  ) {
-    throw new InputError('Anchored PDF stamps require Gotenberg 9.4 or newer.', 409)
+  // Standalone controls share the same version gates as the browser. An explicit
+  // false tracked-changes value is also unsupported before 9.10 at the API boundary.
+  for (const field of operation.fields) {
+    const value = payload.fields[field.name]
+    if (
+      value === undefined ||
+      value === '' ||
+      (value === false && field.name !== 'showTrackedChanges')
+    )
+      continue
+    const reason = fieldMinimumVersionReason(field, version, value)
+    if (reason) throw new InputError(reason, 409)
   }
   if (
     major === 9 &&

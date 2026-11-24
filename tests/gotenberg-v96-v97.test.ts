@@ -1019,7 +1019,7 @@ describe('Gotenberg 9.7 per-file merge bookmarks', () => {
       )
       assert.match(render, /disabled/)
       assert.match(render, /Gotenberg 9\./)
-      assert.equal(activeOperationFields(tool, { [name]: true }, version)[name], true)
+      assert.equal(activeOperationFields(tool, { [name]: true }, version)[name], undefined)
       assert.equal(activeOperationFields(tool, { [name]: true }, '9.7.0')[name], true)
     }
   })

@@ -32,7 +32,7 @@ export const CHROMIUM_MEDIA_OPTIONS = [
   },
 ] as const
 
-/** The four pseudo-fields must NEVER be transmitted as individual multipart fields. */
+/** Both Gotenberg 8 and 9 bind emulatedMediaFeatures as a map of strings. */
 export function encodeChromiumMediaFeatures(
   fields: Readonly<Record<string, string | boolean>>,
 ): string | undefined {
@@ -42,33 +42,37 @@ export function encodeChromiumMediaFeatures(
     if (typeof value !== 'string' || !options.some((option) => option === value)) {
       throw new Error(`Invalid Chromium media feature ${name}.`)
     }
-    return [{ name: mediaName, value }]
+    return [[mediaName, value]]
   })
-  return selected.length ? JSON.stringify(selected) : undefined
+  return selected.length ? JSON.stringify(Object.fromEntries(selected)) : undefined
 }
 
-/** Advanced JSON remains available for non-standard Chromium media features. */
-export function validateAdvancedMediaFeatures(value: string): void {
-  let rows: unknown
+/** Accept the official object format and normalise older Gotenui name/value rows. */
+export function normalizeAdvancedMediaFeatures(value: string): string {
+  let input: unknown
   try {
-    rows = JSON.parse(value)
+    input = JSON.parse(value)
   } catch {
-    throw new Error('emulatedMediaFeatures must contain a JSON array.')
+    throw new Error('emulatedMediaFeatures must contain a JSON object or legacy name/value array.')
   }
-  if (
-    !Array.isArray(rows) ||
-    rows.length === 0 ||
-    rows.some((row: unknown) => {
-      if (!row || typeof row !== 'object' || Array.isArray(row)) return true
-      const feature = row as Record<string, unknown>
-      return (
-        Object.keys(feature).length !== 2 ||
-        typeof feature.name !== 'string' ||
-        !feature.name ||
-        typeof feature.value !== 'string'
-      )
-    })
-  ) {
-    throw new Error('emulatedMediaFeatures must contain name/value pairs.')
+  const result: Record<string, string> = Object.create(null)
+  function add(name: unknown, value: unknown) {
+    if (typeof name !== 'string' || !name || typeof value !== 'string' || name in result) {
+      throw new Error('Duplicate or invalid Chromium media feature name/value pair.')
+    }
+    result[name] = value
   }
+  if (Array.isArray(input)) {
+    for (const row of input) {
+      if (!row || typeof row !== 'object' || Array.isArray(row) || Object.keys(row).length !== 2) {
+        throw new Error('emulatedMediaFeatures must contain name/value pairs.')
+      }
+      add(row.name, row.value)
+    }
+  } else if (input && typeof input === 'object') {
+    for (const [name, value] of Object.entries(input)) add(name, value)
+  } else {
+    throw new Error('emulatedMediaFeatures must contain a JSON object or legacy name/value array.')
+  }
+  return JSON.stringify(result)
 }

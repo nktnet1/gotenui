@@ -526,3 +526,27 @@ test('resource exclusions match Gotenberg 9 URL/port forms and unlimited status-
   assert.deepEqual(parseIgnoredDomains('Example.com, example.com'), ['example.com'])
   assert.deepEqual(parseStatusCodes('404, 499, 404'), [404, 499])
 })
+
+test('all Chromium forms distinguish omitted status checks from explicit empty arrays', () => {
+  for (const id of [
+    'url-pdf',
+    'html-pdf',
+    'markdown-pdf',
+    'url-shot',
+    'html-shot',
+    'markdown-shot',
+  ]) {
+    for (const field of ['failOnHttpStatusCodes', 'failOnResourceHttpStatusCodes']) {
+      for (const value of ['', '[]', '[ ]', '404, 599']) {
+        const validated = validatePayload(request(id, { [field]: value }))
+        const form = createGotenbergForm(validated.operation, validated.payload, [], [])
+        assert.equal(
+          form.get(field),
+          value === '' ? null : value.startsWith('[') ? '[]' : '[404,599]',
+          `${id}: ${field}`,
+        )
+      }
+    }
+  }
+  assert.deepEqual(parseStatusCodes(' [] '), [])
+})

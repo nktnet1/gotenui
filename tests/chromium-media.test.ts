@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { encodeChromiumMediaFeatures } from '#/lib/chromium-media'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { OPERATION_BY_ID, type Operation } from '#/lib/operations'
@@ -50,7 +50,7 @@ describe('first-class Chromium media emulation', () => {
     expect(operation('url-pdf').fields.some((field) => field.name === 'omitBackground')).toBe(true)
   })
 
-  it('serializes selected options into exactly one official Gotenberg JSON array', () => {
+  it('serializes selected options into exactly one official Gotenberg JSON object', () => {
     const fields = {
       url: 'https://example.test/page',
       mediaColorScheme: 'dark',
@@ -63,12 +63,12 @@ describe('first-class Chromium media emulation', () => {
     }
     const { payload: valid, operation: op } = payload('url-pdf', fields)
     const form = createGotenbergForm(op, valid, [], [])
-    assert.deepEqual(JSON.parse(String(form.get('emulatedMediaFeatures'))), [
-      { name: 'prefers-color-scheme', value: 'dark' },
-      { name: 'prefers-reduced-motion', value: 'reduce' },
-      { name: 'color-gamut', value: 'p3' },
-      { name: 'forced-colors', value: 'active' },
-    ])
+    assert.deepEqual(JSON.parse(String(form.get('emulatedMediaFeatures'))), {
+      'prefers-color-scheme': 'dark',
+      'prefers-reduced-motion': 'reduce',
+      'color-gamut': 'p3',
+      'forced-colors': 'active',
+    })
     for (const name of [
       'mediaColorScheme',
       'mediaReducedMotion',
@@ -89,7 +89,7 @@ describe('first-class Chromium media emulation', () => {
       mediaForcedColors: 'none',
     })
     const form = createGotenbergForm(op, valid, [], [])
-    expect(form.get('emulatedMediaFeatures')).toBe('[{"name":"forced-colors","value":"none"}]')
+    expect(form.get('emulatedMediaFeatures')).toBe('{"forced-colors":"none"}')
     expect(
       createGotenbergForm(
         operation('url-shot'),
@@ -114,7 +114,7 @@ describe('first-class Chromium media emulation', () => {
     ).toThrow(/UI or Advanced JSON/)
     expect(() =>
       payload('url-pdf', { url: 'https://example.test' }, { emulatedMediaFeatures: '{not-array}' }),
-    ).toThrow(/JSON array/)
+    ).toThrow(/JSON object/)
     expect(() =>
       payload(
         'url-pdf',
@@ -134,7 +134,7 @@ describe('first-class Chromium media emulation', () => {
       },
     )
     expect(createGotenbergForm(op, valid, [], []).get('emulatedMediaFeatures')).toBe(
-      '[{"name":"dynamic-range","value":"high"}]',
+      '{"dynamic-range":"high"}',
     )
   })
 })
@@ -152,6 +152,34 @@ describe('advanced Chromium media parity with Gotenberg 9', () => {
       { url: 'https://example.test' },
       { emulatedMediaFeatures: source },
     )
-    expect(createGotenbergForm(op, valid, [], []).get('emulatedMediaFeatures')).toBe(source)
+    assert.deepEqual(
+      JSON.parse(String(createGotenbergForm(op, valid, [], []).get('emulatedMediaFeatures'))),
+      Object.fromEntries(features.map(({ name, value }) => [name, value])),
+    )
   })
+})
+
+test('media type and feature maps work on screenshots for both supported majors', () => {
+  for (const major of [8, 9] as const) {
+    const { payload: valid, operation: op } = payload(
+      'url-shot',
+      { url: 'https://example.test', emulatedMediaType: 'print' },
+      { emulatedMediaFeatures: '{"dynamic-range":"high","__proto__":"allowed"}' },
+    )
+    const form = createGotenbergForm(op, valid, [], [], undefined, {}, [], major)
+    expect(form.get('emulatedMediaType')).toBe('print')
+    expect(form.get('emulatedMediaFeatures')).toBe('{"dynamic-range":"high","__proto__":"allowed"}')
+  }
+})
+
+test('legacy duplicate media rows and non-string map values fail validation', () => {
+  for (const raw of [
+    '[{"name":"color-gamut","value":"p3"},{"name":"color-gamut","value":"srgb"}]',
+    '{"color-gamut":false}',
+    '{"":"value"}',
+  ]) {
+    expect(() =>
+      payload('url-shot', { url: 'https://example.test' }, { emulatedMediaFeatures: raw }),
+    ).toThrow(/name\/value/)
+  }
 })

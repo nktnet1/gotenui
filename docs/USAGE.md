@@ -99,8 +99,14 @@ The advanced inputs support fetching remote files and delivering conversion resu
 
 Remote files are downloaded by **Gotenberg**, not by your browser. The remote response needs a valid `Content-Type` and a `Content-Disposition` filename. The Gotenberg instance must permit the remote destination.
 
-Webhook requests may return **Accepted** before the conversion finishes. Gotenui does not receive webhook callbacks or maintain a job history. Check the destination service for delivery results. In Gotenberg 9, PDF inspection tools return JSON immediately and do **not** support webhooks; their advanced form hides that option and keeps any v8-specific webhook draft out of v9 requests. Other v9 webhook operations still require an events callback URL. On a healthy v8 or v9 connection, Gotenui selects the matching API automatically without a generic migration warning; unsupported settings and versions are explained only where relevant.
+Webhook requests may return **Accepted** before the conversion finishes. Gotenui does not receive webhook callbacks or maintain a job history. Check the destination service for delivery results. In Gotenberg 9, PDF inspection tools return JSON immediately and do **not** support webhooks; their advanced form hides that option and blocks a configured v8-specific webhook draft until you switch back or discard it. Other v9 webhook operations still require an events callback URL. On a healthy v8 or v9 connection, Gotenui selects the matching API automatically without a generic migration warning; unsupported settings and versions are explained only where relevant.
 
 ## Diagnostics
 
 Use **Diagnostics** to check connectivity and, when available, read debug information or Prometheus-compatible metrics. These endpoints depend on your Gotenberg deployment and its access settings.
+
+### Backend compatibility and HTTP status checks
+
+Switching connections preserves the current tool draft, including source files and settings, while cancelling its in-flight request and clearing the previous connection's result. Existing batch jobs retain their original connection. If an option cannot be used by the new backend, running or queuing the draft is blocked until you switch back or choose **Discard incompatible settings**. Legacy v8 PDF post-processing is not automatically translated into v9 pipeline stages.
+
+In Chromium's **Rendering & error checks** section, leave a status-code field blank to use the server default, or choose **Disable checks** to send an empty JSON array (`[]`). Enter comma-separated codes to check specific HTTP responses. Gotenberg defaults the main-page checks to all 4xx and 5xx responses. Screenshot viewport defaults are 800 × 600 pixels, with PNG output, pixel density 1 and JPEG quality 100 unless overridden. Screenshot tools on both majors also support print or screen media rendering. Chromium media features are sent as JSON objects on both majors, with legacy Advanced JSON name/value arrays normalised automatically.

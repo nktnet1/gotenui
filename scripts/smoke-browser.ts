@@ -1088,6 +1088,24 @@ async function run(): Promise<void> {
     )
     checks++
 
+    // Keep a configured v8-only option in the unqueued draft while switching.
+    await page.evaluate(`(() => {
+      const editor = document.querySelector('#source-editor')
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+      setter.call(editor, '<h1>Preserved connection-switch draft</h1>')
+      editor.dispatchEvent(new Event('input', { bubbles: true }))
+      const label = [...document.querySelectorAll('label')].find(el => el.textContent.trim() === 'Optimize PDF images')
+      const toggle = label && document.getElementById(label.htmlFor)
+      if (!toggle || toggle.disabled) throw new Error('Missing v8 image optimization control')
+      toggle.closest('details').open = true
+      toggle.click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
+       [...document.querySelectorAll('label')].some(el => el.textContent.trim() === 'Optimize PDF images' && document.getElementById(el.htmlFor)?.getAttribute('aria-checked') === 'true')`,
+      'configured v8 draft before connection switch',
+    )
+
     await page.evaluate(`(() => {
       const settings = [...document.querySelectorAll('#gotenui-navigation button')]
         .find(el => el.textContent.trim() === 'Connection settings')
@@ -1115,6 +1133,23 @@ async function run(): Promise<void> {
       `document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 9.0.0') &&
         document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')`,
       'queued v8 work survives selecting v9',
+    )
+    checks++
+
+    await page.waitUntil(
+      `document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
+       [...document.querySelectorAll('[role=alert]')].some(el => el.textContent.includes('Optimize PDF images requires Gotenberg 8')) &&
+       [...document.querySelectorAll('button')].filter(el => ['Run operation', 'Add to batch'].includes(el.textContent.trim())).every(el => el.disabled)`,
+      'incompatible v8 draft retained and blocked on v9',
+    )
+    await page.evaluate(
+      `[...document.querySelectorAll('button')].find(el => el.textContent.trim() === 'Discard incompatible settings').click()`,
+    )
+    await page.waitUntil(
+      `document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
+       ![...document.querySelectorAll('[role=alert]')].some(el => el.textContent.includes('cannot run all configured settings')) &&
+       [...document.querySelectorAll('button')].filter(el => ['Run operation', 'Add to batch'].includes(el.textContent.trim())).every(el => !el.disabled)`,
+      'only incompatible settings discarded',
     )
     checks++
 

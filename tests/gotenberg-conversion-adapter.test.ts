@@ -60,7 +60,7 @@ test('v9 Office conversion stages permit duplicate local and remote source names
   )
 })
 
-test('v8 Chromium retains legacy fields, array media features and PDF post-processing', () => {
+test('v8 Chromium retains legacy fields, object media features and PDF post-processing', () => {
   const form = adapt(
     'html-pdf',
     {
@@ -81,9 +81,9 @@ test('v8 Chromium retains legacy fields, array media features and PDF post-proce
   assert.equal(form.get('nativePageRanges'), '1-3')
   assert.equal(form.get('waitWindowStatus'), 'ready')
   assert.equal(form.get('pdfa'), 'PDF/A-2b')
-  assert.deepEqual(JSON.parse(String(form.get('emulatedMediaFeatures'))), [
-    { name: 'prefers-color-scheme', value: 'dark' },
-  ])
+  assert.deepEqual(JSON.parse(String(form.get('emulatedMediaFeatures'))), {
+    'prefers-color-scheme': 'dark',
+  })
   assert.equal(form.get('stages'), null)
 })
 

@@ -5,7 +5,11 @@ import {
   defaultMarkdownTemplate,
   generatedChromiumFilenames,
 } from '#/lib/chromium-documents'
-import { CHROMIUM_MEDIA_OPTIONS, encodeChromiumMediaFeatures } from '#/lib/chromium-media'
+import {
+  CHROMIUM_MEDIA_OPTIONS,
+  encodeChromiumMediaFeatures,
+  normalizeAdvancedMediaFeatures,
+} from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import { effectiveRemoteFilename, possibleRemoteFilename } from '#/lib/file-names'
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
@@ -230,6 +234,12 @@ export function createGotenbergForm(
   if (isChromium) {
     const mediaFeatures = encodeChromiumMediaFeatures(payload.fields)
     if (mediaFeatures) form.set('emulatedMediaFeatures', mediaFeatures)
+    else if (typeof payload.advanced.emulatedMediaFeatures === 'string') {
+      form.set(
+        'emulatedMediaFeatures',
+        normalizeAdvancedMediaFeatures(payload.advanced.emulatedMediaFeatures),
+      )
+    }
   }
   if (payload.downloadFrom?.length) {
     // 9.2 adds filename to the official downloadFrom descriptor. The previous

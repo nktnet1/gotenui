@@ -1,5 +1,6 @@
 import { styleText } from 'node:util'
 import {
+  GOTENBERG_FULL_INTEGRATION_VERSIONS,
   GOTENBERG_INTEGRATION_VERSIONS,
   GOTENBERG_TEST_VERSIONS,
   type GotenbergIntegrationVersion,
@@ -15,7 +16,7 @@ export function integrationVersions(
   environment?: string,
 ): GotenbergIntegrationVersion[] {
   const version = requested || environment
-  if (!version) return [...GOTENBERG_INTEGRATION_VERSIONS]
+  if (!version) return [...GOTENBERG_FULL_INTEGRATION_VERSIONS]
   const selected = integrationTestVersion(version)
   if (!selected) {
     throw new Error(
@@ -34,15 +35,17 @@ type RunVersion = (
   version: GotenbergIntegrationVersion,
 ) => TestProcessResult | Promise<TestProcessResult>
 
+function versionLabel(version: GotenbergIntegrationVersion) {
+  if (version === GOTENBERG_TEST_VERSIONS.v8) return 'v8'
+  if (version === GOTENBERG_TEST_VERSIONS.v9) return 'v9'
+  return version
+}
+
 function runVitest(version: GotenbergIntegrationVersion): Promise<TestProcessResult> {
-  return spawnVitest(
-    'vitest.integration.config.ts',
-    version === GOTENBERG_TEST_VERSIONS.v8 ? 'v8' : 'v9',
-    {
-      ...process.env,
-      GOTENBERG_TEST_VERSION: version,
-    },
-  )
+  return spawnVitest('vitest.integration.config.ts', versionLabel(version), {
+    ...process.env,
+    GOTENBERG_TEST_VERSION: version,
+  })
 }
 
 /** Run separate Vitest processes concurrently; each provisions its own Docker container and fixture. */
@@ -52,7 +55,7 @@ export async function runIntegrationMatrix(
 ): Promise<number> {
   const outcomes = await Promise.all(
     versions.map(async (version) => {
-      const label = styleText('cyan', version === GOTENBERG_TEST_VERSIONS.v8 ? '[v8]' : '[v9]')
+      const label = styleText('cyan', `[${versionLabel(version)}]`)
       console.info(`\n${label} Starting Gotenberg ${version} integration tests...`)
       try {
         const result = await runVersion(version)

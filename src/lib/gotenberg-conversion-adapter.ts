@@ -19,14 +19,14 @@ import { type ConversionPayload, InputError, supportsArchiveInputs } from '#/lib
 import type { Operation } from '#/tools/registry'
 
 /** Gotenberg 8 and 9 have different multipart contracts even on unchanged route paths. */
-const chromiumNames = {
+export const chromiumNames = {
   waitWindowStatus: 'waitForWindowStatus',
   nativePageRanges: 'nativePages',
   generateDocumentOutline: 'nativeBookmarks',
   generateTaggedPdf: 'nativeTaggedPdf',
 } as const
 
-const officeNames = {
+export const officeNames = {
   nativePageRanges: 'nativePages',
   exportBookmarks: 'nativeBookmarks',
   generateTaggedPdf: 'nativeTaggedPdf',
@@ -64,28 +64,6 @@ function renameFields(form: FormData, names: Readonly<Record<string, string>>): 
     form.delete(from)
     form.set(to, value)
   }
-}
-
-/** v8 encodes media features as rows, whereas v9 requires a JSON object. */
-function v9MediaFeatures(form: FormData): void {
-  const raw = form.get('emulatedMediaFeatures')
-  if (typeof raw !== 'string' || !raw) return
-  const rows: unknown = JSON.parse(raw)
-  if (!Array.isArray(rows)) {
-    throw new InputError('Chromium media features must contain name/value pairs.')
-  }
-  const features: Record<string, string> = Object.create(null)
-  for (const item of rows) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      throw new InputError('Invalid Chromium media feature.')
-    }
-    const { name, value } = item as { name?: unknown; value?: unknown }
-    if (typeof name !== 'string' || typeof value !== 'string' || name in features) {
-      throw new InputError('Duplicate or invalid Chromium media feature.')
-    }
-    features[name] = value
-  }
-  form.set('emulatedMediaFeatures', JSON.stringify(features))
 }
 
 type Stage = { op: string; [name: string]: unknown }
@@ -389,7 +367,6 @@ export function adaptConversionForm(
       }
     }
     renameFields(form, chromiumNames)
-    v9MediaFeatures(form)
   }
   if (operation.output === 'pdf') {
     const firstUserStages = payload.conversionStages

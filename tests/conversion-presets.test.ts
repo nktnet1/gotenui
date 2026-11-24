@@ -239,7 +239,7 @@ describe('browser-local operation presets', () => {
     )
     expect(applied).toEqual({
       width: '1920',
-      height: '900',
+      height: '600',
       format: 'png',
       // An omitted setting restores the current operation default, not an old snapshot.
       skipNetworkIdleEvent: true,
