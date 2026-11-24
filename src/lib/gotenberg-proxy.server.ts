@@ -17,6 +17,7 @@ import {
   requiresGotenberg98ForExtractTextFormat,
   requiresGotenberg99ForCompressStreams,
   type SupportedGotenbergMajor,
+  sameGotenbergApiVersion,
 } from '#/lib/gotenberg-version'
 import {
   invalidateOAuth2Authorization,
@@ -597,6 +598,13 @@ export async function proxyConversionRequest(
   const { url, headers: authHeaders } = target
   const version = await conversionTargetVersion(request, fetcher, target)
   const major = version.major as SupportedGotenbergMajor
+  const expected = parseGotenbergVersion(payload.expectedBackendVersion)
+  if (expected && !sameGotenbergApiVersion(expected, version)) {
+    throw new InputError(
+      `Gotenberg changed from ${expected.major}.${expected.minor} to ${version.major}.${version.minor} since this request was configured. Refresh the connection and review the draft before running or queuing it again.`,
+      409,
+    )
+  }
   if (!(operation.supportedGotenbergMajors ?? [8]).includes(major)) {
     throw new ProxyInputError(
       `The ${operation.title} tool is not available on Gotenberg ${major} yet.`,
@@ -778,11 +786,17 @@ export async function proxyConversionRequest(
     const returnedVersion = upstream.headers.get('Gotenberg-Version')
     if (returnedVersion !== null) {
       const parsed = parseGotenbergVersion(returnedVersion)
-      if (!parsed || parsed.major !== major) {
+      if (
+        !parsed ||
+        parsed.major !== major ||
+        (expected && !sameGotenbergApiVersion(parsed, expected))
+      ) {
         await upstream.body?.cancel().catch(() => {})
-        const detail = parsed
-          ? `Gotenberg changed from v${major} to v${parsed.major} during conversion.`
-          : 'Gotenberg returned an invalid version header.'
+        const detail = !parsed
+          ? 'Gotenberg returned an invalid version header.'
+          : parsed.major !== major
+            ? `Gotenberg changed from v${major} to v${parsed.major} during conversion.`
+            : `Gotenberg changed from ${major}.${version.minor} to ${parsed.major}.${parsed.minor} during conversion.`
         const accepted = upstream.status === 202 || upstream.status === 204
         throw new ProxyInputError(
           accepted

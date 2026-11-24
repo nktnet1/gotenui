@@ -21,7 +21,7 @@ import {
   filenameKey,
   possibleRemoteFilename,
 } from '#/lib/file-names'
-import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
   parseConsoleMessageTypes,
@@ -73,6 +73,8 @@ export type WebhookConfig = v.InferOutput<typeof webhookSchema>
 
 export const payloadSchema = v.object({
   operation: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
+  // Browser submissions and queued jobs retain the API version they were configured for.
+  expectedBackendVersion: v.optional(v.pipe(v.string(), v.maxLength(80))),
   fields: v.record(v.string(), fieldValue),
   advanced: v.record(v.string(), advancedValue),
   source: v.optional(v.string()),
@@ -1121,6 +1123,12 @@ export function validatePayload(input: unknown): {
   if (!parsed.success)
     throw new InputError(parsed.issues[0]?.message ?? 'Invalid conversion request.')
   const payload = parsed.output
+  if (payload.expectedBackendVersion !== undefined) {
+    const expected = parseGotenbergVersion(payload.expectedBackendVersion)
+    if (!expected || (expected.major !== 8 && expected.major !== 9)) {
+      throw new InputError('Expected backend version must be a supported Gotenberg 8 or 9 version.')
+    }
+  }
   const operation = OPERATION_BY_ID.get(payload.operation)
   if (!operation) throw new InputError('Unknown Gotenberg operation.')
   if (

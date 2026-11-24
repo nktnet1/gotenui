@@ -204,3 +204,62 @@ test('known incompatible raw multipart aliases are reported during preflight', (
     draftOutboundIssues(spec, {}, '8.40.0', { ...draft, advanced: '{"flatten":true}' }),
   ).toEqual([])
 })
+
+test.each([
+  ['html-shot', 'nativeBookmarks'],
+  ['html-shot', 'nativePages'],
+  ['html-pdf', 'nativeQuality'],
+  ['office-pdf', 'waitForWindowStatus'],
+  ['html-pdf', 'nativePdfa'],
+] as const)('rejects %s Advanced JSON alias %s on the wrong route', (id, name) => {
+  const spec = operation(id)
+  expect(
+    draftOutboundIssues(spec, {}, '9.10.0', {
+      ...draft,
+      advanced: JSON.stringify({ [name]: 'value' }),
+    }),
+  ).toEqual([`Advanced field ${name} is not supported for ${spec.title}.`])
+})
+
+test.each([
+  { pdfaProfile: 'PDF/A-3b' },
+  { pdfuaProfile: 'PDF/UA-1' },
+  { pdfa: 'PDF/A-2b' },
+  { pdfua: true },
+  { pdfaMethod: 'remediate' },
+  { v9Language: 'en-AU' },
+] as Record<string, string | boolean>[])(
+  'rejects raw native conformance alongside UI settings %j',
+  (fields) => {
+    const spec = operation('office-pdf')
+    expect(
+      outboundCompatibilityReasons(spec, v910, {
+        fields,
+        advanced: { nativePdfa: 'PDF/A-2b' },
+      }),
+    ).toEqual([
+      'Choose either nativePdfa/nativePdfua in Advanced JSON or the Office PDF conformance settings, not both.',
+    ])
+  },
+)
+
+test('raw native profiles remain usable on their own and supported aliases stay route-specific', () => {
+  expect(
+    draftOutboundIssues(operation('office-pdf'), {}, '9.10.0', {
+      ...draft,
+      advanced: '{"nativePdfua":"PDF/UA-1"}',
+    }),
+  ).toEqual([])
+  expect(
+    draftOutboundIssues(operation('html-pdf'), {}, '9.10.0', {
+      ...draft,
+      advanced: '{"nativePages":"1-2"}',
+    }),
+  ).toEqual([])
+  expect(
+    draftOutboundIssues(operation('html-shot'), {}, '9.10.0', {
+      ...draft,
+      advanced: '{"waitForWindowStatus":"ready"}',
+    }),
+  ).toEqual([])
+})

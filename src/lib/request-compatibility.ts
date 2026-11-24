@@ -1,4 +1,8 @@
-import { chromiumNames, officeNames } from '#/lib/gotenberg-conversion-adapter'
+import {
+  chromiumNames,
+  officeConformanceAliasReason,
+  officeNames,
+} from '#/lib/gotenberg-conversion-adapter'
 import type { GotenbergVersion } from '#/lib/gotenberg-version'
 import { canWebhookForOperation } from '#/lib/operation-availability'
 import { pdfPostProcessSchema } from '#/lib/pdf-post-processing'
@@ -46,6 +50,14 @@ const legacyPostProcessFields = new Set([
   'titleBookmarks',
 ])
 
+// Native aliases are route-specific even when their legacy spelling is shared.
+const nativeConversionAliases = new Set<string>([
+  ...Object.values(chromiumNames),
+  ...Object.values(officeNames),
+  'nativePdfa',
+  'nativePdfua',
+])
+
 function advancedCompatibilityReasons(
   operation: Operation,
   version: GotenbergVersion,
@@ -59,16 +71,30 @@ function advancedCompatibilityReasons(
   }
   const office = operation.id === 'office-pdf'
   const chromium = operation.path.startsWith('/forms/chromium/')
-  const renamedFields = office ? officeNames : chromium ? chromiumNames : {}
-  const nativeFields = new Set<string>(Object.values(renamedFields))
+  const renamedFields: Readonly<Record<string, string>> = office
+    ? officeNames
+    : chromium
+      ? chromiumNames
+      : {}
+  const nativeFields = new Set<string>(
+    Object.entries(renamedFields)
+      .filter(([legacy]) => operation.fields.some((field) => field.name === legacy))
+      .map(([, native]) => native),
+  )
   if (office) {
     nativeFields.add('nativePdfa')
     nativeFields.add('nativePdfua')
   }
   const reasons: string[] = []
+  if (version.major === 9 && office) {
+    const reason = officeConformanceAliasReason(fields, advanced)
+    if (reason) reasons.push(reason)
+  }
   for (const [name, value] of Object.entries(advanced)) {
     if (value === '') continue
-    if (version.major === 8 && nativeFields.has(name)) {
+    if (nativeConversionAliases.has(name) && !nativeFields.has(name)) {
+      reasons.push(`Advanced field ${name} is not supported for ${operation.title}.`)
+    } else if (version.major === 8 && nativeFields.has(name)) {
       reasons.push(
         `Advanced field ${name} requires Gotenberg 9. Use the corresponding tool setting instead.`,
       )

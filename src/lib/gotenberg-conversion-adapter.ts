@@ -66,6 +66,28 @@ function renameFields(form: FormData, names: Readonly<Record<string, string>>): 
   }
 }
 
+/** Raw native profiles must not compete with the generated conformance settings. */
+export function officeConformanceAliasReason(
+  fields: ConversionPayload['fields'],
+  advanced: ConversionPayload['advanced'],
+): string | null {
+  const raw = [advanced.nativePdfa, advanced.nativePdfua].some(
+    (value) => value !== undefined && value !== '',
+  )
+  if (!raw) return null
+  if (
+    fields.pdfa ||
+    fields.pdfua === true ||
+    fields.pdfaProfile ||
+    fields.pdfuaProfile ||
+    (fields.pdfaMethod && fields.pdfaMethod !== 'auto') ||
+    Object.keys(v9RemediationOptions(fields)).length
+  ) {
+    return 'Choose either nativePdfa/nativePdfua in Advanced JSON or the Office PDF conformance settings, not both.'
+  }
+  return null
+}
+
 type Stage = { op: string; [name: string]: unknown }
 
 function take(form: FormData, name: string): string | null {
@@ -367,6 +389,10 @@ export function adaptConversionForm(
       }
     }
     renameFields(form, chromiumNames)
+  }
+  if (operation.id === 'office-pdf') {
+    const reason = officeConformanceAliasReason(payload.fields, payload.advanced)
+    if (reason) throw new InputError(reason)
   }
   if (operation.output === 'pdf') {
     const firstUserStages = payload.conversionStages

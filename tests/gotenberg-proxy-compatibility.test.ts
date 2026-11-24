@@ -1382,3 +1382,176 @@ test('proxy rejects migrated numeric values before forwarding', async () => {
   )
   assert.deepEqual(v9.counts(), { probes: 2, conversions: 0 })
 })
+
+test.each([
+  ['8.40.0', '9.10.0'],
+  ['9.10.0', '9.9.0'],
+  ['9.1.0', '9.2.0'],
+] as const)(
+  'rejects a request configured for %s when the target reports %s',
+  async (expectedBackendVersion, actual) => {
+    const fixture = upstreamFixture(actual, () =>
+      assert.fail('An unreviewed request must not reach the conversion route.'),
+    )
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('html-pdf', {}, { expectedBackendVersion }),
+        fixture.fetcher,
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error && 'status' in error)
+        assert.equal(error.status, 409)
+        assert.match(error.message, /since this request was configured/)
+        return true
+      },
+    )
+    assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
+  },
+)
+
+test('accepts patch updates within the configured API minor version', async () => {
+  const fixture = upstreamFixture('9.10.3', (form) => {
+    assert.equal(form.has('expectedBackendVersion'), false)
+    assert.equal(form.has('nativeBookmarks'), true)
+  })
+  const response = await proxyConversionRequest(
+    requestFor(
+      'html-pdf',
+      { generateDocumentOutline: true },
+      { expectedBackendVersion: 'v9.10.0' },
+    ),
+    fixture.fetcher,
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
+test.each(['Unknown', '10.0.0', '9', ''])(
+  'rejects invalid expected version %j before probing',
+  async (expectedBackendVersion) => {
+    const fixture = upstreamFixture('9.10.0', () =>
+      assert.fail('Invalid version must not be forwarded.'),
+    )
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('html-pdf', {}, { expectedBackendVersion }),
+        fixture.fetcher,
+      ),
+      /Expected backend version must be a supported Gotenberg/,
+    )
+    assert.deepEqual(fixture.counts(), { probes: 0, conversions: 0 })
+  },
+)
+
+test('detects minor version drift between the probe and conversion response', async () => {
+  let cancelled = false
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('%PDF-1.7\n'))
+    },
+    cancel() {
+      cancelled = true
+    },
+  })
+  const fetcher: typeof fetch = async (input) =>
+    String(input).endsWith('/version')
+      ? new Response('9.10.0')
+      : new Response(source, {
+          headers: { 'Content-Type': 'application/pdf', 'Gotenberg-Version': '9.9.0' },
+        })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('html-pdf', {}, { expectedBackendVersion: '9.10.0' }),
+      fetcher,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error && 'status' in error)
+      assert.equal(error.status, 409)
+      assert.match(error.message, /changed from 9\.10 to 9\.9 during conversion/)
+      return true
+    },
+  )
+  assert.equal(cancelled, true)
+})
+
+test('accepts a response from a different patch of the same API version', async () => {
+  const fetcher: typeof fetch = async (input) =>
+    String(input).endsWith('/version')
+      ? new Response('9.10.0')
+      : new Response('%PDF-1.7\n', {
+          headers: { 'Content-Type': 'application/pdf', 'Gotenberg-Version': 'v9.10.2' },
+        })
+  const response = await proxyConversionRequest(
+    requestFor('html-pdf', {}, { expectedBackendVersion: '9.10.0' }),
+    fetcher,
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+})
+
+test('minor drift after a webhook acceptance warns that processing may already have started', async () => {
+  const fetcher: typeof fetch = async (input) =>
+    String(input).endsWith('/version')
+      ? new Response('9.10.0')
+      : new Response(null, { status: 202, headers: { 'Gotenberg-Version': '9.9.0' } })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'html-pdf',
+        {},
+        {
+          expectedBackendVersion: '9.10.0',
+          webhook: {
+            url: 'https://hooks.example.test/complete',
+            eventsUrl: 'https://hooks.example.test/events',
+          },
+        },
+      ),
+      fetcher,
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error && 'status' in error)
+      assert.equal(error.status, 502)
+      assert.match(error.message, /may already have been accepted/)
+      return true
+    },
+  )
+})
+
+test('raw Office conformance aliases cannot be overwritten by generated profiles', async () => {
+  const file = new File(['Document'], 'document.txt')
+  const fixture = upstreamFixture('9.10.0', (form) => {
+    assert.equal(form.get('nativePdfa'), 'PDF/A-2b')
+    assert.equal(form.has('stages'), false)
+  })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'office-pdf',
+        { pdfaProfile: 'PDF/A-3b' },
+        {
+          advanced: { nativePdfa: 'PDF/A-2b' },
+        },
+        [file],
+      ),
+      fixture.fetcher,
+    ),
+    /Choose either nativePdfa\/nativePdfua/,
+  )
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
+  const response = await proxyConversionRequest(
+    requestFor(
+      'office-pdf',
+      {},
+      {
+        advanced: { nativePdfa: 'PDF/A-2b' },
+      },
+      [file],
+    ),
+    fixture.fetcher,
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+  assert.deepEqual(fixture.counts(), { probes: 2, conversions: 1 })
+})

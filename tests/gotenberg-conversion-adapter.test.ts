@@ -911,3 +911,18 @@ test('v8 conversion rejects Gotenberg 9 remediation stage options', () => {
     /require Gotenberg 9|Unsupported|Advanced/,
   )
 })
+
+test('Office native aliases do not compete with generated conformance profiles in the adapter', () => {
+  const cases: ConversionPayload['fields'][] = [
+    { pdfaProfile: 'PDF/A-3b' },
+    { pdfaProfile: 'PDF/A-3b', merge: true },
+  ]
+  for (const fields of cases) {
+    assert.throws(
+      () => adapt('office-pdf', { fields, advanced: { nativePdfa: 'PDF/A-2b' } }, 9),
+      /Choose either nativePdfa\/nativePdfua/,
+    )
+  }
+  const form = adapt('office-pdf', { advanced: { nativePdfa: 'PDF/A-2b' } }, 9)
+  assert.equal(form.get('nativePdfa'), 'PDF/A-2b')
+})

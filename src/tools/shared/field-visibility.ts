@@ -1,5 +1,6 @@
 /** Centralised conditional field visibility for rendering and multipart payload construction. */
 import { type GotenbergVersion, parseGotenbergVersion } from '#/lib/gotenberg-version'
+import { hasGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import { isGotenberg95PaperSize } from '#/lib/pdf-paper-sizes'
 import type { FieldDefinition, Operation } from '#/tools/types'
 
@@ -74,6 +75,16 @@ export function fieldMinimumVersionReason(
     version.minor < 5
   ) {
     return 'A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.'
+  }
+  if (
+    version.major === 9 &&
+    version.minor < 2 &&
+    ['pages', 'sourcePages', 'rotatePages', 'watermarkPages', 'stampPages', 'splitSpan'].includes(
+      field.name,
+    ) &&
+    hasGotenberg92PageSyntax(value)
+  ) {
+    return 'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.'
   }
   if (version.major === 9 && value !== undefined && value !== '') {
     if (field.minGotenberg9 !== undefined && Number(value) < field.minGotenberg9) {

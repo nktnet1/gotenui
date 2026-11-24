@@ -182,3 +182,22 @@ describe('unverified versions and version-dependent field values', () => {
     expect(activeOperationFields(spec, values, '9.10.0')).not.toHaveProperty(name)
   })
 })
+
+test.each([
+  ['select-pages', { pages: '1-,!2' }, 'pages'],
+  ['rotate', { rotatePages: '-3' }, 'rotatePages'],
+  ['split', { splitMode: 'pages', splitSpan: '2-' }, 'splitSpan'],
+  ['office-pdf', { splitMode: 'pages', splitSpan: 'odd,!1' }, 'splitSpan'],
+] as const)('standalone %s detects page syntax introduced in 9.2', (id, fields, name) => {
+  const spec = operation(id)
+  const older = incompatibleOperationFields(spec, fields, '9.1.0')
+  expect(older).toContainEqual({
+    name,
+    reason: 'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.',
+  })
+  expect(activeOperationFields(spec, fields, '9.1.0')).not.toHaveProperty(name)
+  expect(incompatibleOperationFields(spec, fields, '9.2.0')).toEqual([])
+  expect(activeOperationFields(spec, fields, '9.2.0')[name]).toBe(
+    fields[name as keyof typeof fields],
+  )
+})

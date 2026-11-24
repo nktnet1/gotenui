@@ -444,7 +444,12 @@ export function Workbench({
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
       const result = await convertWithGotenberg(
         connection,
-        { operation: metadata ? 'metadata-read' : 'bookmarks-read', fields: {}, advanced: {} },
+        {
+          operation: metadata ? 'metadata-read' : 'bookmarks-read',
+          expectedBackendVersion: verifiedVersion,
+          fields: {},
+          advanced: {},
+        },
         files,
         [],
         signal,
@@ -489,6 +494,7 @@ export function Workbench({
     const selectedFields = activeOperationFields(operation, fields, backendVersion)
     const candidate = {
       operation: operation.id,
+      expectedBackendVersion: verifiedVersion,
       fields: v8StandaloneOverlay
         ? {}
         : hasChromiumNetwork

@@ -21,6 +21,11 @@ export function parseGotenbergVersion(version: string | undefined): GotenbergVer
   return { major, minor, patch }
 }
 
+/** Minor releases introduce API features. Patch releases use the same adapter contract. */
+export function sameGotenbergApiVersion(a: GotenbergVersion, b: GotenbergVersion): boolean {
+  return a.major === b.major && a.minor === b.minor
+}
+
 /** PDF extraction endpoints and final pipeline stages were added in Gotenberg 9.1. */
 export function requiresGotenberg91ForExtraction(
   version: GotenbergVersion,
