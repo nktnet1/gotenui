@@ -936,6 +936,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
   const officeOnly = [
     'password',
     'locale',
+    'showTrackedChanges',
     'exportOnlyNotesPages',
     'exportNotesPages',
     'exportHiddenSlides',

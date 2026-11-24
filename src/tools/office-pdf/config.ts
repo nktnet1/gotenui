@@ -41,6 +41,16 @@ export const operation: Operation = {
     { name: 'singlePageSheets', label: 'Single page per sheet', kind: 'toggle' },
     { name: 'skipEmptyPages', label: 'Skip blank pages', kind: 'toggle', advanced: true },
     {
+      name: 'showTrackedChanges',
+      label: 'Show tracked changes',
+      kind: 'toggle',
+      advanced: true,
+      supportedGotenbergMajors: [9],
+      minGotenbergMinor: 10,
+      description:
+        'Gotenberg 9.10+. Show document revisions as marked-up insertions and deletions instead of accepting all changes in the exported PDF. Off by default.',
+    },
+    {
       name: 'exportNotes',
       label: 'Export presentation notes',
       kind: 'toggle',
