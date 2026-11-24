@@ -201,3 +201,24 @@ test.each([
     fields[name as keyof typeof fields],
   )
 })
+
+test('retained Office watermark angles must be representable in the selected version', () => {
+  const spec = operation('office-pdf')
+  for (const angle of ['12.34', '-720.125']) {
+    const values = { nativeWatermarkText: 'DRAFT', nativeWatermarkRotateAngle: angle }
+    expect(incompatibleOperationFields(spec, values, '8.40.0')).toContainEqual({
+      name: 'nativeWatermarkRotateAngle',
+      reason: expect.stringMatching(/one decimal/i),
+    })
+    expect(activeOperationFields(spec, values, '8.40.0')).not.toHaveProperty(
+      'nativeWatermarkRotateAngle',
+    )
+    expect(incompatibleOperationFields(spec, values, '9.10.0')).toEqual([])
+    expect(activeOperationFields(spec, values, '9.10.0')).toEqual(values)
+  }
+  for (const angle of ['', '0', '12.3', '-720.1']) {
+    const values = { nativeWatermarkText: 'DRAFT', nativeWatermarkRotateAngle: angle }
+    expect(incompatibleOperationFields(spec, values, '8.40.0')).toEqual([])
+    expect(activeOperationFields(spec, values, '8.40.0')).toEqual(values)
+  }
+})

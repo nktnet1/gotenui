@@ -77,6 +77,16 @@ export function parseIgnoredDomains(input: string): string[] {
   return [...new Set(parts.map((value) => value.toLowerCase()))]
 }
 
+/** Gotenberg 8 sends native LibreOffice watermark angles in tenths of a degree. */
+export const V8_WATERMARK_ROTATION_ERROR =
+  'Gotenberg 8 native watermark rotation supports one decimal place.'
+
+export function v8WatermarkRotationTenths(value: string | boolean): number | null {
+  const tenths = Number(value) * 10
+  const rounded = Math.round(tenths)
+  return Number.isFinite(tenths) && Math.abs(tenths - rounded) <= 1e-7 ? rounded : null
+}
+
 export function encodeOfficialField(
   field: { name: string; kind: string } | undefined,
   value: string | boolean,
@@ -88,11 +98,9 @@ export function encodeOfficialField(
     return String(Number.parseInt(String(value).slice(1), 16))
   }
   if (field?.name === 'nativeWatermarkRotateAngle') {
-    const degrees = Number(value)
-    if (!Number.isFinite(degrees) || Math.abs(degrees * 10 - Math.round(degrees * 10)) > 1e-7) {
-      throw new Error('Native watermark rotation supports one decimal place.')
-    }
-    return String(Math.round(degrees * 10))
+    const tenths = v8WatermarkRotationTenths(value)
+    if (tenths === null) throw new Error(V8_WATERMARK_ROTATION_ERROR)
+    return String(tenths)
   }
   return String(value)
 }

@@ -943,6 +943,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       const value = payload.fields[name]
       if (
         typeof value === 'string' &&
+        value !== '' &&
         (value.trim().length === 0 ||
           (['userAgent', 'waitWindowStatus'].includes(name) && /[\r\n]/.test(value)))
       ) {

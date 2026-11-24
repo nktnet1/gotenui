@@ -613,3 +613,33 @@ test('LibreOffice native source password stays separate from output PDF encrypti
     }),
   )
 })
+
+test('cleared optional Chromium wait and User-Agent fields restore upstream defaults', () => {
+  const names = ['waitForSelector', 'waitForExpression', 'waitWindowStatus', 'userAgent']
+  for (const id of [
+    'url-pdf',
+    'html-pdf',
+    'markdown-pdf',
+    'url-shot',
+    'html-shot',
+    'markdown-shot',
+  ]) {
+    const { operation, payload } = validatePayload(
+      request(id, Object.fromEntries(names.map((name) => [name, '']))),
+    )
+    for (const major of [8, 9] as const) {
+      const form = adaptConversionForm(
+        operation,
+        payload,
+        createGotenbergForm(operation, payload, [], [], undefined, {}, [], major),
+        major,
+      )
+      for (const name of [...names, 'waitForWindowStatus']) {
+        assert.equal(form.has(name), false, `${id} v${major}: ${name}`)
+      }
+    }
+    for (const name of names) {
+      assert.throws(() => validatePayload(request(id, { [name]: '  ' })), /Invalid Chromium/)
+    }
+  }
+})

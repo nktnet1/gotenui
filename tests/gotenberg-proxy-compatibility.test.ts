@@ -1604,3 +1604,32 @@ test('the native LibreOffice singlePage alias is forwarded only on Gotenberg 9',
   )
   assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
 })
+
+test('Office watermark rotation precision is checked against the verified backend', async () => {
+  const file = new File(['Document'], 'document.txt')
+  const candidate = (angle: string) =>
+    requestFor(
+      'office-pdf',
+      { nativeWatermarkText: 'DRAFT', nativeWatermarkRotateAngle: angle },
+      {},
+      [file],
+    )
+  const v8 = upstreamFixture('8.40.0', (form) => {
+    assert.equal(form.get('nativeWatermarkRotateAngle'), '123')
+    assert.equal(form.has('nativeWatermarkRotation'), false)
+  })
+  await assert.rejects(proxyConversionRequest(candidate('12.34'), v8.fetcher), {
+    status: 409,
+    message: /one decimal/i,
+  })
+  assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
+  assert.equal((await proxyConversionRequest(candidate('12.3'), v8.fetcher)).status, 200)
+  assert.deepEqual(v8.counts(), { probes: 2, conversions: 1 })
+
+  const v9 = upstreamFixture('9.10.0', (form) => {
+    assert.equal(form.get('nativeWatermarkRotation'), '12.34')
+    assert.equal(form.has('nativeWatermarkRotateAngle'), false)
+  })
+  assert.equal((await proxyConversionRequest(candidate('12.34'), v9.fetcher)).status, 200)
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 1 })
+})
