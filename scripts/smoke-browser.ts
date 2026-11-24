@@ -906,6 +906,8 @@ async function run(): Promise<void> {
       window.__originalSmokeUrl = document.querySelector('#connection-url').value
       window.__holdV8Status = true
       window.__pendingV8Status = []
+      window.__holdV9Status = false
+      window.__pendingV9Status = []
       window.fetch = (input, options) => {
         if (String(input).startsWith('/api/gotenberg/status?')) {
           const url = new URL(String(input), location.origin).searchParams.get('url')
@@ -916,6 +918,9 @@ async function run(): Promise<void> {
             return Promise.resolve(Response.json({ online: true, version: '8.40.0', modules: [] }))
           }
           if (url === 'https://v9.example.test') {
+            if (window.__holdV9Status) {
+              return new Promise(resolve => window.__pendingV9Status.push(resolve))
+            }
             return Promise.resolve(Response.json({ online: true, version: '9.0.0', modules: [] }))
           }
         }
@@ -1128,7 +1133,25 @@ async function run(): Promise<void> {
         document.querySelector('#connection-url')?.value === 'https://v9.example.test'`,
       'saved v9 connection draft and URL have updated',
     )
-    await page.evaluate("document.querySelector('[role=dialog] button[type=submit]').click()")
+    await page.evaluate(`(() => {
+      window.__holdV9Status = true
+      document.querySelector('[role=dialog] button[type=submit]').click()
+    })()`)
+    await page.waitUntil(
+      `window.__pendingV9Status.length >= 1 &&
+       document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
+       [...document.querySelectorAll('label')].some(el => el.textContent.trim() === 'Optimize PDF images' && document.getElementById(el.htmlFor)?.getAttribute('aria-checked') === 'true') &&
+       ![...document.querySelectorAll('button')].some(el => el.textContent.trim() === 'Discard incompatible settings' && !el.disabled) &&
+       [...document.querySelectorAll('button')].some(el => el.textContent.trim() === 'Confirm draft for this connection' && el.disabled) &&
+       [...document.querySelectorAll('button')].filter(el => ['Run operation', 'Add to batch'].includes(el.textContent.trim())).every(el => el.disabled)`,
+      'pending v9 status retains v8 controls without allowing submission or discard',
+    )
+    checks++
+    await page.evaluate(`(() => {
+      window.__holdV9Status = false
+      window.__pendingV9Status.splice(0).forEach(resolve =>
+        resolve(Response.json({ online: true, version: '9.0.0', modules: [] })))
+    })()`)
     await page.waitUntil(
       `document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 9.0.0') &&
         document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')`,
@@ -1148,8 +1171,16 @@ async function run(): Promise<void> {
     await page.waitUntil(
       `document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
        ![...document.querySelectorAll('[role=alert]')].some(el => el.textContent.includes('cannot run all configured settings')) &&
+       [...document.querySelectorAll('button')].filter(el => ['Run operation', 'Add to batch'].includes(el.textContent.trim())).every(el => el.disabled)`,
+      'only incompatible settings discarded, with transfer still blocked',
+    )
+    await page.evaluate(
+      `[...document.querySelectorAll('button')].find(el => el.textContent.trim() === 'Confirm draft for this connection').click()`,
+    )
+    await page.waitUntil(
+      `document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
        [...document.querySelectorAll('button')].filter(el => ['Run operation', 'Add to batch'].includes(el.textContent.trim())).every(el => !el.disabled)`,
-      'only incompatible settings discarded',
+      'confirmed retained draft can run on v9',
     )
     checks++
 

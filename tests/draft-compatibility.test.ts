@@ -140,3 +140,45 @@ describe('draft compatibility across backend switches', () => {
     expect(isFieldVisible(field, { failOnResourceHttpStatusCodes: '404' })).toBe(true)
   })
 })
+
+describe('unverified versions and version-dependent field values', () => {
+  test.each([undefined, 'Unavailable', 'Unknown', '10.0.0'])(
+    'does not classify retained settings on %s',
+    (version) => {
+      const file = new File(['data'], 'archive.zip')
+      const spec = operation('office-pdf')
+      const values = { showTrackedChanges: true, locale: 'en-AU' }
+      const result = draftCompatibility(spec, values, version, {
+        ...emptyDraft,
+        acceptsArchives: false,
+        archives: [file],
+        acceptsPostProcess: false,
+        postProcess: { flatten: true },
+        acceptsWebhook: false,
+        webhookConfigured: true,
+        acceptsConversionStages: false,
+        conversionStages: '[{"op":"merge"}]',
+      })
+      expect(result.reasons).toEqual([])
+      expect(result.fieldConflicts).toEqual([])
+      expect(result.discardArchives).toBe(false)
+      expect(result.discardPostProcess).toBe(false)
+      expect(result.discardWebhook).toBe(false)
+      expect(result.discardStages).toBe(false)
+      expect(activeOperationFields(spec, values, version)).toEqual(values)
+    },
+  )
+
+  test.each([
+    ['office-pdf', { openBookmarkLevels: '20' }, 'openBookmarkLevels'],
+    ['office-pdf', { openBookmarkLevels: '0' }, 'openBookmarkLevels'],
+    ['html-shot', { format: 'jpeg', quality: '0' }, 'quality'],
+  ] as const)('detects a migrated value for %s', (id, values, name) => {
+    const spec = operation(id)
+    expect(incompatibleOperationFields(spec, values, '8.40.0')).toEqual([])
+    expect(
+      incompatibleOperationFields(spec, values, '9.10.0').map((field) => field.name),
+    ).toContain(name)
+    expect(activeOperationFields(spec, values, '9.10.0')).not.toHaveProperty(name)
+  })
+})

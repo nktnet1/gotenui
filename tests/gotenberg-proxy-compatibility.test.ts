@@ -172,7 +172,7 @@ test('rejects a Gotenberg 9-only option against v8 before forwarding conversion'
   const fixture = upstreamFixture('8.40.0', () => {})
   await assert.rejects(
     proxyConversionRequest(requestFor('html-pdf', { paperSize: 'A4' }), fixture.fetcher),
-    /Named paper sizes require Gotenberg 9/,
+    /Named paper size requires Gotenberg 9/,
   )
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
 })
@@ -557,7 +557,7 @@ test('v9 PDF pipeline can use only remote PDF inputs, rejecting legacy destinati
       ),
       v9.fetcher,
     ),
-    /not legacy remote destinations/,
+    /Remote attachment and overlay destinations require named PDF pipeline files/,
   )
   assert.deepEqual(v9.counts(), { probes: 2, conversions: 1 })
 })
@@ -1339,4 +1339,46 @@ test('a rewritten PDF still requires an immediate version header', async () => {
     ),
     /does not match its declared file type/,
   )
+})
+
+test('proxy rejects previously unguarded major-specific native Office fields', async () => {
+  const fields = { pageLayout: '3', firstPageOnLeft: true }
+  const file = new File(['source'], 'report.docx')
+  const v9 = upstreamFixture('9.10.0', () => assert.fail('Incompatible request reached upstream'))
+  await assert.rejects(
+    proxyConversionRequest(requestFor('office-pdf', fields, {}, [file]), v9.fetcher),
+    {
+      status: 409,
+      message: /First page on left requires Gotenberg 8/,
+    },
+  )
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+  const v8 = upstreamFixture('8.40.0', (form) => {
+    assert.equal(form.get('firstPageOnLeft'), 'true')
+  })
+  assert.equal(
+    (await proxyConversionRequest(requestFor('office-pdf', fields, {}, [file]), v8.fetcher)).status,
+    200,
+  )
+})
+
+test('proxy rejects migrated numeric values before forwarding', async () => {
+  const v9 = upstreamFixture('9.10.0', () => assert.fail('Incompatible request reached upstream'))
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('office-pdf', { openBookmarkLevels: '20' }, {}, [
+        new File(['source'], 'report.docx'),
+      ]),
+      v9.fetcher,
+    ),
+    { status: 409, message: /bookmark expansion/ },
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('html-shot', { format: 'jpeg', quality: '0' }, { source: '<p>Hello</p>' }),
+      v9.fetcher,
+    ),
+    { status: 409, message: /at least 1/ },
+  )
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 0 })
 })

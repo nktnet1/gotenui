@@ -29,8 +29,10 @@ export function isFieldVisible(
 
 export function fieldSupportsBackend(field: FieldDefinition, version?: string): boolean {
   if (!field.supportedGotenbergMajors) return true
-  const major = parseGotenbergVersion(version)?.major ?? 8
-  return field.supportedGotenbergMajors.some((supported) => supported === major)
+  const major = parseGotenbergVersion(version)?.major
+  return (
+    major !== undefined && field.supportedGotenbergMajors.some((supported) => supported === major)
+  )
 }
 
 /** A minor gate belongs to a single major, even when a field is shared. */
@@ -73,6 +75,17 @@ export function fieldMinimumVersionReason(
   ) {
     return 'A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.'
   }
+  if (version.major === 9 && value !== undefined && value !== '') {
+    if (field.minGotenberg9 !== undefined && Number(value) < field.minGotenberg9) {
+      return `${field.label} must be at least ${field.minGotenberg9} on Gotenberg 9.`
+    }
+    if (field.name === 'openBookmarkLevels') {
+      const levels = Number(value)
+      if (!Number.isInteger(levels) || (levels !== -1 && (levels < 1 || levels > 10))) {
+        return 'Gotenberg 9 bookmark expansion must be -1 (all) or 1 to 10 levels.'
+      }
+    }
+  }
   return null
 }
 
@@ -82,6 +95,7 @@ export function fieldCompatibilityReason(
   value?: string | boolean,
 ): string | null {
   const version = parseGotenbergVersion(backendVersion)
+  if (!version || (version.major !== 8 && version.major !== 9)) return null
   const minimum = fieldMinimumVersionReason(field, version, value)
   if (minimum) return minimum
   if (!fieldSupportsBackend(field, backendVersion)) {
@@ -104,6 +118,8 @@ export function incompatibleOperationFields(
   backendVersion?: string,
   legacyStandaloneOverlay = false,
 ): { name: string; reason: string }[] {
+  const version = parseGotenbergVersion(backendVersion)
+  if (!version || (version.major !== 8 && version.major !== 9)) return []
   return operation.fields.flatMap((field) => {
     const value = values[field.name]
     if (!isFieldVisible(field, values) || !isConfiguredField(field, value)) return []

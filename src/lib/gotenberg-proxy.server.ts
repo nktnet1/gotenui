@@ -22,7 +22,6 @@ import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
-import { canWebhookForOperation } from '#/lib/operation-availability'
 import { hasGotenberg92PageSyntax, stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import {
   isStandaloneAttachmentExtraction,
@@ -40,6 +39,10 @@ import {
   readLimitedBody,
   requireSameOrigin,
 } from '#/lib/proxy-policy'
+import {
+  outboundCompatibilityReasons,
+  requestFieldCompatibilityReason,
+} from '#/lib/request-compatibility'
 import { verifyConversionSignature } from '#/lib/response-signature'
 import { hasAttachmentFilename, safeAttachmentDisposition } from '#/lib/security'
 import {
@@ -56,7 +59,6 @@ import {
 } from '#/lib/validation'
 import { validateZipInputs } from '#/lib/zip-input-validation'
 import type { Operation } from '#/tools/registry'
-import { fieldMinimumVersionReason } from '#/tools/shared/field-visibility'
 
 const serverEnvSchema = v.object({
   GOTENBERG_ALLOWED_URLS: v.optional(v.pipe(v.string(), v.maxLength(20_000))),
@@ -608,19 +610,11 @@ export async function proxyConversionRequest(
   if (requiresGotenberg92ForComposition(version, [operation.id])) {
     throw new InputError('PDF page composition requires Gotenberg 9.2 or newer.', 409)
   }
-  // Standalone controls share the same version gates as the browser. An explicit
-  // false tracked-changes value is also unsupported before 9.10 at the API boundary.
-  for (const field of operation.fields) {
-    const value = payload.fields[field.name]
-    if (
-      value === undefined ||
-      value === '' ||
-      (value === false && field.name !== 'showTrackedChanges')
-    )
-      continue
-    const reason = fieldMinimumVersionReason(field, version, value)
-    if (reason) throw new InputError(reason, 409)
-  }
+  const fieldReason = requestFieldCompatibilityReason(operation, version, payload.fields)
+  if (fieldReason) throw new InputError(fieldReason, 409)
+  const outboundReason = outboundCompatibilityReasons(operation, version, payload)[0]
+  if (outboundReason)
+    throw new InputError(outboundReason, outboundReason.includes('filename overrides') ? 409 : 400)
   if (
     major === 9 &&
     version.minor < 2 &&
@@ -728,19 +722,6 @@ export async function proxyConversionRequest(
     throw new InputError(
       'Gotenberg 9 does not accept the legacy embeds field. Use an attach stage with a named pipeline stage file, or use a Gotenberg 8 connection.',
     )
-  }
-  if (payload.webhook && major === 9) {
-    if (!canWebhookForOperation(major, operation)) {
-      throw new InputError(
-        'Gotenberg 9 PDF inspection tools return JSON directly and cannot deliver results through a webhook.',
-      )
-    }
-    if (!payload.webhook.eventsUrl) {
-      throw new InputError('Gotenberg 9 webhooks require an events callback URL.')
-    }
-    if (payload.webhook.errorUrl || payload.webhook.errorMethod) {
-      throw new InputError('Gotenberg 9 removed the separate webhook error callback.')
-    }
   }
   const legacy = createGotenbergForm(
     operation,

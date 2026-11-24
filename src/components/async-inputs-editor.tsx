@@ -189,24 +189,50 @@ export function RemoteInputsEditor({
               autoComplete="off"
             />
           </div>
-          {isV9 && (
+          {(isV9 || row.filename) && (
             <div className="space-y-1">
               <Label htmlFor={`${id}-remote-name-${row.id}`}>
-                {supportsFilenameOverride
+                {(row.filenameMode ?? (supportsFilenameOverride ? 'override' : 'hint')) ===
+                'override'
                   ? 'Downloaded filename (optional)'
                   : 'Expected filename (optional)'}
               </Label>
               <Input
                 id={`${id}-remote-name-${row.id}`}
                 value={row.filename ?? ''}
-                onChange={(event) => update(index, { filename: event.target.value })}
+                onChange={(event) =>
+                  update(index, {
+                    filename: event.target.value,
+                    filenameMode: event.target.value.trim()
+                      ? (row.filenameMode ?? (supportsFilenameOverride ? 'override' : 'hint'))
+                      : undefined,
+                  })
+                }
                 placeholder="stamp.png"
               />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {supportsFilenameOverride
-                  ? 'Sent as downloadFrom.filename. Overrides Content-Disposition; if blank, Gotenberg uses the response header, then the URL path when it ends in a filename with an extension. PDF stage references must match the actual download name.'
-                  : 'Preflight hint only (not sent upstream). Gotenberg expects a Content-Disposition filename. PDF stage references must match the downloaded name.'}
+                {row.filenameMode === 'override' ||
+                (row.filenameMode === undefined && supportsFilenameOverride)
+                  ? 'Sent as downloadFrom.filename. Overrides Content-Disposition. Requires Gotenberg 9.2 or newer.'
+                  : supportsFilenameOverride
+                    ? 'This legacy filename hint is pinned as the download filename on Gotenberg 9.2 or newer.'
+                    : 'Preflight hint only (not sent upstream). Gotenberg expects a Content-Disposition filename. PDF stage references must match the downloaded name.'}
               </p>
+              {row.filename?.trim() &&
+                row.filenameMode === 'override' &&
+                !supportsFilenameOverride && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                    <span>This connection cannot override the remote filename.</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => update(index, { filenameMode: 'hint' })}
+                    >
+                      Use as expected filename instead
+                    </Button>
+                  </div>
+                )}
             </div>
           )}
           {!pdfInputOnly && (

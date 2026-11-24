@@ -17,6 +17,16 @@ export function canWebhookForOperation(major: number, operation: Operation): boo
   return major !== 9 || operation.output !== 'json'
 }
 
+/** Only a current, successful status probe can authorise a submission or discard. */
+export function confirmedBackendVersion(
+  status: ServerStatus | null,
+  pending: boolean,
+): string | undefined {
+  if (pending || !status?.online) return undefined
+  const version = parseGotenbergVersion(status.version)
+  return version && (version.major === 8 || version.major === 9) ? status.version : undefined
+}
+
 /** The selected instance decides availability; unknown/unsupported majors must not be treated as v8. */
 export function unavailableOperationReason(
   status: ServerStatus | null,

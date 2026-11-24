@@ -44,6 +44,7 @@ import { type ObservedConnectionStatus, statusForConnection } from '#/lib/connec
 import { getGotenbergStatus, type ServerStatus } from '#/lib/gotenberg-client'
 import {
   backendCompatibilityNotice,
+  confirmedBackendVersion,
   unavailableOperationReason,
 } from '#/lib/operation-availability'
 import { isSearchShortcut } from '#/lib/operation-search'
@@ -425,9 +426,12 @@ function Workspace({
     document.title = `${selectedId === 'home' ? 'All tools' : operation.title} · Gotenui`
   }, [selectedId, operation.title])
   const Icon = operationIcon(operation.id)
-  const unavailableReason = status
-    ? unavailableOperationReason(status, operation)
-    : 'Checking the selected Gotenberg version…'
+  const verifiedVersion = confirmedBackendVersion(status, statusLoading)
+  const unavailableReason = statusLoading
+    ? 'Checking the selected Gotenberg version…'
+    : !status?.online
+      ? 'The selected Gotenberg connection is unavailable. Verify the connection before running tools.'
+      : unavailableOperationReason(status, operation)
   const compatibilityNotice = backendCompatibilityNotice(status)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -744,7 +748,8 @@ function Workspace({
                 connectionKey={statusKey}
                 operation={operation}
                 unavailableReason={unavailableReason}
-                backendVersion={status?.online ? status.version : undefined}
+                backendVersion={verifiedVersion}
+                connectionName={connectionName}
                 recent={recent}
                 onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
                 connection={connection}

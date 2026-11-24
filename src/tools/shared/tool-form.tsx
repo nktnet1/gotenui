@@ -82,7 +82,7 @@ import {
   type Operation,
   operationDefaults,
 } from '#/tools/registry'
-import { draftCompatibility } from '#/tools/shared/draft-compatibility'
+import { draftCompatibility, draftOutboundIssues } from '#/tools/shared/draft-compatibility'
 import { JobPanel } from '#/tools/shared/job-panel'
 import { FieldControl } from '#/tools/shared/tool-fields'
 import type { AcceptedWebhook, Download, Job } from '#/tools/shared/tool-jobs'
@@ -117,8 +117,9 @@ Turn plain text into beautiful, portable documents.
 export function Workbench({
   operation,
   unavailableReason,
-  backendVersion,
+  backendVersion: verifiedVersion,
   connectionKey,
+  connectionName,
   recent,
   onCompleted,
   connection,
@@ -128,11 +129,26 @@ export function Workbench({
   unavailableReason: string | null
   backendVersion?: string
   connectionKey: string
+  connectionName: string
   recent: Job[]
   onCompleted: (job: Job) => void
   connection: ConnectionChoice
   batchQueue: BrowserBatchQueue
 }) {
+  // Keep the last confirmed layout while the current connection is being verified.
+  const [lastVerifiedVersion, setLastVerifiedVersion] = useState(verifiedVersion)
+  useLayoutEffect(() => {
+    if (verifiedVersion) setLastVerifiedVersion(verifiedVersion)
+  }, [verifiedVersion])
+  const backendVersion = verifiedVersion ?? lastVerifiedVersion
+  const [approvedConnectionKey, setApprovedConnectionKey] = useState(connectionKey)
+  const transferPending = approvedConnectionKey !== connectionKey
+  const actionUnavailable =
+    unavailableReason ??
+    (!verifiedVersion ? 'Verify the selected Gotenberg version before running tools.' : null)
+  const submissionBlocked =
+    actionUnavailable ??
+    (transferPending ? 'Confirm that this draft may be sent to the selected connection.' : null)
   const [fields, setFields] = useState<Record<string, string | boolean>>(() =>
     operationDefaults(operation),
   )
@@ -248,10 +264,12 @@ export function Workbench({
     (field) => field.name === 'bookmarks' && fieldSupportsBackend(field, backendVersion),
   )
   const hasPdfStructureEditor = hasMetadataEditor || hasBookmarksEditor || operation.id === 'embed'
-  const isV9 = parseGotenbergVersion(backendVersion)?.major === 9
-  const canWebhook = canWebhookForOperation(isV9 ? 9 : 8, operation)
+  const layoutMajor = parseGotenbergVersion(backendVersion)?.major
+  const isV9 = layoutMajor === 9
+  const isV8 = layoutMajor === 8
+  const canWebhook = (isV8 || isV9) && canWebhookForOperation(layoutMajor, operation)
   const canUploadArchives = isV9 && supportsArchiveInputs(operation)
-  const v8StandaloneOverlay = Boolean(standaloneKind) && !isV9
+  const v8StandaloneOverlay = Boolean(standaloneKind) && isV8
   const basicFields = v8StandaloneOverlay
     ? []
     : operation.fields.filter(
@@ -310,10 +328,10 @@ export function Workbench({
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
   const operationHasFileAssets = isSourceEditor
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
-  const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && !isV9
+  const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && isV8
   const supportsConversionPipeline = isV9 && operation.output === 'pdf' && operation.input !== 'pdf'
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
-  const compatibility = draftCompatibility(operation, fields, backendVersion, {
+  const compatibility = draftCompatibility(operation, fields, verifiedVersion, {
     legacyStandaloneOverlay: v8StandaloneOverlay,
     acceptsPostProcess: v8StandaloneOverlay || hasPostProcessing,
     postProcess,
@@ -327,7 +345,15 @@ export function Workbench({
     conversionStageFiles,
     auxiliary: auxFiles,
   })
+  const outboundIssues = draftOutboundIssues(operation, fields, verifiedVersion, {
+    remoteRows,
+    remoteInput,
+    webhookSettings,
+    webhookInput,
+    advanced,
+  })
   const discardIncompatibleSettings = () => {
+    if (actionUnavailable || pending) return
     setFields((current) => {
       const next = { ...current }
       const defaults = operationDefaults(operation)
@@ -407,8 +433,8 @@ export function Workbench({
       readAbort.current
     )
       return
-    if (unavailableReason) {
-      toast.error(unavailableReason)
+    if (submissionBlocked) {
+      toast.error(submissionBlocked)
       return
     }
     const controller = new AbortController()
@@ -451,17 +477,13 @@ export function Workbench({
   }
 
   const buildCandidate = () => {
-    if (compatibility.reasons.length) throw new InputError(compatibility.reasons.join(' '))
+    if (submissionBlocked) throw new InputError(submissionBlocked)
+    const issues = [...compatibility.reasons, ...outboundIssues]
+    if (issues.length) throw new InputError(issues.join(' '))
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
     const webhook = !canWebhook
       ? undefined
       : (webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined)
-    if (isV9 && webhook && !webhook.eventsUrl) {
-      throw new InputError('Gotenberg 9 webhooks require an events callback URL.')
-    }
-    if (isV9 && webhook && (webhook.errorUrl || webhook.errorMethod)) {
-      throw new InputError('Gotenberg 9 removed separate webhook error callbacks.')
-    }
     if (pipelineError) throw new InputError(pipelineError)
     if (conversionPipelineError) throw new InputError(conversionPipelineError)
     const selectedFields = activeOperationFields(operation, fields, backendVersion)
@@ -504,8 +526,8 @@ export function Workbench({
   }
 
   const queueCurrent = () => {
-    if (unavailableReason) {
-      toast.error(unavailableReason)
+    if (submissionBlocked) {
+      toast.error(submissionBlocked)
       return
     }
     try {
@@ -527,8 +549,8 @@ export function Workbench({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (pending || requestAbort.current) return
-    if (unavailableReason) {
-      toast.error(unavailableReason)
+    if (submissionBlocked) {
+      toast.error(submissionBlocked)
       return
     }
     const controller = new AbortController()
@@ -674,13 +696,55 @@ export function Workbench({
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
-            {unavailableReason && (
+            {actionUnavailable && (
               <p
                 role="alert"
                 className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
               >
-                {unavailableReason} Choose another tool or connection.
+                {actionUnavailable} Choose another tool or connection.
               </p>
+            )}
+            {transferPending && (
+              <div
+                role="alert"
+                className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+              >
+                <p className="font-medium">Review retained draft before using {connectionName}.</p>
+                <p>
+                  {connection.kind === 'browser' && (
+                    <>Destination: {safeOutboundHost(connection.url)}. </>
+                  )}
+                  The draft may contain documents, source content, passwords, cookies,
+                  authentication headers, remote downloads or webhook settings. Review them before
+                  sending the draft to this connection. Existing queued jobs keep their original
+                  connection.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!verifiedVersion}
+                  onClick={() => setApprovedConnectionKey(connectionKey)}
+                >
+                  Confirm draft for this connection
+                </Button>
+              </div>
+            )}
+            {outboundIssues.length > 0 && (
+              <div
+                role="alert"
+                className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+              >
+                <p className="font-medium">
+                  Review remote files, webhook settings or Advanced JSON.
+                </p>
+                <ul className="list-disc space-y-1 pl-5">
+                  {[...new Set(outboundIssues)].map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+                <p>Correct the settings below or select a compatible connection.</p>
+              </div>
             )}
             {compatibility.reasons.length > 0 && (
               <div
@@ -703,7 +767,7 @@ export function Workbench({
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={pending}
+                  disabled={pending || Boolean(actionUnavailable)}
                   onClick={discardIncompatibleSettings}
                 >
                   Discard incompatible settings
@@ -890,7 +954,7 @@ export function Workbench({
                   disabled={
                     pending ||
                     readingStructure ||
-                    Boolean(unavailableReason) ||
+                    Boolean(submissionBlocked) ||
                     !files.length ||
                     (operation.id === 'metadata-write' && files.length !== 1)
                   }
@@ -1168,7 +1232,7 @@ export function Workbench({
                       rows={4}
                       spellCheck={false}
                       className="font-mono text-xs"
-                      placeholder={'{ "waitForExpression": "window.ready === true" }'}
+                      placeholder="{}"
                       value={advanced}
                       onChange={(event) => setAdvanced(event.target.value)}
                     />
@@ -1190,8 +1254,9 @@ export function Workbench({
                 />
                 {!canWebhook ? (
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    PDF inspection returns JSON directly on Gotenberg 9; webhook delivery is not
-                    available for this tool.
+                    {layoutMajor === undefined
+                      ? 'Webhook options will be available after the backend version is verified.'
+                      : 'PDF inspection returns JSON directly on Gotenberg 9, so webhook delivery is not available for this tool.'}
                   </p>
                 ) : (
                   <WebhookEditor
@@ -1229,8 +1294,9 @@ export function Workbench({
               size="lg"
               disabled={
                 pending ||
-                Boolean(unavailableReason) ||
+                Boolean(submissionBlocked) ||
                 compatibility.reasons.length > 0 ||
+                outboundIssues.length > 0 ||
                 Boolean(pipelineError || conversionPipelineError)
               }
               onClick={queueCurrent}
@@ -1242,8 +1308,9 @@ export function Workbench({
               size="lg"
               disabled={
                 pending ||
-                Boolean(unavailableReason) ||
+                Boolean(submissionBlocked) ||
                 compatibility.reasons.length > 0 ||
+                outboundIssues.length > 0 ||
                 Boolean(pipelineError || conversionPipelineError)
               }
               className="min-w-44"

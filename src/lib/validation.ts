@@ -208,7 +208,7 @@ function validateHeaderMap(headers: Record<string, string> | undefined): void {
   }
 }
 
-function validateAsyncInputs(payload: ConversionPayload): void {
+function validateAsyncInputs(payload: Pick<ConversionPayload, 'downloadFrom' | 'webhook'>): void {
   for (const remote of payload.downloadFrom ?? []) {
     requireHttpUrl(remote.url, 'downloadFrom URL')
     if (remote.name) {
@@ -233,6 +233,21 @@ function validateAsyncInputs(payload: ConversionPayload): void {
     if (webhook.eventsUrl) requireHttpUrl(webhook.eventsUrl, 'Webhook events URL')
     validateHeaderMap(webhook.extraHttpHeaders)
   }
+}
+
+/** Validate editor and legacy JSON values without requiring unrelated document fields. */
+export function validateAsyncInputValues(
+  downloadFrom: unknown,
+  webhook: unknown,
+): Pick<ConversionPayload, 'downloadFrom' | 'webhook'> {
+  const remotes = v.safeParse(v.optional(v.array(remoteFileSchema)), downloadFrom)
+  if (!remotes.success)
+    throw new InputError('Remote files must be an array of valid download descriptors.')
+  const callback = v.safeParse(v.optional(webhookSchema), webhook)
+  if (!callback.success) throw new InputError('Webhook settings must be a valid callback object.')
+  const result = { downloadFrom: remotes.output, webhook: callback.output }
+  validateAsyncInputs(result)
+  return result
 }
 
 /** Enforce the same metadata contract for /embed and conversion-time embeds. */
@@ -912,6 +927,68 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
 function validateConversionOptions(operation: Operation, payload: ConversionPayload): void {
   const chromium = operation.path.startsWith('/forms/chromium/')
   const office = operation.id === 'office-pdf'
+  if (chromium) {
+    for (const name of ['cookies', 'extraHttpHeaders'] as const) {
+      const value = payload.fields[name]
+      if (value !== undefined && value !== '') validateChromiumNetworkField(name, value)
+    }
+    for (const name of [
+      'waitForSelector',
+      'waitForExpression',
+      'waitWindowStatus',
+      'userAgent',
+    ] as const) {
+      const value = payload.fields[name]
+      if (
+        typeof value === 'string' &&
+        (value.trim().length === 0 ||
+          (['userAgent', 'waitWindowStatus'].includes(name) && /[\r\n]/.test(value)))
+      ) {
+        throw new InputError(`Invalid Chromium ${name} value.`)
+      }
+    }
+  }
+  if (office) {
+    if (payload.fields.exportOnlyNotesPages === true && payload.fields.exportNotesPages !== true) {
+      throw new InputError('Export only notes pages requires Export slide notes pages.')
+    }
+    if (
+      payload.fields.allowDuplicateFieldNames === true &&
+      payload.fields.exportFormFields === false
+    ) {
+      throw new InputError('Duplicate form field names require interactive form fields.')
+    }
+    if (payload.fields.firstPageOnLeft === true && payload.fields.pageLayout !== '3') {
+      throw new InputError('First page on left requires the two-column PDF page layout.')
+    }
+    if (
+      payload.fields.zoom !== undefined &&
+      payload.fields.zoom !== '' &&
+      payload.fields.magnification !== '4'
+    ) {
+      throw new InputError('Custom PDF zoom requires Custom zoom magnification.')
+    }
+    for (const name of ['nativeWatermarkText', 'nativeTiledWatermarkText']) {
+      const value = payload.fields[name]
+      if (typeof value === 'string' && /[\r\n]/.test(value)) {
+        throw new InputError(`Invalid ${name}: use a single line of text.`)
+      }
+    }
+    const watermarkFont = payload.fields.nativeWatermarkFontName
+    if (typeof watermarkFont === 'string' && /[\r\n]/.test(watermarkFont)) {
+      throw new InputError('Invalid nativeWatermarkFontName: use a single line of text.')
+    }
+  }
+}
+
+/** Validate the escape-hatch fields independently of unfinished document inputs. */
+export function validateAdvancedParameters(
+  operation: Operation,
+  fields: ConversionPayload['fields'],
+  advanced: ConversionPayload['advanced'],
+): void {
+  const chromium = operation.path.startsWith('/forms/chromium/')
+  const office = operation.id === 'office-pdf'
   const chromiumPdf = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
   const chromiumOnly = [
     'cookies',
@@ -975,7 +1052,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     'reduceImageResolution',
     'maxImageResolution',
   ]
-  for (const name of Object.keys(payload.advanced)) {
+  for (const name of Object.keys(advanced)) {
     if (
       (!chromium && chromiumOnly.includes(name)) ||
       (!chromiumPdf && chromiumPdfOnly.includes(name)) ||
@@ -987,7 +1064,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
   }
   const pdfOptimizeRoute =
     chromiumPdf || office || operation.id === 'merge' || operation.id === 'split'
-  for (const name of Object.keys(payload.advanced)) {
+  for (const name of Object.keys(advanced)) {
     if (
       (name === 'optimizeImages' || name === 'imageQuality') &&
       !pdfOptimizeRoute &&
@@ -1007,57 +1084,32 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       throw new InputError(`Advanced field ${name} is not supported for ${operation.title}.`)
     }
   }
-  if (chromium) {
-    for (const name of ['cookies', 'extraHttpHeaders'] as const) {
-      const value = payload.fields[name]
-      if (value !== undefined && value !== '') validateChromiumNetworkField(name, value)
+  if (advanced.emulatedMediaFeatures !== undefined) {
+    if (!operation.path.startsWith('/forms/chromium/')) {
+      throw new InputError('emulatedMediaFeatures is supported only by Chromium.')
     }
-    for (const name of [
-      'waitForSelector',
-      'waitForExpression',
-      'waitWindowStatus',
-      'userAgent',
-    ] as const) {
-      const value = payload.fields[name]
-      if (
-        typeof value === 'string' &&
-        (value.trim().length === 0 ||
-          (['userAgent', 'waitWindowStatus'].includes(name) && /[\r\n]/.test(value)))
-      ) {
-        throw new InputError(`Invalid Chromium ${name} value.`)
-      }
+    if (encodeChromiumMediaFeatures(fields)) {
+      throw new InputError('Choose media settings in the UI or Advanced JSON, not both.')
+    }
+    if (typeof advanced.emulatedMediaFeatures !== 'string') {
+      throw new InputError('emulatedMediaFeatures must contain JSON text.')
+    }
+    try {
+      normalizeAdvancedMediaFeatures(advanced.emulatedMediaFeatures)
+    } catch (error) {
+      throw new InputError(error instanceof Error ? error.message : 'Invalid media features.')
     }
   }
-  if (office) {
-    if (payload.fields.exportOnlyNotesPages === true && payload.fields.exportNotesPages !== true) {
-      throw new InputError('Export only notes pages requires Export slide notes pages.')
-    }
+  for (const [name, value] of Object.entries(advanced)) {
     if (
-      payload.fields.allowDuplicateFieldNames === true &&
-      payload.fields.exportFormFields === false
+      !fieldNamePattern.test(name) ||
+      forbiddenAdvanced.has(name) ||
+      operation.fields.some((field) => field.name === name)
     ) {
-      throw new InputError('Duplicate form field names require interactive form fields.')
+      throw new InputError(`Unsupported advanced field: ${name}`)
     }
-    if (payload.fields.firstPageOnLeft === true && payload.fields.pageLayout !== '3') {
-      throw new InputError('First page on left requires the two-column PDF page layout.')
-    }
-    if (
-      payload.fields.zoom !== undefined &&
-      payload.fields.zoom !== '' &&
-      payload.fields.magnification !== '4'
-    ) {
-      throw new InputError('Custom PDF zoom requires Custom zoom magnification.')
-    }
-    for (const name of ['nativeWatermarkText', 'nativeTiledWatermarkText']) {
-      const value = payload.fields[name]
-      if (typeof value === 'string' && /[\r\n]/.test(value)) {
-        throw new InputError(`Invalid ${name}: use a single line of text.`)
-      }
-    }
-    const watermarkFont = payload.fields.nativeWatermarkFontName
-    if (typeof watermarkFont === 'string' && /[\r\n]/.test(watermarkFont)) {
-      throw new InputError('Invalid nativeWatermarkFontName: use a single line of text.')
-    }
+    if (typeof value === 'number' && !Number.isFinite(value))
+      throw new InputError('Advanced values must be finite.')
   }
 }
 
@@ -1214,29 +1266,7 @@ export function validatePayload(input: unknown): {
       throw new InputError(`${field.label} is required.`)
     }
   }
-  if (payload.advanced.emulatedMediaFeatures !== undefined) {
-    if (!operation.path.startsWith('/forms/chromium/')) {
-      throw new InputError('emulatedMediaFeatures is supported only by Chromium.')
-    }
-    if (encodeChromiumMediaFeatures(payload.fields)) {
-      throw new InputError('Choose media settings in the UI or Advanced JSON, not both.')
-    }
-    if (typeof payload.advanced.emulatedMediaFeatures !== 'string') {
-      throw new InputError('emulatedMediaFeatures must contain JSON text.')
-    }
-    try {
-      normalizeAdvancedMediaFeatures(payload.advanced.emulatedMediaFeatures)
-    } catch (error) {
-      throw new InputError(error instanceof Error ? error.message : 'Invalid media features.')
-    }
-  }
-  for (const [name, value] of Object.entries(payload.advanced)) {
-    if (!fieldNamePattern.test(name) || forbiddenAdvanced.has(name) || definitions.has(name)) {
-      throw new InputError(`Unsupported advanced field: ${name}`)
-    }
-    if (typeof value === 'number' && !Number.isFinite(value))
-      throw new InputError('Advanced values must be finite.')
-  }
+  validateAdvancedParameters(operation, payload.fields, payload.advanced)
   // Chromium accepts an empty index.html and renders a blank document.
   // Require an explicit source value, but do not treat blank HTML as missing.
   if (operation.input === 'html' && payload.source === undefined) {

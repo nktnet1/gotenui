@@ -6,6 +6,8 @@ export type RemoteInputRow = {
   id: number
   url: string
   filename?: string
+  /** Keep the original filename intent when changing connections. */
+  filenameMode?: 'override' | 'hint'
   field: '' | 'embedded' | 'watermark' | 'stamp'
   headers: ExtraHeaderRow[]
 }
@@ -65,7 +67,11 @@ export function remoteInputsPayload(rows: readonly RemoteInputRow[], json: strin
     const headers = headerMap(row.headers)
     return {
       url: row.url.trim(),
-      ...(row.filename?.trim() ? { name: row.filename.trim() } : {}),
+      ...(row.filename?.trim()
+        ? row.filenameMode === 'override'
+          ? { filename: row.filename.trim() }
+          : { name: row.filename.trim() }
+        : {}),
       ...(row.field ? { field: row.field } : {}),
       ...(headers ? { extraHttpHeaders: headers } : {}),
     }

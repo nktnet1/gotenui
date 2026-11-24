@@ -35,6 +35,7 @@ import {
   validatePayload,
 } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
+import { fieldCompatibilityReason } from '#/tools/shared/field-visibility'
 
 // The browser retains input files in memory; this is an application-side safety cap.
 const maxUploadSchema = v.pipe(
@@ -208,9 +209,24 @@ export function createGotenbergForm(
   const isChromium = operation.path.startsWith('/forms/chromium/')
   const mediaFieldNames = new Set<string>(CHROMIUM_MEDIA_OPTIONS.map((feature) => feature.name))
   for (const [key, value] of Object.entries({ ...payload.fields, ...payload.advanced })) {
-    if (mediaFieldNames.has(key)) continue // UI-only controls are encoded as a single JSON array.
+    if (mediaFieldNames.has(key)) continue // UI-only controls are encoded as a single JSON object.
 
     if (value === '') continue
+    const definition = operation.fields.find((field) => field.name === key)
+    if (
+      value === false &&
+      definition &&
+      version &&
+      definition.defaultValue !== true &&
+      fieldCompatibilityReason(
+        definition,
+        `${version.major}.${version.minor}.${version.patch}`,
+        value,
+      )
+    ) {
+      // An unsupported disabled opt-in is a no-op, not an unknown upstream key.
+      continue
+    }
     // Gotenberg keys per-input bookmarks by the uploaded filename.
     const encoded =
       operation.id === 'merge' && key === 'bookmarks'
@@ -225,10 +241,7 @@ export function createGotenbergForm(
       key,
       major === 9 && key === 'nativeWatermarkRotateAngle'
         ? encoded
-        : encodeOfficialField(
-            operation.fields.find((field) => field.name === key),
-            encoded,
-          ),
+        : encodeOfficialField(definition, encoded),
     )
   }
   if (isChromium) {

@@ -101,7 +101,7 @@ export function adaptPdfForm(
   }
   if (payload.postProcess) {
     throw new InputError(
-      'Gotenberg 9 requires an ordered pipeline for additional PDF post-processing. Remove the extra steps or use a Gotenberg 8 connection until the pipeline editor is available.',
+      'Gotenberg 9 requires an ordered pipeline for additional PDF post-processing. Recreate the settings in the PDF pipeline editor or use a Gotenberg 8 connection.',
     )
   }
   if (Object.keys(payload.advanced).length) {

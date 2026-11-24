@@ -342,7 +342,7 @@ export function adaptConversionForm(
   }
   if (payload.postProcess) {
     throw new InputError(
-      'Complex PDF post-processing is not yet available on Gotenberg 9. Remove the post-processing options or use a Gotenberg 8 connection.',
+      'Legacy PDF post-processing requires Gotenberg 8. Recreate the settings as PDF stages on Gotenberg 9.',
     )
   }
   if (operation.path.startsWith('/forms/chromium/')) {
