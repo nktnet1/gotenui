@@ -1,5 +1,5 @@
 import { effectiveRemoteFilename } from '#/lib/file-names'
-import { mergeUploadFilenames } from '#/lib/merge-order'
+import { mergeUploadFilenames, remoteMergeFilenames } from '#/lib/merge-order'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { parsePdfPipeline, pdfStageAssetNames, validatePdfStageUploads } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
@@ -66,12 +66,9 @@ export function adaptPdfPipeline(
       ? mergeUploadFilenames(
           inputs.map((file) => (file instanceof File ? file.name : '')),
           [
-            ...auxiliary.map(({ name }) => name),
+            ...remoteMergeFilenames(payload.downloadFrom),
             ...archiveEntryNames,
-            ...(payload.downloadFrom ?? []).flatMap((remote) => {
-              const filename = effectiveRemoteFilename(remote)
-              return filename ? [filename] : []
-            }),
+            ...auxiliary.map(({ name }) => name),
           ],
         )
       : []

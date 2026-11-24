@@ -46,8 +46,8 @@ async function forwardedFiles(
   request: Request,
   version = '9.1.0',
   path = '/forms/libreoffice/convert',
-): Promise<{ filenames: string[]; stages: unknown[] }> {
-  const output = { filenames: [] as string[], stages: [] as unknown[] }
+): Promise<{ filenames: string[]; stages: unknown[]; remotes: unknown[] }> {
+  const output = { filenames: [] as string[], stages: [] as unknown[], remotes: [] as unknown[] }
   const fetcher: typeof fetch = async (url, init) => {
     if (String(url) === `${upstream}/version`) return new Response(version)
     assert.equal(new URL(String(url)).pathname, path)
@@ -57,6 +57,7 @@ async function forwardedFiles(
       .map((entry) => (entry instanceof File ? entry.name : ''))
     const raw = init.body.get('stages')
     output.stages = raw ? JSON.parse(String(raw)) : []
+    output.remotes = JSON.parse(String(init.body.get('downloadFrom') ?? '[]'))
     return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
   }
   const response = await proxyConversionRequest(request, fetcher)
@@ -207,14 +208,16 @@ function pdfMergeRequest(
     archives?: File[]
     remotes?: { url: string; name?: string }[]
     sourceNames?: string[]
+    fields?: Record<string, string | boolean>
+    pipeline?: boolean
   } = {},
 ): Request {
   const body = new FormData()
   body.set(
     'payload',
     JSON.stringify({
-      operation: 'merge',
-      fields: {},
+      operation: options.pipeline ? 'pdf-pipeline' : 'merge',
+      fields: options.fields ?? {},
       advanced: {},
       ...(options.remotes ? { downloadFrom: options.remotes } : {}),
     }),
@@ -251,4 +254,64 @@ test('Gotenberg 9 PDF merge reserves remote source names without changing the UR
   )
   assert.deepEqual(output.filenames, ['01__report.pdf'])
   assert.deepEqual(output.stages, [{ op: 'merge' }])
+})
+
+test.each([false, true])(
+  'Gotenberg 9.10 Office merge reserves an inferred remote filename (pipeline=%s)',
+  async (pipeline) => {
+    const url = 'https://example.test/01_z.docx'
+    const output = await forwardedFiles(
+      officeRequest({
+        merge: !pipeline,
+        stages: pipeline ? [{ op: 'merge' }] : undefined,
+        sourceNames: ['z.docx', 'a.docx'],
+        remotes: [{ url }],
+      }),
+      '9.10.0',
+    )
+    assert.deepEqual(output.remotes, [{ url, filename: '01_z.docx' }])
+    assert.deepEqual(output.filenames, ['01__z.docx', '02_a.docx'])
+  },
+)
+
+test.each([false, true])(
+  'Gotenberg 9.10 merge preserves local and remote bookmark labels when a pinned URL name collides (pipeline=%s)',
+  async (pipeline) => {
+    const url = 'https://example.test/01_z.pdf'
+    const labels = { 'z.pdf': 'Local document', '01_z.pdf': 'Remote document' }
+    const output = await forwardedFiles(
+      pdfMergeRequest({
+        pipeline,
+        sourceNames: ['z.pdf', 'a.pdf'],
+        remotes: [{ url }],
+        fields: pipeline
+          ? { stages: JSON.stringify([{ op: 'merge', fileBookmarks: { labels } }]) }
+          : { v9FileBookmarks: true, v9FileBookmarkLabels: JSON.stringify(labels) },
+      }),
+      '9.10.0',
+      '/forms/pdf/pipe',
+    )
+    assert.deepEqual(output.remotes, [{ url, filename: '01_z.pdf' }])
+    assert.deepEqual(output.filenames, ['01__z.pdf', '02_a.pdf'])
+    assert.deepEqual(output.stages, [
+      {
+        op: 'merge',
+        fileBookmarks: { labels: { '01__z.pdf': 'Local document', '01_z.pdf': 'Remote document' } },
+      },
+    ])
+  },
+)
+
+test('Gotenberg 9.10 merge reserves numbered duplicate remote filenames', async () => {
+  const url = 'https://example.test/01_report.pdf'
+  const output = await forwardedFiles(
+    pdfMergeRequest({ sourceNames: ['report (2).pdf'], remotes: [{ url }, { url }] }),
+    '9.10.0',
+    '/forms/pdf/pipe',
+  )
+  assert.deepEqual(output.remotes, [
+    { url, filename: '01_report.pdf' },
+    { url, filename: '01_report.pdf' },
+  ])
+  assert.deepEqual(output.filenames, ['01__report (2).pdf'])
 })

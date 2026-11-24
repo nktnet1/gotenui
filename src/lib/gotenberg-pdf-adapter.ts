@@ -1,8 +1,12 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
-import { effectiveRemoteFilename, filenameKey } from '#/lib/file-names'
+import { filenameKey } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
-import { mergeUploadFilename, reservePrefixedMergeUploadNames } from '#/lib/merge-order'
+import {
+  mergeUploadFilename,
+  remoteMergeFilenames,
+  reservePrefixedMergeUploadNames,
+} from '#/lib/merge-order'
 import {
   type FileBookmarks,
   mapFileBookmarkLabels,
@@ -118,13 +122,7 @@ export function adaptPdfForm(
   const fields = payload.fields
   const output = new FormData()
   const sources = legacy.getAll('files')
-  const reservedNames = [
-    ...archiveEntryNames,
-    ...(payload.downloadFrom ?? []).flatMap((remote) => {
-      const filename = effectiveRemoteFilename(remote)
-      return filename ? [filename] : []
-    }),
-  ]
+  const reservedNames = [...remoteMergeFilenames(payload.downloadFrom), ...archiveEntryNames]
   const numberedNames =
     operation.id === 'merge'
       ? reservePrefixedMergeUploadNames(

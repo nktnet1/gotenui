@@ -1,7 +1,48 @@
+import { filenameKey, possibleRemoteFilename } from '#/lib/file-names'
+
 /** Prefix local merge inputs so Gotenberg's filename sort follows the visible order. */
 export function mergeUploadFilename(filename: string, index: number, count: number): string {
   const prefix = String(index + 1).padStart(Math.max(2, String(count).length), '0')
   return `${prefix}_${filename}`
+}
+
+/** Preserve remote filenames that the encoder may pin from the URL on v9.2+.
+ * Older servers can still return these names in Content-Disposition.
+ */
+export function remoteMergeFilenames(
+  remotes: readonly { url: string; name?: string; filename?: string }[] = [],
+): string[] {
+  return remotes.flatMap((remote) => {
+    const name = possibleRemoteFilename(remote)
+    return name ? [name] : []
+  })
+}
+
+/** Gotenberg registers downloads before uploads and auto-numbers duplicate
+ * filenames. Reserve those generated names as well as the received names.
+ */
+function registeredNames(names: readonly string[]): Set<string> {
+  const occupied = new Set<string>()
+  const nextSuffix = new Map<string, number>()
+  for (const raw of names) {
+    const name = filenameKey(raw)
+    if (!occupied.has(name)) {
+      occupied.add(name)
+      continue
+    }
+    const dot = name.lastIndexOf('.')
+    const stem = dot === -1 ? name : name.slice(0, dot)
+    const extension = dot === -1 ? '' : name.slice(dot)
+    let suffix = nextSuffix.get(name) ?? 2
+    let candidate = `${stem} (${suffix})${extension}`
+    while (occupied.has(candidate)) {
+      suffix++
+      candidate = `${stem} (${suffix})${extension}`
+    }
+    occupied.add(candidate)
+    nextSuffix.set(name, suffix + 1)
+  }
+  return occupied
 }
 
 /** Reserve stage asset names when numbering pipeline merge inputs. The rank
@@ -11,15 +52,15 @@ export function mergeUploadFilenames(
   filenames: readonly string[],
   reservedNames: readonly string[] = [],
 ): string[] {
-  const occupied = new Set(reservedNames.map((name) => name.normalize('NFC')))
+  const occupied = registeredNames(reservedNames)
   return filenames.map((filename, index) => {
     let disambiguator = ''
     let renamed = mergeUploadFilename(filename, index, filenames.length)
-    while (occupied.has(renamed.normalize('NFC'))) {
+    while (occupied.has(filenameKey(renamed))) {
       disambiguator += '_'
       renamed = mergeUploadFilename(`${disambiguator}${filename}`, index, filenames.length)
     }
-    occupied.add(renamed.normalize('NFC'))
+    occupied.add(filenameKey(renamed))
     return renamed
   })
 }

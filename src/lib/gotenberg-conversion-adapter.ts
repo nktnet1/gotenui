@@ -3,6 +3,7 @@ import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
   mergeUploadFilename,
   mergeUploadFilenames,
+  remoteMergeFilenames,
   reservePrefixedMergeUploadNames,
 } from '#/lib/merge-order'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
@@ -287,12 +288,9 @@ function orderOfficeMergeInputs(
 
   const filenames = sources.map((source) => (source instanceof File ? source.name : ''))
   const reserved = [
-    ...stageFiles.map(({ name }) => name),
+    ...remoteMergeFilenames(payload.downloadFrom),
     ...archiveEntryNames,
-    ...(payload.downloadFrom ?? []).flatMap((remote) => {
-      const filename = effectiveRemoteFilename(remote)
-      return filename ? [filename] : []
-    }),
+    ...stageFiles.map(({ name }) => name),
   ]
   // The v8 form builder already prefixes documents for its Merge switch.
   const ordered = builtInMerge

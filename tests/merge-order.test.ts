@@ -74,3 +74,16 @@ test('allows colliding source documents on other PDF routes and rejects invalid 
     /Unsupported advanced field: bookmarks/,
   )
 })
+
+test('reserves upstream duplicate filenames without overwriting explicit names', () => {
+  assert.deepEqual(
+    mergeUploadFilenames(
+      ['report (3).pdf'],
+      ['01_report.pdf', '01_report (2).pdf', '01_report.pdf'],
+    ),
+    ['01__report (3).pdf'],
+  )
+  assert.deepEqual(mergeUploadFilenames(['report (2).pdf'], ['01_report.pdf', '01_report.pdf']), [
+    '01__report (2).pdf',
+  ])
+})
