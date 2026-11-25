@@ -956,17 +956,21 @@ describe('Gotenberg 9.7 per-file merge bookmarks', () => {
       fileBookmarks: { label: ['filename'], labels: { '01_report.pdf': 'Report' } },
     })
     assert.deepEqual(
-      reconcilePdfComposeSources(
-        [
-          { op: 'split', every: 1 },
-          { op: 'merge', fileBookmarks: { labels: { 'report.pdf': 'Old name' } } },
-        ],
-        {
-          inputs: [{ original: 'report.pdf', forwarded: '01_report.pdf' }],
-          unknownInputs: true,
-          mapBookmarks: true,
-        },
-      )[1],
+      JSON.parse(
+        JSON.stringify(
+          reconcilePdfComposeSources(
+            [
+              { op: 'split', every: 1 },
+              { op: 'merge', fileBookmarks: { labels: { 'report.pdf': 'Old name' } } },
+            ],
+            {
+              inputs: [{ original: 'report.pdf', forwarded: '01_report.pdf' }],
+              unknownInputs: true,
+              mapBookmarks: true,
+            },
+          )[1],
+        ),
+      ),
       { op: 'merge', fileBookmarks: { labels: { 'report.pdf': 'Old name' } } },
     )
   })

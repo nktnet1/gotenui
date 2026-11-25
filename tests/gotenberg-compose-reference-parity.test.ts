@@ -775,3 +775,124 @@ describe('Office conversion input order and built-in split parity', () => {
     )
   })
 })
+
+describe('Merge bookmark mapping with incomplete or duplicate source names', () => {
+  it.each(['pdf-pipeline', 'office-pdf'] as const)(
+    'preserves exact labels for duplicate remote %s filenames',
+    async (operation) => {
+      const filename = operation === 'pdf-pipeline' ? 'report.pdf' : 'report.docx'
+      const first = operation === 'pdf-pipeline' ? 'report.pdf' : 'report.docx.pdf'
+      const second = operation === 'pdf-pipeline' ? 'report (2).pdf' : 'report (2).docx.pdf'
+      const stages = [
+        { op: 'merge', fileBookmarks: { labels: { [first]: 'First', [second]: 'Second' } } },
+      ]
+      const result = await forwarded({
+        operation,
+        version: '9.10.0',
+        names: [],
+        remotes: [
+          { url: 'https://files.example.test/first', filename },
+          { url: 'https://files.example.test/second', filename },
+        ],
+        stages,
+      })
+      assert.equal(result.status, 200, result.error)
+      assert.deepEqual(result.stages, stages)
+    },
+  )
+
+  it.each(['pdf-pipeline', 'office-pdf'] as const)(
+    'maps known local %s split labels even with a dynamically named download',
+    async (operation) => {
+      const extension = operation === 'pdf-pipeline' ? 'pdf' : 'docx'
+      const stem = operation === 'pdf-pipeline' ? 'report' : 'report.docx'
+      const remotePart = operation === 'pdf-pipeline' ? 'remote_0.pdf' : 'remote.docx_0.pdf'
+      const stages = [
+        { op: 'split', ranges: ['1', '2'] },
+        {
+          op: 'merge',
+          fileBookmarks: {
+            labels: { [`${stem}_1.pdf`]: 'Local part', [remotePart]: 'Remote part' },
+          },
+        },
+      ]
+      const result = await forwarded({
+        operation,
+        version: '9.10.0',
+        names: [`report.${extension}`, `other.${extension}`],
+        remotes: [{ url: 'https://files.example.test/dynamic' }],
+        stages,
+      })
+      assert.equal(result.status, 200, result.error)
+      assert.deepEqual(result.names, [`01_report.${extension}`, `02_other.${extension}`])
+      assert.deepEqual(result.stages, [
+        stages[0],
+        {
+          op: 'merge',
+          fileBookmarks: {
+            labels: { [`01_${stem}_1.pdf`]: 'Local part', [remotePart]: 'Remote part' },
+          },
+        },
+      ])
+    },
+  )
+
+  it('accepts explicit split labels for numbered duplicate remote PDFs', async () => {
+    const stages = [
+      { op: 'split', ranges: ['1', '2'] },
+      {
+        op: 'merge',
+        fileBookmarks: { labels: { 'report_0.pdf': 'First', 'report (2)_1.pdf': 'Second' } },
+      },
+    ]
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: [],
+      remotes: [
+        { url: 'https://files.example.test/first', filename: 'report.pdf' },
+        { url: 'https://files.example.test/second', filename: 'report.pdf' },
+      ],
+      stages,
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.stages, stages)
+  })
+
+  it('normalizes explicit labels even when a previous merge has an unknown output filename', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: [],
+      remotes: [{ url: 'https://files.example.test/dynamic' }],
+      stages: [
+        { op: 'merge' },
+        { op: 'merge', fileBookmarks: { labels: { 'cafe\u0301.pdf': 'Cafe' } } },
+      ],
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.stages, [
+      { op: 'merge' },
+      { op: 'merge', fileBookmarks: { labels: { 'caf\u00e9.pdf': 'Cafe' } } },
+    ])
+  })
+
+  it('still rejects separate explicit labels that normalize to the same filename', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: [],
+      remotes: [{ url: 'https://files.example.test/dynamic' }],
+      stages: [
+        { op: 'merge' },
+        {
+          op: 'merge',
+          fileBookmarks: { labels: { 'cafe\u0301.pdf': 'First', 'caf\u00e9.pdf': 'Second' } },
+        },
+      ],
+    })
+    assert.equal(result.status, 400, result.error)
+    assert.equal(result.calls, 0)
+    assert.match(result.error, /duplicate fileBookmarks label/)
+  })
+})

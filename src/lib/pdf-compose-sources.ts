@@ -117,10 +117,9 @@ function currentFileMatches(name: string, sources: readonly SourceTemplate[]): s
   })
 }
 
-function firstSource(sources: readonly SourceTemplate[] | null): SourceTemplate[] | null {
-  if (!sources?.length) return null
+function firstSource(sources: readonly SourceTemplate[]): SourceTemplate[] {
   const first = sources[0]
-  if (!first) return null
+  if (!first) return []
   // A split returns parts in document order; the first part of the first
   // document is the one Gotenberg names a subsequent merge/compose after.
   const zeros = first.original
@@ -161,7 +160,7 @@ function mapCurrentBookmarkLabels(
   for (const [name, label] of Object.entries(bookmarks.labels ?? {})) {
     const normalized = name.normalize('NFC')
     const matches = currentFileMatches(normalized, dynamicSources)
-    for (const target of matches.length ? matches : [normalized]) {
+    for (const target of new Set(matches.length ? matches : [normalized])) {
       if (Object.hasOwn(labels, target)) {
         throw new InputError(`merge: duplicate fileBookmarks label for ${target}.`)
       }
@@ -205,42 +204,39 @@ export function reconcilePdfComposeSources(
     sortName: (sortName ?? forwarded).normalize('NFC'),
   }))
   const duplicateInputs = new Set(names.map(({ forwarded }) => forwarded)).size !== names.length
-  let sources: SourceTemplate[] | null =
-    unknownInputs || duplicateInputs
-      ? null
-      : names.sort((a, b) => compareSourceNames(a.sortName, b.sortName))
+  const sourcesKnown = !unknownInputs && !duplicateInputs
+  // Keep the known filenames even when the complete set is unavailable. Split
+  // preserves each input's stem, but merge and compose depend on the first
+  // actual document and can therefore lose that knowledge.
+  let sources: SourceTemplate[] = sourcesKnown
+    ? names.sort((a, b) => compareSourceNames(a.sortName, b.sortName))
+    : names
   let single = singleInput || (!unknownInputs && names.length === 1)
   let afterSplit = false
-  // Unknown remote names prevent predicting a later merge output, but they
-  // do not change the known local filenames before the first reshaping stage.
-  let initialNamesPreserved = true
 
   return stages.map((stage) => {
     if (stage.op === 'merge') {
-      const candidates = sources ?? (initialNamesPreserved ? names : null)
+      const bookmarks = stage.fileBookmarks as FileBookmarks | undefined
+      const needsNormalization = Object.keys(bookmarks?.labels ?? {}).some(
+        (name) => name !== name.normalize('NFC'),
+      )
       const mapped =
-        mapBookmarks && candidates?.length && stage.fileBookmarks
+        mapBookmarks && bookmarks && (sources.length || needsNormalization)
           ? {
               ...stage,
-              fileBookmarks: mapCurrentBookmarkLabels(
-                stage.fileBookmarks as FileBookmarks,
-                candidates,
-              ),
+              fileBookmarks: mapCurrentBookmarkLabels(bookmarks, sources),
             }
           : stage
-      initialNamesPreserved = false
-      sources = firstSource(sources)
+      sources = sourcesKnown ? firstSource(sources) : []
       single = true
       afterSplit = false
       return mapped
     }
     if (stage.op === 'split') {
-      initialNamesPreserved = false
-      sources =
-        sources?.map(({ original, forwarded }) => ({
-          original: splitName(original),
-          forwarded: splitName(forwarded),
-        })) ?? null
+      sources = sources.map(({ original, forwarded }) => ({
+        original: splitName(original),
+        forwarded: splitName(forwarded),
+      }))
       single = single && Array.isArray(stage.ranges) && stage.ranges.length === 1
       afterSplit = true
       return stage
@@ -267,7 +263,7 @@ export function reconcilePdfComposeSources(
             : `compose: placement ${index + 1} needs a source when more than one PDF is present.`,
         )
       }
-      if (!sources?.length) {
+      if (!sourcesKnown || !sources.length) {
         // Gotenberg auto-numbers colliding uploads (including ZIP entries), so
         // the current name may be "report (2)_0.pdf" after a split. The preflight
         // cannot predict which upload gets the suffix when fields collide.
@@ -291,8 +287,7 @@ export function reconcilePdfComposeSources(
       }
       return { ...entry, source: matches[0] }
     })
-    initialNamesPreserved = false
-    sources = firstSource(sources)
+    sources = sourcesKnown ? firstSource(sources) : []
     single = true
     afterSplit = false
     return { ...stage, placements }

@@ -65,7 +65,9 @@ export function mapFileBookmarkLabels(
     const targets = matched.length
       ? matched.map(({ forwarded }) => forwarded.normalize('NFC'))
       : [original.normalize('NFC')]
-    for (const name of targets) {
+    // Duplicate received names share one known current filename. Gotenberg
+    // numbers the other documents, whose explicit labels remain independent.
+    for (const name of new Set(targets)) {
       if (assigned.has(name)) {
         throw new InputError(`merge: duplicate fileBookmarks label for ${name}.`)
       }
