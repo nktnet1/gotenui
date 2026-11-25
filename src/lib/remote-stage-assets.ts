@@ -12,13 +12,14 @@ export function remoteStageAssets(
   remotes: readonly RemoteFile[] = [],
   references: readonly string[],
   localNames: readonly string[] = [],
+  forwardedNames: readonly (string | undefined)[] = remotes.map(effectiveRemoteFilename),
 ): string[] {
   const referenced = new Set(references.map((name) => name.normalize('NFC')))
   const known = new Set(localNames.map(filenameKey))
   const assets: string[] = []
-  for (const remote of remotes) {
+  for (const [index, remote] of remotes.entries()) {
     if (remote.field || remote.embedded) continue // Legacy v8 destinations are handled elsewhere.
-    const name = effectiveRemoteFilename(remote)
+    const name = forwardedNames[index]
     if (!name) continue
     const key = filenameKey(name)
     const isStageAsset = referenced.has(key)

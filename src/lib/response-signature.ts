@@ -5,7 +5,7 @@ const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
 const RIFF_SIGNATURE = new TextEncoder().encode('RIFF')
 const WEBP_SIGNATURE = new TextEncoder().encode('WEBP')
 // PDF readers may locate the header within the first 1,024 bytes. Gotenberg 9
-// preserves those original bytes for a one-document merge without bookmarks.
+// may preserve those original bytes when merging one document or applying incremental edits.
 const PDF_PREAMBLE_LIMIT = 1024
 
 function beginsWith(value: Uint8Array, signature: Uint8Array, offset = 0): boolean {

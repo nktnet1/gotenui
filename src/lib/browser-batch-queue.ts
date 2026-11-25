@@ -167,6 +167,7 @@ export class BrowserBatchQueue {
   private snapshot: BatchSnapshot = { active: false, jobs: [] }
   private nextId = 1
   private disposed = false
+  private pumping = false
 
   constructor(
     private readonly execute: BatchExecutor = executeConversion,
@@ -242,13 +243,22 @@ export class BrowserBatchQueue {
   }
 
   private pump() {
-    if (!this.snapshot.active || this.disposed) return
-    let running = this.records.filter((record) => record.controller).length
-    for (const record of this.records) {
-      if (running >= MAX_BATCH_CONCURRENT) break
-      if (record.view.status !== 'queued') continue
-      running++
-      this.launch(record)
+    if (this.pumping || !this.snapshot.active || this.disposed) return
+    this.pumping = true
+    try {
+      // Launch emits synchronously. Subscribers may pause, enqueue, remove or
+      // cancel jobs before it returns, so refresh both the capacity and queue.
+      while (this.snapshot.active && !this.disposed) {
+        const running = this.records.filter((record) => record.controller).length
+        if (running >= MAX_BATCH_CONCURRENT) break
+        const next = this.records.find(
+          (record) => record.view.status === 'queued' && record.input && !record.controller,
+        )
+        if (!next) break
+        this.launch(next)
+      }
+    } finally {
+      this.pumping = false
     }
   }
 

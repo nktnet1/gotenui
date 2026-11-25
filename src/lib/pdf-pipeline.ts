@@ -3,6 +3,7 @@
  */
 
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
+import { registeredFilenames } from '#/lib/file-names'
 import { validateFileBookmarks } from '#/lib/pdf-file-bookmarks'
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
@@ -281,10 +282,29 @@ export type PdfPipelineStage = { op: PdfPipelineOp; [key: string]: unknown }
 export function conversionSplitStage(
   mode: string | null | undefined,
   span: string | null | undefined,
-  unify = false,
+  rawUnify: string | boolean | number | null = false,
 ): PdfPipelineStage | undefined {
-  if (!mode || !span) return undefined
-  if (mode === 'intervals') return { op: 'split', every: Number(span) }
+  // Preserve the boolean spellings accepted by Gotenberg's Go form parser.
+  const flag = String(rawUnify ?? '')
+  const unify = ['1', 't', 'T', 'true', 'TRUE', 'True'].includes(flag)
+  if (!unify && !['', '0', 'f', 'F', 'false', 'FALSE', 'False'].includes(flag)) {
+    throw new InputError('splitUnify must be true or false.')
+  }
+  if (!mode && !span && !unify) return undefined
+  if (mode !== 'pages' && mode !== 'intervals') {
+    throw new InputError('Choose a split mode of pages or intervals.')
+  }
+  if (!span?.trim()) {
+    throw new InputError('A page range or interval is required when splitting output.')
+  }
+  if (mode === 'intervals') {
+    if (unify) throw new InputError('Combine selected page ranges is available only in pages mode.')
+    const every = Number(span)
+    if (!/^\+?\d+$/.test(span) || !Number.isSafeInteger(every) || every < 1) {
+      throw new InputError('Split interval must be a positive whole number.')
+    }
+    return { op: 'split', every }
+  }
   if (unify) return { op: 'select', pages: span }
   const ranges = span.split(',').map((range) => range.trim())
   if (ranges.some((range) => !range)) {
@@ -799,6 +819,42 @@ export function validatePdfStageUploads(
   }
 }
 
+/** Gotenberg excludes files read by stages from its PDF and Office sources.
+ * A primary upload must therefore never resolve as an auxiliary stage file.
+ */
+export function validatePipelineSourceUploads(
+  stages: readonly PdfPipelineStage[],
+  sourceNames: readonly string[],
+  remoteNames: readonly (string | undefined)[] = [],
+  archiveEntryNames: readonly string[] = [],
+): void {
+  const assets = new Set(pdfStageAssetNames(stages))
+  if (!assets.size) return
+  const knownRemoteNames = remoteNames.filter((name): name is string => name !== undefined)
+  // Downloads register first. The upload and archive fields may register in
+  // either order, and duplicate names are numbered before stages resolve them.
+  const originalNames = new Set(sourceNames.map((name) => name.normalize('NFC')))
+  const possibleNames = new Set(originalNames)
+  for (const preceding of [knownRemoteNames, [...knownRemoteNames, ...archiveEntryNames]]) {
+    for (const name of registeredFilenames([...preceding, ...sourceNames]).slice(
+      preceding.length,
+    )) {
+      possibleNames.add(name)
+    }
+  }
+  for (const name of possibleNames) {
+    if (!assets.has(name)) continue
+    if (!originalNames.has(name)) {
+      throw new InputError(
+        `Stage asset filename collides after Gotenberg numbers duplicate files: ${name}. A source document would become the stage asset instead. Rename the asset or the colliding input.`,
+      )
+    }
+    throw new InputError(
+      `Source document "${name}" cannot also be a stage asset. Upload the asset separately with a distinct filename.`,
+    )
+  }
+}
+
 export type PdfPipelineValidation = {
   assetNames?: readonly string[]
   /** An unnamed remote download may supply a stage asset; Gotenberg checks its actual filename. */
@@ -925,6 +981,28 @@ export function parsePdfPipeline(
   )
     throw new InputError('PDF/A and Factur-X documents cannot be encrypted in the same pipeline.')
   return stages
+}
+
+/** Match Gotenberg's incremental edits and single-document merge paths.
+ * Full rewrites generate a new PDF header (pkg/modules/pdf/stage_types.go).
+ */
+export function pipelineMayPreservePdfHeader(stages: readonly PdfPipelineStage[]): boolean {
+  const incremental = new Set<PdfPipelineOp>([
+    'merge',
+    'rotate',
+    'stamp-text',
+    'stamp-image',
+    'stamp-pdf',
+    'set-metadata',
+    'set-bookmarks',
+    'set-form',
+    'autotag',
+    'attach',
+    'detach',
+    'sign',
+    'timestamp',
+  ])
+  return stages.length > 0 && stages.every(({ op }) => incremental.has(op))
 }
 
 /** Only a standalone extraction can return an individual embedded attachment.

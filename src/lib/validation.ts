@@ -202,8 +202,8 @@ function requireHttpUrl(url: string, label: string): void {
 
 function validateHeaderMap(headers: Record<string, string> | undefined): void {
   if (!headers) return
-  const entries = Object.entries(headers)
-  for (const [name, value] of entries) {
+  const seen = new Set<string>()
+  for (const [name, value] of Object.entries(headers)) {
     if (
       !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
       [...value].some((character) => {
@@ -213,6 +213,9 @@ function validateHeaderMap(headers: Record<string, string> | undefined): void {
     ) {
       throw new InputError('Invalid extra HTTP header name or value.')
     }
+    const key = name.toLowerCase()
+    if (seen.has(key)) throw new InputError(`Duplicate HTTP header name: ${name}`)
+    seen.add(key)
   }
 }
 

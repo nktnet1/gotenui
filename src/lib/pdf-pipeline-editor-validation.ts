@@ -1,5 +1,6 @@
 import { type RemoteInputRow, remoteInputsPayload } from '#/lib/async-inputs'
 import { planRemoteFilenames } from '#/lib/file-names'
+import { planV9ConversionStages } from '#/lib/gotenberg-conversion-adapter'
 import {
   parseGotenbergVersion,
   requiresGotenberg91ForExtraction,
@@ -20,11 +21,13 @@ import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { officePdfComposeInput, reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import {
-  conversionSplitStage,
   parsePdfPipeline,
   pdfStageAssetNames,
   validatePdfStageUploads,
+  validatePipelineSourceUploads,
 } from '#/lib/pdf-pipeline'
+import { remoteStageAssets } from '#/lib/remote-stage-assets'
+import { type ConversionPayload, parseAdvanced, validateAsyncInputValues } from '#/lib/validation'
 
 /** Preflight the same asset names as the request adapter, including remote
  * filename hints. Gotenberg still verifies the actual downloaded filenames.
@@ -45,6 +48,8 @@ export function pdfPipelineEditorError(
     splitSpan,
     splitUnify,
     outputName,
+    conversionFields,
+    advancedJson,
   }: {
     localAssetNames: readonly string[]
     archivesPresent: boolean
@@ -61,37 +66,67 @@ export function pdfPipelineEditorError(
     splitUnify?: boolean
     /** The optional Gotenberg-Output-Filename basename for Chromium conversions. */
     outputName?: string
+    conversionFields?: ConversionPayload['fields']
+    advancedJson?: string
   },
 ): string | null {
   try {
-    let assetNames: string[] | undefined
-    let allowUnresolvedAssets = false
-    let remotes: unknown
-    if (!archivesPresent) {
-      remotes = remoteInputsPayload(remoteRows, remoteJson)
-      const remoteAssetNames = Array.isArray(remotes)
-        ? remotes.flatMap((remote: unknown) => {
-            if (!remote || typeof remote !== 'object' || Array.isArray(remote)) return []
-            const { name, filename, field, embedded } = remote as Record<string, unknown>
-            if (field || embedded) return []
-            if (typeof filename === 'string' && filename !== '') return [filename]
-            if (typeof name === 'string' && name !== '') return [name]
-            // Without a hint, Gotenberg resolves Content-Disposition at download time.
-            allowUnresolvedAssets = true
-            return []
-          })
-        : []
-      assetNames = [...localAssetNames, ...remoteAssetNames]
-    }
     const conversionMode = documentKind === 'office' || documentKind === 'single'
-    const parsed = parsePdfPipeline(stages, {
-      assetNames,
-      allowUnresolvedAssets,
-      allowEmpty: conversionMode,
-      acknowledgedRedaction,
-    })
-    validatePdfStageUploads(parsed, localAssetNames, conversionMode)
+    const parsed = parsePdfPipeline(stages, { allowEmpty: conversionMode, acknowledgedRedaction })
     const version = parseGotenbergVersion(backendVersion)
+    const localNames = documentNames ?? []
+    const referencedAssets = new Set(pdfStageAssetNames(parsed))
+    const remotes =
+      validateAsyncInputValues(remoteInputsPayload(remoteRows, remoteJson), undefined)
+        .downloadFrom ?? []
+    const sourceRemotes = remotes.filter(({ field, embedded }) => !field && !embedded)
+    const remoteFilenames = planRemoteFilenames(sourceRemotes, {
+      supportsFilename: version?.major === 9 && version.minor >= 2,
+      inferAll: localNames.length > 0 || archivesPresent,
+      pinAll: localAssetNames.length > 0 || documentKind === 'single',
+      stageAssetNames: referencedAssets,
+    }).map(({ name }) => name)
+    const pipeline = (() => {
+      if (!conversionMode) return parsed
+      const fields = conversionFields ?? {
+        merge: builtInMerge ?? false,
+        splitMode: splitMode ?? '',
+        splitSpan: splitSpan ?? '',
+        splitUnify: splitUnify ?? false,
+      }
+      const form = new FormData()
+      for (const [name, value] of Object.entries({
+        ...fields,
+        ...parseAdvanced(advancedJson ?? ''),
+      })) {
+        if (value !== '') form.set(name, String(value))
+      }
+      return planV9ConversionStages(form, documentKind === 'office', parsed, fields)
+    })()
+    const forwarded = numbersPipelineInputs(pipeline, localNames.length, builtInMerge)
+      ? mergeUploadFilenames(localNames, [
+          ...remoteMergeFilenames(sourceRemotes),
+          ...localAssetNames,
+        ])
+      : localNames
+    if (!archivesPresent) {
+      if (documentKind === 'pdf' || documentKind === 'office') {
+        validatePipelineSourceUploads(parsed, forwarded, remoteFilenames)
+      }
+      const remoteNames = remoteStageAssets(
+        sourceRemotes,
+        [...referencedAssets],
+        [...localAssetNames, ...forwarded],
+        remoteFilenames,
+      )
+      parsePdfPipeline(stages, {
+        assetNames: [...localAssetNames, ...remoteNames],
+        allowUnresolvedAssets: remoteFilenames.some((name) => !name),
+        allowEmpty: conversionMode,
+        acknowledgedRedaction,
+      })
+    }
+    validatePdfStageUploads(parsed, localAssetNames, conversionMode)
     if (
       version &&
       requiresGotenberg91ForExtraction(
@@ -138,49 +173,15 @@ export function pdfPipelineEditorError(
       return 'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.'
     }
     if (documentKind && !archivesPresent) {
-      const referencedAssets = new Set(pdfStageAssetNames(parsed))
       const extensionMatches = (name: string): boolean =>
         !referencedAssets.has(name.normalize('NFC')) &&
         (documentKind === 'office'
           ? OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase())
           : documentKind === 'pdf' && /\.pdf$/i.test(name))
-      const sourceRemotes = Array.isArray(remotes)
-        ? remotes.flatMap((remote: unknown) => {
-            if (!remote || typeof remote !== 'object' || Array.isArray(remote)) return []
-            const { url, filename, name, field, embedded } = remote as Record<string, unknown>
-            if (field || embedded) return []
-            return [
-              {
-                url: typeof url === 'string' ? url : '',
-                name: typeof name === 'string' ? name : undefined,
-                filename: typeof filename === 'string' ? filename : undefined,
-              },
-            ]
-          })
-        : []
-      const localNames = documentNames ?? []
-      const remoteFilenames = planRemoteFilenames(sourceRemotes, {
-        supportsFilename: version?.major === 9 && version.minor >= 2,
-        inferAll: localNames.length > 0,
-        pinAll: localAssetNames.length > 0,
-        stageAssetNames: referencedAssets,
-      }).map(({ name }) => name)
       const remoteSources = remoteFilenames.filter(
         (name): name is string => name !== undefined && extensionMatches(name),
       )
       const unknownRemote = documentKind !== 'single' && remoteFilenames.some((name) => !name)
-      const split = conversionSplitStage(splitMode, splitSpan, splitUnify)
-      const pipeline = [
-        ...(builtInMerge ? ([{ op: 'merge' }] as const) : []),
-        ...(split ? [split] : []),
-        ...parsed,
-      ]
-      const forwarded = numbersPipelineInputs(pipeline, localNames.length, builtInMerge)
-        ? mergeUploadFilenames(localNames, [
-            ...remoteMergeFilenames(sourceRemotes),
-            ...localAssetNames,
-          ])
-        : localNames
       const sourceInput = (original: string, forwarded = original) =>
         documentKind === 'office'
           ? officePdfComposeInput(original, forwarded)

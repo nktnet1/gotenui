@@ -27,7 +27,9 @@ import { operationMinimumVersionReason } from '#/lib/operation-availability'
 import { hasGotenberg92PageSyntax, stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import {
   isStandaloneAttachmentExtraction,
+  type PdfPipelineStage,
   parsePdfPipeline,
+  pipelineMayPreservePdfHeader,
   pipelineResponseTypes,
 } from '#/lib/pdf-pipeline'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
@@ -891,28 +893,15 @@ export async function proxyConversionRequest(
     arbitraryAttachment ? 'application/octet-stream' : returnedType,
     declaredLength,
     {
-      // A one-document v9 merge without per-file bookmarks returns the
-      // original PDF bytes. Its readable header need not start at byte zero.
+      // Incremental edits and single-document merges can keep the original
+      // PDF header. Full rewrites must still return an immediate header.
       allowPdfPreamble:
         major === 9 &&
         returnedType === 'application/pdf' &&
         path === '/forms/pdf/pipe' &&
-        (() => {
-          const rawStages = form.get('stages')
-          if (typeof rawStages !== 'string') return false
-          // The form was validated by the adapter. Inspect only the merge
-          // operation here, without revalidating unrelated stage file assets.
-          const stages: unknown = JSON.parse(rawStages)
-          if (!Array.isArray(stages) || stages.length !== 1) return false
-          const stage: unknown = stages[0]
-          return (
-            stage !== null &&
-            typeof stage === 'object' &&
-            'op' in stage &&
-            stage.op === 'merge' &&
-            (!('fileBookmarks' in stage) || stage.fileBookmarks == null)
-          )
-        })(),
+        pipelineMayPreservePdfHeader(
+          JSON.parse(String(form.get('stages') ?? '[]')) as PdfPipelineStage[],
+        ),
     },
   )
   headers.set('Content-Type', upstreamContentType ?? returnedType)

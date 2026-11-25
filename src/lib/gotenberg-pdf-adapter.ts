@@ -494,7 +494,11 @@ export function adaptPdfForm(
         ModDate: 'modDate',
       }
       for (const [name, value] of Object.entries(source)) {
-        const key = mapping[name] ?? (Object.values(mapping).includes(name) ? name : null)
+        const key = Object.hasOwn(mapping, name)
+          ? mapping[name]
+          : Object.values(mapping).includes(name)
+            ? name
+            : null
         if (!key) throw new InputError(`Gotenberg 9 cannot write the v8 metadata key '${name}'.`)
         const normalized =
           key === 'keywords' &&
@@ -508,6 +512,9 @@ export function adaptPdfForm(
           throw new InputError(
             `Gotenberg 9 metadata '${name}' must be a PDF date such as D:20261001090000Z.`,
           )
+        }
+        if (Object.hasOwn(translated, key)) {
+          throw new InputError(`Gotenberg 9 metadata contains conflicting aliases for '${key}'.`)
         }
         translated[key] = normalized
       }

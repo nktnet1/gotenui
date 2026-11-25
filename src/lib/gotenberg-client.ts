@@ -399,6 +399,13 @@ export type ConversionResult =
     }
   | { mode: 'webhook'; trace?: string; status: 202 | 204 }
 
+/** Keep text previews bounded and render them as text, never as HTML. */
+export async function conversionTextPreview(blob: Blob, type: string): Promise<string | undefined> {
+  return ['application/json', 'text/plain', 'text/markdown'].includes(type)
+    ? blob.slice(0, 16_000).text()
+    : undefined
+}
+
 /** The proxy revalidates the JSON and files, and reconstructs a safe Gotenberg form. */
 export async function convertWithGotenberg(
   connection: string | ConnectionChoice,
@@ -462,10 +469,10 @@ export async function convertWithGotenberg(
     }
   }
   const blob = await response.blob()
-  const type =
-    response.headers.get('content-type')?.split(';')[0]?.trim() ||
-    blob.type ||
+  const type = (
+    (response.headers.get('content-type') || blob.type).split(';')[0]?.trim() ||
     'application/octet-stream'
+  ).toLowerCase()
   const extension = responseExtension(type)
   // The proxy has already chosen a safe filename for the actual output type.
   // Use that filename even with an explicit outputName: a conversion that asks

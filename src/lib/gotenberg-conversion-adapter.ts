@@ -20,6 +20,7 @@ import {
   parsePdfPipeline,
   pdfStageAssetNames,
   validatePdfStageUploads,
+  validatePipelineSourceUploads,
 } from '#/lib/pdf-pipeline'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
@@ -74,29 +75,62 @@ function renameFields(form: FormData, names: Readonly<Record<string, string>>): 
   }
 }
 
-/** Raw native profiles must not compete with the generated conformance settings. */
-export function officeConformanceAliasReason(
+const nativePdfaProfiles = new Set(['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b', 'PDF/A-4'])
+
+/** Apply LibreOffice's native alias constraints to Advanced JSON, including
+ * conflicts with generated conformance settings.
+ */
+export function officeNativeAliasReason(
   fields: ConversionPayload['fields'],
   advanced: ConversionPayload['advanced'],
 ): string | null {
   const raw = [advanced.nativePdfa, advanced.nativePdfua].some(
     (value) => value !== undefined && value !== '',
   )
-  if (!raw) return null
   if (
-    fields.pdfa ||
-    fields.pdfua === true ||
-    fields.pdfaProfile ||
-    fields.pdfuaProfile ||
-    (fields.pdfaMethod && fields.pdfaMethod !== 'auto') ||
-    Object.keys(v9RemediationOptions(fields)).length
+    raw &&
+    (fields.pdfa ||
+      fields.pdfua === true ||
+      fields.pdfaProfile ||
+      fields.pdfuaProfile ||
+      (fields.pdfaMethod && fields.pdfaMethod !== 'auto') ||
+      Object.keys(v9RemediationOptions(fields)).length)
   ) {
     return 'Choose either nativePdfa/nativePdfua in Advanced JSON or the Office PDF conformance settings, not both.'
   }
+  const { nativePdfa, nativePdfua } = advanced
+  if (
+    nativePdfa !== undefined &&
+    nativePdfa !== '' &&
+    !nativePdfaProfiles.has(String(nativePdfa))
+  ) {
+    return 'nativePdfa must be PDF/A-1b, PDF/A-2b, PDF/A-3b or PDF/A-4.'
+  }
+  if (nativePdfua !== undefined && nativePdfua !== '' && nativePdfua !== 'PDF/UA-1') {
+    return 'nativePdfua must be PDF/UA-1. Use a remediation stage for PDF/UA-2.'
+  }
+  if (nativePdfa === 'PDF/A-4' && nativePdfua === 'PDF/UA-1') {
+    return 'nativePdfa PDF/A-4 cannot be combined with nativePdfua. Use PDF/A-4 and PDF/UA-2 remediation instead.'
+  }
+  const integer = (name: string, valid: (number: number) => boolean): boolean => {
+    const value = advanced[name]
+    if (value === undefined || value === '') return true
+    const number = Number(value)
+    return /^[-+]?\d+$/.test(String(value)) && Number.isSafeInteger(number) && valid(number)
+  }
+  if (!integer('nativeQuality', (number) => number >= 1 && number <= 100)) {
+    return 'nativeQuality must be an integer from 1 to 100.'
+  }
+  if (
+    !integer('nativeMaxImageResolution', (number) => [75, 150, 300, 600, 1200].includes(number))
+  ) {
+    return 'nativeMaxImageResolution must be 75, 150, 300, 600 or 1200.'
+  }
+  if (!integer('nativeWatermarkFontSize', (number) => number >= 0)) {
+    return 'nativeWatermarkFontSize must be a non-negative integer.'
+  }
   return null
 }
-
-type Stage = { op: string; [name: string]: unknown }
 
 function take(form: FormData, name: string): string | null {
   const value = form.get(name)
@@ -106,22 +140,22 @@ function take(form: FormData, name: string): string | null {
 
 function v9PdfStages(
   form: FormData,
-  operation: Operation,
+  office: boolean,
   postProcessing: boolean,
   fields: ConversionPayload['fields'],
-): Stage[] {
-  const stages: Stage[] = []
+): PdfPipelineStage[] {
+  const stages: PdfPipelineStage[] = []
   const remediationOptions = v9RemediationOptions(fields)
   for (const name of V9_REMEDIATION_FIELD_NAMES) form.delete(name)
   if (form.has('stages')) {
     throw new InputError('Advanced stages require the Gotenberg 9 PDF pipeline editor.')
   }
-  if (operation.id === 'office-pdf') {
+  if (office) {
     if (take(form, 'merge') === 'true') stages.push({ op: 'merge' })
   }
   const splitMode = take(form, 'splitMode')
   const splitSpan = take(form, 'splitSpan')
-  const unify = take(form, 'splitUnify') === 'true'
+  const unify = take(form, 'splitUnify')
   const split = conversionSplitStage(splitMode, splitSpan, unify)
   if (split) stages.push(split)
   const legacyPdfa = take(form, 'pdfa')
@@ -144,13 +178,12 @@ function v9PdfStages(
   if (pdfa && pdfua && pdfua !== (pdfa.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1')) {
     throw new InputError('This PDF/A profile cannot be combined with the selected PDF/UA profile.')
   }
-  const nativePdfaProfiles = new Set(['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b', 'PDF/A-4'])
   // Gotenberg 9 exports each source PDF natively *before* applying stages.
   // A subsequent merge, split or select can invalidate its conformance. Finish
   // with remediation rather than claiming the native profile on edited PDFs.
   const hasBuiltInStages = stages.length > 0
   const canExportNatively =
-    operation.id === 'office-pdf' &&
+    office &&
     !postProcessing &&
     !hasBuiltInStages &&
     !Object.keys(remediationOptions).length &&
@@ -181,6 +214,37 @@ function v9PdfStages(
     )
   }
   return stages
+}
+
+/** Build and validate the exact pipeline used by conversion routes. The editor
+ * uses a scratch form so generated stages cannot bypass its preflight checks.
+ */
+export function planV9ConversionStages(
+  form: FormData,
+  office: boolean,
+  userStages: readonly PdfPipelineStage[],
+  fields: ConversionPayload['fields'],
+): PdfPipelineStage[] {
+  const generated = v9PdfStages(form, office, userStages.length > 0, fields)
+  const remediation = generated.filter((stage) => stage.op === 'remediate')
+  const setup = generated.filter((stage) => stage.op !== 'remediate')
+  // Remediation follows page and content edits, but precedes encryption,
+  // signing, timestamps and final readers to preserve conformance.
+  const firstFinalizingStage = userStages.findIndex((stage) =>
+    ['encrypt', 'sign', 'timestamp', 'render', 'extract-attachments', 'extract-text'].includes(
+      stage.op,
+    ),
+  )
+  const remediationAt = firstFinalizingStage === -1 ? userStages.length : firstFinalizingStage
+  return parsePdfPipeline(
+    JSON.stringify([
+      ...setup,
+      ...userStages.slice(0, remediationAt),
+      ...remediation,
+      ...userStages.slice(remediationAt),
+    ]),
+    { allowEmpty: true, acknowledgedRedaction: true },
+  )
 }
 
 /** Keep custom LibreOffice page dimensions consistent with Gotenberg 9's Inches parser. */
@@ -260,7 +324,7 @@ function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
 function orderOfficeMergeInputs(
   form: FormData,
   payload: ConversionPayload,
-  stages: readonly Stage[],
+  stages: readonly PdfPipelineStage[],
   stageFiles: readonly File[],
   archiveEntryNames: readonly string[],
 ): PdfComposeInput[] | null {
@@ -376,7 +440,7 @@ export function adaptConversionForm(
     renameFields(form, chromiumNames)
   }
   if (operation.id === 'office-pdf') {
-    const reason = officeConformanceAliasReason(payload.fields, payload.advanced)
+    const reason = officeNativeAliasReason(payload.fields, payload.advanced)
     if (reason) throw new InputError(reason)
   }
   if (operation.output === 'pdf') {
@@ -386,34 +450,42 @@ export function adaptConversionForm(
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
-    const generated = v9PdfStages(form, operation, firstUserStages.length > 0, payload.fields)
+    const stages = planV9ConversionStages(
+      form,
+      operation.id === 'office-pdf',
+      firstUserStages,
+      payload.fields,
+    )
     const officeSourceNames =
       operation.id === 'office-pdf'
-        ? orderOfficeMergeInputs(
-            form,
-            payload,
-            [...generated.filter(({ op }) => op !== 'remediate'), ...firstUserStages],
-            stageFiles,
-            archiveEntryNames,
-          )
+        ? orderOfficeMergeInputs(form, payload, stages, stageFiles, archiveEntryNames)
         : null
+    const primaryNames = form
+      .getAll('files')
+      .filter((file): file is File => file instanceof File)
+      .map(({ name }) => name)
+    const remoteFilenames = forwardedRemoteFilenames(form, payload.downloadFrom)
+    if (operation.id === 'office-pdf') {
+      validatePipelineSourceUploads(
+        firstUserStages,
+        primaryNames,
+        remoteFilenames,
+        archiveEntryNames,
+      )
+    }
     const remoteNames = payload.conversionStages
-      ? remoteStageAssets(payload.downloadFrom, pdfStageAssetNames(firstUserStages), [
-          ...stageFiles.map(({ name }) => name),
-          ...archiveEntryNames,
-          ...form
-            .getAll('files')
-            .filter((file): file is File => file instanceof File)
-            .map(({ name }) => name),
-        ])
+      ? remoteStageAssets(
+          payload.downloadFrom,
+          pdfStageAssetNames(firstUserStages),
+          [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...primaryNames],
+          remoteFilenames,
+        )
       : []
     const userStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {
           allowEmpty: true,
           assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
-          allowUnresolvedAssets: payload.downloadFrom?.some(
-            (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
-          ),
+          allowUnresolvedAssets: remoteFilenames.some((name) => !name),
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
@@ -422,30 +494,11 @@ export function adaptConversionForm(
       stageFiles.map(({ name }) => name),
       true,
     )
-    // Remediation must follow page/content edits but precede encryption,
-    // signing, document timestamps and final readers. Placing it after a
-    // signature would rewrite signed bytes; placing it after encryption would
-    // violate Gotenberg's stage ordering even for PDF/UA-only remediation.
-    const remediation = generated.filter((stage) => stage.op === 'remediate')
-    const setup = generated.filter((stage) => stage.op !== 'remediate')
-    const firstFinalizingStage = userStages.findIndex((stage) =>
-      ['encrypt', 'sign', 'timestamp', 'render', 'extract-attachments', 'extract-text'].includes(
-        stage.op,
-      ),
-    )
-    const remediationAt = firstFinalizingStage === -1 ? userStages.length : firstFinalizingStage
-    const stages = [
-      ...setup,
-      ...userStages.slice(0, remediationAt),
-      ...remediation,
-      ...userStages.slice(remediationAt),
-    ]
     if (stages.length) {
       const referenced = new Set(pdfStageAssetNames(userStages))
       const isOfficeSource = (name: string): boolean =>
         OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase()) &&
         !referenced.has(name.normalize('NFC'))
-      const remoteFilenames = forwardedRemoteFilenames(form, payload.downloadFrom)
       const remoteSources = remoteFilenames.filter(
         (name): name is string => name !== undefined && isOfficeSource(name),
       )
@@ -455,7 +508,7 @@ export function adaptConversionForm(
           .getAll('files')
           .filter((file): file is File => file instanceof File)
           .map(({ name }) => officePdfComposeInput(name))
-      const mergedStages = reconcilePdfComposeSources(stages as PdfPipelineStage[], {
+      const mergedStages = reconcilePdfComposeSources(stages, {
         inputs:
           operation.id === 'office-pdf'
             ? [
@@ -474,9 +527,7 @@ export function adaptConversionForm(
       })
       parsePdfPipeline(JSON.stringify(mergedStages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
-        allowUnresolvedAssets: payload.downloadFrom?.some(
-          (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
-        ),
+        allowUnresolvedAssets: remoteFilenames.some((name) => !name),
         acknowledgedRedaction: payload.acknowledgedConversionRedaction,
       })
       form.set('stages', JSON.stringify(normalizePdfStageAssets(mergedStages)))

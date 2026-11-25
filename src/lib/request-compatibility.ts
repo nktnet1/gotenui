@@ -1,10 +1,11 @@
 import {
   chromiumNames,
-  officeConformanceAliasReason,
   officeNames,
+  officeNativeAliasReason,
 } from '#/lib/gotenberg-conversion-adapter'
 import type { GotenbergVersion } from '#/lib/gotenberg-version'
 import { canWebhookForOperation } from '#/lib/operation-availability'
+import { conversionSplitStage } from '#/lib/pdf-pipeline'
 import { pdfPostProcessSchema } from '#/lib/pdf-post-processing'
 import type { ConversionPayload } from '#/lib/validation'
 import { fieldCompatibilityReason } from '#/tools/shared/field-visibility'
@@ -87,8 +88,24 @@ function advancedCompatibilityReasons(
   }
   const reasons: string[] = []
   if (version.major === 9 && office) {
-    const reason = officeConformanceAliasReason(fields, advanced)
+    const reason = officeNativeAliasReason(fields, advanced)
     if (reason) reasons.push(reason)
+  }
+  if (
+    version.major === 9 &&
+    (office || chromium) &&
+    operation.output === 'pdf' &&
+    ['splitMode', 'splitSpan', 'splitUnify'].some((name) => Object.hasOwn(advanced, name))
+  ) {
+    try {
+      conversionSplitStage(
+        String(advanced.splitMode ?? fields.splitMode ?? ''),
+        String(advanced.splitSpan ?? fields.splitSpan ?? ''),
+        advanced.splitUnify ?? fields.splitUnify ?? false,
+      )
+    } catch (error) {
+      reasons.push(error instanceof Error ? error.message : 'Invalid split settings.')
+    }
   }
   for (const [name, value] of Object.entries(advanced)) {
     if (value === '') continue

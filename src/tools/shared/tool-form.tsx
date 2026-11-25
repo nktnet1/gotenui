@@ -49,6 +49,7 @@ import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
 import { chromiumNetworkFields } from '#/lib/chromium-network'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import {
+  conversionTextPreview,
   convertWithGotenberg,
   REQUEST_TIMEOUT_MS,
   remediationReviewNotice,
@@ -408,6 +409,8 @@ export function Workbench({
           splitSpan: typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,
           splitUnify: fields.splitUnify === true,
           outputName: outputName.trim() || undefined,
+          conversionFields: activeOperationFields(operation, fields, backendVersion),
+          advancedJson: advanced,
         })
       : null
   const docsUrl =
@@ -603,9 +606,7 @@ export function Workbench({
         return
       }
       const { blob, type, name, trace, remediation } = result
-      const preview = ['application/json', 'text/plain'].includes(type)
-        ? await blob.slice(0, 16_000).text()
-        : undefined
+      const preview = await conversionTextPreview(blob, type)
       const validation =
         operation.id === 'pdf-validate'
           ? ((await summarisePdfValidationBlob(blob)) ?? undefined)

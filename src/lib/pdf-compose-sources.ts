@@ -154,7 +154,15 @@ function firstSource(sources: readonly SourceTemplate[]): SourceTemplate[] {
 function mapCurrentBookmarkLabels(
   bookmarks: FileBookmarks,
   sources: readonly SourceTemplate[],
+  sourcesKnown: boolean,
 ): FileBookmarks {
+  if (sourcesKnown) {
+    for (const name of Object.keys(bookmarks.labels ?? {})) {
+      if (!currentFileMatches(name.normalize('NFC'), sources).length) {
+        throw new InputError(`merge: fileBookmarks.labels must name a current PDF, got "${name}".`)
+      }
+    }
+  }
   const staticSources = sources.filter(
     ({ original, forwarded }) => !original.includes(partMarker) && !forwarded.includes(partMarker),
   )
@@ -237,7 +245,11 @@ export function reconcilePdfComposeSources(
         mapBookmarks && bookmarks && (sources.length || needsNormalization)
           ? {
               ...stage,
-              fileBookmarks: mapCurrentBookmarkLabels(bookmarks, sources),
+              fileBookmarks: mapCurrentBookmarkLabels(
+                bookmarks,
+                sources,
+                sourcesKnown && sources.length > 0,
+              ),
             }
           : stage
       sources = sourcesKnown ? firstSource(sources) : []

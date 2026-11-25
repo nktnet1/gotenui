@@ -918,3 +918,59 @@ describe('conversion stage assets in the batch queue', () => {
     queue.dispose()
   })
 })
+
+it('honours a synchronous pause during the first running-state notification', () => {
+  const pending = deferred<ConversionResult>()
+  const execute = vi.fn(() => pending.promise)
+  const { queue } = queueWith(execute)
+  for (let i = 0; i < 3; i++) queue.enqueue(input())
+  let paused = false
+  queue.subscribe(() => {
+    if (!paused && queue.getSnapshot().jobs.some(({ status }) => status === 'running')) {
+      paused = true
+      queue.pause()
+    }
+  })
+  try {
+    queue.start()
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(queue.getSnapshot().jobs.map(({ status }) => status)).toEqual([
+      'running',
+      'queued',
+      'queued',
+    ])
+  } finally {
+    queue.dispose()
+  }
+})
+
+it('never exceeds concurrency when a subscriber enqueues during dispatch', async () => {
+  const waiting = Array.from({ length: 4 }, () => deferred<ConversionResult>())
+  let started = 0
+  const execute = vi.fn(() => waiting[started++]?.promise as Promise<ConversionResult>)
+  const { queue } = queueWith(execute)
+  for (let i = 0; i < 3; i++) queue.enqueue(input())
+  let added = false
+  queue.subscribe(() => {
+    if (!added && queue.getSnapshot().jobs.some(({ status }) => status === 'running')) {
+      added = true
+      queue.enqueue(input())
+    }
+  })
+  try {
+    queue.start()
+    expect(execute).toHaveBeenCalledTimes(MAX_BATCH_CONCURRENT)
+    waiting[0]?.resolve(pdf())
+    await tick()
+    expect(execute).toHaveBeenCalledTimes(3)
+    waiting[1]?.resolve(pdf())
+    await tick()
+    expect(execute).toHaveBeenCalledTimes(4)
+    waiting[2]?.resolve(pdf())
+    waiting[3]?.resolve(pdf())
+    await tick()
+    expect(queue.getSnapshot().jobs.every(({ status }) => status === 'completed')).toBe(true)
+  } finally {
+    queue.dispose()
+  }
+})

@@ -284,3 +284,38 @@ test('Office singlePage is a v9 native alias, not a Chromium-only setting', () =
     ['Advanced field singlePage is not supported for HTML screenshot.'],
   )
 })
+
+test('preflight rejects invalid native Office profiles and numeric aliases', () => {
+  const spec = operation('office-pdf')
+  for (const [advanced, error] of [
+    ['{"nativePdfa":"PDF/A-4","nativePdfua":"PDF/UA-1"}', /cannot be combined/],
+    ['{"nativeQuality":0}', /nativeQuality/],
+    ['{"nativeMaxImageResolution":200}', /nativeMaxImageResolution/],
+    ['{"nativeWatermarkFontSize":-1}', /nativeWatermarkFontSize/],
+  ] as const) {
+    expect(draftOutboundIssues(spec, {}, '9.10.0', { ...draft, advanced })).toEqual([
+      expect.stringMatching(error),
+    ])
+  }
+})
+
+test('preflight validates raw Chromium split settings without a custom pipeline', () => {
+  const spec = operation('url-pdf')
+  for (const [advanced, error] of [
+    ['{"splitMode":"pages"}', /range or interval/],
+    ['{"splitSpan":"1-2"}', /split mode/],
+    ['{"splitMode":"intervals","splitSpan":"2","splitUnify":true}', /only in pages mode/],
+    ['{"splitMode":"intervals","splitSpan":"1e2"}', /positive whole number/],
+    ['{"splitMode":"pages","splitSpan":"1-2","splitUnify":"yes"}', /must be true or false/],
+  ] as const) {
+    expect(draftOutboundIssues(spec, {}, '9.10.0', { ...draft, advanced })).toEqual([
+      expect.stringMatching(error),
+    ])
+  }
+  expect(
+    draftOutboundIssues(spec, {}, '9.10.0', {
+      ...draft,
+      advanced: '{"splitMode":"pages","splitSpan":"1-2","splitUnify":"True"}',
+    }),
+  ).toEqual([])
+})

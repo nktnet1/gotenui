@@ -5,7 +5,12 @@ import {
   remoteMergeFilenames,
 } from '#/lib/merge-order'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
-import { parsePdfPipeline, pdfStageAssetNames, validatePdfStageUploads } from '#/lib/pdf-pipeline'
+import {
+  parsePdfPipeline,
+  pdfStageAssetNames,
+  validatePdfStageUploads,
+  validatePipelineSourceUploads,
+} from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 
@@ -34,30 +39,10 @@ export function adaptPdfPipeline(
   }
   const raw = payload.fields.stages
   if (typeof raw !== 'string') throw new InputError('Choose at least one PDF pipeline stage.')
-  const references = pdfStageAssetNames(
-    parsePdfPipeline(raw, {
-      acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
-    }),
-  )
-  const remoteNames = remoteStageAssets(payload.downloadFrom, references, [
-    ...auxiliary.map(({ name }) => name),
-    ...archiveEntryNames,
-    ...legacy
-      .getAll('files')
-      .filter((file): file is File => file instanceof File)
-      .map(({ name }) => name),
-  ])
   const stages = parsePdfPipeline(raw, {
-    assetNames: [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
-    allowUnresolvedAssets: payload.downloadFrom?.some(
-      (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
-    ),
     acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
   })
-  validatePdfStageUploads(
-    stages,
-    auxiliary.map(({ name }) => name),
-  )
+  const references = pdfStageAssetNames(stages)
   const form = new FormData()
   const inputs = legacy.getAll('files')
   // Gotenberg 9 sorts PDFs by their received filenames, regardless of the
@@ -73,6 +58,27 @@ export function adaptPdfPipeline(
         ],
       )
     : []
+  const primaryNames = inputs.map((file, index) => {
+    if (!(file instanceof File)) throw new InputError('Expected an uploaded PDF.')
+    return orderedNames[index] ?? file.name
+  })
+  const remoteFilenames = forwardedRemoteFilenames(legacy, payload.downloadFrom)
+  validatePipelineSourceUploads(stages, primaryNames, remoteFilenames, archiveEntryNames)
+  const remoteNames = remoteStageAssets(
+    payload.downloadFrom,
+    references,
+    [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...primaryNames],
+    remoteFilenames,
+  )
+  parsePdfPipeline(raw, {
+    assetNames: [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
+    allowUnresolvedAssets: remoteFilenames.some((name) => !name),
+    acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
+  })
+  validatePdfStageUploads(
+    stages,
+    auxiliary.map(({ name }) => name),
+  )
   for (const [index, file] of inputs.entries()) {
     if (!(file instanceof File)) throw new InputError('Expected an uploaded PDF.')
     form.append('files', file, orderedNames[index] ?? file.name)
@@ -85,7 +91,6 @@ export function adaptPdfPipeline(
   for (const archive of archives) form.append('archives', archive, archive.name)
   const isInput = (name: string): boolean =>
     /\.pdf$/i.test(name) && !references.includes(name.normalize('NFC'))
-  const remoteFilenames = forwardedRemoteFilenames(legacy, payload.downloadFrom)
   const external = [
     ...archiveEntryNames.filter(isInput),
     ...remoteFilenames.filter((name): name is string => name !== undefined && isInput(name)),

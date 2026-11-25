@@ -1334,7 +1334,9 @@ test('a rewritten PDF still requires an immediate version header', async () => {
       : new Response(source, { headers: { 'Content-Type': 'application/pdf' } })
   await assert.rejects(
     proxyConversionRequest(
-      requestFor('rotate', { rotateAngle: '90' }, {}, [new File([source], 'input.pdf')]),
+      requestFor('split', { splitMode: 'pages', splitSpan: '1' }, {}, [
+        new File([source], 'input.pdf'),
+      ]),
       fetcher,
     ),
     /does not match its declared file type/,
