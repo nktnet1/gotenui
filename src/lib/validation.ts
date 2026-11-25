@@ -706,10 +706,15 @@ export function validateFiles(
     // stage references must identify a single asset by its exact name.
     const isSourceDocument =
       index < files.length && (operation.input === 'pdf' || operation.input === 'office')
-    if (names.has(filenameKey(name)) && !isSourceDocument) {
-      throw new InputError(`Duplicate filename: ${name}`)
+    // The archive container itself is never registered in the workspace.
+    // Its extracted entries are checked separately by validateZipInputs.
+    const isArchive = index >= files.length + auxiliary.length + stageFiles.length
+    if (!isArchive) {
+      if (names.has(filenameKey(name)) && !isSourceDocument) {
+        throw new InputError(`Duplicate filename: ${name}`)
+      }
+      names.add(filenameKey(name))
     }
-    names.add(filenameKey(name))
     total += file.size
     if (
       file.size === 0 &&

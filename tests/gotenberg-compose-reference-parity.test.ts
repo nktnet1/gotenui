@@ -300,14 +300,18 @@ describe('Gotenberg 9.2 compose source reconciliation', () => {
   })
 
   it('forwards explicit split references when directly uploaded PDFs have the same name', async () => {
+    const composition = {
+      ...compose(),
+      placements: [{ source: 'same_0.pdf' }, { source: 'same (2)_0.pdf' }],
+    }
     const result = await forwarded({
       operation: 'pdf-pipeline',
       names: ['same.pdf', 'same.pdf'],
-      stages: [{ op: 'split', ranges: ['1'] }, compose('same (2)_0.pdf')],
+      stages: [{ op: 'split', ranges: ['1'] }, composition],
     })
     assert.equal(result.status, 200, result.error)
     assert.equal(result.calls, 1)
-    assert.deepEqual(result.stages[1], compose('same (2)_0.pdf'))
+    assert.deepEqual(result.stages[1], composition)
   })
 
   it('keeps genuine multi-PDF compose references before a merge', async () => {
@@ -380,10 +384,20 @@ describe('compose stage filename validation', () => {
     const duplicated = { ...editor, documentNames: ['same.pdf', 'same.pdf'] }
     assert.equal(
       pdfPipelineEditorError(
-        JSON.stringify([{ op: 'split', ranges: ['1'] }, compose('same (2)_0.pdf')]),
+        JSON.stringify([
+          { op: 'split', ranges: ['1'] },
+          { ...compose(), placements: [{ source: 'same_0.pdf' }, { source: 'same (2)_0.pdf' }] },
+        ]),
         duplicated,
       ),
       null,
+    )
+    assert.match(
+      pdfPipelineEditorError(
+        JSON.stringify([{ op: 'split', ranges: ['1'] }, compose('same (2)_0.pdf')]),
+        duplicated,
+      ) ?? '',
+      /place every PDF/,
     )
     assert.match(
       pdfPipelineEditorError(
@@ -1183,4 +1197,136 @@ it('plans Chromium split names from the actual HTTP output header value', () => 
     }),
     null,
   )
+})
+
+describe('complete composition coverage and upload registration', () => {
+  it.each(['pdf-pipeline', 'office-pdf'] as const)(
+    'requires all duplicate %s split outputs',
+    async (operation) => {
+      const office = operation === 'office-pdf'
+      const name = office ? 'same.docx' : 'same.pdf'
+      const first = office ? 'same.docx_0.pdf' : 'same_0.pdf'
+      const second = office ? 'same (2).docx_0.pdf' : 'same (2)_0.pdf'
+      const options = {
+        operation,
+        version: '9.10.0',
+        names: [name, name],
+        stages: [{ op: 'split', ranges: ['1'] }, compose(second)],
+      }
+      const incomplete = await forwarded(options)
+      assert.equal(incomplete.status, 400, incomplete.error)
+      assert.match(incomplete.error, /place every PDF/)
+      const complete = await forwarded({
+        ...options,
+        stages: [
+          options.stages[0],
+          { ...compose(), placements: [{ source: first }, { source: second }] },
+        ],
+      })
+      assert.equal(complete.status, 200, complete.error)
+    },
+  )
+
+  it('requires coverage of both input families even for an interval split', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: ['one.pdf', 'two.pdf'],
+      stages: [{ op: 'split', every: 1 }, compose('one_0.pdf')],
+    })
+    assert.equal(result.status, 400, result.error)
+    assert.match(result.error, /place every PDF/)
+  })
+
+  it('resolves a deterministic merge filename for duplicate pinned remote sources', async () => {
+    const stages = [
+      { op: 'merge' },
+      { op: 'split', ranges: ['1', '2'] },
+      { ...compose(), placements: [{ source: 'same_0.pdf' }, { source: 'same_1.pdf' }] },
+    ]
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: [],
+      remotes: [
+        { url: 'https://files.example.test/first', filename: 'same.pdf' },
+        { url: 'https://files.example.test/second', filename: 'same.pdf' },
+      ],
+      stages,
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.stages, stages)
+    const invalid = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: [],
+      remotes: [
+        { url: 'https://files.example.test/first', filename: 'same.pdf' },
+        { url: 'https://files.example.test/second', filename: 'same.pdf' },
+      ],
+      stages: [stages[0], stages[1], compose('wrong_0.pdf')],
+    })
+    assert.equal(invalid.status, 400, invalid.error)
+    assert.match(invalid.error, /does not match a split output/)
+  })
+
+  it('requires full coverage even if archive registration order is uncertain', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: ['same.pdf'],
+      archives: [zipFixture({ 'same.pdf': '%PDF-1.7', 'same (2).pdf': '%PDF-1.7' })],
+      stages: [
+        { op: 'split', ranges: ['1'] },
+        { ...compose(), placements: [{ source: 'same_0.pdf' }, { source: 'same (2)_0.pdf' }] },
+      ],
+    })
+    assert.equal(result.status, 400, result.error)
+    assert.match(result.error, /place every PDF/)
+  })
+
+  it('accepts multiple archive containers named like a source PDF', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: ['report.pdf'],
+      archives: [
+        new File([zipFixture({ 'one.pdf': '%PDF-1.7' })], 'report.pdf'),
+        new File([zipFixture({ 'two.pdf': '%PDF-1.7' })], 'report.pdf'),
+      ],
+      stages: [{ op: 'merge' }],
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.equal(result.calls, 1)
+  })
+
+  it('rejects an incorrect explicit initial Chromium source when the output name is known', () => {
+    const operation = OPERATION_BY_ID.get('html-pdf')
+    assert.ok(operation)
+    const payload: ConversionPayload = {
+      operation: 'html-pdf',
+      fields: {},
+      advanced: {},
+      outputName: 'stable',
+      conversionStages: JSON.stringify([compose('wrong.pdf')]),
+    }
+    assert.throws(
+      () => adaptConversionForm(operation, payload, new FormData(), 9),
+      /not one of the current PDF inputs/,
+    )
+    assert.match(
+      pdfPipelineEditorError(payload.conversionStages ?? '', {
+        localAssetNames: [],
+        remoteRows: [],
+        remoteJson: '',
+        archivesPresent: false,
+        acknowledgedRedaction: false,
+        backendVersion: '9.10.0',
+        documentKind: 'single',
+        documentNames: [],
+        outputName: 'stable',
+      }) ?? '',
+      /not one of the current PDF inputs/,
+    )
+  })
 })

@@ -540,17 +540,19 @@ export function adaptConversionForm(
         inputs:
           operation.id === 'office-pdf'
             ? [
+                ...remoteSources.map((name) => officePdfComposeInput(name)),
                 ...localSources,
                 ...archiveEntryNames
                   .filter(isOfficeSource)
                   .map((name) => officePdfComposeInput(name)),
-                ...remoteSources.map((name) => officePdfComposeInput(name)),
               ]
             : chromiumName
               ? [{ original: chromiumName, forwarded: chromiumName }]
               : [],
         singleInput: operation.id !== 'office-pdf',
         unknownInputs: operation.id === 'office-pdf' && remoteFilenames.some((name) => !name),
+        registrationOrderKnown:
+          operation.id === 'office-pdf' && (!archives.length || !localSources.length),
         mapBookmarks: true,
       })
       parsePdfPipeline(JSON.stringify(mergedStages), {

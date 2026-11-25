@@ -92,12 +92,12 @@ export function adaptPdfPipeline(
   for (const archive of archives) form.append('archives', archive, archive.name)
   const assets = new Set(references)
   const isInput = (name: string): boolean => isV9SourceDocument('pdf', name, assets)
-  const external = [
-    ...archiveEntryNames.filter(isInput),
-    ...remoteFilenames.filter((name): name is string => name !== undefined && isInput(name)),
-  ]
+  const external = [...archiveEntryNames.filter(isInput)]
   const mappedStages = reconcilePdfComposeSources(stages, {
     inputs: [
+      ...remoteFilenames
+        .filter((name): name is string => name !== undefined && isInput(name))
+        .map((name) => ({ original: name, forwarded: name })),
       ...inputs.map((source, index) => {
         if (!(source instanceof File)) throw new InputError('Expected an uploaded PDF.')
         return { original: source.name, forwarded: orderedNames[index] ?? source.name }
@@ -105,6 +105,7 @@ export function adaptPdfPipeline(
       ...external.map((name) => ({ original: name, forwarded: name })),
     ],
     unknownInputs: remoteFilenames.some((name) => !name),
+    registrationOrderKnown: !archives.length || !inputs.length,
     mapBookmarks: true,
   })
   form.set('stages', JSON.stringify(mappedStages))

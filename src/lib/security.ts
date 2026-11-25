@@ -133,7 +133,8 @@ export function safeAttachmentDisposition(
   const fallback = `${fallbackBase}.${extension}`
   const upstreamName = downloadFilename(upstreamDisposition, fallback)
   if (preserveOriginalName) return attachmentHeader(upstreamName)
-  const candidate = requestedBase ? `${requestedBase}.${extension}` : upstreamName
+  const effectiveBase = requestedBase?.replace(/^ +| +$/g, '')
+  const candidate = effectiveBase ? `${effectiveBase}.${extension}` : upstreamName
   const knownExtension =
     candidate.toLowerCase().endsWith(`.${extension}`) ||
     (extension === 'jpeg' && candidate.toLowerCase().endsWith('.jpg'))

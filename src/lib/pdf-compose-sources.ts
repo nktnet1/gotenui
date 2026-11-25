@@ -1,3 +1,4 @@
+import { registeredFilenames } from '#/lib/file-names'
 import { type FileBookmarks, mapFileBookmarkLabels } from '#/lib/pdf-file-bookmarks'
 import type { PdfPipelineStage } from '#/lib/pdf-pipeline'
 import { InputError } from '#/lib/validation'
@@ -203,7 +204,7 @@ function mapCurrentBookmarkLabels(
 /** Reconcile compose references against Gotenberg 9.2's document-name rules.
  * Merge/compose always leave one PDF (so source is optional); split appends a
  * zero-based suffix to the *current* filename, not a generic document name.
- * Never fabricate names when an unnamed remote or duplicate input intervenes.
+ * Never fabricate names when an unnamed remote or ambiguous registration order intervenes.
  */
 export function reconcilePdfComposeSources(
   stages: readonly PdfPipelineStage[],
@@ -213,12 +214,15 @@ export function reconcilePdfComposeSources(
     singleInput = false,
     mapBookmarks = false,
     preserveNamedSingleSource = false,
+    registrationOrderKnown = false,
   }: {
     inputs: readonly PdfComposeInput[]
     unknownInputs?: boolean
     singleInput?: boolean
     mapBookmarks?: boolean
     preserveNamedSingleSource?: boolean
+    /** Inputs are in actual registration order (downloads before uploads or archives). */
+    registrationOrderKnown?: boolean
   },
 ): PdfPipelineStage[] {
   const names = inputs.map(({ original, forwarded, sortName }) => ({
@@ -226,6 +230,18 @@ export function reconcilePdfComposeSources(
     forwarded: forwarded.normalize('NFC'),
     sortName: (sortName ?? forwarded).normalize('NFC'),
   }))
+  if (registrationOrderKnown && !unknownInputs) {
+    // LibreOffice appends .pdf only after the original Office name is registered.
+    // Retain the received name for sorting, including stable arrival-order ties.
+    const assigned = registeredFilenames(names.map(({ sortName }) => sortName))
+    for (const [index, input] of names.entries()) {
+      const registered = assigned[index] as string
+      const suffix = input.forwarded.slice(input.sortName.length)
+      const forwarded = registered + suffix
+      if (input.original === input.forwarded) input.original = forwarded
+      input.forwarded = forwarded
+    }
+  }
   const duplicateInputs = new Set(names.map(({ forwarded }) => forwarded)).size !== names.length
   const sourcesKnown = !unknownInputs && !duplicateInputs
   // Keep the known filenames even when the complete set is unavailable. Split
@@ -242,10 +258,14 @@ export function reconcilePdfComposeSources(
   const ambiguousFirstName =
     sourcesKnown &&
     firstName !== undefined &&
-    names.slice(1).some(({ sortName }) => compareSourceNames(firstName.sortName, sortName) >= 0)
+    names.slice(1).some(({ sortName }) => {
+      const order = compareSourceNames(firstName.sortName, sortName)
+      return order > 0 || (order === 0 && firstName.sortName !== sortName)
+    })
   const ambiguousFilenameReason =
     'The merged PDF filename is ambiguous because the source filenames do not have a deterministic first name. Rename the inputs to give them distinct ordered prefixes before using named downstream references.'
   let single = singleInput || (!unknownInputs && names.length === 1)
+  let minimumDocuments = Math.max(names.length, singleInput ? 1 : 0)
   let afterSplit = false
   let afterCollapse = false
   let ambiguousCollapsedName = false
@@ -253,6 +273,7 @@ export function reconcilePdfComposeSources(
     if (!afterCollapse && ambiguousFirstName) ambiguousCollapsedName = true
     sources = sourcesKnown && !ambiguousCollapsedName ? firstSource(sources) : []
     single = true
+    minimumDocuments = 1
     afterCollapse = true
     afterSplit = false
   }
@@ -288,6 +309,7 @@ export function reconcilePdfComposeSources(
         forwarded: splitName(forwarded),
         partCounts: [...(partCounts ?? []), count],
       }))
+      minimumDocuments = Math.min(Number.MAX_SAFE_INTEGER, minimumDocuments * (count ?? 1))
       single = single && Array.isArray(stage.ranges) && stage.ranges.length === 1
       afterSplit = true
       return stage
@@ -306,7 +328,6 @@ export function reconcilePdfComposeSources(
         // Only after a merge/compose may the generated filename be irrelevant.
         if (
           name &&
-          !singleInput &&
           !afterCollapse &&
           sourcesKnown &&
           sources.length &&
@@ -345,6 +366,7 @@ export function reconcilePdfComposeSources(
             'compose: cannot resolve filenames after split when source filenames are unknown. Set a Chromium output filename, downloadFrom filename overrides for remotes, or use separately named PDF inputs.',
           )
         }
+        placed.add(name)
         return entry
       }
       const matches = currentFileMatches(name, sources)
@@ -360,12 +382,14 @@ export function reconcilePdfComposeSources(
       placed.add(source)
       return { ...entry, source }
     })
+    if (!sourcesKnown && !unknownInputs && !single && placed.size < minimumDocuments) {
+      throw new InputError('compose: placements must place every PDF, including all split outputs.')
+    }
     if (sourcesKnown && !single) {
       // Gotenberg requires every current document to be placed at least once.
-      // Fixed range splits have known cardinality, unlike interval splits.
-      // Compare counts without expanding the potentially huge set of filenames.
+      // Interval splits have unknown cardinality but always produce at least
+      // one output. Compare lower bounds without expanding all filenames.
       for (const { original, forwarded, partCounts = [] } of sources) {
-        if (partCounts.some((count) => count === undefined)) continue
         if (!partCounts.length) {
           if (!placed.has(forwarded)) {
             throw new InputError(

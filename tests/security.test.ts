@@ -193,3 +193,15 @@ test('neutralises superscript Windows device suffixes', () => {
     'LPT_.pdf',
   )
 })
+
+test('preserves the upstream download name when the output header is whitespace only', () => {
+  assert.equal(
+    safeAttachmentDisposition(
+      'attachment; filename="upstream.pdf"',
+      'merge',
+      'application/pdf',
+      '   ',
+    ),
+    'attachment; filename="upstream.pdf"',
+  )
+})

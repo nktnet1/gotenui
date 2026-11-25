@@ -851,6 +851,7 @@ export function Workbench({
                 files={archives}
                 onChange={setArchives}
                 multiple
+                allowDuplicateNames
               />
             )}
             {operation.input === 'url' && (

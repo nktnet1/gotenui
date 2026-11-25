@@ -87,3 +87,11 @@ test('reserves upstream duplicate filenames without overwriting explicit names',
     '01__report (2).pdf',
   ])
 })
+
+test('rejects colliding legacy bookmark aliases rather than overwriting a tree', () => {
+  const value = JSON.stringify({
+    'a.pdf': [{ title: 'Original', page: 1 }],
+    '01_a.pdf': [{ title: 'Explicit', page: 1 }],
+  })
+  assert.throws(() => mergeBookmarks(value, ['a.pdf']), /duplicate.*bookmark/i)
+})

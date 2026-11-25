@@ -130,9 +130,9 @@ export function adaptV9PdfExtra(
         .getAll('files')
         .flatMap((file) => (file instanceof File ? [file.name] : []))
       const names = [
+        ...remotes.filter((name): name is string => name !== undefined),
         ...localNames,
         ...archiveEntryNames,
-        ...remotes.filter((name): name is string => name !== undefined),
       ].filter((name) => isV9SourceDocument('pdf', name))
       // The proxy has inspected every archive, including empty ones. Only
       // unpinned downloads may introduce additional unknown source PDFs.
@@ -142,6 +142,7 @@ export function adaptV9PdfExtra(
         unknownInputs: unknownRemotes > 0,
         singleInput: names.length + unknownRemotes === 1,
         preserveNamedSingleSource: true,
+        registrationOrderKnown: !archiveEntryNames.length || !localNames.length,
       })
       if (!reconciled) throw new InputError('Invalid page composition.')
       form.set('placements', JSON.stringify(reconciled.placements))

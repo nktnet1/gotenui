@@ -220,14 +220,15 @@ export function pdfPipelineEditorError(
             ? [{ original: chromiumName, forwarded: chromiumName }]
             : []
           : [
-              ...localNames.map((name, index) => sourceInput(name, forwarded[index])),
               ...remoteSources.map((name) => sourceInput(name)),
+              ...localNames.map((name, index) => sourceInput(name, forwarded[index])),
             ]
       if (sources.length || unknownRemote || documentKind === 'single') {
         reconcilePdfComposeSources(pipeline, {
           inputs: sources,
           singleInput: documentKind === 'single',
           unknownInputs: unknownRemote,
+          registrationOrderKnown: documentKind !== 'single',
           mapBookmarks: true,
         })
       }

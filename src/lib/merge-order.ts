@@ -1,4 +1,5 @@
 import { filenameKey, possibleRemoteFilename, registeredFilenames } from '#/lib/file-names'
+import { InputError } from '#/lib/validation'
 
 /** Prefix local merge inputs so Gotenberg's filename sort follows the visible order. */
 export function mergeUploadFilename(filename: string, index: number, count: number): string {
@@ -80,7 +81,11 @@ export function mergeBookmarks(value: string, filenames: string[]): string {
   }
   for (const [index, filename] of filenames.entries()) {
     if (Object.hasOwn(input, filename)) {
-      mapped[mergeUploadFilename(filename, index, filenames.length)] = input[filename]
+      const target = mergeUploadFilename(filename, index, filenames.length)
+      if (Object.hasOwn(mapped, target)) {
+        throw new InputError(`Duplicate merge bookmark key for ${target}.`)
+      }
+      mapped[target] = input[filename]
     }
   }
   return JSON.stringify(mapped)
