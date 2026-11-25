@@ -8,8 +8,13 @@ import {
   reservePrefixedMergeUploadNames,
 } from '#/lib/merge-order'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
-import { type PdfComposeInput, reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import {
+  officePdfComposeInput,
+  type PdfComposeInput,
+  reconcilePdfComposeSources,
+} from '#/lib/pdf-compose-sources'
+import {
+  conversionSplitStage,
   normalizePdfStageAssets,
   type PdfPipelineStage,
   parsePdfPipeline,
@@ -117,19 +122,8 @@ function v9PdfStages(
   const splitMode = take(form, 'splitMode')
   const splitSpan = take(form, 'splitSpan')
   const unify = take(form, 'splitUnify') === 'true'
-  if (splitMode && splitSpan) {
-    if (splitMode === 'intervals') {
-      stages.push({ op: 'split', every: Number(splitSpan) })
-    } else if (unify) {
-      stages.push({ op: 'select', pages: splitSpan })
-    } else {
-      const ranges = splitSpan.split(',').map((range) => range.trim())
-      if (ranges.some((range) => !range)) {
-        throw new InputError('Split page ranges cannot be empty.')
-      }
-      stages.push({ op: 'split', ranges })
-    }
-  }
+  const split = conversionSplitStage(splitMode, splitSpan, unify)
+  if (split) stages.push(split)
   const legacyPdfa = take(form, 'pdfa')
   const legacyPdfua = take(form, 'pdfua') === 'true'
   const selectedPdfa = take(form, 'pdfaProfile')
@@ -298,7 +292,7 @@ function orderOfficeMergeInputs(
   return filenames.map((name, index) => {
     const prefix = mergeUploadFilename('', index, sources.length)
     const original = builtInMerge && name.startsWith(prefix) ? name.slice(prefix.length) : name
-    return { original: `${original}.pdf`, forwarded: `${ordered[index]}.pdf` }
+    return officePdfComposeInput(original, ordered[index])
   })
 }
 
@@ -460,20 +454,16 @@ export function adaptConversionForm(
         form
           .getAll('files')
           .filter((file): file is File => file instanceof File)
-          .map(({ name }) => ({ original: `${name}.pdf`, forwarded: `${name}.pdf` }))
+          .map(({ name }) => officePdfComposeInput(name))
       const mergedStages = reconcilePdfComposeSources(stages as PdfPipelineStage[], {
         inputs:
           operation.id === 'office-pdf'
             ? [
                 ...localSources,
-                ...archiveEntryNames.filter(isOfficeSource).map((name) => ({
-                  original: `${name}.pdf`,
-                  forwarded: `${name}.pdf`,
-                })),
-                ...remoteSources.map((name) => ({
-                  original: `${name}.pdf`,
-                  forwarded: `${name}.pdf`,
-                })),
+                ...archiveEntryNames
+                  .filter(isOfficeSource)
+                  .map((name) => officePdfComposeInput(name)),
+                ...remoteSources.map((name) => officePdfComposeInput(name)),
               ]
             : payload.outputName
               ? [{ original: `${payload.outputName}.pdf`, forwarded: `${payload.outputName}.pdf` }]

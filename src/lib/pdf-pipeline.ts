@@ -275,6 +275,24 @@ export const PDF_PIPELINE_STAGES = [
 export type PdfPipelineOp = (typeof PDF_PIPELINE_STAGES)[number]['op']
 export type PdfPipelineStage = { op: PdfPipelineOp; [key: string]: unknown }
 
+/** Map the conversion form's built-in split settings to the stages that run
+ * before the user-defined pipeline. Both preflight and the adapter use this.
+ */
+export function conversionSplitStage(
+  mode: string | null | undefined,
+  span: string | null | undefined,
+  unify = false,
+): PdfPipelineStage | undefined {
+  if (!mode || !span) return undefined
+  if (mode === 'intervals') return { op: 'split', every: Number(span) }
+  if (unify) return { op: 'select', pages: span }
+  const ranges = span.split(',').map((range) => range.trim())
+  if (ranges.some((range) => !range)) {
+    throw new InputError('Split page ranges cannot be empty.')
+  }
+  return { op: 'split', ranges }
+}
+
 export const DEFAULT_PDF_PIPELINE = '[{"op":"optimize"}]'
 const pipelineByOp = new Map<string, (typeof PDF_PIPELINE_STAGES)[number]>(
   PDF_PIPELINE_STAGES.map((stage) => [stage.op, stage]),

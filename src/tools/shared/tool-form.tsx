@@ -404,6 +404,9 @@ export function Workbench({
           documentNames: files.map(({ name }) => name),
           documentKind: operation.id === 'office-pdf' ? 'office' : 'single',
           builtInMerge: operation.id === 'office-pdf' && fields.merge === true,
+          splitMode: typeof fields.splitMode === 'string' ? fields.splitMode : undefined,
+          splitSpan: typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,
+          splitUnify: fields.splitUnify === true,
           outputName: outputName.trim() || undefined,
         })
       : null

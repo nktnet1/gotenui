@@ -17,9 +17,11 @@ afterEach(() => vi.unstubAllEnvs())
 
 type Options = {
   operation?: 'pdf-pipeline' | 'office-pdf'
+  version?: string
   names?: string[]
   stages: unknown[]
   merge?: boolean
+  split?: { splitMode: string; splitSpan: string; splitUnify?: boolean }
   remotes?: Array<{ url: string; filename?: string; name?: string }>
   archives?: File[]
   stageFiles?: File[]
@@ -34,7 +36,7 @@ function request(options: Options): Request {
       operation,
       fields:
         operation === 'office-pdf'
-          ? { merge: options.merge ?? false }
+          ? { merge: options.merge ?? false, ...options.split }
           : { stages: JSON.stringify(options.stages) },
       advanced: {},
       ...(operation === 'office-pdf' ? { conversionStages: JSON.stringify(options.stages) } : {}),
@@ -77,7 +79,7 @@ async function forwarded(options: Options): Promise<{
     calls: 0,
   }
   const fetcher: typeof fetch = async (url, init) => {
-    if (String(url) === `${upstream}/version`) return new Response('9.2.0')
+    if (String(url) === `${upstream}/version`) return new Response(options.version ?? '9.2.0')
     output.calls++
     assert.equal(
       new URL(String(url)).pathname,
@@ -605,3 +607,171 @@ it.each(['pdf', 'office'] as const)(
     )
   },
 )
+
+describe('Office conversion input order and built-in split parity', () => {
+  const options = {
+    localAssetNames: [],
+    archivesPresent: false,
+    remoteRows: [],
+    remoteJson: '',
+    acknowledgedRedaction: false,
+    backendVersion: '9.10.0',
+    documentKind: 'office' as const,
+    documentNames: ['report10.docx'],
+  }
+  const stages = [
+    { op: 'merge' },
+    { op: 'split', ranges: ['1', '2'] },
+    {
+      op: 'compose',
+      paperSize: 'A4',
+      placements: [{ source: 'report2.docx_0.pdf' }, { source: 'report2.docx_1.pdf' }],
+    },
+  ]
+  const remote = { url: 'https://files.example.test/report2.docx', filename: 'report2.docx' }
+
+  it('sorts Office source filenames before appending the PDF extension', async () => {
+    const result = await forwarded({
+      version: '9.10.0',
+      names: ['report10.docx'],
+      remotes: [remote],
+      stages,
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.names, ['report10.docx'])
+    assert.deepEqual(result.stages, stages)
+  })
+
+  it('sorts archive-only Office sources by their pre-conversion filenames', async () => {
+    const result = await forwarded({
+      version: '9.10.0',
+      names: [],
+      archives: [zipFixture({ 'report10.docx': 'ten', 'report2.docx': 'two' })],
+      stages,
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.stages, stages)
+  })
+
+  it('preflights Office merge output in the same order as LibreOffice', () => {
+    assert.equal(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        ...options,
+        remoteJson: JSON.stringify([remote]),
+      }),
+      null,
+    )
+  })
+
+  it('preflights built-in split before user composition', async () => {
+    const split = { splitMode: 'pages', splitSpan: '1,2' }
+    const stages = [
+      {
+        op: 'compose',
+        paperSize: 'A4',
+        placements: [
+          { source: 'report10.docx_0.pdf' },
+          { source: 'report10.docx_1.pdf' },
+          { source: 'report2.docx_0.pdf' },
+          { source: 'report2.docx_1.pdf' },
+        ],
+      },
+    ]
+    const result = await forwarded({
+      version: '9.10.0',
+      names: ['report10.docx', 'report2.docx'],
+      stages,
+      split,
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.stages, [{ op: 'split', ranges: ['1', '2'] }, ...stages])
+    assert.equal(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        ...options,
+        documentNames: ['report10.docx', 'report2.docx'],
+        ...split,
+      }),
+      null,
+    )
+  })
+
+  it('requires a compose source after a built-in interval split, even with one input', () => {
+    assert.match(
+      pdfPipelineEditorError(JSON.stringify([compose()]), {
+        ...options,
+        splitMode: 'intervals',
+        splitSpan: '1',
+      }) ?? '',
+      /needs a source after split/,
+    )
+  })
+
+  it('rejects the incorrect lexicographic Office merge filename', async () => {
+    const wrong = [...stages.slice(0, 2), compose('report10.docx_0.pdf')]
+    const result = await forwarded({
+      version: '9.10.0',
+      names: ['report10.docx'],
+      remotes: [remote],
+      stages: wrong,
+    })
+    assert.equal(result.status, 400, result.error)
+    assert.equal(result.calls, 0)
+    assert.match(result.error, /report2\.docx_0\.pdf/)
+  })
+
+  it('keeps the original filenames when selected ranges are unified', async () => {
+    const split = { splitMode: 'pages', splitSpan: '1,2', splitUnify: true }
+    const stages = [
+      {
+        op: 'compose',
+        paperSize: 'A4',
+        placements: [{ source: 'report10.docx.pdf' }, { source: 'report2.docx.pdf' }],
+      },
+    ]
+    const names = ['report10.docx', 'report2.docx']
+    const result = await forwarded({ version: '9.10.0', names, split, stages })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.stages, [{ op: 'select', pages: '1,2' }, ...stages])
+    assert.equal(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        ...options,
+        documentNames: names,
+        ...split,
+      }),
+      null,
+    )
+  })
+
+  it('tracks numbered Office filenames after built-in merge and split', async () => {
+    const names = ['report10.docx', 'report2.docx']
+    const split = { splitMode: 'pages', splitSpan: '1,2' }
+    const stages = [
+      {
+        op: 'compose',
+        paperSize: 'A4',
+        placements: [{ source: 'report10.docx_0.pdf' }, { source: 'report10.docx_1.pdf' }],
+      },
+    ]
+    const result = await forwarded({ version: '9.10.0', names, split, stages, merge: true })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.names, ['01_report10.docx', '02_report2.docx'])
+    assert.deepEqual(result.stages, [
+      { op: 'merge' },
+      { op: 'split', ranges: ['1', '2'] },
+      {
+        op: 'compose',
+        paperSize: 'A4',
+        placements: [{ source: '01_report10.docx_0.pdf' }, { source: '01_report10.docx_1.pdf' }],
+      },
+    ])
+    assert.equal(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        ...options,
+        documentNames: names,
+        builtInMerge: true,
+        ...split,
+      }),
+      null,
+    )
+  })
+})

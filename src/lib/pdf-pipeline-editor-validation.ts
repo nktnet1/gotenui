@@ -17,9 +17,14 @@ import {
   remoteMergeFilenames,
 } from '#/lib/merge-order'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
-import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
+import { officePdfComposeInput, reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
-import { parsePdfPipeline, pdfStageAssetNames, validatePdfStageUploads } from '#/lib/pdf-pipeline'
+import {
+  conversionSplitStage,
+  parsePdfPipeline,
+  pdfStageAssetNames,
+  validatePdfStageUploads,
+} from '#/lib/pdf-pipeline'
 
 /** Preflight the same asset names as the request adapter, including remote
  * filename hints. Gotenberg still verifies the actual downloaded filenames.
@@ -36,6 +41,9 @@ export function pdfPipelineEditorError(
     documentNames,
     documentKind,
     builtInMerge,
+    splitMode,
+    splitSpan,
+    splitUnify,
     outputName,
   }: {
     localAssetNames: readonly string[]
@@ -48,6 +56,9 @@ export function pdfPipelineEditorError(
     documentNames?: readonly string[]
     documentKind?: 'office' | 'pdf' | 'single'
     builtInMerge?: boolean
+    splitMode?: string
+    splitSpan?: string
+    splitUnify?: boolean
     /** The optional Gotenberg-Output-Filename basename for Chromium conversions. */
     outputName?: string
   },
@@ -158,28 +169,30 @@ export function pdfPipelineEditorError(
         (name): name is string => name !== undefined && extensionMatches(name),
       )
       const unknownRemote = documentKind !== 'single' && remoteFilenames.some((name) => !name)
-      const pipeline = [...(builtInMerge ? ([{ op: 'merge' }] as const) : []), ...parsed]
+      const split = conversionSplitStage(splitMode, splitSpan, splitUnify)
+      const pipeline = [
+        ...(builtInMerge ? ([{ op: 'merge' }] as const) : []),
+        ...(split ? [split] : []),
+        ...parsed,
+      ]
       const forwarded = numbersPipelineInputs(pipeline, localNames.length, builtInMerge)
         ? mergeUploadFilenames(localNames, [
             ...remoteMergeFilenames(sourceRemotes),
             ...localAssetNames,
           ])
         : localNames
-      const pdfName = (name: string) => (documentKind === 'office' ? `${name}.pdf` : name)
+      const sourceInput = (original: string, forwarded = original) =>
+        documentKind === 'office'
+          ? officePdfComposeInput(original, forwarded)
+          : { original, forwarded }
       const sources =
         documentKind === 'single'
           ? outputName
             ? [{ original: `${outputName}.pdf`, forwarded: `${outputName}.pdf` }]
             : []
           : [
-              ...localNames.map((name, index) => ({
-                original: pdfName(name),
-                forwarded: pdfName(forwarded[index] ?? name),
-              })),
-              ...remoteSources.map((name) => ({
-                original: pdfName(name),
-                forwarded: pdfName(name),
-              })),
+              ...localNames.map((name, index) => sourceInput(name, forwarded[index])),
+              ...remoteSources.map((name) => sourceInput(name)),
             ]
       if (sources.length || unknownRemote || documentKind === 'single') {
         reconcilePdfComposeSources(pipeline, {

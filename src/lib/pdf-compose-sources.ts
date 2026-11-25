@@ -3,7 +3,12 @@ import type { PdfPipelineStage } from '#/lib/pdf-pipeline'
 import { InputError } from '#/lib/validation'
 
 /** A PDF source name as entered in the editor and as sent to Gotenberg. */
-export type PdfComposeInput = { original: string; forwarded: string }
+export type PdfComposeInput = { original: string; forwarded: string; sortName?: string }
+
+/** LibreOffice sorts its input documents before adding the .pdf extension. */
+export function officePdfComposeInput(original: string, forwarded = original): PdfComposeInput {
+  return { original: `${original}.pdf`, forwarded: `${forwarded}.pdf`, sortName: forwarded }
+}
 
 type SourceTemplate = PdfComposeInput
 
@@ -194,15 +199,16 @@ export function reconcilePdfComposeSources(
     mapBookmarks?: boolean
   },
 ): PdfPipelineStage[] {
-  const names = inputs.map(({ original, forwarded }) => ({
+  const names = inputs.map(({ original, forwarded, sortName }) => ({
     original: original.normalize('NFC'),
     forwarded: forwarded.normalize('NFC'),
+    sortName: (sortName ?? forwarded).normalize('NFC'),
   }))
   const duplicateInputs = new Set(names.map(({ forwarded }) => forwarded)).size !== names.length
   let sources: SourceTemplate[] | null =
     unknownInputs || duplicateInputs
       ? null
-      : names.sort((a, b) => compareSourceNames(a.forwarded, b.forwarded))
+      : names.sort((a, b) => compareSourceNames(a.sortName, b.sortName))
   let single = singleInput || (!unknownInputs && names.length === 1)
   let afterSplit = false
   // Unknown remote names prevent predicting a later merge output, but they
