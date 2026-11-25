@@ -211,3 +211,12 @@ test('browser upload selection preserves case-distinct names and ordered duplica
   )
   assert.deepEqual(combineUploadSelection([first], [caps]), [caps])
 })
+
+test('rejects malformed Unicode filenames before multipart serialization', () => {
+  assert.throws(() => safeFilename('report\ud800.pdf'), /Unicode/)
+  assert.throws(
+    () =>
+      validatePayload({ operation: 'merge', fields: {}, advanced: {}, outputName: 'report\udc00' }),
+    /Unicode/,
+  )
+})

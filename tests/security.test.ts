@@ -159,3 +159,8 @@ test('ignores parameter lookalikes inside quoted disposition values', () => {
     "safe; filename_=UTF-8''fake.pdf",
   )
 })
+
+test('does not throw while constructing an attachment header from malformed Unicode', () => {
+  const disposition = safeAttachmentDisposition(null, 'merge', 'application/pdf', 'report\ud800')
+  assert.equal(downloadFilename(disposition, 'fallback'), 'report\ufffd.pdf')
+})

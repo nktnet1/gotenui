@@ -3,7 +3,7 @@
  */
 function cleanDownloadName(candidate: string, fallback: string): string {
   const basename = candidate.split(/[\\/]/).pop() ?? fallback
-  const normalized = basename.normalize('NFC')
+  const normalized = basename.replace(/\p{Cs}/gu, '\ufffd').normalize('NFC')
   const clean = normalized
     .replace(/[\\/:*?"<>|\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '_')
     .replace(/\p{Cc}/gu, '_')

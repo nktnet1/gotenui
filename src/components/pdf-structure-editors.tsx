@@ -138,7 +138,9 @@ export function PdfMetadataEditor({
                   id={`${id}-${name}`}
                   value={visualMetadataValue(metadata ?? {}, name) ?? ''}
                   placeholder={placeholder}
-                  onChange={(event) => onChange(updateMetadata(value, name, event.target.value))}
+                  onChange={(event) =>
+                    onChange(updateMetadata(value, name, event.target.value, { standardOnly }))
+                  }
                 />
               </div>
             ))}
@@ -150,7 +152,7 @@ export function PdfMetadataEditor({
                 placeholder="invoice, accounts, 2026"
                 onChange={(event) => {
                   setKeywordDraft(event.target.value)
-                  onChange(updateMetadata(value, 'Keywords', event.target.value))
+                  onChange(updateMetadata(value, 'Keywords', event.target.value, { standardOnly }))
                 }}
                 onBlur={() => setKeywordDraft(null)}
               />
@@ -301,10 +303,10 @@ export function PdfBookmarksEditor({
     ? allowFilenameMap && filename
       ? (mapped[filename] ?? null)
       : null
-    : visualBookmarkList(value)
+    : visualBookmarkList(value, { allowNativePageNumber: !allowFilenameMap })
   let warning: string | null = null
   try {
-    validateBookmarkDocument(value)
+    validateBookmarkDocument(value, { allowNativePageNumber: !allowFilenameMap })
   } catch (error) {
     warning = error instanceof Error ? error.message : 'Invalid bookmark data.'
   }
@@ -313,7 +315,7 @@ export function PdfBookmarksEditor({
       const next =
         mapped && filename
           ? editFileBookmarks(value, filename, change)
-          : editBookmarks(value, change)
+          : editBookmarks(value, change, { allowNativePageNumber: !allowFilenameMap })
       onChange(next)
       setEditError(null)
     } catch (error) {
@@ -338,8 +340,10 @@ export function PdfBookmarksEditor({
         <div>
           <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">PDF bookmarks</h3>
           <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-            Add and reorder outlines. Pages are 1-based. Filename-specific pages are relative to
-            each input and Gotenberg offsets them when merging.
+            Add and reorder outlines. Pages are 1-based.{' '}
+            {allowFilenameMap
+              ? 'Filename-specific pages are relative to each input and Gotenberg offsets them when merging.'
+              : 'Gotenberg 9 applies the shared tree to each output PDF.'}
           </p>
         </div>
         <EditorMode mode={mode} onChange={setMode} id={id} />
@@ -358,8 +362,9 @@ export function PdfBookmarksEditor({
               required
             />
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Use JSON for advanced bookmarks. A list applies to the final document; a
-              filename-keyed map has per-file page offsets.
+              {allowFilenameMap
+                ? 'Use JSON for advanced bookmarks. A list applies to the final document, and a filename-keyed map has per-file page offsets.'
+                : "Use one shared list. Gotenberg 9 accepts pageNumber or the editor's page alias, but not filename-keyed maps."}
             </p>
           </div>
         ) : (
@@ -446,8 +451,8 @@ export function PdfBookmarksEditor({
                 role="status"
                 className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
               >
-                This is a filename map or invalid bookmark JSON. Switch to JSON mode to edit without
-                losing any entries.
+                This bookmark structure cannot be represented visually. Switch to JSON mode to edit
+                without losing any entries.
               </p>
             ) : (
               <>

@@ -141,3 +141,23 @@ test('the ZIP preview is opt-in and does not unpack or display files on initial 
   assert.match(html, /aria-expanded="false"/)
   assert.doesNotMatch(html, /Archive files|Reading ZIP directory/)
 })
+
+test('classifies long filenames and excludes long directory names before truncating for display', async () => {
+  const result = await inspectZipResult(
+    zipBlob(
+      zipFixture([
+        `${'a'.repeat(170)}/`,
+        `${'b'.repeat(170)}.pdf`,
+        `${'c'.repeat(159)}\u{1f4c4}.png`,
+        '\ufeffreport.pdf',
+      ]),
+    ),
+  )
+  assert.equal(result.totalFiles, 3)
+  assert.deepEqual(
+    result.entries.map(({ kind }) => kind),
+    ['PDF', 'Image', 'PDF'],
+  )
+  assert.ok(result.entries.every(({ name }) => !/\p{Cs}/u.test(name) && [...name].length <= 160))
+  assert.equal(result.entries[2]?.name, '\ufeffreport.pdf')
+})

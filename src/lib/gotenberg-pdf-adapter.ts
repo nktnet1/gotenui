@@ -12,13 +12,12 @@ import {
   mapFileBookmarkLabels,
   validateFileBookmarks,
 } from '#/lib/pdf-file-bookmarks'
-import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
 import { isPdfStampPosition } from '#/lib/pdf-stamp-position'
-import { metadataObject } from '#/lib/pdf-structure-editors'
+import { v9BookmarkTree, v9MetadataFields } from '#/lib/pdf-v9-structure'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
 import { V9_PDF_IDS } from '#/tools/v9-pdf-config'
@@ -481,62 +480,14 @@ export function adaptPdfForm(
       permitted('metadata')
       const raw = optional('metadata')
       if (!raw) throw new InputError('Enter metadata to write.')
-      const source = metadataObject(raw)
-      const translated: Record<string, string> = {}
-      const mapping: Readonly<Record<string, string>> = {
-        Title: 'title',
-        Author: 'author',
-        Subject: 'subject',
-        Keywords: 'keywords',
-        Creator: 'creator',
-        Producer: 'producer',
-        CreationDate: 'creationDate',
-        ModDate: 'modDate',
-      }
-      for (const [name, value] of Object.entries(source)) {
-        const key = Object.hasOwn(mapping, name)
-          ? mapping[name]
-          : Object.values(mapping).includes(name)
-            ? name
-            : null
-        if (!key) throw new InputError(`Gotenberg 9 cannot write the v8 metadata key '${name}'.`)
-        const normalized =
-          key === 'keywords' &&
-          Array.isArray(value) &&
-          value.every((item) => typeof item === 'string')
-            ? value.join(', ')
-            : value
-        if (typeof normalized !== 'string')
-          throw new InputError(`Gotenberg 9 metadata '${name}' must be a string.`)
-        if ((key === 'creationDate' || key === 'modDate') && !isPdfMetadataDate(normalized)) {
-          throw new InputError(
-            `Gotenberg 9 metadata '${name}' must be a PDF date such as D:20261001090000Z.`,
-          )
-        }
-        if (Object.hasOwn(translated, key)) {
-          throw new InputError(`Gotenberg 9 metadata contains conflicting aliases for '${key}'.`)
-        }
-        translated[key] = normalized
-      }
-      stages.push({ op: 'set-metadata', ...translated })
+      stages.push({ op: 'set-metadata', ...v9MetadataFields(raw) })
       break
     }
     case 'bookmarks-write': {
       permitted('bookmarks')
       const raw = optional('bookmarks')
       if (!raw) throw new InputError('Enter bookmarks to write.')
-      let decoded: unknown
-      try {
-        decoded = JSON.parse(raw)
-      } catch {
-        throw new InputError('Invalid bookmark JSON.')
-      }
-      if (!Array.isArray(decoded)) {
-        throw new InputError(
-          'Gotenberg 9 requires one shared bookmark tree. Per-filename bookmark maps are supported by Gotenberg 8 only.',
-        )
-      }
-      stages.push({ op: 'set-bookmarks', bookmarks: toV9Bookmarks(decoded) })
+      stages.push({ op: 'set-bookmarks', bookmarks: v9BookmarkTree(raw) })
       break
     }
     case 'embed': {
@@ -667,40 +618,4 @@ function overlayOptions(raw: string | undefined): {
       : {}),
     ...(options.color ? { color: options.color as string } : {}),
   }
-}
-
-function toV9Bookmarks(nodes: unknown[]): unknown[] {
-  return nodes.map((node) => {
-    if (!node || typeof node !== 'object' || Array.isArray(node))
-      throw new InputError('Every bookmark must be an object.')
-    const entry = node as Record<string, unknown>
-    if (
-      Object.keys(entry).some((key) => !['title', 'page', 'pageNumber', 'children'].includes(key))
-    ) {
-      throw new InputError('Gotenberg 9 does not support extra bookmark properties in this editor.')
-    }
-    if (
-      entry.page !== undefined &&
-      entry.pageNumber !== undefined &&
-      entry.page !== entry.pageNumber
-    ) {
-      throw new InputError('A bookmark cannot specify different page and pageNumber values.')
-    }
-    const pageNumber = entry.pageNumber ?? entry.page
-    if (
-      !Number.isSafeInteger(pageNumber) ||
-      (pageNumber as number) < 1 ||
-      typeof entry.title !== 'string' ||
-      !entry.title.trim()
-    ) {
-      throw new InputError('Each bookmark needs a title and a positive page number.')
-    }
-    if (entry.children !== undefined && !Array.isArray(entry.children))
-      throw new InputError('Bookmark children must be an array.')
-    return {
-      title: entry.title,
-      pageNumber,
-      ...(entry.children ? { children: toV9Bookmarks(entry.children) } : {}),
-    }
-  })
 }

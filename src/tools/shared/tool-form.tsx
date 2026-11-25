@@ -66,7 +66,11 @@ import {
   type PdfPostProcess,
   type PostProcessFiles,
 } from '#/lib/pdf-post-processing'
-import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
+import {
+  canImportPdfStructure,
+  importReadableBookmarks,
+  importReadableMetadata,
+} from '#/lib/pdf-read-import'
 import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
 import { cn } from '#/lib/utils'
 import {
@@ -438,10 +442,8 @@ export function Workbench({
   }
   const readExistingPdfStructure = async () => {
     const metadata = operation.id === 'metadata-write'
-    if (!metadata && operation.id !== 'bookmarks-write') return
     if (
-      !files.length ||
-      (metadata && files.length !== 1) ||
+      !canImportPdfStructure(operation.id, isV9, files.length) ||
       pending ||
       readingStructure ||
       readAbort.current
@@ -974,8 +976,7 @@ export function Workbench({
                     pending ||
                     readingStructure ||
                     Boolean(submissionBlocked) ||
-                    !files.length ||
-                    (operation.id === 'metadata-write' && files.length !== 1)
+                    !canImportPdfStructure(operation.id, isV9, files.length)
                   }
                   onClick={readExistingPdfStructure}
                 >
@@ -983,10 +984,13 @@ export function Workbench({
                   {readingStructure ? 'Reading uploaded PDF…' : 'Read existing PDF values'}
                 </Button>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Reads the uploaded PDF{operation.id === 'bookmarks-write' ? '(s)' : ''} into the
-                  editor without downloading or copying JSON. Metadata import excludes read-only
-                  tags.
-                  {operation.id === 'metadata-write' && ' Select exactly one PDF.'}
+                  Reads the uploaded PDF{operation.id === 'bookmarks-write' && !isV9 ? '(s)' : ''}{' '}
+                  into the editor without downloading or copying JSON. Metadata import excludes
+                  read-only tags.
+                  {(operation.id === 'metadata-write' || isV9) && ' Select exactly one PDF.'}
+                  {operation.id === 'bookmarks-write' &&
+                    isV9 &&
+                    ' Gotenberg 9 writes one shared bookmark tree to every selected document.'}
                 </p>
               </div>
             )}

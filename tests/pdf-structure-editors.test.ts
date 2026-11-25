@@ -314,3 +314,38 @@ describe('bookmark tree editing and route contract', () => {
     expect(mapped).not.toContain('Add top-level bookmark')
   })
 })
+
+it('edits v9 metadata strings without changing spacing or splitting keywords', () => {
+  const options = { standardOnly: true }
+  const raw = updateMetadata('{}', 'Keywords', 'a,,b, c ', options)
+  const edited = updateMetadata(raw, 'Title', ' ', options)
+  assert.deepEqual(metadataObject(edited), { Keywords: 'a,,b, c ', Title: ' ' })
+  assert.deepEqual(metadataObject(updateMetadata(edited, 'Keywords', '', options)), { Title: ' ' })
+})
+
+it('edits native v9 bookmark pages without leaving contradictory page aliases', () => {
+  const raw =
+    '[{"title":"Intro","pageNumber":1,"children":[{"title":"Child","page":2,"pageNumber":2}]}]'
+  const options = { allowNativePageNumber: true }
+  assert.equal(visualBookmarkList(raw, options)?.[0]?.children[0]?.page, 2)
+  assert.equal(visualBookmarkList(raw), null)
+  const edited = editBookmarks(
+    raw,
+    { kind: 'update', path: [0, 0], field: 'page', value: '3' },
+    options,
+  )
+  assert.deepEqual(JSON.parse(edited), [
+    { title: 'Intro', page: 1, children: [{ title: 'Child', page: 3, children: [] }] },
+  ])
+  assert.equal(visualBookmarkList('[{"title":"Conflict","page":1,"pageNumber":2}]', options), null)
+  const html = renderToStaticMarkup(
+    createElement(
+      TooltipProvider,
+      null,
+      createElement(PdfBookmarksEditor, { value: raw, onChange: vi.fn() }),
+    ),
+  )
+  assert.match(html, /Gotenberg 9 applies the shared tree to each output PDF/)
+  assert.match(html, /Bookmark 1.1 title/)
+  assert.doesNotMatch(html, /Filename-specific pages/)
+})

@@ -23,19 +23,33 @@ export function importReadableMetadata(
   const editableFields = standardOnly ? GOTENBERG_9_METADATA_FIELDS : METADATA_TEXT_FIELDS
   for (const { name } of editableFields) {
     const value = source[name] ?? source[name.charAt(0).toLowerCase() + name.slice(1)]
-    if (typeof value === 'string' && value.trim()) metadata[name] = value
+    if (typeof value === 'string' && (standardOnly ? value !== '' : value.trim()))
+      metadata[name] = value
   }
   const keywords = source.Keywords ?? source.keywords
   if (Array.isArray(keywords) && keywords.every((item) => typeof item === 'string')) {
     metadata.Keywords = keywords
-  } else if (typeof keywords === 'string' && keywords.trim()) {
-    metadata.Keywords = keywords
-      .split(',')
-      .map((word) => word.trim())
-      .filter(Boolean)
+  } else if (typeof keywords === 'string' && (standardOnly ? keywords !== '' : keywords.trim())) {
+    metadata.Keywords = standardOnly
+      ? keywords
+      : keywords
+          .split(',')
+          .map((word) => word.trim())
+          .filter(Boolean)
   }
   const editable = JSON.stringify(metadata)
   return editable
+}
+
+/** V9 applies a shared outline to every output, rather than a filename-keyed map. */
+export function canImportPdfStructure(
+  operation: string,
+  isV9: boolean,
+  fileCount: number,
+): boolean {
+  if (operation === 'metadata-write' || (isV9 && operation === 'bookmarks-write'))
+    return fileCount === 1
+  return operation === 'bookmarks-write' && fileCount > 0
 }
 
 /** Preserve the filename-to-bookmarks map so existing source page numbers stay local. */

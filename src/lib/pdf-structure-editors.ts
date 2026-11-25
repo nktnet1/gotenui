@@ -99,11 +99,16 @@ export function metadataObject(text: string): Record<string, unknown> {
 }
 
 /** Unknown XMP keys stay untouched when a common field is edited visually. */
-export function updateMetadata(text: string, key: MetadataKey, nextValue: string): string {
+export function updateMetadata(
+  text: string,
+  key: MetadataKey,
+  nextValue: string,
+  { standardOnly = false }: { standardOnly?: boolean } = {},
+): string {
   const data = { ...metadataObject(text) }
-  if (!nextValue.trim()) {
+  if (standardOnly ? nextValue === '' : !nextValue.trim()) {
     delete data[key]
-  } else if (key === 'Keywords') {
+  } else if (key === 'Keywords' && !standardOnly) {
     data.Keywords = nextValue
       .split(',')
       .map((keyword) => keyword.trim())
@@ -143,7 +148,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** The server validates the structure for either documented bookmarks payload shape. */
-export function validateBookmarkDocument(text: string): void {
+export function validateBookmarkDocument(
+  text: string,
+  { allowNativePageNumber = false }: { allowNativePageNumber?: boolean } = {},
+): void {
   let value: unknown
   try {
     value = JSON.parse(text)
@@ -163,7 +171,8 @@ export function validateBookmarkDocument(text: string): void {
         if (typeof item.title !== 'string' || !item.title.trim()) {
           throw new Error(`${where} needs a title.`)
         }
-        if (!Number.isSafeInteger(item.page) || (item.page as number) < 1) {
+        const page = allowNativePageNumber ? (item.page ?? item.pageNumber) : item.page
+        if (!Number.isSafeInteger(page) || (page as number) < 1) {
           throw new Error(`${where} needs a positive whole-number page (starting at 1).`)
         }
         if (item.children !== undefined)
@@ -188,7 +197,7 @@ export function validateBookmarkDocument(text: string): void {
   }
 }
 
-function convertBookmarkList(value: unknown): BookmarkNode[] | null {
+function convertBookmarkList(value: unknown, allowNativePageNumber = false): BookmarkNode[] | null {
   if (!Array.isArray(value)) return null
   const root: BookmarkNode[] = []
   const pending: { source: unknown; output: BookmarkNode[] }[] = [{ source: value, output: root }]
@@ -197,15 +206,21 @@ function convertBookmarkList(value: unknown): BookmarkNode[] | null {
     if (!current) break
     if (!Array.isArray(current.source)) return null
     for (const item of current.source) {
+      if (!isRecord(item) || typeof item.title !== 'string') return null
       if (
-        !isRecord(item) ||
-        typeof item.title !== 'string' ||
-        (typeof item.page !== 'number' && typeof item.page !== 'string')
-      ) {
+        allowNativePageNumber &&
+        item.page !== undefined &&
+        item.pageNumber !== undefined &&
+        item.page !== item.pageNumber
+      )
         return null
-      }
+      const page = allowNativePageNumber ? (item.page ?? item.pageNumber) : item.page
+      if (typeof page !== 'number' && typeof page !== 'string') return null
       const children: BookmarkNode[] = []
-      current.output.push({ ...item, title: item.title, page: item.page, children })
+      const row: BookmarkNode = { ...item, title: item.title, page, children }
+      // Use the editor's canonical page alias so a visual edit cannot leave a stale pageNumber.
+      if (allowNativePageNumber) delete row.pageNumber
+      current.output.push(row)
       pending.push({ source: item.children ?? [], output: children })
     }
   }
@@ -213,14 +228,17 @@ function convertBookmarkList(value: unknown): BookmarkNode[] | null {
 }
 
 /** A filename-keyed map stays in raw JSON mode rather than being silently flattened. */
-export function visualBookmarkList(text: string): BookmarkNode[] | null {
+export function visualBookmarkList(
+  text: string,
+  { allowNativePageNumber = false }: { allowNativePageNumber?: boolean } = {},
+): BookmarkNode[] | null {
   let value: unknown
   try {
     value = JSON.parse(text)
   } catch {
     return null
   }
-  return convertBookmarkList(value)
+  return convertBookmarkList(value, allowNativePageNumber)
 }
 
 export type BookmarkEdit =
@@ -230,8 +248,12 @@ export type BookmarkEdit =
   | { kind: 'move'; path: number[]; direction: -1 | 1 }
 
 /** Immutable JSON transformation, with paths indexing siblings at each tree level. */
-export function editBookmarks(text: string, edit: BookmarkEdit): string {
-  const rows = visualBookmarkList(text)
+export function editBookmarks(
+  text: string,
+  edit: BookmarkEdit,
+  options: { allowNativePageNumber?: boolean } = {},
+): string {
+  const rows = visualBookmarkList(text, options)
   if (!rows) throw new Error('Switch to JSON to edit this bookmark structure.')
   const root = structuredClone(rows)
   const path = edit.kind === 'add' ? edit.parent : edit.path.slice(0, -1)

@@ -643,3 +643,13 @@ test('cleared optional Chromium wait and User-Agent fields restore upstream defa
     }
   }
 })
+
+test('rejects non-string SameSite values even when they stringify to a supported enum', () => {
+  assert.throws(
+    () =>
+      validatePayload(
+        request('url-pdf', { cookies: JSON.stringify([{ ...cookie, sameSite: ['Lax'] }]) }),
+      ),
+    /cookie/i,
+  )
+})

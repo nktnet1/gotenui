@@ -42,6 +42,7 @@ import {
 } from '#/lib/connection-profiles'
 import { type ObservedConnectionStatus, statusForConnection } from '#/lib/connection-status'
 import { getGotenbergStatus, type ServerStatus } from '#/lib/gotenberg-client'
+import { LatestProbe } from '#/lib/latest-probe'
 import {
   backendCompatibilityNotice,
   confirmedBackendVersion,
@@ -461,43 +462,46 @@ function Workspace({
     document.addEventListener('keydown', handleSearchShortcut)
     return () => document.removeEventListener('keydown', handleSearchShortcut)
   }, [settingsOpen, diagnosticsOpen, openSearch, searchOpen])
-  const statusAbort = useRef<AbortController | null>(null)
+  const statusProbe = useRef(new LatestProbe())
   const refreshStatus = useCallback(
     async (notify = false) => {
-      statusAbort.current?.abort()
-      const controller = new AbortController()
-      statusAbort.current = controller
       setStatusPending(true)
-      const timeout = window.setTimeout(() => controller.abort(), 7_000)
-      try {
-        const result = await getGotenbergStatus(connection, controller.signal)
-        if (!controller.signal.aborted && statusAbort.current === controller) {
-          setObservedStatus({ key: statusKey, value: result })
-          if (notify) {
-            if (result.online) toast.success('Gotenberg status refreshed - service online.')
-            else toast.error('Gotenberg status refreshed - service unavailable.')
-          }
-        }
-      } catch {
-        if (statusAbort.current === controller) {
-          setObservedStatus({
-            key: statusKey,
-            value: {
-              online: false,
-              version: 'Unavailable',
-              modules: [],
-              error: 'Connection test timed out.',
-            },
-          })
-          if (notify) toast.error('Gotenberg status refresh timed out.')
-        }
-      } finally {
-        window.clearTimeout(timeout)
-        if (statusAbort.current === controller) {
-          statusAbort.current = null
-          setStatusPending(false)
-        }
-      }
+      await statusProbe.current.run(
+        (signal) => getGotenbergStatus(connection, signal),
+        {
+          success: (result) => {
+            setObservedStatus({ key: statusKey, value: result })
+            if (notify) {
+              if (result.online) toast.success('Gotenberg status refreshed - service online.')
+              else toast.error('Gotenberg status refreshed - service unavailable.')
+            }
+          },
+          error: (error) => {
+            const timedOut = error instanceof Error && error.name === 'TimeoutError'
+            setObservedStatus({
+              key: statusKey,
+              value: {
+                online: false,
+                version: 'Unavailable',
+                modules: [],
+                error: timedOut
+                  ? 'Connection test timed out.'
+                  : error instanceof Error
+                    ? error.message
+                    : 'Connection test failed.',
+              },
+            })
+            if (notify)
+              toast.error(
+                timedOut
+                  ? 'Gotenberg status refresh timed out.'
+                  : 'Gotenberg status refresh failed.',
+              )
+          },
+          settled: () => setStatusPending(false),
+        },
+        7_000,
+      )
     },
     [connection, statusKey],
   )
@@ -506,12 +510,11 @@ function Workspace({
     void refreshStatus()
     const timer = window.setInterval(() => {
       // An automatic poll must not cancel a manually requested refresh and its toast.
-      if (!statusAbort.current) void refreshStatus()
+      if (!statusProbe.current.pending) void refreshStatus()
     }, 30_000)
     return () => {
       window.clearInterval(timer)
-      statusAbort.current?.abort()
-      statusAbort.current = null
+      statusProbe.current.cancel()
     }
   }, [refreshStatus])
   const applyConnection = (id: string, username: string, secret: string) => {

@@ -7,7 +7,11 @@ import { PdfBookmarksEditor } from '#/components/pdf-structure-editors'
 import { TooltipProvider } from '#/components/ui/tooltip'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { isFieldVisible, OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
-import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
+import {
+  canImportPdfStructure,
+  importReadableBookmarks,
+  importReadableMetadata,
+} from '#/lib/pdf-read-import'
 import {
   addBookmarkMapping,
   editFileBookmarks,
@@ -384,5 +388,27 @@ it('native LibreOffice watermarks accept long upstream-supported text', () => {
     })
     const form = createGotenbergForm(operation, payload, [office], [])
     assert.equal(form.get(name), longWatermark)
+  }
+})
+
+it('preserves exact writable v9 metadata strings, including comma spacing and whitespace', () => {
+  const metadata = { title: ' ', keywords: 'one,two,, three ' }
+  assert.deepEqual(
+    JSON.parse(
+      importReadableMetadata({ 'report.pdf': metadata }, 'report.pdf', { standardOnly: true }),
+    ),
+    { Title: ' ', Keywords: metadata.keywords },
+  )
+})
+
+it('limits v9 bookmark import to one source without changing v8 multi-file import', () => {
+  for (const version of [false, true]) {
+    assert.equal(canImportPdfStructure('metadata-write', version, 0), false)
+    assert.equal(canImportPdfStructure('metadata-write', version, 1), true)
+    assert.equal(canImportPdfStructure('metadata-write', version, 2), false)
+    assert.equal(canImportPdfStructure('bookmarks-write', version, 0), false)
+    assert.equal(canImportPdfStructure('bookmarks-write', version, 1), true)
+    assert.equal(canImportPdfStructure('bookmarks-write', version, 2), !version)
+    assert.equal(canImportPdfStructure('rotate', version, 1), false)
   }
 })

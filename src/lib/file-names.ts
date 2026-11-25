@@ -3,6 +3,7 @@
  */
 export function safeFilename(name: string): string {
   if (
+    /\p{Cs}/u.test(name) ||
     name === '' ||
     name === '.' ||
     name === '..' ||
@@ -12,7 +13,9 @@ export function safeFilename(name: string): string {
       return code < 32 || code === 127
     })
   ) {
-    throw new Error('File names must not be empty, paths or contain control characters.')
+    throw new Error(
+      'File names must not be empty, paths or contain control characters or malformed Unicode.',
+    )
   }
   return name
 }

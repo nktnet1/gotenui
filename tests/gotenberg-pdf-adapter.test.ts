@@ -1036,3 +1036,58 @@ describe('Gotenberg 9 source PDF overlay page', () => {
     assert.equal(remote.count(), 0)
   })
 })
+
+it('accepts native pageNumber bookmark JSON on v9 but rejects it before forwarding to v8', async () => {
+  const bookmarks =
+    '[{"title":"Intro","pageNumber":1,"children":[{"title":"Next","pageNumber":2}]}]'
+  const modern = fixture('9.1.0', (form) => {
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+      { op: 'set-bookmarks', bookmarks: JSON.parse(bookmarks) },
+    ])
+  })
+  const result = await proxyConversionRequest(
+    requestFor('bookmarks-write', { bookmarks }),
+    modern.fetcher,
+  )
+  assert.equal(result.status, 200)
+  await result.body?.cancel()
+  assert.equal(modern.count(), 1)
+  const legacy = fixture('8.40.0', () =>
+    assert.fail('Native bookmark pages must not be forwarded to v8'),
+  )
+  await assert.rejects(
+    proxyConversionRequest(requestFor('bookmarks-write', { bookmarks }), legacy.fetcher),
+    /positive whole-number page/,
+  )
+  assert.equal(legacy.count(), 0)
+})
+
+it('rejects an empty v9 bookmark write rather than forwarding an invalid set-bookmarks stage', async () => {
+  const remote = fixture('9.1.0', () => assert.fail('An empty bookmark tree must not be forwarded'))
+  await assert.rejects(
+    proxyConversionRequest(requestFor('bookmarks-write', { bookmarks: '[]' }), remote.fetcher),
+    /at least one bookmark/,
+  )
+  assert.equal(remote.count(), 0)
+})
+
+it('round-trips native metadata strings without normalising their spacing', async () => {
+  const keywords = 'one,two,, three '
+  const metadata = importReadableMetadata(
+    { 'report.pdf': { keywords, title: ' ' } },
+    'report.pdf',
+    { standardOnly: true },
+  )
+  const remote = fixture('9.1.0', (form) => {
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+      { op: 'set-metadata', title: ' ', keywords },
+    ])
+  })
+  const response = await proxyConversionRequest(
+    requestFor('metadata-write', { metadata }),
+    remote.fetcher,
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+  assert.equal(remote.count(), 1)
+})

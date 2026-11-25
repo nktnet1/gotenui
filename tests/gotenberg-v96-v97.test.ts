@@ -1028,3 +1028,39 @@ describe('Gotenberg 9.7 per-file merge bookmarks', () => {
     }
   })
 })
+
+it('gates explicit null options that older Gotenberg releases do not recognise', async () => {
+  const { requiresGotenberg96ForSignatureDrop, requiresGotenberg97ForFileBookmarks } = await import(
+    '#/lib/gotenberg-version'
+  )
+  const stage = { op: 'merge', dropSignatures: null, fileBookmarks: null }
+  assert.equal(requiresGotenberg96ForSignatureDrop({ major: 9, minor: 5, patch: 0 }, [stage]), true)
+  assert.equal(
+    requiresGotenberg96ForSignatureDrop({ major: 9, minor: 6, patch: 0 }, [stage]),
+    false,
+  )
+  assert.equal(requiresGotenberg97ForFileBookmarks({ major: 9, minor: 6, patch: 0 }, [stage]), true)
+  assert.equal(
+    requiresGotenberg97ForFileBookmarks({ major: 9, minor: 7, patch: 0 }, [stage]),
+    false,
+  )
+})
+
+it('applies null option version gates to the editor and wire adapter', async () => {
+  for (const [stages, older, newer, reason] of [
+    [[{ op: 'optimize', dropSignatures: null }], '9.5.0', '9.6.0', /9\.6/],
+    [[{ op: 'merge', fileBookmarks: null }], '9.6.0', '9.7.0', /9\.7/],
+  ] as const) {
+    const raw = JSON.stringify(stages)
+    assert.match(pdfPipelineEditorError(raw, { ...editor, backendVersion: older }) ?? '', reason)
+    assert.equal(pdfPipelineEditorError(raw, { ...editor, backendVersion: newer }), null)
+    const old = server(older)
+    await assert.rejects(
+      proxyConversionRequest(request('pdf-pipeline', { stages: raw }), old.fetcher),
+      { status: 409 },
+    )
+    assert.equal(old.requests.length, 0)
+    const current = await convert('pdf-pipeline', newer, { stages: raw })
+    assert.deepEqual(current.stages, stages)
+  }
+})

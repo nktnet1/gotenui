@@ -319,3 +319,24 @@ test('preflight validates raw Chromium split settings without a custom pipeline'
     }),
   ).toEqual([])
 })
+
+test('preflights metadata and bookmark writes against the selected version', () => {
+  for (const [id, fields, reason] of [
+    ['metadata-write', { metadata: '{"Copyright":"legacy"}' }, /cannot write/],
+    ['metadata-write', { metadata: '{"Title":"a","title":"b"}' }, /conflicting aliases/],
+    [
+      'bookmarks-write',
+      { bookmarks: '{"report.pdf":[{"title":"A","page":1}]}' },
+      /shared bookmark tree/,
+    ],
+    ['bookmarks-write', { bookmarks: '[]' }, /at least one bookmark/],
+    [
+      'bookmarks-write',
+      { bookmarks: '[{"title":"A","page":1,"children":[{"title":"B","page":2,"extra":true}]}]' },
+      /extra bookmark properties/,
+    ],
+  ] as const) {
+    expect(draftOutboundIssues(operation(id), fields, '9.10.0', draft).join(' ')).toMatch(reason)
+    expect(draftOutboundIssues(operation(id), fields, '8.40.0', draft)).toEqual([])
+  }
+})

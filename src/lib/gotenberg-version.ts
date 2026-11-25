@@ -50,18 +50,19 @@ export function requiresGotenberg92ForComposition(
   return false
 }
 
-/** Only Gotenberg 9.4+ understands anchored text, image and PDF stamps. */
+/** Only Gotenberg 9.4+ understands the position option, even if its value is empty.
+ * Older stage decoders reject unknown option names before decoding their values.
+ */
 export function requiresGotenberg94ForStampPosition(
   version: GotenbergVersion,
   stages: Iterable<{ op: string; position?: unknown }>,
 ): boolean {
   if (version.major !== 9 || version.minor >= 4) return false
-  for (const { op, position } of stages) {
+  for (const stage of stages) {
+    const { op } = stage
     if (
       (op === 'stamp-text' || op === 'stamp-image' || op === 'stamp-pdf') &&
-      position !== undefined &&
-      position !== null &&
-      position !== ''
+      Object.hasOwn(stage, 'position')
     ) {
       return true
     }
@@ -88,7 +89,7 @@ export function requiresGotenberg96ForSignatureDrop(
 ): boolean {
   if (version.major !== 9 || version.minor >= 6) return false
   for (const stage of stages) {
-    if (stage.dropSignatures !== undefined && stage.dropSignatures !== null) return true
+    if (Object.hasOwn(stage, 'dropSignatures')) return true
   }
   return false
 }
@@ -100,7 +101,7 @@ export function requiresGotenberg97ForFileBookmarks(
 ): boolean {
   if (version.major !== 9 || version.minor >= 7) return false
   for (const stage of stages) {
-    if (stage.op === 'merge' && stage.fileBookmarks !== undefined && stage.fileBookmarks !== null) {
+    if (stage.op === 'merge' && Object.hasOwn(stage, 'fileBookmarks')) {
       return true
     }
   }

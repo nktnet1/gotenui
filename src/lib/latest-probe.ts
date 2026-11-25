@@ -2,6 +2,10 @@
 export class LatestProbe {
   private active: AbortController | null = null
 
+  get pending(): boolean {
+    return this.active !== null
+  }
+
   cancel(): void {
     const controller = this.active
     this.active = null

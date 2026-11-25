@@ -7,6 +7,8 @@ import type { GotenbergVersion } from '#/lib/gotenberg-version'
 import { canWebhookForOperation } from '#/lib/operation-availability'
 import { conversionSplitStage } from '#/lib/pdf-pipeline'
 import { pdfPostProcessSchema } from '#/lib/pdf-post-processing'
+import { validateBookmarkDocument } from '#/lib/pdf-structure-editors'
+import { v9BookmarkTree, v9MetadataFields } from '#/lib/pdf-v9-structure'
 import type { ConversionPayload } from '#/lib/validation'
 import { fieldCompatibilityReason } from '#/tools/shared/field-visibility'
 import type { Operation } from '#/tools/types'
@@ -158,6 +160,19 @@ export function outboundCompatibilityReasons(
       reasons.push('Gotenberg 9 webhooks require an events callback URL.')
     if (payload.webhook.errorUrl || payload.webhook.errorMethod)
       reasons.push('Gotenberg 9 removed the separate webhook error callback.')
+  }
+  // Match the standalone adapters before users submit or queue a retained draft.
+  try {
+    if (modern && operation.id === 'metadata-write' && payload.fields.metadata) {
+      v9MetadataFields(String(payload.fields.metadata))
+    }
+    if (operation.id === 'bookmarks-write' && payload.fields.bookmarks) {
+      const raw = String(payload.fields.bookmarks)
+      if (modern) v9BookmarkTree(raw)
+      else validateBookmarkDocument(raw)
+    }
+  } catch (error) {
+    reasons.push(error instanceof Error ? error.message : 'Invalid PDF structure.')
   }
   reasons.push(...advancedCompatibilityReasons(operation, version, payload))
   return reasons

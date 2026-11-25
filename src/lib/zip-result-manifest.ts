@@ -39,6 +39,7 @@ function entryKind(name: string): ZipResultEntry['kind'] {
 function displayName(name: string): string {
   // A malicious archive name is only displayed; no path is ever extracted.
   return Array.from(name)
+    .slice(0, 160)
     .map((character) => {
       const code = character.codePointAt(0) ?? 0
       return code < 32 ||
@@ -49,7 +50,6 @@ function displayName(name: string): string {
         : character
     })
     .join('')
-    .slice(0, 160)
 }
 
 /** Read at most ~576 KiB regardless of the total downloaded archive size. */
@@ -93,7 +93,7 @@ export async function inspectZipResult(blob: Blob): Promise<ZipResultManifest> {
   let fileCount = 0
   let totalUncompressedBytes = 0
   const entries: ZipResultEntry[] = []
-  const decoder = new TextDecoder('utf-8', { fatal: false })
+  const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true })
   for (let i = 0; i < totalFiles; i++) {
     if (cursor + 46 > directory.length) throw new Error('Truncated ZIP directory entry.')
     if (readUint32(view, cursor) !== 0x02014b50) throw new Error('Invalid ZIP directory entry.')
@@ -104,14 +104,12 @@ export async function inspectZipResult(blob: Blob): Promise<ZipResultManifest> {
     const next = cursor + 46 + filenameLength + extraLength + commentLength
     if (next > directory.length) throw new Error('Truncated ZIP directory entry.')
     if (size === 0xffffffff) throw new Error('ZIP64 entries cannot be previewed.')
-    const name = displayName(
-      decoder.decode(directory.subarray(cursor + 46, cursor + 46 + filenameLength)),
-    )
+    const name = decoder.decode(directory.subarray(cursor + 46, cursor + 46 + filenameLength))
     if (!name.endsWith('/')) {
       fileCount++
       totalUncompressedBytes += size
       if (entries.length < MAX_VISIBLE_FILES) {
-        entries.push({ id: cursor, name, size, kind: entryKind(name) })
+        entries.push({ id: cursor, name: displayName(name), size, kind: entryKind(name) })
       }
     }
     cursor = next

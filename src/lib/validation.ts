@@ -150,7 +150,9 @@ export function safeFilename(name: string): string {
   try {
     return checkFilename(name)
   } catch {
-    throw new InputError('File names must not be empty, paths or contain control characters.')
+    throw new InputError(
+      'File names must not be empty, paths or contain control characters or malformed Unicode.',
+    )
   }
 }
 
@@ -861,7 +863,8 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
         (entry.secure !== undefined && typeof entry.secure !== 'boolean') ||
         (entry.httpOnly !== undefined && typeof entry.httpOnly !== 'boolean') ||
         (entry.sameSite !== undefined &&
-          !['strict', 'lax', 'none'].includes(String(entry.sameSite).toLowerCase()))
+          (typeof entry.sameSite !== 'string' ||
+            !['strict', 'lax', 'none'].includes(entry.sameSite.toLowerCase())))
       ) {
         throw new InputError(
           'Chromium cookie requires a valid name, value, domain and optional attributes.',
@@ -1273,7 +1276,9 @@ export function validatePayload(input: unknown): {
   }
   if (definitions.has('bookmarks') && payload.fields.bookmarks) {
     try {
-      validateBookmarkDocument(String(payload.fields.bookmarks ?? ''))
+      validateBookmarkDocument(String(payload.fields.bookmarks ?? ''), {
+        allowNativePageNumber: true,
+      })
     } catch (error) {
       throw new InputError(error instanceof Error ? error.message : 'Invalid PDF bookmarks.')
     }
