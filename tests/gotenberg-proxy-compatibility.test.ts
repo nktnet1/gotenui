@@ -1680,3 +1680,100 @@ test.each(['8.40.0', '9.10.0'])(
     assert.equal(fixture.counts().conversions, 1)
   },
 )
+
+test.each(attachmentExtractionCases)(
+  '$operation accepts filename-bearing attachments with valid MIME token punctuation',
+  async ({ operation, fields }) => {
+    const type = 'application/vnd.example~archive'
+    const fetcher: typeof fetch = async (input) =>
+      String(input) === `${upstream}/version`
+        ? new Response('9.10.0')
+        : new Response('contents', {
+            headers: {
+              'Content-Type': type,
+              'Content-Disposition': 'attachment; filename="example.custom"',
+            },
+          })
+    const response = await proxyConversionRequest(
+      requestFor(operation, fields, {}, [new File(['%PDF-1.7\n'], 'source.pdf')]),
+      fetcher,
+    )
+    assert.equal(response.headers.get('content-type'), type)
+    assert.equal(await response.text(), 'contents')
+  },
+)
+
+test.each([undefined, '[]', '[{"op":"optimize"}]'])(
+  'Office built-in merge remains PDF-only with conversion stages %s',
+  async (conversionStages) => {
+    const source = zipFixture({ 'first.docx': 'first', 'second.docx': 'second' })
+    const fetcher: typeof fetch = async (input, options) => {
+      if (String(input) === `${upstream}/version`) return new Response('9.10.0')
+      assert.ok(options?.body instanceof FormData)
+      assert.equal(JSON.parse(String(options.body.get('stages')))[0].op, 'merge')
+      return new Response(await source.arrayBuffer(), {
+        headers: { 'Content-Type': 'application/zip' },
+      })
+    }
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('office-pdf', { merge: true }, { conversionStages }, [], [], [], [source]),
+        fetcher,
+      ),
+      /unexpected conversion response/,
+    )
+  },
+)
+
+test('a generated Office merge followed by a custom split still permits a ZIP', async () => {
+  const source = zipFixture({ 'first.docx': 'first', 'second.docx': 'second' })
+  const output = zipFixture({ 'first_1.pdf': '%PDF-1.7\n', 'first_2.pdf': '%PDF-1.7\n' })
+  const fetcher: typeof fetch = async (input, options) => {
+    if (String(input) === `${upstream}/version`) return new Response('9.10.0')
+    assert.ok(options?.body instanceof FormData)
+    assert.deepEqual(JSON.parse(String(options.body.get('stages'))), [
+      { op: 'merge' },
+      { op: 'split', every: 1 },
+    ])
+    return new Response(await output.arrayBuffer(), {
+      headers: { 'Content-Type': 'application/zip' },
+    })
+  }
+  const response = await proxyConversionRequest(
+    requestFor(
+      'office-pdf',
+      { merge: true },
+      { conversionStages: '[{"op":"split","every":1}]' },
+      [],
+      [],
+      [],
+      [source],
+    ),
+    fetcher,
+  )
+  assert.equal(response.headers.get('content-type'), 'application/zip')
+  assert.deepEqual(
+    Buffer.from(await response.arrayBuffer()),
+    Buffer.from(await output.arrayBuffer()),
+  )
+})
+
+test.each([
+  ['application/*', 'attachment; filename="example.custom"'],
+  ['application/vnd.example~archive', 'inline; filename="example.custom"'],
+  ['application/vnd.example~archive', 'attachment'],
+])('attachment extraction rejects %s with disposition %s', async (type, disposition) => {
+  const fetcher: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.10.0')
+      : new Response('contents', {
+          headers: { 'Content-Type': type, 'Content-Disposition': disposition },
+        })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('extract-attachments', {}, {}, [new File(['%PDF-1.7\n'], 'source.pdf')]),
+      fetcher,
+    ),
+    /unexpected conversion response/,
+  )
+})

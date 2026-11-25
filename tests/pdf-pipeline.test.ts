@@ -547,7 +547,7 @@ describe('PDF pipeline catalogue and stage contract', () => {
   it('supports upstream empty defaults without inventing missing PDF stage assets', () => {
     const stages = [
       { op: 'remediate', profile: 'Factur-X', xml: '' },
-      { op: 'sign', certificate: 'signing.p12', key: '' },
+      { op: 'sign', certificate: 'signing.p12', key: '', timestampUrl: '' },
     ]
     assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
     const signingFile = new File(['certificate'], 'signing.p12')

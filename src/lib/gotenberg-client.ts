@@ -11,7 +11,12 @@ import {
   normalizeAdvancedMediaFeatures,
 } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
-import { filenameKey, planRemoteFilenames } from '#/lib/file-names'
+import {
+  CHROMIUM_REMOTE_FILENAME_VERSION_REASON,
+  filenameKey,
+  planRemoteFilenames,
+  remoteFilenamePlanReason,
+} from '#/lib/file-names'
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
@@ -298,11 +303,10 @@ export function createGotenbergForm(
       stageAssetNames,
     })
     if (chromiumNamesAtRisk && !supportsFilename) {
-      throw new InputError(
-        'Chromium remote downloads alongside local assets require Gotenberg 9.2 or newer to pin their filenames.',
-        409,
-      )
+      throw new InputError(CHROMIUM_REMOTE_FILENAME_VERSION_REASON, 409)
     }
+    const filenameReason = remoteFilenamePlanReason(filenamePlan)
+    if (filenameReason) throw new InputError(filenameReason)
     form.set(
       'downloadFrom',
       JSON.stringify(
@@ -313,13 +317,7 @@ export function createGotenbergForm(
               409,
             )
           }
-          const planned = filenamePlan[index]
-          const effectiveFilename = planned?.name
-          if (planned?.required && !effectiveFilename) {
-            throw new InputError(
-              'Specify a remote filename for downloads whose URL has no file extension when named assets could be shadowed.',
-            )
-          }
+          const effectiveFilename = filenamePlan[index]?.name
           return {
             ...remote,
             ...(supportsFilename && effectiveFilename ? { filename: effectiveFilename } : {}),

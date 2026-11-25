@@ -418,8 +418,15 @@ export function Workbench({
       ? `https://gotenberg.dev/docs/pdf/${operation.id === 'extract-attachments' ? 'attachments' : operation.id === 'extract-text' ? 'pages' : operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`
       : `https://gotenberg.dev/docs/${operation.docs}`
 
-  const updateField = (name: string, value: string | boolean) =>
+  const cancelStructureRead = () => {
+    readAbort.current?.abort()
+    readAbort.current = null
+    setReadingStructure(false)
+  }
+  const updateField = (name: string, value: string | boolean) => {
+    if (name === 'metadata' || name === 'bookmarks') cancelStructureRead()
     setFields((current) => ({ ...current, [name]: value }))
+  }
   const updateAux = (selected: File[]) => {
     setAuxFiles(selected)
     if ((operation.id === 'watermark' || operation.id === 'stamp') && selected[0]) {
@@ -461,20 +468,20 @@ export function Workbench({
         [],
         signal,
       )
-      if (signal.aborted) return
+      signal.throwIfAborted()
       if (result.mode !== 'download')
         throw new Error('Reading requires an immediate JSON response.')
       if (result.blob.size > 2_000_000)
         throw new Error('The PDF structure response is too large to edit.')
       const content: unknown = JSON.parse(await result.blob.text())
-      if (signal.aborted) return
+      signal.throwIfAborted()
       const editable = metadata
         ? importReadableMetadata(content, files[0]?.name ?? '', { standardOnly: isV9 })
         : importReadableBookmarks(
             content,
             files.map((file) => file.name),
           )
-      updateField(metadata ? 'metadata' : 'bookmarks', editable)
+      setFields((current) => ({ ...current, [metadata ? 'metadata' : 'bookmarks']: editable }))
       toast.success(`Existing ${metadata ? 'metadata' : 'bookmarks'} loaded for editing.`)
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -490,6 +497,7 @@ export function Workbench({
 
   const buildCandidate = () => {
     if (submissionBlocked) throw new InputError(submissionBlocked)
+    if (readAbort.current) throw new InputError('Wait for the PDF structure read to finish.')
     const issues = [...compatibility.reasons, ...outboundIssues]
     if (issues.length) throw new InputError(issues.join(' '))
     const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
@@ -561,7 +569,7 @@ export function Workbench({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (pending || requestAbort.current) return
+    if (pending || requestAbort.current || readAbort.current) return
     if (submissionBlocked) {
       toast.error(submissionBlocked)
       return
@@ -801,7 +809,7 @@ export function Workbench({
                 }
                 files={files}
                 onChange={(nextFiles) => {
-                  readAbort.current?.abort()
+                  cancelStructureRead()
                   setFiles(nextFiles)
                 }}
                 accept={
@@ -1305,6 +1313,7 @@ export function Workbench({
               size="lg"
               disabled={
                 pending ||
+                readingStructure ||
                 Boolean(submissionBlocked) ||
                 compatibility.reasons.length > 0 ||
                 outboundIssues.length > 0 ||
@@ -1319,6 +1328,7 @@ export function Workbench({
               size="lg"
               disabled={
                 pending ||
+                readingStructure ||
                 Boolean(submissionBlocked) ||
                 compatibility.reasons.length > 0 ||
                 outboundIssues.length > 0 ||

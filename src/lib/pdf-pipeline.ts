@@ -757,7 +757,11 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('render: JPEG quality must be between 1 and 100.')
       break
   }
-  if ((name === 'sign' || name === 'timestamp') && !absent(stage.timestampUrl)) {
+  if (
+    (name === 'sign' || name === 'timestamp') &&
+    !absent(stage.timestampUrl) &&
+    !(name === 'sign' && stage.timestampUrl === '')
+  ) {
     if (typeof stage.timestampUrl !== 'string')
       throw new InputError(`${name}: invalid timestamp authority URL.`)
     stage.timestampUrl = timestampAuthorityUrl(stage.timestampUrl)

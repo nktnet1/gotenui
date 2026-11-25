@@ -1,5 +1,9 @@
 import { type RemoteInputRow, remoteInputsPayload } from '#/lib/async-inputs'
-import { planRemoteFilenames } from '#/lib/file-names'
+import {
+  CHROMIUM_REMOTE_FILENAME_VERSION_REASON,
+  planRemoteFilenames,
+  remoteFilenamePlanReason,
+} from '#/lib/file-names'
 import { planV9ConversionStages } from '#/lib/gotenberg-conversion-adapter'
 import {
   parseGotenbergVersion,
@@ -80,12 +84,23 @@ export function pdfPipelineEditorError(
       validateAsyncInputValues(remoteInputsPayload(remoteRows, remoteJson), undefined)
         .downloadFrom ?? []
     const sourceRemotes = remotes.filter(({ field, embedded }) => !field && !embedded)
-    const remoteFilenames = planRemoteFilenames(sourceRemotes, {
+    if (
+      documentKind === 'single' &&
+      sourceRemotes.length &&
+      version?.major === 9 &&
+      version.minor < 2
+    ) {
+      return CHROMIUM_REMOTE_FILENAME_VERSION_REASON
+    }
+    const filenamePlan = planRemoteFilenames(sourceRemotes, {
       supportsFilename: version?.major === 9 && version.minor >= 2,
       inferAll: localNames.length > 0 || archivesPresent,
       pinAll: localAssetNames.length > 0 || documentKind === 'single',
       stageAssetNames: referencedAssets,
-    }).map(({ name }) => name)
+    })
+    const filenameReason = remoteFilenamePlanReason(filenamePlan)
+    if (filenameReason) return filenameReason
+    const remoteFilenames = filenamePlan.map(({ name }) => name)
     const pipeline = (() => {
       if (!conversionMode) return parsed
       const fields = conversionFields ?? {

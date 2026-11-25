@@ -153,3 +153,41 @@ it('rejects raw decryption stages in conversion-time editors only', () => {
   }
   assert.equal(pdfPipelineEditorError(stages, { ...base, documentKind: 'pdf' }), null)
 })
+
+it('requires deterministic remote filenames when local stage assets could be shadowed', () => {
+  assert.match(
+    pdfPipelineEditorError('[{"op":"attach","file":"proof.txt"}]', {
+      ...base,
+      backendVersion: '9.10.0',
+      documentKind: 'pdf',
+      documentNames: ['source.pdf'],
+      localAssetNames: ['proof.txt'],
+      remoteRows: [remoteRow(1, '')],
+    }) ?? '',
+    /Specify a remote filename/,
+  )
+})
+
+it('requires v9.2 to pin downloads alongside Chromium conversion pipelines', () => {
+  assert.match(
+    pdfPipelineEditorError('[{"op":"optimize"}]', {
+      ...base,
+      backendVersion: '9.1.0',
+      documentKind: 'single',
+      remoteJson: '[{"url":"https://example.test/style.css"}]',
+    }) ?? '',
+    /Chromium remote downloads alongside local assets require Gotenberg 9.2/,
+  )
+})
+
+it('retains dynamically named downloads where no local or remote asset needs protection', () => {
+  assert.equal(
+    pdfPipelineEditorError('[{"op":"optimize"}]', {
+      ...base,
+      backendVersion: '9.10.0',
+      documentKind: 'pdf',
+      remoteRows: [remoteRow(1, '')],
+    }),
+    null,
+  )
+})

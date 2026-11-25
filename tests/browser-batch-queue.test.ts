@@ -974,3 +974,50 @@ it('never exceeds concurrency when a subscriber enqueues during dispatch', async
     queue.dispose()
   }
 })
+
+it('does not strand a running job when a subscriber throws during dispatch', async () => {
+  const execute = vi.fn(async () => pdf())
+  const { queue } = queueWith(execute)
+  queue.enqueue(input())
+  queue.subscribe(() => {
+    if (queue.getSnapshot().jobs.some(({ status }) => status === 'running')) {
+      throw new Error('subscriber failed')
+    }
+  })
+  const observer = vi.fn()
+  queue.subscribe(observer)
+  try {
+    expect(() => queue.start()).not.toThrow()
+    await tick()
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('completed')
+    expect(observer).toHaveBeenCalledTimes(3)
+  } finally {
+    queue.dispose()
+  }
+})
+
+it('cancels all waiting jobs before publishing a snapshot that can restart dispatch', async () => {
+  const execute = vi.fn(async () => pdf())
+  const { queue } = queueWith(execute)
+  for (let i = 0; i < 3; i++) queue.enqueue(input())
+  let restarted = false
+  queue.subscribe(() => {
+    if (!restarted && !queue.getSnapshot().active) {
+      restarted = true
+      queue.start()
+    }
+  })
+  try {
+    queue.cancelAll()
+    await tick()
+    expect(execute).not.toHaveBeenCalled()
+    expect(queue.getSnapshot().jobs.map(({ status }) => status)).toEqual([
+      'cancelled',
+      'cancelled',
+      'cancelled',
+    ])
+  } finally {
+    queue.dispose()
+  }
+})

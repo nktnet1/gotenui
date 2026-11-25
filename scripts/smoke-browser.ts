@@ -1403,6 +1403,80 @@ async function run(): Promise<void> {
     )
     checks++
 
+    // A read can complete after a user has edited the imported structure.
+    // Deliberately ignore the abort signal in this fixture to test stale results.
+    await page.evaluate(`(() => {
+      const delegate = window.fetch.bind(window)
+      window.__restoreStructureReadFetch = () => { window.fetch = delegate }
+      window.fetch = (input, options) => {
+        if (String(input) === '/api/gotenberg/convert') {
+          const payload = JSON.parse(options.body.get('payload'))
+          if (payload.operation === 'metadata-read') {
+            window.__structureReadSignal = options.signal
+            return new Promise(resolve => {
+              window.__finishStructureRead = () => resolve(Response.json({
+                'source.pdf': { Title: 'Old server title' },
+              }))
+            })
+          }
+        }
+        return delegate(input, options)
+      }
+      document.querySelector('#gotenui-navigation nav button[data-operation-id="metadata-write"]').click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent === 'Write metadata'",
+      'metadata import editor',
+    )
+    await page.evaluate(`(() => {
+      const input = document.querySelector('fieldset[aria-label="Upload PDF documents drop area"] input[type=file]')
+      if (!input) throw new Error('Missing PDF upload for metadata import')
+      const files = new DataTransfer()
+      files.items.add(new File(['%PDF-1.7\\nsynthetic browser fixture'], 'source.pdf', { type: 'application/pdf' }))
+      input.files = files.files
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('[aria-label="Upload PDF documents selected files"]')?.textContent.includes('source.pdf')`,
+      'metadata import receives a local file',
+    )
+    await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Read existing PDF values')
+      if (!button || button.disabled) throw new Error('Metadata read is unavailable')
+      button.click()
+    })()`)
+    await page.waitUntil(
+      `typeof window.__finishStructureRead === 'function' &&
+        document.querySelector('form button[type=submit]')?.disabled &&
+        [...document.querySelectorAll('form button')].find(el => el.textContent.trim() === 'Add to batch')?.disabled`,
+      'an in-progress PDF structure read blocks submission and queuing',
+    )
+    await page.evaluate(`(() => {
+      const input = document.querySelector('input[id$="-Title"]')
+      if (!input) throw new Error('Missing metadata title input')
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'My edited title')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `window.__structureReadSignal.aborted &&
+        !document.querySelector('form button[type=submit]')?.disabled &&
+        [...document.querySelectorAll('button')].some(el => el.textContent.trim() === 'Read existing PDF values')`,
+      'manual metadata editing cancels the outstanding read',
+    )
+    await page.evaluate(`(async () => {
+      window.__finishStructureRead()
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      window.__restoreStructureReadFetch()
+    })()`)
+    assert.equal(
+      await page.evaluate(`document.querySelector('input[id$="-Title"]')?.value`),
+      'My edited title',
+      'An obsolete metadata read must not overwrite the user draft.',
+    )
+    checks++
+
     // Restore the v8 connection for the remaining legacy diagnostics, theme,
     // and conversion checks in this smoke suite.
     await page.evaluate(`(() => {

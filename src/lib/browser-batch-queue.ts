@@ -199,7 +199,13 @@ export class BrowserBatchQueue {
       active: this.snapshot.active,
       jobs: this.records.map(({ view }) => ({ ...view })),
     }
-    for (const listener of this.listeners) listener()
+    for (const listener of this.listeners) {
+      try {
+        listener()
+      } catch {
+        // A failing observer must not interrupt dispatch or other observers.
+      }
+    }
   }
 
   enqueue(input: BatchInput): number {
@@ -355,22 +361,31 @@ export class BrowserBatchQueue {
     })()
   }
 
-  cancel(id: number) {
-    const record = this.records.find(({ view }) => view.id === id)
-    if (!record || (record.view.status !== 'queued' && record.view.status !== 'running')) return
+  private markCancelled(record: RecordEntry): boolean {
+    if (record.view.status !== 'queued' && record.view.status !== 'running') return false
     record.view = {
       id: record.view.id,
       operation: record.view.operation,
       status: 'cancelled',
       aborting: Boolean(record.controller),
     }
+    return true
+  }
+
+  cancel(id: number) {
+    const record = this.records.find(({ view }) => view.id === id)
+    if (!record || !this.markCancelled(record)) return
     record.controller?.abort()
     this.emit()
   }
 
   cancelAll() {
-    this.pause()
-    for (const record of this.records) this.cancel(record.view.id)
+    this.snapshot = { ...this.snapshot, active: false }
+    // Mark every job before notifying subscribers or firing abort handlers.
+    // Neither may restart dispatch while old jobs are still queued.
+    const cancelled = this.records.filter((record) => this.markCancelled(record))
+    for (const record of cancelled) record.controller?.abort()
+    this.emit()
   }
 
   retry(id: number) {

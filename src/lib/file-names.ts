@@ -90,6 +90,18 @@ export function planRemoteFilenames(
   })
 }
 
+/** The editor and encoder must reject the same missing filename overrides. */
+export function remoteFilenamePlanReason(
+  plan: readonly { name: string | undefined; required: boolean }[],
+): string | null {
+  return plan.some(({ name, required }) => required && !name)
+    ? 'Specify a remote filename for downloads whose URL has no file extension when named assets could be shadowed.'
+    : null
+}
+
+export const CHROMIUM_REMOTE_FILENAME_VERSION_REASON =
+  'Chromium remote downloads alongside local assets require Gotenberg 9.2 or newer to pin their filenames.'
+
 /** Use the actual filename override emitted by the multipart encoder when
  * reconciling PDF sources. An older server's explicit name hint remains an
  * expected filename, not an upstream override.

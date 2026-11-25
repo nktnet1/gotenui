@@ -1,5 +1,6 @@
 import { joinURL } from 'ufo'
 import * as v from 'valibot'
+import { isAttachmentMimeType } from '#/lib/attachment-metadata'
 import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.server'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
@@ -399,6 +400,7 @@ function allowedConversionContentTypes(
   files: readonly File[],
   archives: readonly File[] = [],
   archiveEntryNames: readonly string[] = [],
+  forwardedStages: readonly PdfPipelineStage[] = [],
 ): readonly string[] {
   if (operation.id === 'extract-attachments') return ['*', 'application/zip']
   if (operation.id === 'extract-text')
@@ -406,18 +408,9 @@ function allowedConversionContentTypes(
       payload.fields.format === 'markdown' ? 'text/markdown' : 'text/plain',
       'application/zip',
     ]
-  if (operation.id === 'pdf-pipeline') {
-    return pipelineResponseTypes(
-      parsePdfPipeline(String(payload.fields.stages ?? ''), {
-        acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
-      }),
-    )
-  }
-  if (payload.conversionStages) {
-    const stages = parsePdfPipeline(payload.conversionStages, {
-      allowEmpty: true,
-      acknowledgedRedaction: payload.acknowledgedConversionRedaction,
-    })
+  if (operation.id === 'pdf-pipeline') return pipelineResponseTypes(forwardedStages)
+  if (operation.input !== 'pdf' && forwardedStages.length) {
+    const stages = forwardedStages
     // Gotenberg's Chromium and LibreOffice conversion routes pass newly
     // generated PDFs to Processor.Run and include those PDFs in its outputs.
     // Unlike /forms/pdf/pipe, they do not drop the source PDF when the sole
@@ -427,7 +420,11 @@ function allowedConversionContentTypes(
     if (['render', 'extract-text', 'extract-attachments'].includes(stages.at(-1)?.op ?? '')) {
       return ['application/zip']
     }
-    return pipelineResponseTypes(stages)
+    const types = pipelineResponseTypes(stages)
+    // Generated merge/compose stages constrain the output even without a
+    // custom pipeline. Otherwise keep the existing source-count checks for
+    // ordinary conversions rather than allowing every PDF/ZIP response.
+    if (payload.conversionStages || types.length === 1) return types
   }
   const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
   if (operation.id === 'render-pages') {
@@ -761,6 +758,8 @@ export async function proxyConversionRequest(
   if (major === 9) {
     validateAssetFilenameRegistration(form, archiveEntryNames, path.startsWith('/forms/chromium/'))
   }
+  const forwardedStages =
+    major === 9 ? (JSON.parse(String(form.get('stages') ?? '[]')) as PdfPipelineStage[]) : []
   const extractsAttachment = isStandaloneAttachmentExtraction(
     operation.id,
     payload.fields.stages,
@@ -840,6 +839,7 @@ export async function proxyConversionRequest(
     files,
     archives,
     archiveEntryNames,
+    forwardedStages,
   )
   const upstreamContentType = upstream.headers.get('content-type')
   const returnedType = upstreamContentType?.split(';')[0]?.trim().toLowerCase()
@@ -850,7 +850,9 @@ export async function proxyConversionRequest(
   const wildcardAllowed =
     allowedTypes.includes('*') &&
     returnedType !== undefined &&
-    /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(returnedType) &&
+    isAttachmentMimeType(returnedType) &&
+    !returnedType.startsWith('*/') &&
+    !returnedType.endsWith('/*') &&
     // Filename is required for arbitrary content; don't accept inline responses.
     /^attachment\s*;/i.test(attachmentDisposition ?? '') &&
     hasAttachmentFilename(attachmentDisposition)
@@ -899,9 +901,7 @@ export async function proxyConversionRequest(
         major === 9 &&
         returnedType === 'application/pdf' &&
         path === '/forms/pdf/pipe' &&
-        pipelineMayPreservePdfHeader(
-          JSON.parse(String(form.get('stages') ?? '[]')) as PdfPipelineStage[],
-        ),
+        pipelineMayPreservePdfHeader(forwardedStages),
     },
   )
   headers.set('Content-Type', upstreamContentType ?? returnedType)
