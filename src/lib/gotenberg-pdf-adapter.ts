@@ -18,6 +18,7 @@ import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-reme
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
 import { isPdfStampPosition } from '#/lib/pdf-stamp-position'
 import { v9BookmarkTree, v9MetadataFields } from '#/lib/pdf-v9-structure'
+import { isV9SourceDocument } from '#/lib/source-documents'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
 import { V9_PDF_IDS } from '#/tools/v9-pdf-config'
@@ -265,15 +266,14 @@ export function adaptPdfForm(
       }
       if (fileBookmarks?.labels) {
         const remoteNames = forwardedRemoteFilenames(output, payload.downloadFrom)
-        if (
-          remoteNames.every((name): name is string => name !== undefined) &&
-          (!archives.length || archiveEntryNames.length)
-        ) {
+        if (remoteNames.every((name): name is string => name !== undefined)) {
           const names = [...remoteNames, ...numberedNames, ...archiveEntryNames]
           // Archive and upload registration order can vary. Check exact
           // names only when that order cannot change a duplicate assignment.
           if (!archives.length || new Set(names.map(filenameKey)).size === names.length) {
-            const known = new Set(registeredFilenames(names))
+            const known = new Set(
+              registeredFilenames(names).filter((name) => isV9SourceDocument('pdf', name)),
+            )
             for (const name of Object.keys(fileBookmarks.labels)) {
               if (!known.has(name))
                 throw new InputError(

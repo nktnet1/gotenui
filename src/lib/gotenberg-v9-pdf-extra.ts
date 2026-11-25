@@ -5,6 +5,7 @@ import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
+import { isV9SourceDocument } from '#/lib/source-documents'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
@@ -144,13 +145,14 @@ export function adaptV9PdfExtra(
         ...localNames,
         ...archiveEntryNames,
         ...remotes.filter((name): name is string => name !== undefined),
-      ]
-      const unknownArchives = archives.length > 0 && archiveEntryNames.length === 0
+      ].filter((name) => isV9SourceDocument('pdf', name))
+      // The proxy has inspected every archive, including empty ones. Only
+      // unpinned downloads may introduce additional unknown source PDFs.
+      const unknownRemotes = remotes.filter((name) => name === undefined).length
       const [reconciled] = reconcilePdfComposeSources([stage], {
         inputs: names.map((name) => ({ original: name, forwarded: name })),
-        unknownInputs: unknownArchives || remotes.some((name) => !name),
-        singleInput:
-          !unknownArchives && localNames.length + archiveEntryNames.length + remotes.length === 1,
+        unknownInputs: unknownRemotes > 0,
+        singleInput: names.length + unknownRemotes === 1,
         preserveNamedSingleSource: true,
       })
       if (!reconciled) throw new InputError('Invalid page composition.')

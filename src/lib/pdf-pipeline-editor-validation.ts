@@ -21,7 +21,6 @@ import {
   numbersPipelineInputs,
   remoteMergeFilenames,
 } from '#/lib/merge-order'
-import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { officePdfComposeInput, reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import {
@@ -31,6 +30,7 @@ import {
   validatePipelineSourceUploads,
 } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
+import { isV9SourceDocument, sourceDocumentReason } from '#/lib/source-documents'
 import { type ConversionPayload, parseAdvanced, validateAsyncInputValues } from '#/lib/validation'
 
 /** Preflight the same asset names as the request adapter, including remote
@@ -101,6 +101,20 @@ export function pdfPipelineEditorError(
     const filenameReason = remoteFilenamePlanReason(filenamePlan)
     if (filenameReason) return filenameReason
     const remoteFilenames = filenamePlan.map(({ name }) => name)
+    if (
+      (documentKind === 'pdf' || documentKind === 'office') &&
+      version?.major === 9 &&
+      version.minor >= 2 &&
+      !archivesPresent &&
+      (localNames.length || sourceRemotes.length)
+    ) {
+      const reason = sourceDocumentReason(
+        documentKind,
+        [...localNames, ...remoteFilenames],
+        referencedAssets,
+      )
+      if (reason && !localNames.length) return reason
+    }
     const pipeline = (() => {
       if (!conversionMode) return parsed
       const fields = conversionFields ?? {
@@ -189,10 +203,7 @@ export function pdfPipelineEditorError(
     }
     if (documentKind && !archivesPresent) {
       const extensionMatches = (name: string): boolean =>
-        !referencedAssets.has(name.normalize('NFC')) &&
-        (documentKind === 'office'
-          ? OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase())
-          : documentKind === 'pdf' && /\.pdf$/i.test(name))
+        documentKind !== 'single' && isV9SourceDocument(documentKind, name, referencedAssets)
       const remoteSources = remoteFilenames.filter(
         (name): name is string => name !== undefined && extensionMatches(name),
       )

@@ -31,6 +31,7 @@ import {
   isStandaloneAttachmentExtraction,
   type PdfPipelineStage,
   parsePdfPipeline,
+  pdfStageAssetNames,
   pipelineMayPreservePdfHeader,
   pipelineResponseTypes,
 } from '#/lib/pdf-pipeline'
@@ -57,6 +58,7 @@ import {
   publicServerConnections,
   requireServerConnection,
 } from '#/lib/server-connections.server'
+import { sourceDocumentReason } from '#/lib/source-documents'
 import { uiFeatures } from '#/lib/ui-features.server'
 import {
   type ConversionPayload,
@@ -761,6 +763,23 @@ export async function proxyConversionRequest(
   }
   const forwardedStages =
     major === 9 ? (JSON.parse(String(form.get('stages') ?? '[]')) as PdfPipelineStage[]) : []
+  if (major === 9 && (operation.input === 'pdf' || operation.input === 'office')) {
+    // Count the actual multipart inputs, not hints or all downloaded resources.
+    const downloads = JSON.parse(String(form.get('downloadFrom') ?? '[]')) as {
+      filename?: string
+    }[]
+    const names = [
+      ...form.getAll('files').flatMap((entry) => (entry instanceof File ? [entry.name] : [])),
+      ...archiveEntryNames,
+      ...downloads.map(({ filename }) => filename || undefined),
+    ]
+    const reason = sourceDocumentReason(
+      operation.input,
+      names,
+      new Set(pdfStageAssetNames(forwardedStages)),
+    )
+    if (reason) throw new InputError(reason)
+  }
   const extractsAttachment = isStandaloneAttachmentExtraction(
     operation.id,
     payload.fields.stages,

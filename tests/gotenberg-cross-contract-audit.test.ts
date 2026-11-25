@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, test, vi } from 'vitest'
 import { conversionTextPreview, convertWithGotenberg } from '#/lib/gotenberg-client'
 import { proxyConversionRequest, proxyErrorResponse } from '#/lib/gotenberg-proxy.server'
+import { multipartBody } from '#/lib/multipart-body'
+import { mapFileBookmarkLabels, validateFileBookmarks } from '#/lib/pdf-file-bookmarks'
 import { pdfPipelineEditorError } from '#/lib/pdf-pipeline-editor-validation'
 import { validateAsyncInputValues } from '#/lib/validation'
+import { zipFixture } from './fixtures/zip'
 
 const upstream = 'http://127.0.0.1:3000'
 const origin = 'https://gotenui.example.test'
@@ -20,15 +23,17 @@ async function proxy(
   candidate: Record<string, unknown>,
   files: File[] = [pdf],
   output = '%PDF-1.7\n',
+  archives: File[] = [],
 ) {
   const body = new FormData()
   body.set('payload', JSON.stringify({ fields: {}, advanced: {}, ...candidate }))
   for (const file of files) body.append('files', file, file.name)
+  for (const archive of archives) body.append('archives', archive, archive.name)
   let forwarded: FormData | undefined
   const fetcher: typeof fetch = async (url, init) => {
     if (String(url).endsWith('/version')) return new Response('9.10.0')
-    assert.ok(init?.body instanceof FormData)
-    forwarded = init.body
+    assert.ok(init?.body instanceof FormData || init?.body instanceof Blob)
+    forwarded = await new Request(String(url), init).formData()
     return new Response(output, { headers: { 'Content-Type': 'application/pdf' } })
   }
   const response = await proxyConversionRequest(
@@ -600,4 +605,165 @@ test('standalone merge accepts labels for independently registered duplicate rem
     'report.pdf': 'First',
     'report (2).pdf': 'Second',
   })
+})
+
+test.each([
+  { files: [], archive: zipFixture({ 'report.pdf': '%PDF', 'notes.txt': 'resource' }) },
+  { files: [pdf], archive: zipFixture({}) },
+])(
+  'standalone composition counts PDFs rather than archive resources',
+  async ({ files, archive }) => {
+    const placements = '[{"sourcePage":1}]'
+    const result = await proxy(
+      { operation: 'compose-pages', fields: { paperSize: 'A4', placements } },
+      files,
+      '%PDF-1.7\n',
+      [archive],
+    )
+    assert.equal(result.status, 200, result.message)
+    assert.equal(result.forwarded?.get('placements'), placements)
+  },
+)
+
+test('standalone composition ignores explicitly named non-PDF downloads', async () => {
+  const placements = '[{"source":"report.pdf","sourcePage":1}]'
+  const result = await proxy({
+    operation: 'compose-pages',
+    fields: { paperSize: 'A4', placements },
+    downloadFrom: [{ url: 'https://example.test/notes.txt', filename: 'notes.txt' }],
+  })
+  assert.equal(result.status, 200, result.message)
+  assert.equal(result.forwarded?.get('placements'), placements)
+})
+
+test.each(['archive', 'remote'] as const)(
+  'standalone merge refuses bookmark labels for non-PDF %s resources',
+  async (kind) => {
+    const result = await proxy(
+      {
+        operation: 'merge',
+        fields: { v9FileBookmarks: true, v9FileBookmarkLabels: '{"notes.txt":"Not a PDF"}' },
+        ...(kind === 'remote'
+          ? { downloadFrom: [{ url: 'https://example.test/notes.txt', filename: 'notes.txt' }] }
+          : {}),
+      },
+      [pdf],
+      '%PDF-1.7\n',
+      kind === 'archive' ? [zipFixture({ 'notes.txt': 'resource' })] : [],
+    )
+    assert.equal(result.status, 400, result.message)
+    assert.match(result.message, /fileBookmarks.*name.*PDF/i)
+    assert.equal(result.forwarded, undefined)
+  },
+)
+
+test.each(['pdf-pipeline', 'office-pdf'] as const)(
+  '%s requires a real source in addition to URL-inferred stage assets',
+  async (operation) => {
+    const name = operation === 'pdf-pipeline' ? 'asset.pdf' : 'asset.docx'
+    const stages = JSON.stringify([{ op: 'attach', file: name }])
+    const downloads = [{ url: `https://example.test/${name}` }]
+    const result = await proxy(
+      {
+        operation,
+        ...(operation === 'pdf-pipeline' ? { fields: { stages } } : { conversionStages: stages }),
+        downloadFrom: downloads,
+      },
+      [],
+    )
+    assert.equal(result.status, 400, result.message)
+    assert.match(result.message, /source (PDF|Office document)/i)
+    assert.equal(result.forwarded, undefined)
+    assert.match(
+      pdfPipelineEditorError(stages, {
+        ...editorContext,
+        documentKind: operation === 'pdf-pipeline' ? 'pdf' : 'office',
+        remoteJson: JSON.stringify(downloads),
+      }) ?? '',
+      /source (PDF|Office document)/i,
+    )
+  },
+)
+
+test.each(['pdf-pipeline', 'office-pdf'] as const)(
+  '%s refuses explicitly named downloads with no supported source document',
+  async (operation) => {
+    const stages = JSON.stringify([{ op: 'merge' }])
+    const downloads = [{ url: 'https://example.test/notes.zip', filename: 'notes.zip' }]
+    const result = await proxy(
+      {
+        operation,
+        ...(operation === 'pdf-pipeline' ? { fields: { stages } } : { conversionStages: stages }),
+        downloadFrom: downloads,
+      },
+      [],
+    )
+    assert.equal(result.status, 400, result.message)
+    assert.match(result.message, /source (PDF|Office document)/i)
+    assert.equal(result.forwarded, undefined)
+    assert.match(
+      pdfPipelineEditorError(stages, {
+        ...editorContext,
+        documentKind: operation === 'pdf-pipeline' ? 'pdf' : 'office',
+        remoteJson: JSON.stringify(downloads),
+      }) ?? '',
+      /source (PDF|Office document)/i,
+    )
+  },
+)
+
+test('a PDF pipeline rejects an explicitly wrong source before any filename-changing stage', async () => {
+  const stages = JSON.stringify([
+    { op: 'compose', paperSize: 'A4', placements: [{ source: 'missing.pdf', sourcePage: 1 }] },
+  ])
+  const result = await proxy({ operation: 'pdf-pipeline', fields: { stages } })
+  assert.equal(result.status, 400, result.message)
+  assert.match(result.message, /not one of the current PDF inputs/)
+  assert.equal(result.forwarded, undefined)
+  assert.match(
+    pdfPipelineEditorError(stages, {
+      ...editorContext,
+      documentKind: 'pdf',
+      documentNames: [pdf.name],
+    }) ?? '',
+    /not one of the current PDF inputs/,
+  )
+})
+
+test('merge bookmark labels use Go whitespace semantics', () => {
+  assert.throws(() => validateFileBookmarks({ labels: { 'report.pdf': '\u0085' } }), /non-blank/)
+  assert.doesNotThrow(() => validateFileBookmarks({ labels: { 'report.pdf': '\ufeff' } }))
+  assert.deepEqual(
+    Object.entries(
+      mapFileBookmarkLabels({ label: ['filename'] }, [
+        { original: '\u0085.pdf', forwarded: '01_\u0085.pdf' },
+        { original: '\ufeff.pdf', forwarded: '02_\ufeff.pdf' },
+      ]).labels ?? {},
+    ),
+    [
+      ['01_\u0085.pdf', '\u0085.pdf'],
+      ['02_\ufeff.pdf', '\ufeff'],
+    ],
+  )
+})
+
+test('multipart preserves opaque field values and repeated text fields exactly', async () => {
+  const form = new FormData()
+  const values = ['a\nb\rc\r\nd', '\n', '\r', '', '\r\n', 'end\n']
+  for (const value of values) form.append('password', value)
+  form.append('files', pdf, pdf.name)
+  form.append('files', new File(['other'], 'notes%22.txt'))
+  const wire = await new Request(upstream, { method: 'POST', body: multipartBody(form) }).formData()
+  assert.deepEqual(wire.getAll('password'), values)
+  assert.deepEqual(
+    wire.getAll('files').map((file) => (file as File).name),
+    [pdf.name, 'notes%22.txt'],
+  )
+})
+
+test('the Office proxy preserves password line endings on the actual multipart wire', async () => {
+  const password = 'first\nsecond\rthird\r\nlast\n'
+  const result = await proxy({ operation: 'office-pdf', fields: { password } }, [office])
+  assert.equal(result.status, 200, result.message)
+  assert.equal(result.forwarded?.get('password'), password)
 })

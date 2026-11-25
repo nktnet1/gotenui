@@ -12,6 +12,7 @@ import {
   validatePipelineSourceUploads,
 } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
+import { isV9SourceDocument } from '#/lib/source-documents'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 
 /** Convert the UI's ordered stages and named asset uploads to a v9 PDF request. */
@@ -89,8 +90,8 @@ export function adaptPdfPipeline(
   const remote = legacy.get('downloadFrom')
   if (typeof remote === 'string') form.set('downloadFrom', remote)
   for (const archive of archives) form.append('archives', archive, archive.name)
-  const isInput = (name: string): boolean =>
-    /\.pdf$/i.test(name) && !references.includes(name.normalize('NFC'))
+  const assets = new Set(references)
+  const isInput = (name: string): boolean => isV9SourceDocument('pdf', name, assets)
   const external = [
     ...archiveEntryNames.filter(isInput),
     ...remoteFilenames.filter((name): name is string => name !== undefined && isInput(name)),

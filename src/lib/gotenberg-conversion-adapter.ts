@@ -7,7 +7,6 @@ import {
   remoteMergeFilenames,
   reservePrefixedMergeUploadNames,
 } from '#/lib/merge-order'
-import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import {
   officePdfComposeInput,
   type PdfComposeInput,
@@ -24,6 +23,7 @@ import {
 } from '#/lib/pdf-pipeline'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
+import { isV9SourceDocument } from '#/lib/source-documents'
 import { type ConversionPayload, InputError, supportsArchiveInputs } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
 
@@ -497,8 +497,7 @@ export function adaptConversionForm(
     if (stages.length) {
       const referenced = new Set(pdfStageAssetNames(userStages))
       const isOfficeSource = (name: string): boolean =>
-        OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase()) &&
-        !referenced.has(name.normalize('NFC'))
+        isV9SourceDocument('office', name, referenced)
       const remoteSources = remoteFilenames.filter(
         (name): name is string => name !== undefined && isOfficeSource(name),
       )

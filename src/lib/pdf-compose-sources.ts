@@ -236,6 +236,7 @@ export function reconcilePdfComposeSources(
     : names
   let single = singleInput || (!unknownInputs && names.length === 1)
   let afterSplit = false
+  let afterCollapse = false
 
   return stages.map((stage) => {
     if (stage.op === 'merge') {
@@ -256,6 +257,7 @@ export function reconcilePdfComposeSources(
           : stage
       sources = sourcesKnown ? firstSource(sources) : []
       single = true
+      afterCollapse = true
       afterSplit = false
       return mapped
     }
@@ -281,6 +283,22 @@ export function reconcilePdfComposeSources(
       const entry = placement as Record<string, unknown>
       const name = typeof entry.source === 'string' ? entry.source.normalize('NFC') : ''
       if (single && (!preserveNamedSingleSource || !name)) {
+        // An explicit initial source must actually identify the known document.
+        // Only after a merge/compose may the generated filename be irrelevant.
+        if (
+          name &&
+          !singleInput &&
+          !afterCollapse &&
+          sourcesKnown &&
+          sources.length &&
+          currentFileMatches(name, sources).length !== 1
+        ) {
+          throw new InputError(
+            afterSplit
+              ? `compose: source "${name}" does not match a split output. Use its current filename.`
+              : `compose: source "${name}" is not one of the current PDF inputs.`,
+          )
+        }
         // There is exactly one current PDF. Omitting source is the backend's
         // supported way to refer to it regardless of dynamic merged filenames.
         const rest = { ...entry }
@@ -354,6 +372,7 @@ export function reconcilePdfComposeSources(
     }
     sources = sourcesKnown ? firstSource(sources) : []
     single = true
+    afterCollapse = true
     afterSplit = false
     return { ...stage, placements }
   })

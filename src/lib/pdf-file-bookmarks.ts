@@ -1,5 +1,8 @@
 import { InputError } from '#/lib/validation'
 
+// Go strings.TrimSpace uses Unicode White_Space, not JavaScript's trim set.
+const isBlank = (value: string): boolean => /^\p{White_Space}*$/u.test(value)
+
 /** Gotenberg 9.7 merge option. Missing label sources fall back to the filename. */
 export type FileBookmarks = {
   label?: ('title' | 'filename')[]
@@ -26,7 +29,7 @@ export function validateFileBookmarks(value: unknown): asserts value is FileBook
       typeof fields.labels !== 'object' ||
       Array.isArray(fields.labels) ||
       Object.entries(fields.labels).some(
-        ([name, label]) => !name || typeof label !== 'string' || !label.trim(),
+        ([name, label]) => !name || typeof label !== 'string' || isBlank(label),
       )
     ) {
       throw new InputError(
@@ -58,7 +61,7 @@ export function mapFileBookmarkLabels(
     // restore the original filenames without overriding a PDF title mode.
     for (const { original, forwarded } of inputs) {
       const basename = original.replace(/\.[^.]+$/, '')
-      labels[forwarded.normalize('NFC')] = basename.trim() ? basename : original
+      labels[forwarded.normalize('NFC')] = isBlank(basename) ? original : basename
     }
   }
   const assigned = new Set<string>()
