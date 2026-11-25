@@ -108,28 +108,38 @@ const compose = (source?: string) => ({
 
 describe('Gotenberg 9.2 compose source reconciliation', () => {
   it('uses a nonempty remote name hint when the official filename override is empty', async () => {
+    const officeStage = {
+      op: 'compose',
+      paperSize: 'A4',
+      placements: [{ source: 'local.docx.pdf' }, { source: 'remote.docx.pdf' }],
+    }
     const office = await forwarded({
       names: ['local.docx'],
-      stages: [compose('remote.docx.pdf')],
+      stages: [officeStage],
       remotes: [{ url: 'https://files.example.test/object', name: 'remote.docx', filename: '' }],
     })
     assert.equal(office.status, 200, office.error)
     assert.deepEqual(office.remotes, [
       { url: 'https://files.example.test/object', filename: 'remote.docx' },
     ])
-    assert.deepEqual(office.stages, [compose('remote.docx.pdf')])
+    assert.deepEqual(office.stages, [officeStage])
 
+    const pdfStage = {
+      op: 'compose',
+      paperSize: 'A4',
+      placements: [{ source: 'local.pdf' }, { source: 'remote.pdf' }],
+    }
     const pdf = await forwarded({
       operation: 'pdf-pipeline',
       names: ['local.pdf'],
-      stages: [compose('remote.pdf')],
+      stages: [pdfStage],
       remotes: [{ url: 'https://files.example.test/object', name: 'remote.pdf', filename: '' }],
     })
     assert.equal(pdf.status, 200, pdf.error)
     assert.deepEqual(pdf.remotes, [
       { url: 'https://files.example.test/object', filename: 'remote.pdf' },
     ])
-    assert.deepEqual(pdf.stages, [compose('remote.pdf')])
+    assert.deepEqual(pdf.stages, [pdfStage])
   })
 
   it('uses source omission for merge and compose stages with a single current PDF', async () => {
@@ -894,5 +904,151 @@ describe('Merge bookmark mapping with incomplete or duplicate source names', () 
     assert.equal(result.status, 400, result.error)
     assert.equal(result.calls, 0)
     assert.match(result.error, /duplicate fileBookmarks label/)
+  })
+})
+
+describe('Composition and bookmark preflight parity', () => {
+  const editor = {
+    localAssetNames: [],
+    archivesPresent: false,
+    remoteRows: [],
+    remoteJson: '',
+    acknowledgedRedaction: false,
+    backendVersion: '9.10.0',
+  }
+
+  it.each(['pdf-pipeline', 'office-pdf'] as const)(
+    'rejects a %s compose stage that omits a known source PDF',
+    async (operation) => {
+      const office = operation === 'office-pdf'
+      const names = office ? ['report.docx', 'annex.docx'] : ['report.pdf', 'annex.pdf']
+      const sources = office ? ['report.docx.pdf', 'annex.docx.pdf'] : names
+      const stages = [compose(sources[0])]
+      const result = await forwarded({ operation, version: '9.10.0', names, stages })
+      assert.equal(result.status, 400, result.error)
+      assert.equal(result.calls, 0)
+      assert.match(result.error, /must place every PDF.*annex/)
+      assert.match(
+        pdfPipelineEditorError(JSON.stringify(stages), {
+          ...editor,
+          documentKind: office ? 'office' : 'pdf',
+          documentNames: names,
+        }) ?? '',
+        /must place every PDF.*annex/,
+      )
+    },
+  )
+
+  it('rejects leading zeros in generated split part names', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: ['report.pdf'],
+      stages: [{ op: 'split', ranges: ['1', '2'] }, compose('report_00.pdf')],
+    })
+    assert.equal(result.status, 400, result.error)
+    assert.equal(result.calls, 0)
+    assert.match(result.error, /does not match a split output/)
+  })
+
+  it('rejects aliases for split part indices outside a fixed range list', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: ['report.pdf'],
+      stages: [{ op: 'split', ranges: ['1', '2'] }, compose('report_2.pdf')],
+    })
+    assert.equal(result.status, 400, result.error)
+    assert.equal(result.calls, 0)
+    assert.match(result.error, /does not match a split output/)
+  })
+
+  it('requires every output from a fixed range split, not merely every original PDF', async () => {
+    const stages = [{ op: 'split', ranges: ['1', '2'] }, compose('report_0.pdf')]
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: ['report.pdf'],
+      stages,
+    })
+    assert.equal(result.status, 400, result.error)
+    assert.equal(result.calls, 0)
+    assert.match(result.error, /must place every PDF.*split output/)
+    assert.match(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        ...editor,
+        documentKind: 'pdf',
+        documentNames: ['report.pdf'],
+      }) ?? '',
+      /must place every PDF.*split output/,
+    )
+  })
+
+  it('accepts every nested fixed split part, including repeated placements of a page', async () => {
+    const stages = [
+      { op: 'split', ranges: ['1-2', '3-4'] },
+      { op: 'split', ranges: ['1', '2'] },
+      {
+        op: 'compose',
+        paperSize: 'A4',
+        placements: [
+          { source: 'report_0_0.pdf' },
+          { source: 'report_0_1.pdf' },
+          { source: 'report_1_0.pdf' },
+          { source: 'report_1_1.pdf' },
+          { source: 'report_1_1.pdf', page: 2 },
+        ],
+      },
+    ]
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: ['report.pdf'],
+      stages,
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.stages, stages)
+    assert.equal(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        ...editor,
+        documentKind: 'pdf',
+        documentNames: ['report.pdf'],
+      }),
+      null,
+    )
+  })
+
+  it('reports conflicting original and numbered bookmark aliases in the editor', () => {
+    const stages = [
+      {
+        op: 'merge',
+        fileBookmarks: { labels: { 'report.pdf': 'Original', '01_report.pdf': 'Numbered' } },
+      },
+    ]
+    assert.match(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        ...editor,
+        documentKind: 'pdf',
+        documentNames: ['report.pdf', 'annex.pdf'],
+      }) ?? '',
+      /duplicate fileBookmarks label for 01_report\.pdf/,
+    )
+  })
+
+  it('reports NFC-equivalent conflicting bookmark keys before resolving archive names', () => {
+    const stages = [
+      {
+        op: 'merge',
+        fileBookmarks: { labels: { 'cafe\u0301.pdf': 'Original', 'caf\u00e9.pdf': 'Normalized' } },
+      },
+    ]
+    assert.match(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        ...editor,
+        documentKind: 'pdf',
+        archivesPresent: true,
+      }) ?? '',
+      /duplicate fileBookmarks label for caf\u00e9\.pdf/,
+    )
   })
 })

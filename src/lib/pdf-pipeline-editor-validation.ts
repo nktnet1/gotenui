@@ -199,6 +199,7 @@ export function pdfPipelineEditorError(
           inputs: sources,
           singleInput: documentKind === 'single',
           unknownInputs: unknownRemote,
+          mapBookmarks: true,
         })
       }
     }

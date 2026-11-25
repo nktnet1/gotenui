@@ -10,7 +10,7 @@ export function officePdfComposeInput(original: string, forwarded = original): P
   return { original: `${original}.pdf`, forwarded: `${forwarded}.pdf`, sortName: forwarded }
 }
 
-type SourceTemplate = PdfComposeInput
+type SourceTemplate = PdfComposeInput & { partCounts?: readonly (number | undefined)[] }
 
 const partMarker = '\u0001'
 
@@ -88,13 +88,26 @@ function splitName(name: string): string {
   return `${name.replace(/\.[^.]+$/, '')}_${partMarker}.pdf`
 }
 
-function matchTemplate(name: string, template: string): string[] | null {
+function matchTemplate(
+  name: string,
+  template: string,
+  partCounts: readonly (number | undefined)[] = [],
+): string[] | null {
   const escaped = template
     .split(partMarker)
     .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('(\\d+)')
+    .join('(0|[1-9]\\d*)')
   const matched = new RegExp(`^${escaped}$`).exec(name)
-  return matched ? matched.slice(1) : null
+  if (!matched) return null
+  const parts = matched.slice(1)
+  // Fixed ranges always produce exactly one output per range. Interval splits
+  // need the actual page count, but their names also use canonical decimal indices.
+  return parts.every((part, index) => {
+    const count = partCounts[index]
+    return count === undefined || Number(part) < count
+  })
+    ? parts
+    : null
 }
 
 function materialize(template: string, parts: readonly string[]): string {
@@ -106,13 +119,13 @@ function materialize(template: string, parts: readonly string[]): string {
  * aliases when a numbered upload has the same spelling as another input.
  */
 function currentFileMatches(name: string, sources: readonly SourceTemplate[]): string[] {
-  const forwarded = sources.flatMap(({ forwarded }) => {
-    const parts = matchTemplate(name, forwarded)
+  const forwarded = sources.flatMap(({ forwarded, partCounts }) => {
+    const parts = matchTemplate(name, forwarded, partCounts)
     return parts ? [materialize(forwarded, parts)] : []
   })
   if (forwarded.length) return forwarded
-  return sources.flatMap(({ original, forwarded }) => {
-    const parts = matchTemplate(name, original)
+  return sources.flatMap(({ original, forwarded, partCounts }) => {
+    const parts = matchTemplate(name, original, partCounts)
     return parts ? [materialize(forwarded, parts)] : []
   })
 }
@@ -233,9 +246,12 @@ export function reconcilePdfComposeSources(
       return mapped
     }
     if (stage.op === 'split') {
-      sources = sources.map(({ original, forwarded }) => ({
+      const count =
+        Array.isArray(stage.ranges) && stage.ranges.length ? stage.ranges.length : undefined
+      sources = sources.map(({ original, forwarded, partCounts }) => ({
         original: splitName(original),
         forwarded: splitName(forwarded),
+        partCounts: [...(partCounts ?? []), count],
       }))
       single = single && Array.isArray(stage.ranges) && stage.ranges.length === 1
       afterSplit = true
@@ -243,6 +259,7 @@ export function reconcilePdfComposeSources(
     }
     if (stage.op !== 'compose' || !Array.isArray(stage.placements)) return stage
 
+    const placed = new Set<string>()
     const placements = stage.placements.map((placement: unknown, index) => {
       if (!placement || typeof placement !== 'object' || Array.isArray(placement)) {
         return placement // parsePdfPipeline validates placement objects first.
@@ -277,7 +294,8 @@ export function reconcilePdfComposeSources(
         return entry
       }
       const matches = currentFileMatches(name, sources)
-      if (matches.length !== 1) {
+      const source = matches[0]
+      if (source === undefined || matches.length !== 1) {
         const example = materialize(sources[0]?.forwarded ?? 'report_0.pdf', ['0'])
         throw new InputError(
           afterSplit
@@ -285,8 +303,41 @@ export function reconcilePdfComposeSources(
             : `compose: source "${name}" is not one of the current PDF inputs.`,
         )
       }
-      return { ...entry, source: matches[0] }
+      placed.add(source)
+      return { ...entry, source }
     })
+    if (sourcesKnown && !single) {
+      // Gotenberg requires every current document to be placed at least once.
+      // Fixed range splits have known cardinality, unlike interval splits.
+      // Compare counts without expanding the potentially huge set of filenames.
+      for (const { original, forwarded, partCounts = [] } of sources) {
+        if (partCounts.some((count) => count === undefined)) continue
+        if (!partCounts.length) {
+          if (!placed.has(forwarded)) {
+            throw new InputError(
+              `compose: placements must place every PDF. Missing source "${original}".`,
+            )
+          }
+          continue
+        }
+        const expected = partCounts.reduce<number>(
+          (total, count) => Math.min(placed.size + 1, total * (count ?? 1)),
+          1,
+        )
+        const actual = [...placed].filter((name) =>
+          matchTemplate(name, forwarded, partCounts),
+        ).length
+        if (actual < expected) {
+          const example = materialize(
+            original,
+            partCounts.map(() => '0'),
+          )
+          throw new InputError(
+            `compose: placements must place every PDF. Missing split output from the set starting with "${example}".`,
+          )
+        }
+      }
+    }
     sources = sourcesKnown ? firstSource(sources) : []
     single = true
     afterSplit = false

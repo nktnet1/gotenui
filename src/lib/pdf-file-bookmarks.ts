@@ -33,6 +33,14 @@ export function validateFileBookmarks(value: unknown): asserts value is FileBook
         'merge: fileBookmarks.labels must map PDF filenames to non-blank labels.',
       )
     }
+    const normalizedNames = new Set<string>()
+    for (const name of Object.keys(fields.labels)) {
+      const normalized = name.normalize('NFC')
+      if (normalizedNames.has(normalized)) {
+        throw new InputError(`merge: duplicate fileBookmarks label for ${normalized}.`)
+      }
+      normalizedNames.add(normalized)
+    }
   }
 }
 
