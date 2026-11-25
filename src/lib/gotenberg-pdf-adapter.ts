@@ -12,7 +12,7 @@ import {
   mapFileBookmarkLabels,
   validateFileBookmarks,
 } from '#/lib/pdf-file-bookmarks'
-import { parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { conversionSplitStage, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
@@ -290,25 +290,13 @@ export function adaptPdfForm(
     case 'split': {
       permitted('splitMode', 'splitSpan', 'splitUnify')
       v8Optimization()
-      const span = optional('splitSpan')
-      if (!span) throw new InputError('Select pages or an interval to split.')
-      if (fields.splitMode === 'intervals') {
-        const every = Number(span)
-        if (!Number.isSafeInteger(every) || every < 1)
-          throw new InputError('Split interval must be a positive integer.')
-        stages.push({ op: 'split', every })
-      } else if (fields.splitMode === 'pages') {
-        if (fields.splitUnify === true) {
-          stages.push({ op: 'select', pages: span })
-        } else {
-          const ranges = span.split(',').map((part) => part.trim())
-          if (ranges.some((part) => !part))
-            throw new InputError('Split page ranges must not be empty.')
-          stages.push({ op: 'split', ranges })
-        }
-      } else {
-        throw new InputError('Choose a supported split mode.')
-      }
+      const split = conversionSplitStage(
+        typeof fields.splitMode === 'string' ? fields.splitMode : undefined,
+        typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,
+        fields.splitUnify,
+      )
+      if (!split) throw new InputError('Select pages or an interval to split.')
+      stages.push(split)
       pdfaStage()
       break
     }

@@ -340,3 +340,36 @@ test('preflights metadata and bookmark writes against the selected version', () 
     expect(draftOutboundIssues(operation(id), fields, '8.40.0', draft)).toEqual([])
   }
 })
+
+test.each([
+  ['office-pdf', { paperWidth: '210mm' }, /both paperWidth and paperHeight/],
+  ['office-pdf', { locale: 'en_AU' }, /locale must be/],
+  [
+    'office-pdf',
+    { nativeWatermarkText: 'one', nativeTiledWatermarkText: 'two' },
+    /cannot combine native watermark/,
+  ],
+  ['html-pdf', { omitBackground: true }, /transparency requires Print background/],
+  ['html-pdf', { marginBottom: '-1mm' }, /marginBottom/],
+  ['split', { splitMode: 'intervals', splitSpan: '1e2' }, /positive whole number/],
+] as const)(
+  'preflight checks native conversion and split settings for %s',
+  (id, fields, reason) => {
+    expect(draftOutboundIssues(operation(id), { ...fields }, '9.10.0', draft)).toContainEqual(
+      expect.stringMatching(reason),
+    )
+  },
+)
+
+test.each([
+  ['office-pdf', 'nativeWatermarkRotation', '45deg'],
+  ['office-pdf', 'nativeReduceImageResolution', 'yes'],
+  ['html-pdf', 'nativeBookmarks', 'yes'],
+] as const)('preflight checks native alias %s %s', (id, name, value) => {
+  expect(
+    draftOutboundIssues(operation(id), {}, '9.10.0', {
+      ...draft,
+      advanced: JSON.stringify({ [name]: value }),
+    }),
+  ).toContainEqual(expect.stringMatching(name))
+})

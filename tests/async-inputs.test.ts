@@ -319,3 +319,26 @@ test('accepted async results label output and events separately without claiming
   assert.match(html, /cannot confirm delivery/)
   assert.doesNotMatch(html, /private-output|private-events|access=secret/)
 })
+
+test('structured remote filenames preserve surrounding whitespace and a leading BOM', () => {
+  for (const filename of [' report.pdf ', '\uFEFFreport.pdf']) {
+    for (const mode of ['override', 'hint'] as const) {
+      const descriptors = remoteInputsPayload([remoteRow({ filename, filenameMode: mode })], '')
+      const { payload } = validated('office-pdf', { downloadFrom: descriptors })
+      assert.equal(payload.downloadFrom?.[0]?.[mode === 'override' ? 'filename' : 'name'], filename)
+    }
+  }
+})
+
+test('all-whitespace remote filenames are rejected instead of silently omitted', () => {
+  assert.throws(
+    () =>
+      validated('office-pdf', {
+        downloadFrom: remoteInputsPayload(
+          [remoteRow({ filename: '   ', filenameMode: 'override' })],
+          '',
+        ),
+      }),
+    /Remote filename must not be blank/,
+  )
+})

@@ -203,7 +203,7 @@ export function RemoteInputsEditor({
                 onChange={(event) =>
                   update(index, {
                     filename: event.target.value,
-                    filenameMode: event.target.value.trim()
+                    filenameMode: event.target.value
                       ? (row.filenameMode ?? (supportsFilenameOverride ? 'override' : 'hint'))
                       : undefined,
                   })
@@ -218,21 +218,19 @@ export function RemoteInputsEditor({
                     ? 'This legacy filename hint is pinned as the download filename on Gotenberg 9.2 or newer.'
                     : 'Preflight hint only (not sent upstream). Gotenberg expects a Content-Disposition filename. PDF stage references must match the downloaded name.'}
               </p>
-              {row.filename?.trim() &&
-                row.filenameMode === 'override' &&
-                !supportsFilenameOverride && (
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
-                    <span>This connection cannot override the remote filename.</span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => update(index, { filenameMode: 'hint' })}
-                    >
-                      Use as expected filename instead
-                    </Button>
-                  </div>
-                )}
+              {row.filename && row.filenameMode === 'override' && !supportsFilenameOverride && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                  <span>This connection cannot override the remote filename.</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => update(index, { filenameMode: 'hint' })}
+                  >
+                    Use as expected filename instead
+                  </Button>
+                </div>
+              )}
             </div>
           )}
           {!pdfInputOnly && (

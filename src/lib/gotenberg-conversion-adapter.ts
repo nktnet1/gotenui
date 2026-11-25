@@ -1,4 +1,5 @@
 import { forwardedRemoteFilenames } from '#/lib/file-names'
+import { goFiniteFloat, goFormLength, isGoFormBoolean } from '#/lib/go-form-values'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
   mergeUploadFilename,
@@ -247,53 +248,104 @@ export function planV9ConversionStages(
   )
 }
 
-/** Keep custom LibreOffice page dimensions consistent with Gotenberg 9's Inches parser. */
-function validateV9OfficePaper(form: FormData): void {
-  const hasDimension = (name: 'paperWidth' | 'paperHeight'): boolean => {
-    const raw = form.get(name)
-    if (raw === null) return false
-    // Gotenberg parses a finite numeric value with an optional CSS length unit.
-    const match =
-      typeof raw === 'string' &&
-      /^\+?((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:pt|px|in|mm|cm|pc)?$/.exec(raw)
-    if (!match || Number(match[1]) <= 0 || !Number.isFinite(Number(match[1]))) {
-      throw new InputError(
-        `Gotenberg 9 ${name} must be a positive number with an optional pt, px, in, mm, cm or pc unit.`,
-      )
-    }
-    return true
-  }
-  const width = hasDimension('paperWidth')
-  const height = hasDimension('paperHeight')
-  if (!form.has('paperSize') && width !== height) {
-    throw new InputError(
-      'Gotenberg 9 Office conversion requires both paperWidth and paperHeight, or a named paperSize for the other dimension.',
+/** Validate native route settings before encoding or queuing the request.
+ * Both the adapter and browser preflight use the same input contract.
+ */
+export function v9NativeConversionReason(
+  operation: Operation,
+  { fields, advanced }: Pick<ConversionPayload, 'fields' | 'advanced'>,
+): string | null {
+  const office = operation.id === 'office-pdf'
+  const chromium = operation.path.startsWith('/forms/chromium/')
+  if (!office && !chromium) return null
+  const values = { ...fields, ...advanced }
+  const value = (name: string): string => String(values[name] ?? '')
+  const present = (name: string): boolean => value(name) !== ''
+  const nativeBooleans =
+    office || operation.output === 'pdf' ? ['nativeBookmarks', 'nativeTaggedPdf'] : []
+  if (office)
+    nativeBooleans.push(
+      'singlePage',
+      'nativeLosslessImageCompression',
+      'nativeReduceImageResolution',
     )
+  for (const name of nativeBooleans) {
+    if (present(name) && !isGoFormBoolean(value(name))) return `${name} must be true or false.`
   }
+  if (chromium && operation.output === 'pdf') {
+    for (const name of [
+      'paperWidth',
+      'paperHeight',
+      'marginTop',
+      'marginBottom',
+      'marginLeft',
+      'marginRight',
+    ]) {
+      if (!present(name)) continue
+      const length = goFormLength(value(name))
+      if (length === undefined || length < 0) {
+        return `Gotenberg 9 ${name} must be a non-negative number with an optional pt, px, in, mm, cm or pc unit.`
+      }
+    }
+    if (fields.omitBackground === true && fields.printBackground !== true) {
+      return 'Gotenberg 9 Chromium PDF transparency requires Print background graphics.'
+    }
+  }
+  if (chromium && operation.output === 'image' && present('quality')) {
+    const quality = Number(value('quality'))
+    if (!/^[-+]?\d+$/.test(value('quality')) || quality < 1 || quality > 100) {
+      return 'Gotenberg 9 screenshot quality must be between 1 and 100.'
+    }
+    if (value('format') !== 'jpeg')
+      return 'Gotenberg 9 screenshot JPEG quality requires JPEG output.'
+  }
+  if (!office) return null
+  const aliasReason = officeNativeAliasReason(fields, advanced)
+  if (aliasReason) return aliasReason
+  for (const name of ['paperWidth', 'paperHeight']) {
+    if (!present(name)) continue
+    const length = goFormLength(value(name))
+    if (length === undefined || length <= 0) {
+      return `Gotenberg 9 ${name} must be a positive number with an optional pt, px, in, mm, cm or pc unit.`
+    }
+  }
+  if (!present('paperSize') && present('paperWidth') !== present('paperHeight')) {
+    return 'Gotenberg 9 Office conversion requires both paperWidth and paperHeight, or a named paperSize for the other dimension.'
+  }
+  if (
+    present('locale') &&
+    !/^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?$/.test(value('locale'))
+  ) {
+    return 'LibreOffice locale must be a BCP 47 tag such as en-AU or de-DE.'
+  }
+  if (present('openBookmarkLevels')) {
+    const count = Number(value('openBookmarkLevels'))
+    if (
+      !/^[-+]?\d+$/.test(value('openBookmarkLevels')) ||
+      (count !== -1 && (count < 1 || count > 10))
+    ) {
+      return 'Gotenberg 9 bookmark expansion must be -1 (all) or 1 to 10 levels.'
+    }
+  }
+  if (present('nativeWatermarkText') && present('nativeTiledWatermarkText')) {
+    return 'Gotenberg 9 cannot combine native watermark text with a tiled watermark. Choose one.'
+  }
+  if (
+    present('nativeWatermarkRotation') &&
+    goFiniteFloat(value('nativeWatermarkRotation')) === undefined
+  ) {
+    return 'nativeWatermarkRotation must be a finite angle in degrees.'
+  }
+  if (
+    present('nativeWatermarkRotateAngle') &&
+    goFiniteFloat(value('nativeWatermarkRotateAngle')) === undefined
+  ) {
+    return 'nativeWatermarkRotateAngle must be a finite angle in degrees.'
+  }
+  return null
 }
 
 function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
-  validateV9OfficePaper(form)
-  const locale = form.get('locale')
-  if (
-    locale !== null &&
-    (typeof locale !== 'string' ||
-      !/^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?$/.test(locale))
-  ) {
-    throw new InputError('LibreOffice locale must be a BCP 47 tag such as en-AU or de-DE.')
-  }
-  const bookmarks = form.get('openBookmarkLevels')
-  if (typeof bookmarks === 'string' && bookmarks !== '') {
-    const count = Number(bookmarks)
-    if (!Number.isInteger(count) || (count !== -1 && (count < 1 || count > 10))) {
-      throw new InputError('Gotenberg 9 bookmark expansion must be -1 (all) or 1 to 10 levels.')
-    }
-  }
-  if (form.has('nativeWatermarkText') && form.has('nativeTiledWatermarkText')) {
-    throw new InputError(
-      'Gotenberg 9 cannot combine native watermark text with a tiled watermark. Choose one.',
-    )
-  }
   if (form.has('firstPageOnLeft')) {
     throw new InputError('Gotenberg 9 removed First page on left. Disable it for this connection.')
   }
@@ -416,33 +468,9 @@ export function adaptConversionForm(
       'Legacy PDF post-processing requires Gotenberg 8. Recreate the settings as PDF stages on Gotenberg 9.',
     )
   }
-  if (operation.path.startsWith('/forms/chromium/')) {
-    if (
-      operation.output === 'pdf' &&
-      form.get('omitBackground') === 'true' &&
-      form.get('printBackground') !== 'true'
-    ) {
-      throw new InputError(
-        'Gotenberg 9 Chromium PDF transparency requires Print background graphics.',
-      )
-    }
-    if (operation.output === 'image') {
-      const quality = form.get('quality')
-      if (typeof quality === 'string' && quality !== '') {
-        if (Number(quality) < 1) {
-          throw new InputError('Gotenberg 9 screenshot quality must be between 1 and 100.')
-        }
-        if (form.get('format') !== 'jpeg') {
-          throw new InputError('Gotenberg 9 screenshot JPEG quality requires JPEG output.')
-        }
-      }
-    }
-    renameFields(form, chromiumNames)
-  }
-  if (operation.id === 'office-pdf') {
-    const reason = officeNativeAliasReason(payload.fields, payload.advanced)
-    if (reason) throw new InputError(reason)
-  }
+  const nativeReason = v9NativeConversionReason(operation, payload)
+  if (nativeReason) throw new InputError(nativeReason)
+  if (operation.path.startsWith('/forms/chromium/')) renameFields(form, chromiumNames)
   if (operation.output === 'pdf') {
     const firstUserStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {

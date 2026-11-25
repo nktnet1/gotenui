@@ -1,11 +1,11 @@
 import {
   chromiumNames,
   officeNames,
-  officeNativeAliasReason,
+  v9NativeConversionReason,
 } from '#/lib/gotenberg-conversion-adapter'
 import type { GotenbergVersion } from '#/lib/gotenberg-version'
 import { canWebhookForOperation } from '#/lib/operation-availability'
-import { conversionSplitStage } from '#/lib/pdf-pipeline'
+import { conversionSplitStage, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { pdfPostProcessSchema } from '#/lib/pdf-post-processing'
 import { validateBookmarkDocument } from '#/lib/pdf-structure-editors'
 import { v9BookmarkTree, v9MetadataFields } from '#/lib/pdf-v9-structure'
@@ -89,22 +89,21 @@ function advancedCompatibilityReasons(
     nativeFields.add('nativePdfua')
   }
   const reasons: string[] = []
-  if (version.major === 9 && office) {
-    const reason = officeNativeAliasReason(fields, advanced)
+  if (version.major === 9) {
+    const reason = v9NativeConversionReason(operation, payload)
     if (reason) reasons.push(reason)
   }
   if (
     version.major === 9 &&
-    (office || chromium) &&
-    operation.output === 'pdf' &&
-    ['splitMode', 'splitSpan', 'splitUnify'].some((name) => Object.hasOwn(advanced, name))
+    (operation.id === 'split' || ((office || chromium) && operation.output === 'pdf'))
   ) {
     try {
-      conversionSplitStage(
+      const split = conversionSplitStage(
         String(advanced.splitMode ?? fields.splitMode ?? ''),
         String(advanced.splitSpan ?? fields.splitSpan ?? ''),
         advanced.splitUnify ?? fields.splitUnify ?? false,
       )
+      if (split) parsePdfPipeline(JSON.stringify([split]), {})
     } catch (error) {
       reasons.push(error instanceof Error ? error.message : 'Invalid split settings.')
     }

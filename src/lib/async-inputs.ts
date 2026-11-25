@@ -67,10 +67,10 @@ export function remoteInputsPayload(rows: readonly RemoteInputRow[], json: strin
     const headers = headerMap(row.headers)
     return {
       url: row.url.trim(),
-      ...(row.filename?.trim()
+      ...(row.filename
         ? row.filenameMode === 'override'
-          ? { filename: row.filename.trim() }
-          : { name: row.filename.trim() }
+          ? { filename: row.filename }
+          : { name: row.filename }
         : {}),
       ...(row.field ? { field: row.field } : {}),
       ...(headers ? { extraHttpHeaders: headers } : {}),

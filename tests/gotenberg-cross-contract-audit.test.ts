@@ -785,3 +785,89 @@ test('Factur-X still requires a conformance level outside repair mode', async ()
   assert.match(result.message, /conformance level is required/i)
   assert.equal(result.forwarded, undefined)
 })
+
+test.each(['1e2', '0x10', '2.0'])(
+  'standalone split rejects non-decimal interval %s',
+  async (splitSpan) => {
+    const result = await proxy({
+      operation: 'split',
+      fields: { splitMode: 'intervals', splitSpan },
+    })
+    assert.equal(result.status, 400)
+    assert.match(result.message, /positive whole number/)
+    assert.equal(result.forwarded, undefined)
+  },
+)
+
+test('standalone split does not silently discard interval unification', async () => {
+  const result = await proxy({
+    operation: 'split',
+    fields: { splitMode: 'intervals', splitSpan: '2', splitUnify: true },
+  })
+  assert.equal(result.status, 400)
+  assert.match(result.message, /only in pages mode/)
+  assert.equal(result.forwarded, undefined)
+})
+
+test.each([
+  ['nativeWatermarkRotation', '45deg'],
+  ['nativeWatermarkRotation', 'Infinity'],
+  ['nativeLosslessImageCompression', 'yes'],
+  ['nativeReduceImageResolution', 'yes'],
+  ['nativeBookmarks', 'yes'],
+  ['nativeTaggedPdf', 'yes'],
+  ['singlePage', 'yes'],
+])('reject malformed native Office %s before forwarding', async (name, value) => {
+  const result = await proxy({ operation: 'office-pdf', advanced: { [name]: value } }, [office])
+  assert.equal(result.status, 400)
+  assert.match(result.message, new RegExp(name))
+  assert.equal(result.forwarded, undefined)
+})
+
+test.each([
+  ['paperWidth', '-1in'],
+  ['paperHeight', '12em'],
+  ['marginTop', 'NaN'],
+  ['marginLeft', '2in\n'],
+])('reject invalid Chromium %s before forwarding', async (name, value) => {
+  const result = await proxy(
+    { operation: 'url-pdf', fields: { url: 'https://example.test', [name]: value } },
+    [],
+  )
+  assert.equal(result.status, 400)
+  assert.match(result.message, new RegExp(name))
+  assert.equal(result.forwarded, undefined)
+})
+
+test('valid native Office boolean and hexadecimal angle spellings reach Gotenberg unchanged', async () => {
+  const advanced = {
+    nativeWatermarkRotation: '0x1.8p2',
+    nativeLosslessImageCompression: 'TRUE',
+    nativeReduceImageResolution: '0',
+    nativeBookmarks: 't',
+    nativeTaggedPdf: 'F',
+    singlePage: '1',
+  }
+  const result = await proxy({ operation: 'office-pdf', advanced }, [office])
+  assert.equal(result.status, 200, result.message)
+  for (const [name, value] of Object.entries(advanced))
+    assert.equal(result.forwarded?.get(name), value)
+})
+
+test('valid Chromium lengths including zero and native aliases reach Gotenberg unchanged', async () => {
+  const fields = {
+    url: 'https://example.test',
+    paperWidth: '210mm',
+    paperHeight: '0x1p3in',
+    marginTop: '0',
+    marginLeft: '1_000px',
+  }
+  const result = await proxy(
+    { operation: 'url-pdf', fields, advanced: { nativeBookmarks: 'True' } },
+    [],
+  )
+  assert.equal(result.status, 200, result.message)
+  for (const [name, value] of Object.entries(fields))
+    assert.equal(result.forwarded?.get(name), value)
+  assert.equal(result.forwarded?.get('nativeBookmarks'), 'True')
+})

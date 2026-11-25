@@ -1246,12 +1246,11 @@ export function validatePayload(input: unknown): {
   if (operation.id === 'office-pdf' && !splitMode && splitSpan) {
     throw new InputError('Choose a split mode before entering a page range or interval.')
   }
-  if (
-    operation.id === 'office-pdf' &&
-    splitMode === 'intervals' &&
-    !/^[1-9]\d*$/.test(String(splitSpan))
-  ) {
-    throw new InputError('Split interval must be a positive whole number.')
+  if (['office-pdf', 'split'].includes(operation.id) && splitMode === 'intervals') {
+    const interval = String(splitSpan ?? '')
+    if (!/^\+?\d+$/.test(interval) || BigInt(interval) < 1n || BigInt(interval) > maxGoInt) {
+      throw new InputError('Split interval must be a positive whole number.')
+    }
   }
   const metadata = payload.fields.metadata ?? payload.advanced.metadata
   if (metadata) {
