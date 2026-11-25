@@ -1052,3 +1052,102 @@ describe('Composition and bookmark preflight parity', () => {
     )
   })
 })
+
+describe('ambiguous backend numeric sorting', () => {
+  const inputs = [
+    { original: '01.pdf', forwarded: '01.pdf' },
+    { original: '1.pdf', forwarded: '1.pdf' },
+  ]
+  const stages = [{ op: 'merge' }, { op: 'split', every: 1 }, compose('01_0.pdf')]
+
+  it('cannot predict a merged filename when distinct numeric prefixes compare equally', () => {
+    assert.throws(
+      () => reconcilePdfComposeSources(parsePdfPipeline(JSON.stringify(stages)), { inputs }),
+      /ambiguous.*filename|filename.*ambiguous/i,
+    )
+  })
+
+  it('rejects ambiguous post-merge composition references in archived PDFs', async () => {
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: [],
+      archives: [zipFixture({ '01.pdf': '%PDF-1.7\n', '1.pdf': '%PDF-1.7\n' })],
+      stages,
+    })
+    assert.equal(result.status, 400, result.error)
+    assert.equal(result.calls, 0)
+    assert.match(result.error, /ambiguous.*filename|filename.*ambiguous/i)
+  })
+
+  it('reports ambiguous named remote sources in both the editor and proxy', async () => {
+    const remotes = inputs.map(({ original }) => ({
+      url: `https://files.example.test/${original}`,
+      filename: original,
+    }))
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      version: '9.10.0',
+      names: [],
+      remotes,
+      stages,
+    })
+    assert.equal(result.status, 400, result.error)
+    assert.equal(result.calls, 0)
+    assert.match(result.error, /ambiguous.*filename|filename.*ambiguous/i)
+    assert.match(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        documentKind: 'pdf',
+        documentNames: [],
+        localAssetNames: [],
+        archivesPresent: false,
+        remoteRows: [],
+        remoteJson: JSON.stringify(remotes),
+        acknowledgedRedaction: false,
+        backendVersion: '9.10.0',
+      }) ?? '',
+      /ambiguous.*filename|filename.*ambiguous/i,
+    )
+  })
+
+  it('cannot assign explicit split bookmark labels to an ambiguous merged filename', () => {
+    assert.throws(
+      () =>
+        reconcilePdfComposeSources(
+          parsePdfPipeline(
+            JSON.stringify([
+              { op: 'merge' },
+              { op: 'split', every: 1 },
+              { op: 'merge', fileBookmarks: { labels: { '01_0.pdf': 'First' } } },
+            ]),
+          ),
+          { inputs, mapBookmarks: true },
+        ),
+      /ambiguous.*filename|filename.*ambiguous/i,
+    )
+  })
+
+  it('keeps merges and composition without filename-dependent references valid', () => {
+    for (const pipeline of [
+      [{ op: 'merge' }],
+      [{ op: 'merge' }, compose()],
+      [{ op: 'merge' }, { op: 'split', every: 1 }],
+      [{ op: 'compose', paperSize: 'A4', placements: [{ source: '01.pdf' }, { source: '1.pdf' }] }],
+    ]) {
+      assert.deepEqual(
+        reconcilePdfComposeSources(parsePdfPipeline(JSON.stringify(pipeline)), { inputs }),
+        pipeline,
+      )
+    }
+  })
+
+  it('retains a deterministic first filename when only later names compare equally', () => {
+    const pipeline = [{ op: 'merge' }, { op: 'split', every: 1 }, compose('00_0.pdf')]
+    assert.deepEqual(
+      reconcilePdfComposeSources(parsePdfPipeline(JSON.stringify(pipeline)), {
+        inputs: [...inputs, { original: '00.pdf', forwarded: '00.pdf' }],
+      }),
+      pipeline,
+    )
+  })
+})

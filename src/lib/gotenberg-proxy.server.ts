@@ -28,6 +28,7 @@ import {
 import { operationMinimumVersionReason } from '#/lib/operation-availability'
 import { hasGotenberg92PageSyntax, stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import {
+  conversionPipelineResponseTypes,
   isStandaloneAttachmentExtraction,
   type PdfPipelineStage,
   parsePdfPipeline,
@@ -413,17 +414,7 @@ function allowedConversionContentTypes(
     ]
   if (operation.id === 'pdf-pipeline') return pipelineResponseTypes(forwardedStages)
   if (operation.input !== 'pdf' && forwardedStages.length) {
-    const stages = forwardedStages
-    // Gotenberg's Chromium and LibreOffice conversion routes pass newly
-    // generated PDFs to Processor.Run and include those PDFs in its outputs.
-    // Unlike /forms/pdf/pipe, they do not drop the source PDF when the sole
-    // stage renders pages or extracts content. The PDF plus at least one
-    // generated file therefore always produces a ZIP, never a lone image,
-    // text file or arbitrary attachment.
-    if (['render', 'extract-text', 'extract-attachments'].includes(stages.at(-1)?.op ?? '')) {
-      return ['application/zip']
-    }
-    const types = pipelineResponseTypes(stages)
+    const types = conversionPipelineResponseTypes(forwardedStages)
     // Generated merge/compose stages constrain the output even without a
     // custom pipeline. Otherwise keep the existing source-count checks for
     // ordinary conversions rather than allowing every PDF/ZIP response.

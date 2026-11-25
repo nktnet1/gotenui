@@ -299,7 +299,7 @@ test('accepted async results label output and events separately without claiming
       files: [],
       auxFiles: [],
       postFiles: {},
-      source: '',
+      documentText: [],
       pending: false,
       lastDownload: null,
       recent: [],

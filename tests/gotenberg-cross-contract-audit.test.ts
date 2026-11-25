@@ -767,3 +767,21 @@ test('the Office proxy preserves password line endings on the actual multipart w
   assert.equal(result.status, 200, result.message)
   assert.equal(result.forwarded?.get('password'), password)
 })
+
+test('Factur-X repair does not require the level used for replacement XML', async () => {
+  const result = await proxy({
+    operation: 'factur-x',
+    fields: { v9FacturxRepairExisting: true },
+  })
+  assert.equal(result.status, 200, result.message)
+  assert.deepEqual(JSON.parse(String(result.forwarded?.get('stages'))), [
+    { op: 'remediate', profile: 'Factur-X' },
+  ])
+})
+
+test('Factur-X still requires a conformance level outside repair mode', async () => {
+  const result = await proxy({ operation: 'factur-x' })
+  assert.equal(result.status, 400)
+  assert.match(result.message, /conformance level is required/i)
+  assert.equal(result.forwarded, undefined)
+})

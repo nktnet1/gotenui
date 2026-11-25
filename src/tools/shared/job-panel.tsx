@@ -18,6 +18,11 @@ import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { ZipResultPreview } from '#/components/zip-result-preview'
 import { MAX_UPLOAD_BYTES, remediationReviewNotice } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
+import {
+  conversionPipelineResponseTypes,
+  parsePdfPipeline,
+  pipelineResponseTypes,
+} from '#/lib/pdf-pipeline'
 import { overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import { formatBytes } from '#/lib/security'
 import { cn } from '#/lib/utils'
@@ -25,13 +30,57 @@ import type { Operation } from '#/tools/registry'
 import type { AcceptedWebhook, Download, Job } from '#/tools/shared/tool-jobs'
 import { V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
 
+function targetOutputLabel(
+  operation: Operation,
+  fields: Readonly<Record<string, string | boolean>>,
+  conversionStages: string | undefined,
+  backendVersion: string | undefined,
+): string {
+  const standalone = operation.id === 'pdf-pipeline'
+  const raw = standalone ? fields.stages : conversionStages
+  if (parseGotenbergVersion(backendVersion)?.major === 9 && typeof raw === 'string' && raw) {
+    try {
+      const stages = parsePdfPipeline(raw, { acknowledgedRedaction: true, allowEmpty: !standalone })
+      if (stages.length) {
+        const types = standalone
+          ? pipelineResponseTypes(stages)
+          : conversionPipelineResponseTypes(stages)
+        const labels: Record<string, string> = {
+          'application/pdf': 'PDF',
+          'application/zip': 'ZIP',
+          'image/png': 'PNG',
+          'image/jpeg': 'JPEG',
+          'text/plain': 'TXT',
+          'text/markdown': 'MD',
+          '*': 'Attachment',
+        }
+        return types.map((type) => labels[type] ?? type).join(' / ')
+      }
+    } catch {
+      // Invalid drafts are reported by the form's validation, not the overview.
+    }
+  }
+  if (operation.id === 'render-pages') return `${fields.format === 'jpeg' ? 'JPEG' : 'PNG'} / ZIP`
+  if (operation.id === 'extract-attachments') return 'Attachment / ZIP'
+  if (operation.id === 'extract-text') return `${fields.format === 'markdown' ? 'MD' : 'TXT'} / ZIP`
+  if (operation.output === 'image')
+    return fields.format === 'jpeg' ? 'JPEG' : fields.format === 'webp' ? 'WebP' : 'PNG'
+  if (operation.id === 'compose-pages') return 'PDF'
+  if (operation.output === 'pdf' || operation.id === 'split') return 'PDF / ZIP'
+  return operation.output
+}
+
 export function JobPanel({
   operation,
   backendVersion,
   files,
   auxFiles,
   postFiles,
-  source,
+  archives = [],
+  stageFiles = [],
+  documentText,
+  fields = {},
+  conversionStages,
   pending,
   lastDownload,
   acceptedWebhook,
@@ -43,7 +92,11 @@ export function JobPanel({
   files: File[]
   auxFiles: File[]
   postFiles: PostProcessFiles
-  source: string
+  archives?: File[]
+  stageFiles?: File[]
+  documentText: readonly string[]
+  fields?: Readonly<Record<string, string | boolean>>
+  conversionStages?: string
   pending: boolean
   lastDownload: Download | null
   acceptedWebhook: AcceptedWebhook | null
@@ -51,6 +104,20 @@ export function JobPanel({
   recent: Job[]
 }) {
   const Icon = operationIcon(operation.id)
+  const uploads = [
+    ...files,
+    ...auxFiles,
+    ...archives,
+    ...stageFiles,
+    ...(postFiles.embeds ?? []),
+    ...overlayUploads(postFiles, 'watermark'),
+    ...overlayUploads(postFiles, 'stamp'),
+    ...(postFiles.facturxXml ? [postFiles.facturxXml] : []),
+  ]
+  const encoder = new TextEncoder()
+  const uploadBytes =
+    uploads.reduce((sum, file) => sum + file.size, 0) +
+    documentText.reduce((sum, part) => sum + encoder.encode(part).byteLength, 0)
   const validationNeedsReview =
     operation.id === 'pdf-validate' &&
     (!lastDownload?.validation ||
@@ -104,44 +171,19 @@ export function JobPanel({
             <div className="flex justify-between gap-4 text-xs">
               <span className="text-slate-500 dark:text-slate-400">Files selected</span>
               <span className="font-semibold text-slate-700 dark:text-slate-200">
-                {files.length +
-                  auxFiles.length +
-                  (postFiles.embeds?.length ?? 0) +
-                  overlayUploads(postFiles, 'watermark').length +
-                  overlayUploads(postFiles, 'stamp').length +
-                  Number(Boolean(postFiles.facturxXml))}
+                {uploads.length}
               </span>
             </div>
             <div className="flex justify-between gap-4 text-xs">
               <span className="text-slate-500 dark:text-slate-400">Upload size</span>
               <span className="font-semibold text-slate-700 dark:text-slate-200">
-                {formatBytes(
-                  [
-                    ...files,
-                    ...auxFiles,
-                    ...(postFiles.embeds ?? []),
-                    ...overlayUploads(postFiles, 'watermark'),
-                    ...overlayUploads(postFiles, 'stamp'),
-                    ...(postFiles.facturxXml ? [postFiles.facturxXml] : []),
-                  ].reduce((sum, file) => sum + file.size, 0) +
-                    new TextEncoder().encode(source).byteLength,
-                )}
+                {formatBytes(uploadBytes)}
               </span>
             </div>
             <div className="flex justify-between gap-4 text-xs">
               <span className="text-slate-500 dark:text-slate-400">Target output</span>
               <span className="font-semibold uppercase text-slate-700 dark:text-slate-200">
-                {operation.id === 'render-pages'
-                  ? 'PNG / JPEG / ZIP'
-                  : operation.id === 'extract-attachments'
-                    ? 'Attachment / ZIP'
-                    : operation.id === 'extract-text'
-                      ? 'TXT / ZIP'
-                      : operation.output === 'image'
-                        ? 'PNG / JPEG / WebP'
-                        : operation.output === 'pdf' || operation.id === 'split'
-                          ? 'PDF / ZIP'
-                          : operation.output}
+                {targetOutputLabel(operation, fields, conversionStages, backendVersion)}
               </span>
             </div>
           </div>

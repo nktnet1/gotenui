@@ -6,8 +6,8 @@ import {
 } from '#/lib/attachment-metadata'
 import {
   DEFAULT_MARKDOWN_NAME,
-  defaultMarkdownTemplate,
   generatedChromiumFilenames,
+  generatedChromiumText,
 } from '#/lib/chromium-documents'
 import { encodeChromiumMediaFeatures, normalizeAdvancedMediaFeatures } from '#/lib/chromium-media'
 import {
@@ -41,6 +41,7 @@ import {
 } from '#/lib/pdf-post-processing'
 import { metadataObject, validateBookmarkDocument } from '#/lib/pdf-structure-editors'
 import {
+  isFieldRequired,
   isFieldVisible,
   OPERATION_BY_ID,
   type Operation,
@@ -659,23 +660,9 @@ export function validateFiles(
   }
   const generatedNames = generatedChromiumFilenames(operation.input, payload)
   const names = new Set(generatedNames.map(filenameKey))
-  const generatedTemplate =
-    operation.input === 'markdown'
-      ? (payload?.markdownTemplate ??
-        defaultMarkdownTemplate([
-          payload?.markdownName ?? DEFAULT_MARKDOWN_NAME,
-          ...(payload?.markdownFiles ?? []).map((file) => file.name),
-        ]))
-      : ''
-  // The JSON payload and local files are independently limited by the HTTP request cap;
-  // include the generated files when enforcing the upstream upload budget as well.
-  const generatedText = [
-    payload?.source ?? '',
-    ...(payload?.markdownFiles ?? []).map((file) => file.content),
-    generatedTemplate,
-    payload?.headerHtml ?? '',
-    payload?.footerHtml ?? '',
-  ]
+  // The JSON payload and local files are independently limited by the HTTP request cap.
+  // Include generated files when enforcing the upstream upload budget as well.
+  const generatedText = generatedChromiumText(operation.input, payload)
   let total = generatedText.reduce(
     (bytes, part) => bytes + new TextEncoder().encode(part).length,
     0,
@@ -1292,7 +1279,7 @@ export function validatePayload(input: unknown): {
   for (const field of operation.fields) {
     if (
       !orderedStandalone &&
-      field.required &&
+      isFieldRequired(field, effectiveFields) &&
       (payload.fields[field.name] === '' || payload.fields[field.name] === undefined)
     ) {
       throw new InputError(`${field.label} is required.`)

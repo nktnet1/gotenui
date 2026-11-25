@@ -20,12 +20,14 @@ function FieldControl({
   value,
   onChange,
   disabled = false,
+  required = field.required,
   backendVersion,
 }: {
   field: FieldDefinition
   value: string | boolean | undefined
   onChange: (value: string | boolean) => void
   disabled?: boolean
+  required?: boolean
   backendVersion?: string
 }) {
   const id = useId()
@@ -92,7 +94,7 @@ function FieldControl({
     <div className="space-y-2">
       <Label htmlFor={id}>
         {field.label}
-        {field.required && <span className="ml-1 text-red-500 dark:text-red-400">*</span>}
+        {required && <span className="ml-1 text-red-500 dark:text-red-400">*</span>}
       </Label>
       {field.kind === 'select' || isV9BookmarkLevels ? (
         <div className="relative">
@@ -101,10 +103,10 @@ function FieldControl({
             className="h-11 w-full appearance-none rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 pr-9 text-sm text-slate-900 dark:text-slate-100 outline-none focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-100 dark:focus-visible:ring-sky-900"
             value={String(value ?? '')}
             onChange={(event) => onChange(event.target.value)}
-            required={field.required}
+            required={required}
             disabled={disabled || (unsupported && !value)}
           >
-            {!field.required && <option value="">Default / not set</option>}
+            {!required && <option value="">Default / not set</option>}
             {isV9BookmarkLevels &&
               value !== undefined &&
               String(value) !== '' &&
@@ -136,7 +138,7 @@ function FieldControl({
           placeholder={field.placeholder ?? '{ }'}
           value={String(value ?? '')}
           onChange={(event) => onChange(event.target.value)}
-          required={field.required}
+          required={required}
           disabled={inactive}
         />
       ) : (
@@ -160,7 +162,7 @@ function FieldControl({
           placeholder={field.placeholder}
           value={String(value ?? (field.kind === 'color' ? '#7ffe7f' : ''))}
           onChange={(event) => onChange(event.target.value)}
-          required={field.required}
+          required={required}
           disabled={inactive}
         />
       )}

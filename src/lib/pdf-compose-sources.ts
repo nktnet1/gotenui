@@ -234,13 +234,35 @@ export function reconcilePdfComposeSources(
   let sources: SourceTemplate[] = sourcesKnown
     ? names.sort((a, b) => compareSourceNames(a.sortName, b.sortName))
     : names
+  // FormData.paths starts from a Go map. Distinct names with equivalent
+  // numeric prefixes can compare equally, so a stable sort does not guarantee
+  // their relative order. Mixed prefix/suffix comparisons can also form cycles.
+  // Only a first name strictly ordered ahead of all others is predictable.
+  const firstName = names[0]
+  const ambiguousFirstName =
+    sourcesKnown &&
+    firstName !== undefined &&
+    names.slice(1).some(({ sortName }) => compareSourceNames(firstName.sortName, sortName) >= 0)
+  const ambiguousFilenameReason =
+    'The merged PDF filename is ambiguous because the source filenames do not have a deterministic first name. Rename the inputs to give them distinct ordered prefixes before using named downstream references.'
   let single = singleInput || (!unknownInputs && names.length === 1)
   let afterSplit = false
   let afterCollapse = false
+  let ambiguousCollapsedName = false
+  const collapseSources = () => {
+    if (!afterCollapse && ambiguousFirstName) ambiguousCollapsedName = true
+    sources = sourcesKnown && !ambiguousCollapsedName ? firstSource(sources) : []
+    single = true
+    afterCollapse = true
+    afterSplit = false
+  }
 
   return stages.map((stage) => {
     if (stage.op === 'merge') {
       const bookmarks = stage.fileBookmarks as FileBookmarks | undefined
+      if (ambiguousCollapsedName && Object.keys(bookmarks?.labels ?? {}).length) {
+        throw new InputError(`merge: ${ambiguousFilenameReason}`)
+      }
       const needsNormalization = Object.keys(bookmarks?.labels ?? {}).some(
         (name) => name !== name.normalize('NFC'),
       )
@@ -255,10 +277,7 @@ export function reconcilePdfComposeSources(
               ),
             }
           : stage
-      sources = sourcesKnown ? firstSource(sources) : []
-      single = true
-      afterCollapse = true
-      afterSplit = false
+      collapseSources()
       return mapped
     }
     if (stage.op === 'split') {
@@ -311,6 +330,9 @@ export function reconcilePdfComposeSources(
             ? `compose: placement ${index + 1} needs a source after split (for example, report_0.pdf).`
             : `compose: placement ${index + 1} needs a source when more than one PDF is present.`,
         )
+      }
+      if (ambiguousCollapsedName) {
+        throw new InputError(`compose: ${ambiguousFilenameReason}`)
       }
       if (!sourcesKnown || !sources.length) {
         // Gotenberg auto-numbers colliding uploads (including ZIP entries), so
@@ -370,10 +392,7 @@ export function reconcilePdfComposeSources(
         }
       }
     }
-    sources = sourcesKnown ? firstSource(sources) : []
-    single = true
-    afterCollapse = true
-    afterSplit = false
+    collapseSources()
     return { ...stage, placements }
   })
 }

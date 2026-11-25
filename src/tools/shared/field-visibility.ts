@@ -29,6 +29,17 @@ export function isFieldVisible(
   return actual === condition.equals || (actual === undefined && condition.equals === false)
 }
 
+/** Retain an ignored setting in drafts without requiring it for submission. */
+export function isFieldRequired(
+  field: FieldDefinition,
+  values: Readonly<Record<string, string | boolean>>,
+): boolean {
+  return Boolean(
+    field.required &&
+      (!field.requiredUnless || values[field.requiredUnless.name] !== field.requiredUnless.equals),
+  )
+}
+
 export function fieldSupportsBackend(field: FieldDefinition, version?: string): boolean {
   if (!field.supportedGotenbergMajors) return true
   const major = parseGotenbergVersion(version)?.major

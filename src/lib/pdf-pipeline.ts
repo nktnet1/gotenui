@@ -1054,6 +1054,15 @@ export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): read
   return ['application/pdf', 'application/zip']
 }
 
+/** Conversion routes include newly converted PDFs alongside final extraction results. */
+export function conversionPipelineResponseTypes(
+  stages: readonly PdfPipelineStage[],
+): readonly string[] {
+  return ['render', 'extract-text', 'extract-attachments'].includes(stages.at(-1)?.op ?? '')
+    ? ['application/zip']
+    : pipelineResponseTypes(stages)
+}
+
 /** Do not echo secrets in the visual preview (the upstream payload still contains them). */
 export function safePipelinePreview(stages: readonly PdfPipelineStage[]): string {
   return JSON.stringify(

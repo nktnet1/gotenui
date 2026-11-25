@@ -45,7 +45,7 @@ import {
   webhookPayload,
 } from '#/lib/async-inputs'
 import type { BrowserBatchQueue } from '#/lib/browser-batch-queue'
-import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
+import { DEFAULT_MARKDOWN_NAME, generatedChromiumText } from '#/lib/chromium-documents'
 import { chromiumNetworkFields } from '#/lib/chromium-network'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import {
@@ -83,6 +83,7 @@ import {
   activeOperationFields,
   type FieldDefinition,
   fieldSupportsBackend,
+  isFieldRequired,
   isFieldVisible,
   type Operation,
   operationDefaults,
@@ -944,6 +945,7 @@ export function Workbench({
                     <FieldControl
                       key={field.name}
                       field={field}
+                      required={isFieldRequired(field, fields)}
                       value={fields[field.name]}
                       onChange={(value) => updateField(field.name, value)}
                       backendVersion={backendVersion}
@@ -1134,6 +1136,7 @@ export function Workbench({
                           <FieldControl
                             key={field.name}
                             field={field}
+                            required={isFieldRequired(field, fields)}
                             value={fields[field.name]}
                             onChange={(value) => updateField(field.name, value)}
                             backendVersion={backendVersion}
@@ -1183,6 +1186,7 @@ export function Workbench({
                             ? { ...field, options: ['PDF/A-3b'] }
                             : field
                         }
+                        required={isFieldRequired(field, fields)}
                         value={fields[field.name]}
                         onChange={(value) => updateField(field.name, value)}
                         backendVersion={backendVersion}
@@ -1356,7 +1360,18 @@ export function Workbench({
         files={files}
         auxFiles={auxFiles}
         postFiles={v8StandaloneOverlay || !standaloneKind ? postFiles : {}}
-        source={isSourceEditor ? source : ''}
+        archives={canUploadArchives ? archives : []}
+        stageFiles={supportsConversionPipeline ? conversionStageFiles : []}
+        documentText={generatedChromiumText(operation.input, {
+          source: isSourceEditor ? source : undefined,
+          markdownName,
+          markdownFiles: operation.input === 'markdown' ? markdownFiles : undefined,
+          markdownTemplate: markdownTemplate ?? undefined,
+          headerHtml: hasPdfHeaderFooter ? headerHtml : undefined,
+          footerHtml: hasPdfHeaderFooter ? footerHtml : undefined,
+        })}
+        fields={fields}
+        conversionStages={supportsConversionPipeline ? conversionStages : undefined}
         pending={pending}
         lastDownload={lastDownload}
         acceptedWebhook={acceptedWebhook}
