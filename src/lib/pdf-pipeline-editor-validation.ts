@@ -1,4 +1,5 @@
 import { type RemoteInputRow, remoteInputsPayload } from '#/lib/async-inputs'
+import { planRemoteFilenames } from '#/lib/file-names'
 import {
   parseGotenbergVersion,
   requiresGotenberg91ForExtraction,
@@ -10,6 +11,11 @@ import {
   requiresGotenberg98ForExtractTextFormat,
   requiresGotenberg99ForCompressStreams,
 } from '#/lib/gotenberg-version'
+import {
+  mergeUploadFilenames,
+  numbersPipelineInputs,
+  remoteMergeFilenames,
+} from '#/lib/merge-order'
 import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
@@ -127,42 +133,60 @@ export function pdfPipelineEditorError(
         (documentKind === 'office'
           ? OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase())
           : documentKind === 'pdf' && /\.pdf$/i.test(name))
-      const remoteSources = Array.isArray(remotes)
+      const sourceRemotes = Array.isArray(remotes)
         ? remotes.flatMap((remote: unknown) => {
             if (!remote || typeof remote !== 'object' || Array.isArray(remote)) return []
-            const { filename, name, field, embedded } = remote as Record<string, unknown>
+            const { url, filename, name, field, embedded } = remote as Record<string, unknown>
             if (field || embedded) return []
-            const known = typeof filename === 'string' && filename ? filename : name
-            return typeof known === 'string' && extensionMatches(known) ? [known] : []
+            return [
+              {
+                url: typeof url === 'string' ? url : '',
+                name: typeof name === 'string' ? name : undefined,
+                filename: typeof filename === 'string' ? filename : undefined,
+              },
+            ]
           })
         : []
-      const unknownRemote =
-        documentKind !== 'single' &&
-        Array.isArray(remotes) &&
-        remotes.some((remote: unknown) => {
-          if (!remote || typeof remote !== 'object' || Array.isArray(remote)) return false
-          const { filename, name, field, embedded } = remote as Record<string, unknown>
-          return !field && !embedded && !filename && !name
-        })
-      const sourceNames =
+      const localNames = documentNames ?? []
+      const remoteFilenames = planRemoteFilenames(sourceRemotes, {
+        supportsFilename: version?.major === 9 && version.minor >= 2,
+        inferAll: localNames.length > 0,
+        pinAll: localAssetNames.length > 0,
+        stageAssetNames: referencedAssets,
+      }).map(({ name }) => name)
+      const remoteSources = remoteFilenames.filter(
+        (name): name is string => name !== undefined && extensionMatches(name),
+      )
+      const unknownRemote = documentKind !== 'single' && remoteFilenames.some((name) => !name)
+      const pipeline = [...(builtInMerge ? ([{ op: 'merge' }] as const) : []), ...parsed]
+      const forwarded = numbersPipelineInputs(pipeline, localNames.length, builtInMerge)
+        ? mergeUploadFilenames(localNames, [
+            ...remoteMergeFilenames(sourceRemotes),
+            ...localAssetNames,
+          ])
+        : localNames
+      const pdfName = (name: string) => (documentKind === 'office' ? `${name}.pdf` : name)
+      const sources =
         documentKind === 'single'
           ? outputName
-            ? [`${outputName}.pdf`]
+            ? [{ original: `${outputName}.pdf`, forwarded: `${outputName}.pdf` }]
             : []
-          : [...(documentNames ?? []), ...remoteSources]
-      if (sourceNames.length || unknownRemote || documentKind === 'single') {
-        const sources = sourceNames.map((name) => {
-          const pdfName = documentKind === 'office' ? `${name}.pdf` : name
-          return { original: pdfName, forwarded: pdfName }
+          : [
+              ...localNames.map((name, index) => ({
+                original: pdfName(name),
+                forwarded: pdfName(forwarded[index] ?? name),
+              })),
+              ...remoteSources.map((name) => ({
+                original: pdfName(name),
+                forwarded: pdfName(name),
+              })),
+            ]
+      if (sources.length || unknownRemote || documentKind === 'single') {
+        reconcilePdfComposeSources(pipeline, {
+          inputs: sources,
+          singleInput: documentKind === 'single',
+          unknownInputs: unknownRemote,
         })
-        reconcilePdfComposeSources(
-          [...(builtInMerge ? ([{ op: 'merge' }] as const) : []), ...parsed],
-          {
-            inputs: sources,
-            singleInput: documentKind === 'single',
-            unknownInputs: unknownRemote,
-          },
-        )
       }
     }
     return null

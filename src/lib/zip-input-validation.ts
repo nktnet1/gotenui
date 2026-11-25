@@ -19,7 +19,8 @@ const MAX_COMMENT_BYTES = 65_535
 // the actual extraction quota (10,000 entries by default) and body limit.
 const MAX_DIRECTORY_BYTES = 64 * 1024 * 1024
 const MAX_ENTRIES = 10_000
-const decoder = new TextDecoder('utf-8', { fatal: false })
+// ZIP names are individual byte strings, not text streams with a BOM.
+const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true })
 
 function invalidArchive(name: string, detail: string): never {
   throw new InputError(`ZIP archive ${name}: ${detail}`)

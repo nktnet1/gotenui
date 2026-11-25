@@ -18,6 +18,22 @@ export function remoteMergeFilenames(
   })
 }
 
+/** A merge before any compose renames local inputs to preserve upload order.
+ * The Office Merge switch always numbers its inputs, even a single document.
+ */
+export function numbersPipelineInputs(
+  stages: readonly { op: string }[],
+  inputCount: number,
+  builtInMerge = false,
+): boolean {
+  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
+  const firstCompose = stages.findIndex(({ op }) => op === 'compose')
+  return (
+    firstMerge !== -1 &&
+    (builtInMerge || (inputCount > 1 && (firstCompose === -1 || firstCompose > firstMerge)))
+  )
+}
+
 /** Reserve stage asset names when numbering pipeline merge inputs. The rank
  * stays at the start, so disambiguation never changes Gotenberg's merge order.
  */

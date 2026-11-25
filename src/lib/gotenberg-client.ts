@@ -11,7 +11,7 @@ import {
   normalizeAdvancedMediaFeatures,
 } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
-import { effectiveRemoteFilename, filenameKey, possibleRemoteFilename } from '#/lib/file-names'
+import { filenameKey, planRemoteFilenames } from '#/lib/file-names'
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
@@ -288,16 +288,15 @@ export function createGotenbergForm(
     const namedArchiveAssets = archiveEntryNames.some((name) =>
       stageAssetNames.has(filenameKey(name)),
     )
-    // A remote stage asset also needs protection from earlier downloads.
-    // Later downloads cannot take its registered name, so do not require
-    // otherwise unnecessary overrides for them.
-    const lastNamedRemoteAsset = payload.downloadFrom.reduce((last, remote, index) => {
-      const name = effectiveRemoteFilename(remote)
-      return name !== undefined && stageAssetNames.has(filenameKey(name)) ? index : last
-    }, -1)
-    const mustPinAllRemoteNames =
-      supportsFilename &&
-      (chromiumNamesAtRisk || auxiliary.length > 0 || stageFiles.length > 0 || namedArchiveAssets)
+    // Pin preceding downloads too: their registered names must not displace
+    // a later named remote stage asset. Later downloads cannot take that name.
+    const filenamePlan = planRemoteFilenames(payload.downloadFrom, {
+      supportsFilename,
+      inferAll: files.length > 0 || archives.length > 0,
+      pinAll:
+        chromiumNamesAtRisk || auxiliary.length > 0 || stageFiles.length > 0 || namedArchiveAssets,
+      stageAssetNames,
+    })
     if (chromiumNamesAtRisk && !supportsFilename) {
       throw new InputError(
         'Chromium remote downloads alongside local assets require Gotenberg 9.2 or newer to pin their filenames.',
@@ -314,19 +313,12 @@ export function createGotenbergForm(
               409,
             )
           }
-          const mustPinRemoteName = mustPinAllRemoteNames || index < lastNamedRemoteAsset
-          let effectiveFilename = effectiveRemoteFilename({ filename, name })
-          if (
-            !effectiveFilename &&
-            supportsFilename &&
-            (mustPinRemoteName || files.length > 0 || archives.length > 0)
-          ) {
-            effectiveFilename = possibleRemoteFilename(remote)
-            if (!effectiveFilename && mustPinRemoteName) {
-              throw new InputError(
-                'Specify a remote filename for downloads whose URL has no file extension when named assets could be shadowed.',
-              )
-            }
+          const planned = filenamePlan[index]
+          const effectiveFilename = planned?.name
+          if (planned?.required && !effectiveFilename) {
+            throw new InputError(
+              'Specify a remote filename for downloads whose URL has no file extension when named assets could be shadowed.',
+            )
           }
           return {
             ...remote,

@@ -315,3 +315,41 @@ test('Gotenberg 9.10 merge reserves numbered duplicate remote filenames', async 
   ])
   assert.deepEqual(output.filenames, ['01__report (2).pdf'])
 })
+
+test.each(['pdf', 'office'] as const)(
+  'Gotenberg 9.10 pipeline keeps inferred %s remote bookmark labels separate from numbered local aliases',
+  async (kind) => {
+    const extension = kind === 'pdf' ? 'pdf' : 'docx'
+    const name = `report.${extension}`
+    const pdfName = kind === 'pdf' ? name : `${name}.pdf`
+    const localPdfName = `01_${pdfName}`
+    const url = `https://example.test/${name}`
+    const stages = [
+      {
+        op: 'merge',
+        fileBookmarks: { labels: { [pdfName]: 'Remote report', [localPdfName]: 'Local report' } },
+      },
+    ]
+    const request =
+      kind === 'pdf'
+        ? pdfMergeRequest({
+            pipeline: true,
+            sourceNames: [name, 'annex.pdf'],
+            remotes: [{ url }],
+            fields: { stages: JSON.stringify(stages) },
+          })
+        : officeRequest({
+            merge: false,
+            sourceNames: [name, 'annex.docx'],
+            remotes: [{ url }],
+            stages,
+          })
+    const output = await forwardedFiles(
+      request,
+      '9.10.0',
+      kind === 'pdf' ? '/forms/pdf/pipe' : '/forms/libreoffice/convert',
+    )
+    assert.deepEqual(output.remotes, [{ url, filename: name }])
+    assert.deepEqual(output.stages, stages)
+  },
+)

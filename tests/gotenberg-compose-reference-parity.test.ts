@@ -556,3 +556,52 @@ describe('compose stage filename validation', () => {
     assert.deepEqual(output[4], compose('report_0_0_0.pdf'))
   })
 })
+
+it.each(['pdf-pipeline', 'office-pdf'] as const)(
+  'uses the pinned URL-derived %s filename when resolving a split after merge',
+  async (operation) => {
+    const extension = operation === 'pdf-pipeline' ? 'pdf' : 'docx'
+    const remoteName = `00_remote.${extension}`
+    const splitName = operation === 'pdf-pipeline' ? '00_remote_0.pdf' : '00_remote.docx_0.pdf'
+    const url = `https://files.example.test/${remoteName}`
+    const result = await forwarded({
+      operation,
+      names: [`z.${extension}`, `a.${extension}`],
+      remotes: [{ url }],
+      stages: [{ op: 'merge' }, { op: 'split', every: 1 }, compose(splitName)],
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.remotes, [{ url, filename: remoteName }])
+    assert.deepEqual(result.stages[2], compose(splitName))
+  },
+)
+
+it.each(['pdf', 'office'] as const)(
+  'editor resolves split filenames using the same numbered local and pinned remote %s inputs as the proxy',
+  (documentKind) => {
+    const extension = documentKind === 'pdf' ? 'pdf' : 'docx'
+    const remoteName = `00_remote.${extension}`
+    const remoteSplit = documentKind === 'pdf' ? '00_remote_0.pdf' : '00_remote.docx_0.pdf'
+    const localSplit = documentKind === 'pdf' ? 'z_0.pdf' : 'z.docx_0.pdf'
+    const options = {
+      localAssetNames: [],
+      archivesPresent: false,
+      remoteRows: [],
+      remoteJson: '',
+      acknowledgedRedaction: false,
+      backendVersion: '9.10.0',
+      documentNames: [`z.${extension}`, `a.${extension}`],
+      documentKind,
+    }
+    const stages = (source: string) =>
+      JSON.stringify([{ op: 'merge' }, { op: 'split', every: 1 }, compose(source)])
+    assert.equal(pdfPipelineEditorError(stages(localSplit), options), null)
+    assert.equal(
+      pdfPipelineEditorError(stages(remoteSplit), {
+        ...options,
+        remoteJson: JSON.stringify([{ url: `https://files.example.test/${remoteName}` }]),
+      }),
+      null,
+    )
+  },
+)

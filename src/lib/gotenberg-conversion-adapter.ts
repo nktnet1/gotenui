@@ -1,8 +1,9 @@
-import { effectiveRemoteFilename } from '#/lib/file-names'
+import { forwardedRemoteFilenames } from '#/lib/file-names'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
   mergeUploadFilename,
   mergeUploadFilenames,
+  numbersPipelineInputs,
   remoteMergeFilenames,
   reservePrefixedMergeUploadNames,
 } from '#/lib/merge-order'
@@ -269,22 +270,13 @@ function orderOfficeMergeInputs(
   stageFiles: readonly File[],
   archiveEntryNames: readonly string[],
 ): PdfComposeInput[] | null {
-  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
-  if (firstMerge === -1) return null
-
-  const firstCompose = stages.findIndex(({ op }) => op === 'compose')
-  const builtInMerge = payload.fields.merge === true
-  // Composing before merging still needs the original document filenames.
-  // After merge, compose can omit source rather than guessing a filename.
-  if (!builtInMerge && firstCompose !== -1 && firstCompose < firstMerge) {
-    return null
-  }
-
   const sources = form.getAll('files')
+  const builtInMerge = payload.fields.merge === true
+  // Composing before merging needs the original document filenames.
+  if (!numbersPipelineInputs(stages, sources.length, builtInMerge)) return null
   if (sources.some((source) => !(source instanceof File))) {
     throw new InputError('Expected an Office document upload.')
   }
-  if (!builtInMerge && sources.length < 2) return null
 
   const filenames = sources.map((source) => (source instanceof File ? source.name : ''))
   const reserved = [
@@ -459,10 +451,10 @@ export function adaptConversionForm(
       const isOfficeSource = (name: string): boolean =>
         OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase()) &&
         !referenced.has(name.normalize('NFC'))
-      const remoteSources = (payload.downloadFrom ?? []).flatMap((remote) => {
-        const remoteName = effectiveRemoteFilename(remote)
-        return remoteName && isOfficeSource(remoteName) ? [remoteName] : []
-      })
+      const remoteFilenames = forwardedRemoteFilenames(form, payload.downloadFrom)
+      const remoteSources = remoteFilenames.filter(
+        (name): name is string => name !== undefined && isOfficeSource(name),
+      )
       const localSources =
         officeSourceNames ??
         form
@@ -487,9 +479,7 @@ export function adaptConversionForm(
               ? [{ original: `${payload.outputName}.pdf`, forwarded: `${payload.outputName}.pdf` }]
               : [],
         singleInput: operation.id !== 'office-pdf',
-        unknownInputs:
-          operation.id === 'office-pdf' &&
-          (payload.downloadFrom ?? []).some((remote) => !effectiveRemoteFilename(remote)),
+        unknownInputs: operation.id === 'office-pdf' && remoteFilenames.some((name) => !name),
         mapBookmarks: true,
       })
       parsePdfPipeline(JSON.stringify(mergedStages), {

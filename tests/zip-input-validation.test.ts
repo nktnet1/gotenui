@@ -568,3 +568,16 @@ test('keeps case-distinct ZIP names separate like the Gotenberg file registry', 
     ['café.pdf', 'café.pdf'],
   )
 })
+
+test('preserves a leading U+FEFF in ZIP entry filenames instead of treating it as a text BOM', async () => {
+  assert.deepEqual(
+    await check('html-pdf', [zipFixture({ '\uFEFFindex.html': 'distinct resource' })]),
+    ['\uFEFFindex.html'],
+  )
+  assert.deepEqual(
+    await check('pdf-pipeline', [
+      zipFixture({ 'report.pdf': '%PDF-1.7', '\uFEFFreport.pdf': '%PDF-1.7' }),
+    ]),
+    ['report.pdf', '\uFEFFreport.pdf'],
+  )
+})

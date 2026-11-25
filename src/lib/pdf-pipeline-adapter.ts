@@ -1,5 +1,9 @@
-import { effectiveRemoteFilename } from '#/lib/file-names'
-import { mergeUploadFilenames, remoteMergeFilenames } from '#/lib/merge-order'
+import { forwardedRemoteFilenames } from '#/lib/file-names'
+import {
+  mergeUploadFilenames,
+  numbersPipelineInputs,
+  remoteMergeFilenames,
+} from '#/lib/merge-order'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { parsePdfPipeline, pdfStageAssetNames, validatePdfStageUploads } from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
@@ -59,19 +63,16 @@ export function adaptPdfPipeline(
   // Gotenberg 9 sorts PDFs by their received filenames, regardless of the
   // multipart upload order. Number local inputs when merging, as the standalone
   // merge tool does. A compose before merge still needs original PDF names.
-  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
-  const firstCompose = stages.findIndex(({ op }) => op === 'compose')
-  const orderedNames =
-    firstMerge !== -1 && (firstCompose === -1 || firstCompose > firstMerge) && inputs.length > 1
-      ? mergeUploadFilenames(
-          inputs.map((file) => (file instanceof File ? file.name : '')),
-          [
-            ...remoteMergeFilenames(payload.downloadFrom),
-            ...archiveEntryNames,
-            ...auxiliary.map(({ name }) => name),
-          ],
-        )
-      : []
+  const orderedNames = numbersPipelineInputs(stages, inputs.length)
+    ? mergeUploadFilenames(
+        inputs.map((file) => (file instanceof File ? file.name : '')),
+        [
+          ...remoteMergeFilenames(payload.downloadFrom),
+          ...archiveEntryNames,
+          ...auxiliary.map(({ name }) => name),
+        ],
+      )
+    : []
   for (const [index, file] of inputs.entries()) {
     if (!(file instanceof File)) throw new InputError('Expected an uploaded PDF.')
     form.append('files', file, orderedNames[index] ?? file.name)
@@ -84,12 +85,10 @@ export function adaptPdfPipeline(
   for (const archive of archives) form.append('archives', archive, archive.name)
   const isInput = (name: string): boolean =>
     /\.pdf$/i.test(name) && !references.includes(name.normalize('NFC'))
+  const remoteFilenames = forwardedRemoteFilenames(legacy, payload.downloadFrom)
   const external = [
     ...archiveEntryNames.filter(isInput),
-    ...(payload.downloadFrom ?? []).flatMap((remote) => {
-      const remoteName = effectiveRemoteFilename(remote)
-      return remoteName && isInput(remoteName) ? [remoteName] : []
-    }),
+    ...remoteFilenames.filter((name): name is string => name !== undefined && isInput(name)),
   ]
   const mappedStages = reconcilePdfComposeSources(stages, {
     inputs: [
@@ -99,7 +98,7 @@ export function adaptPdfPipeline(
       }),
       ...external.map((name) => ({ original: name, forwarded: name })),
     ],
-    unknownInputs: (payload.downloadFrom ?? []).some((remote) => !effectiveRemoteFilename(remote)),
+    unknownInputs: remoteFilenames.some((name) => !name),
     mapBookmarks: true,
   })
   form.set('stages', JSON.stringify(mappedStages))

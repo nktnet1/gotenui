@@ -60,6 +60,49 @@ export function possibleRemoteFilename(remote: {
   }
 }
 
+type RemoteFilenameInput = { url: string; name?: string; filename?: string }
+
+/** Predict exactly which names the multipart encoder can pin. Keep legacy
+ * hints on older backends, but infer names only where an override is supported.
+ */
+export function planRemoteFilenames(
+  remotes: readonly RemoteFilenameInput[],
+  options: {
+    supportsFilename: boolean
+    inferAll: boolean
+    pinAll: boolean
+    stageAssetNames: ReadonlySet<string>
+  },
+): { name: string | undefined; required: boolean }[] {
+  const lastNamedAsset = options.supportsFilename
+    ? remotes.reduce((last, remote, index) => {
+        const name = effectiveRemoteFilename(remote)
+        return name !== undefined && options.stageAssetNames.has(filenameKey(name)) ? index : last
+      }, -1)
+    : -1
+  return remotes.map((remote, index) => {
+    const required = options.supportsFilename && (options.pinAll || index < lastNamedAsset)
+    const infer = options.supportsFilename && (required || options.inferAll)
+    return {
+      name: effectiveRemoteFilename(remote) ?? (infer ? possibleRemoteFilename(remote) : undefined),
+      required,
+    }
+  })
+}
+
+/** Use the actual filename override emitted by the multipart encoder when
+ * reconciling PDF sources. An older server's explicit name hint remains an
+ * expected filename, not an upstream override.
+ */
+export function forwardedRemoteFilenames(
+  form: FormData,
+  remotes: readonly RemoteFilenameInput[] = [],
+): (string | undefined)[] {
+  const raw = form.get('downloadFrom')
+  const encoded = typeof raw === 'string' ? (JSON.parse(raw) as RemoteFilenameInput[]) : []
+  return remotes.map((remote, index) => encoded[index]?.filename || effectiveRemoteFilename(remote))
+}
+
 /** Mirror Gotenberg uniqueFilename in registration order, including names
  * already occupied by earlier numbered duplicates.
  */
