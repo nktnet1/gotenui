@@ -1151,3 +1151,36 @@ describe('ambiguous backend numeric sorting', () => {
     )
   })
 })
+
+it('plans Chromium split names from the actual HTTP output header value', () => {
+  const stages = [{ op: 'split', every: 1 }, compose('stable_0.pdf')]
+  const operation = OPERATION_BY_ID.get('html-pdf')
+  assert.ok(operation)
+  const payload: ConversionPayload = {
+    operation: 'html-pdf',
+    fields: {},
+    advanced: {},
+    outputName: ' stable ',
+    conversionStages: JSON.stringify(stages),
+  }
+  const form = adaptConversionForm(operation, payload, new FormData(), 9)
+  assert.deepEqual(JSON.parse(String(form.get('stages'))), stages)
+  assert.throws(
+    () => adaptConversionForm(operation, { ...payload, outputName: '  ' }, new FormData(), 9),
+    /Chromium output filename/,
+  )
+  assert.equal(
+    pdfPipelineEditorError(JSON.stringify(stages), {
+      localAssetNames: [],
+      archivesPresent: false,
+      remoteRows: [],
+      remoteJson: '',
+      acknowledgedRedaction: false,
+      backendVersion: '9.10.0',
+      documentKind: 'single',
+      documentNames: [],
+      outputName: ' stable ',
+    }),
+    null,
+  )
+})

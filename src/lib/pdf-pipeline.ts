@@ -4,6 +4,7 @@
 
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
 import { registeredFilenames } from '#/lib/file-names'
+import { goFormLength } from '#/lib/go-form-values'
 import { validateFileBookmarks } from '#/lib/pdf-file-bookmarks'
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
@@ -524,10 +525,8 @@ function validateStage(stage: PdfPipelineStage): void {
       for (const side of ['paperWidth', 'paperHeight'] as const) {
         const length = stage[side] as string | undefined
         if (absent(length) || length === '') continue
-        const match = /^\+?((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:pt|px|in|mm|cm|pc)?$/.exec(
-          length,
-        )
-        if (!match || !Number.isFinite(Number(match[1])) || Number(match[1]) <= 0) {
+        const inches = goFormLength(length)
+        if (inches === undefined || !Number.isFinite(inches) || inches <= 0) {
           throw new InputError(`compose: "${side}" must be a positive length such as 6in or 432pt.`)
         }
       }
@@ -871,6 +870,26 @@ export type PdfPipelineValidation = {
   acknowledgedRedaction?: boolean
   /** Chromium and LibreOffice accept blank, null or [] stage lists; /pdf/pipe does not. */
   allowEmpty?: boolean
+}
+
+/** Map the standalone composition fields without changing native length spellings. */
+export function composeStageFromFields(
+  fields: Readonly<Record<string, string | boolean | undefined>>,
+): PdfPipelineStage {
+  let placements: unknown
+  try {
+    placements = JSON.parse(String(fields.placements ?? ''))
+  } catch {
+    throw new InputError('Page placements must be valid JSON.')
+  }
+  const stage: PdfPipelineStage = { op: 'compose', placements }
+  for (const name of ['paperSize', 'paperWidth', 'paperHeight'] as const) {
+    const value = fields[name]
+    if (value !== undefined && value !== '') stage[name] = value
+  }
+  const [parsed] = parsePdfPipeline(JSON.stringify([stage]))
+  if (!parsed) throw new InputError('Invalid page composition.')
+  return parsed
 }
 
 /** Parse user JSON, validate ordered stage semantics and (on server) file references. */

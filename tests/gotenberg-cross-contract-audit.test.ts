@@ -871,3 +871,80 @@ test('valid Chromium lengths including zero and native aliases reach Gotenberg u
     assert.equal(result.forwarded?.get(name), value)
   assert.equal(result.forwarded?.get('nativeBookmarks'), 'True')
 })
+
+test.each(['0x1.8p2in', '1_000pt'])(
+  'composition preserves valid Go length %s on both routes',
+  async (paperWidth) => {
+    const stage = { op: 'compose', paperWidth, paperHeight: '8in', placements: [{ sourcePage: 1 }] }
+    const standalone = await proxy({
+      operation: 'compose-pages',
+      fields: {
+        paperWidth,
+        paperHeight: stage.paperHeight,
+        placements: JSON.stringify(stage.placements),
+      },
+    })
+    assert.equal(standalone.status, 200, standalone.message)
+    assert.equal(standalone.forwarded?.get('paperWidth'), paperWidth)
+    const pipeline = await proxy({
+      operation: 'pdf-pipeline',
+      fields: { stages: JSON.stringify([stage]) },
+    })
+    assert.equal(pipeline.status, 200, pipeline.message)
+    assert.deepEqual(JSON.parse(String(pipeline.forwarded?.get('stages'))), [stage])
+  },
+)
+
+test.each(['1e-323px', ' 6in ', ' '])(
+  'standalone and pipeline composition reject invalid length %j without trimming',
+  async (paperWidth) => {
+    const stage = { op: 'compose', paperSize: 'A4', paperWidth, placements: [{ sourcePage: 1 }] }
+    for (const candidate of [
+      {
+        operation: 'compose-pages',
+        fields: { paperSize: 'A4', paperWidth, placements: JSON.stringify(stage.placements) },
+      },
+      { operation: 'pdf-pipeline', fields: { stages: JSON.stringify([stage]) } },
+    ]) {
+      const result = await proxy(candidate)
+      assert.equal(result.status, 400, result.message)
+      assert.match(result.message, /positive length/)
+      assert.equal(result.forwarded, undefined)
+    }
+  },
+)
+
+test('preserves leading BOMs in primary and stage filenames across both multipart hops', async () => {
+  const source = new File(['%PDF-1.7\n'], '\ufeffreport.pdf')
+  const asset = new File(['with BOM'], '\ufeffnotes.txt')
+  const other = new File(['without BOM'], 'notes.txt')
+  const stages = JSON.stringify([
+    { op: 'attach', file: asset.name },
+    { op: 'attach', file: other.name },
+  ])
+  let names: string[] | undefined
+  vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+    return proxyConversionRequest(
+      new Request(`${origin}/api/gotenberg/convert`, {
+        ...init,
+        headers: { Origin: origin, 'X-Gotenberg-Url': upstream },
+      }),
+      async (url, upstreamInit) => {
+        if (String(url).endsWith('/version')) return new Response('9.10.0')
+        const parsed = await new Request(String(url), upstreamInit).formData()
+        names = parsed.getAll('files').map((file) => (file as File).name)
+        assert.equal(parsed.get('stages'), stages)
+        return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+      },
+    ).catch(proxyErrorResponse)
+  })
+  const result = await convertWithGotenberg(
+    upstream,
+    { operation: 'pdf-pipeline', fields: { stages }, advanced: {} },
+    [source],
+    [asset, other],
+    new AbortController().signal,
+  )
+  assert.equal(result.mode, 'download')
+  assert.deepEqual(names, [source.name, asset.name, other.name])
+})

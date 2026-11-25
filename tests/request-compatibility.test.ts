@@ -373,3 +373,19 @@ test.each([
     }),
   ).toContainEqual(expect.stringMatching(name))
 })
+
+test('standalone composition preflight uses the same length and placement validation as the adapter', () => {
+  const spec = operation('compose-pages')
+  const fields = { paperSize: 'A4', placements: '[{"sourcePage":1}]' }
+  expect(
+    draftOutboundIssues(spec, { ...fields, paperWidth: '0x1.8p2in' }, '9.10.0', draft),
+  ).toEqual([])
+  expect(
+    draftOutboundIssues(spec, { ...fields, paperWidth: '1e-323px' }, '9.10.0', draft).join(' '),
+  ).toMatch(/positive length/)
+  expect(
+    draftOutboundIssues(spec, { ...fields, placements: '[{"scale":0}]' }, '9.10.0', draft).join(
+      ' ',
+    ),
+  ).toMatch(/invalid placements entry/)
+})

@@ -1,6 +1,7 @@
 /** Node decodes %22/%0A/%0D in ordinary multipart filenames, while Go does
  * not. Both parsers support extended UTF-8 filename parameters. Use those
  * when native FormData would otherwise change or conflate an upload name.
+ * Node also strips leading U+FEFF from ordinary filename parameters.
  * Native FormData also rewrites bare CR/LF in text fields, including passwords.
  */
 export function multipartBody(form: FormData): FormData | Blob {
@@ -8,7 +9,7 @@ export function multipartBody(form: FormData): FormData | Blob {
     ![...form.values()].some((value) =>
       typeof value === 'string'
         ? /\r(?!\n)|(?<!\r)\n/.test(value)
-        : /"|%22|%0[ad]/i.test(value.name),
+        : /^\uFEFF|"|%22|%0[ad]/i.test(value.name),
     )
   ) {
     return form

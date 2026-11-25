@@ -5,7 +5,7 @@ import {
 } from '#/lib/gotenberg-conversion-adapter'
 import type { GotenbergVersion } from '#/lib/gotenberg-version'
 import { canWebhookForOperation } from '#/lib/operation-availability'
-import { conversionSplitStage, parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { composeStageFromFields, conversionSplitStage, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { pdfPostProcessSchema } from '#/lib/pdf-post-processing'
 import { validateBookmarkDocument } from '#/lib/pdf-structure-editors'
 import { v9BookmarkTree, v9MetadataFields } from '#/lib/pdf-v9-structure'
@@ -162,6 +162,9 @@ export function outboundCompatibilityReasons(
   }
   // Match the standalone adapters before users submit or queue a retained draft.
   try {
+    if (modern && operation.id === 'compose-pages') {
+      composeStageFromFields(payload.fields)
+    }
     if (modern && operation.id === 'metadata-write' && payload.fields.metadata) {
       v9MetadataFields(String(payload.fields.metadata))
     }

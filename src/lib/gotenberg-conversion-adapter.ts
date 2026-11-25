@@ -1,4 +1,4 @@
-import { forwardedRemoteFilenames } from '#/lib/file-names'
+import { chromiumOutputPdfName, forwardedRemoteFilenames } from '#/lib/file-names'
 import { goFiniteFloat, goFormLength, isGoFormBoolean } from '#/lib/go-form-values'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
@@ -535,6 +535,7 @@ export function adaptConversionForm(
           .getAll('files')
           .filter((file): file is File => file instanceof File)
           .map(({ name }) => officePdfComposeInput(name))
+      const chromiumName = chromiumOutputPdfName(payload.outputName)
       const mergedStages = reconcilePdfComposeSources(stages, {
         inputs:
           operation.id === 'office-pdf'
@@ -545,8 +546,8 @@ export function adaptConversionForm(
                   .map((name) => officePdfComposeInput(name)),
                 ...remoteSources.map((name) => officePdfComposeInput(name)),
               ]
-            : payload.outputName
-              ? [{ original: `${payload.outputName}.pdf`, forwarded: `${payload.outputName}.pdf` }]
+            : chromiumName
+              ? [{ original: chromiumName, forwarded: chromiumName }]
               : [],
         singleInput: operation.id !== 'office-pdf',
         unknownInputs: operation.id === 'office-pdf' && remoteFilenames.some((name) => !name),

@@ -1,6 +1,7 @@
 import { type RemoteInputRow, remoteInputsPayload } from '#/lib/async-inputs'
 import {
   CHROMIUM_REMOTE_FILENAME_VERSION_REASON,
+  chromiumOutputPdfName,
   planRemoteFilenames,
   remoteFilenamePlanReason,
 } from '#/lib/file-names'
@@ -212,10 +213,11 @@ export function pdfPipelineEditorError(
         documentKind === 'office'
           ? officePdfComposeInput(original, forwarded)
           : { original, forwarded }
+      const chromiumName = chromiumOutputPdfName(outputName)
       const sources =
         documentKind === 'single'
-          ? outputName
-            ? [{ original: `${outputName}.pdf`, forwarded: `${outputName}.pdf` }]
+          ? chromiumName
+            ? [{ original: chromiumName, forwarded: chromiumName }]
             : []
           : [
               ...localNames.map((name, index) => sourceInput(name, forwarded[index])),

@@ -3,7 +3,7 @@
 import { filenameKey, forwardedRemoteFilenames } from '#/lib/file-names'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
-import { parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { composeStageFromFields, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
 import { isV9SourceDocument } from '#/lib/source-documents'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
@@ -121,19 +121,7 @@ export function adaptV9PdfExtra(
     case 'compose-pages': {
       allow('paperSize', 'paperWidth', 'paperHeight', 'placements')
       onlyPdfInputs()
-      const placements = jsonValue(value('placements'), 'Page placements')
-      const stage = parsePdfPipeline(
-        JSON.stringify([
-          {
-            op: 'compose',
-            ...(value('paperSize') ? { paperSize: value('paperSize') } : {}),
-            ...(value('paperWidth') ? { paperWidth: value('paperWidth') } : {}),
-            ...(value('paperHeight') ? { paperHeight: value('paperHeight') } : {}),
-            placements,
-          },
-        ]),
-      )[0]
-      if (!stage) throw new InputError('Invalid page composition.')
+      const stage = composeStageFromFields(fields)
       for (const name of ['paperSize', 'paperWidth', 'paperHeight']) {
         if (stage[name]) form.set(name, String(stage[name]))
       }

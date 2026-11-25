@@ -23,6 +23,15 @@ export function safeFilename(name: string): string {
 /** Gotenberg NFC-normalises filenames, but resolves them case-sensitively. */
 export const filenameKey = (name: string): string => name.normalize('NFC')
 
+/** HTTP strips surrounding spaces from output filename headers. An empty
+ * header leaves Chromium's generated filename unknown. Do not trim Unicode
+ * whitespace, which Go preserves in the UTF-8 header value.
+ */
+export function chromiumOutputPdfName(outputName?: string): string | undefined {
+  const name = outputName?.replace(/^ +| +$/g, '')
+  return name ? `${filenameKey(name)}.pdf` : undefined
+}
+
 /** An empty official filename override means "not set". Match the name that
  * the v9 multipart adapter sends, including when a legacy name hint exists.
  */
