@@ -60,6 +60,33 @@ export function possibleRemoteFilename(remote: {
   }
 }
 
+/** Mirror Gotenberg uniqueFilename in registration order, including names
+ * already occupied by earlier numbered duplicates.
+ */
+export function registeredFilenames(names: readonly string[]): string[] {
+  const occupied = new Set<string>()
+  const nextSuffix = new Map<string, number>()
+  return names.map((raw) => {
+    const name = filenameKey(raw)
+    if (!occupied.has(name)) {
+      occupied.add(name)
+      return name
+    }
+    const dot = name.lastIndexOf('.')
+    const stem = dot === -1 ? name : name.slice(0, dot)
+    const extension = dot === -1 ? '' : name.slice(dot)
+    let suffix = nextSuffix.get(name) ?? 2
+    let candidate = `${stem} (${suffix})${extension}`
+    while (occupied.has(candidate)) {
+      suffix++
+      candidate = `${stem} (${suffix})${extension}`
+    }
+    occupied.add(candidate)
+    nextSuffix.set(name, suffix + 1)
+    return candidate
+  })
+}
+
 /** Preserve upload arrival order. Gotenberg compares NFC-normalised filenames
  * case-sensitively and auto-renames repeated source documents in major 9.
  */

@@ -20,6 +20,7 @@ import {
   effectiveRemoteFilename,
   filenameKey,
   possibleRemoteFilename,
+  registeredFilenames,
 } from '#/lib/file-names'
 import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
@@ -764,9 +765,12 @@ export function validateFiles(
       ...auxiliary.map(({ name }) => filenameKey(name)),
       ...stageFiles.map(({ name }) => filenameKey(name)),
     ])
-    for (const remote of payload?.downloadFrom ?? []) {
+    const remoteNames = payload.downloadFrom.flatMap((remote) => {
       const name = possibleRemoteFilename(remote)
-      if (name && localNames.has(filenameKey(name))) {
+      return name ? [name] : []
+    })
+    for (const name of registeredFilenames(remoteNames)) {
+      if (localNames.has(name)) {
         throw new InputError(`Remote filename collides with a local document or asset: ${name}`)
       }
     }

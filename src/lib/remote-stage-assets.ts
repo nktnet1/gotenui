@@ -1,4 +1,5 @@
-import { effectiveRemoteFilename, filenameKey } from '#/lib/file-names'
+import { effectiveRemoteFilename, filenameKey, registeredFilenames } from '#/lib/file-names'
+import { type PdfPipelineStage, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import type { RemoteFile } from '#/lib/validation'
 import { InputError } from '#/lib/validation'
 
@@ -30,4 +31,40 @@ export function remoteStageAssets(
     if (isStageAsset) assets.push(key)
   }
   return assets
+}
+
+/** Check exact stage references against the final multipart names, after merge
+ * renaming. Downloads register first, but Go iterates the upload and archive
+ * fields in unspecified order. Neither possible order may shadow a named asset.
+ * Unpinned remote names remain unknown until Gotenberg downloads the files.
+ */
+export function validateStageFilenameRegistration(
+  form: FormData,
+  archiveEntryNames: readonly string[],
+): void {
+  const rawStages = form.get('stages')
+  if (typeof rawStages !== 'string') return
+  const stages = JSON.parse(rawStages) as PdfPipelineStage[]
+  const protectedNames = new Set(pdfStageAssetNames(stages).map(filenameKey))
+  if (!protectedNames.size) return
+  const remotes = JSON.parse(String(form.get('downloadFrom') ?? '[]')) as RemoteFile[]
+  const remoteNames = remotes.flatMap(({ filename }) => (filename ? [filename] : []))
+  const uploads = form
+    .getAll('files')
+    .flatMap((entry) => (entry instanceof File ? [entry.name] : []))
+  const orders = [
+    [...remoteNames, ...uploads, ...archiveEntryNames],
+    [...remoteNames, ...archiveEntryNames, ...uploads],
+  ]
+  for (const order of orders) {
+    const assigned = registeredFilenames(order)
+    for (const [index, raw] of order.entries()) {
+      const name = filenameKey(raw)
+      if (protectedNames.has(name) && assigned[index] !== name) {
+        throw new InputError(
+          `Stage asset filename collides after Gotenberg numbers duplicate files: ${name}. Rename the asset or the colliding input.`,
+        )
+      }
+    }
+  }
 }

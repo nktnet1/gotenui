@@ -41,6 +41,7 @@ import {
   readLimitedBody,
   requireSameOrigin,
 } from '#/lib/proxy-policy'
+import { validateStageFilenameRegistration } from '#/lib/remote-stage-assets'
 import {
   outboundCompatibilityReasons,
   requestFieldCompatibilityReason,
@@ -755,6 +756,7 @@ export async function proxyConversionRequest(
             archiveEntryNames,
           ),
         }
+  if (major === 9) validateStageFilenameRegistration(form, archiveEntryNames)
   const extractsAttachment = isStandaloneAttachmentExtraction(
     operation.id,
     payload.fields.stages,

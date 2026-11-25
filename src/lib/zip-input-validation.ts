@@ -1,5 +1,10 @@
 import { generatedChromiumFilenames } from '#/lib/chromium-documents'
-import { effectiveRemoteFilename, filenameKey, possibleRemoteFilename } from '#/lib/file-names'
+import {
+  effectiveRemoteFilename,
+  filenameKey,
+  possibleRemoteFilename,
+  registeredFilenames,
+} from '#/lib/file-names'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -257,10 +262,12 @@ export async function validateZipInputs(
     protectedNames.add(filenameKey(name))
   }
   const remoteNames = new Set(
-    (payload.downloadFrom ?? []).flatMap((remote) => {
-      const name = possibleRemoteFilename(remote)
-      return name ? [filenameKey(name)] : []
-    }),
+    registeredFilenames(
+      (payload.downloadFrom ?? []).flatMap((remote) => {
+        const name = possibleRemoteFilename(remote)
+        return name ? [name] : []
+      }),
+    ),
   )
   const extensions = officeExtensionSetForMajor(9)
   const stages =

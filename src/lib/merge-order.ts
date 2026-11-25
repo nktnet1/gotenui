@@ -1,4 +1,4 @@
-import { filenameKey, possibleRemoteFilename } from '#/lib/file-names'
+import { filenameKey, possibleRemoteFilename, registeredFilenames } from '#/lib/file-names'
 
 /** Prefix local merge inputs so Gotenberg's filename sort follows the visible order. */
 export function mergeUploadFilename(filename: string, index: number, count: number): string {
@@ -18,33 +18,6 @@ export function remoteMergeFilenames(
   })
 }
 
-/** Gotenberg registers downloads before uploads and auto-numbers duplicate
- * filenames. Reserve those generated names as well as the received names.
- */
-function registeredNames(names: readonly string[]): Set<string> {
-  const occupied = new Set<string>()
-  const nextSuffix = new Map<string, number>()
-  for (const raw of names) {
-    const name = filenameKey(raw)
-    if (!occupied.has(name)) {
-      occupied.add(name)
-      continue
-    }
-    const dot = name.lastIndexOf('.')
-    const stem = dot === -1 ? name : name.slice(0, dot)
-    const extension = dot === -1 ? '' : name.slice(dot)
-    let suffix = nextSuffix.get(name) ?? 2
-    let candidate = `${stem} (${suffix})${extension}`
-    while (occupied.has(candidate)) {
-      suffix++
-      candidate = `${stem} (${suffix})${extension}`
-    }
-    occupied.add(candidate)
-    nextSuffix.set(name, suffix + 1)
-  }
-  return occupied
-}
-
 /** Reserve stage asset names when numbering pipeline merge inputs. The rank
  * stays at the start, so disambiguation never changes Gotenberg's merge order.
  */
@@ -52,7 +25,7 @@ export function mergeUploadFilenames(
   filenames: readonly string[],
   reservedNames: readonly string[] = [],
 ): string[] {
-  const occupied = registeredNames(reservedNames)
+  const occupied = new Set(registeredFilenames(reservedNames))
   return filenames.map((filename, index) => {
     let disambiguator = ''
     let renamed = mergeUploadFilename(filename, index, filenames.length)
