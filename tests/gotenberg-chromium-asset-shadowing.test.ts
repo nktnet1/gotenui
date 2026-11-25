@@ -378,3 +378,55 @@ test('proxy rejects unpredictable Chromium remote filenames before conversion', 
   )
   assert.equal(conversionCalls, 0)
 })
+
+test.each([false, true])(
+  'rejects duplicate ZIP resources shadowing explicitly numbered Chromium assets (local: %s)',
+  async (local) => {
+    const entries = {
+      'one/logo.png': 'first image',
+      'two/logo.png': 'second image',
+      ...(!local ? { 'logo (2).png': 'intended image' } : {}),
+    }
+    await assert.rejects(
+      proxyConversionRequest(
+        proxyRequest(
+          {
+            operation: 'html-pdf',
+            source: '<img src="logo (2).png">',
+            fields: {},
+            advanced: {},
+          },
+          {
+            archives: [zipFixture(entries)],
+            auxiliary: local ? [new File(['intended image'], 'logo (2).png')] : [],
+          },
+        ),
+        async (url) => {
+          if (String(url).endsWith('/version')) return new Response('9.10.0')
+          assert.fail('Shadowed Chromium resources must not reach Gotenberg.')
+        },
+      ),
+      /Chromium asset filename collides after Gotenberg numbers duplicate files: logo \(2\)\.png/,
+    )
+  },
+)
+
+test('allows duplicate ZIP resources when their numbered names do not shadow other assets', async () => {
+  const response = await proxyConversionRequest(
+    proxyRequest(
+      { operation: 'html-pdf', source: '<img src="logo (2).png">', fields: {}, advanced: {} },
+      {
+        archives: [zipFixture({ 'one/logo.png': 'first image', 'two/logo.png': 'second image' })],
+        auxiliary: [new File(['third image'], 'logo (3).png')],
+      },
+    ),
+    async (url, init) => {
+      if (String(url).endsWith('/version')) return new Response('9.10.0')
+      assert.ok(init?.body instanceof FormData)
+      assert.equal(init.body.getAll('archives').length, 1)
+      return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+    },
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+})

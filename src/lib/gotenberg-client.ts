@@ -11,7 +11,7 @@ import {
   normalizeAdvancedMediaFeatures,
 } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
-import { effectiveRemoteFilename, possibleRemoteFilename } from '#/lib/file-names'
+import { effectiveRemoteFilename, filenameKey, possibleRemoteFilename } from '#/lib/file-names'
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { encodeOfficialField } from '#/lib/official-form-fields'
@@ -272,21 +272,30 @@ export function createGotenbergForm(
         payload.conversionStages !== undefined)
     const stagesJson =
       operation.id === 'pdf-pipeline' ? payload.fields.stages : payload.conversionStages
-    const namedArchiveAssets =
-      archives.length > 0 &&
-      archiveEntryNames.length > 0 &&
-      typeof stagesJson === 'string' &&
-      pdfStageAssetNames(
-        parsePdfPipeline(stagesJson, {
-          allowEmpty: operation.id !== 'pdf-pipeline',
-          acknowledgedRedaction:
-            operation.id === 'pdf-pipeline'
-              ? payload.fields.acknowledgedRedaction === true
-              : payload.acknowledgedConversionRedaction,
-        }),
-      ).some((name) => archiveEntryNames.includes(name))
-    const mustPinRemoteNames =
-      major === 9 &&
+    const stageAssetNames = new Set(
+      supportsFilename && typeof stagesJson === 'string'
+        ? pdfStageAssetNames(
+            parsePdfPipeline(stagesJson, {
+              allowEmpty: operation.id !== 'pdf-pipeline',
+              acknowledgedRedaction:
+                operation.id === 'pdf-pipeline'
+                  ? payload.fields.acknowledgedRedaction === true
+                  : payload.acknowledgedConversionRedaction,
+            }),
+          )
+        : [],
+    )
+    const namedArchiveAssets = archiveEntryNames.some((name) =>
+      stageAssetNames.has(filenameKey(name)),
+    )
+    // A remote stage asset also needs protection from earlier downloads.
+    // Later downloads cannot take its registered name, so do not require
+    // otherwise unnecessary overrides for them.
+    const lastNamedRemoteAsset = payload.downloadFrom.reduce((last, remote, index) => {
+      const name = effectiveRemoteFilename(remote)
+      return name !== undefined && stageAssetNames.has(filenameKey(name)) ? index : last
+    }, -1)
+    const mustPinAllRemoteNames =
       supportsFilename &&
       (chromiumNamesAtRisk || auxiliary.length > 0 || stageFiles.length > 0 || namedArchiveAssets)
     if (chromiumNamesAtRisk && !supportsFilename) {
@@ -298,23 +307,24 @@ export function createGotenbergForm(
     form.set(
       'downloadFrom',
       JSON.stringify(
-        payload.downloadFrom.map(({ name, filename, ...remote }) => {
+        payload.downloadFrom.map(({ name, filename, ...remote }, index) => {
           if (filename && !supportsFilename) {
             throw new InputError(
               'downloadFrom filename overrides require Gotenberg 9.2 or newer.',
               409,
             )
           }
+          const mustPinRemoteName = mustPinAllRemoteNames || index < lastNamedRemoteAsset
           let effectiveFilename = effectiveRemoteFilename({ filename, name })
           if (
             !effectiveFilename &&
             supportsFilename &&
-            (mustPinRemoteNames || files.length > 0 || archives.length > 0)
+            (mustPinRemoteName || files.length > 0 || archives.length > 0)
           ) {
             effectiveFilename = possibleRemoteFilename(remote)
-            if (!effectiveFilename && mustPinRemoteNames) {
+            if (!effectiveFilename && mustPinRemoteName) {
               throw new InputError(
-                'Specify a remote filename for downloads whose URL has no file extension when local assets are present.',
+                'Specify a remote filename for downloads whose URL has no file extension when named assets could be shadowed.',
               )
             }
           }

@@ -489,3 +489,81 @@ test('allows the same local duplicates when a merge numbers them before registra
   assert.equal(response.status, 200)
   await response.body?.cancel()
 })
+
+test('rejects an explicitly named remote asset shadowed by inferred duplicate downloads in a remote-only pipeline', async () => {
+  const url = 'https://cdn.example.test/document.pdf'
+  await assert.rejects(
+    proxyConversionRequest(
+      pipelineRequest([], numberedAsset.name, {
+        remotes: [{ url }, { url }, { url, filename: numberedAsset.name }],
+      }),
+      versionOnlyFetcher(),
+    ),
+    /Stage asset filename collides after Gotenberg numbers duplicate files: document \(2\)\.pdf/,
+  )
+})
+
+test('requires predictable names for downloads preceding a named remote stage asset', async () => {
+  await assert.rejects(
+    proxyConversionRequest(
+      pipelineRequest([], numberedAsset.name, {
+        remotes: [
+          { url: 'https://cdn.example.test/download?id=1' },
+          { url: 'https://cdn.example.test/asset', filename: numberedAsset.name },
+        ],
+      }),
+      versionOnlyFetcher(),
+    ),
+    /Specify a remote filename/,
+  )
+})
+
+test('pins inferred names before a remote stage asset but preserves later dynamic source downloads', async () => {
+  const remotes = [
+    { url: 'https://cdn.example.test/source.pdf' },
+    { url: 'https://cdn.example.test/asset', filename: numberedAsset.name },
+    { url: 'https://cdn.example.test/download?id=1' },
+  ]
+  const response = await proxyConversionRequest(
+    pipelineRequest([], numberedAsset.name, { remotes }),
+    async (url, init) => {
+      if (String(url).endsWith('/version')) return new Response('9.10.0')
+      assert.ok(init?.body instanceof FormData)
+      assert.deepEqual(JSON.parse(String(init.body.get('downloadFrom'))), [
+        { ...remotes[0], filename: 'source.pdf' },
+        remotes[1],
+        remotes[2],
+      ])
+      return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+    },
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+})
+
+test('rejects a remote-only Office conversion whose named attachment is shadowed by earlier downloads', async () => {
+  const name = 'document (2).docx'
+  const url = 'https://cdn.example.test/document.docx'
+  const body = new FormData()
+  body.set(
+    'payload',
+    JSON.stringify({
+      operation: 'office-pdf',
+      fields: {},
+      advanced: {},
+      conversionStages: JSON.stringify([{ op: 'attach', file: name }]),
+      downloadFrom: [{ url }, { url }, { url, filename: name }],
+    }),
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      new Request(`${origin}/api/gotenberg/convert`, {
+        method: 'POST',
+        headers: { Origin: origin, 'X-Gotenberg-Url': upstream },
+        body,
+      }),
+      versionOnlyFetcher(),
+    ),
+    /Stage asset filename collides after Gotenberg numbers duplicate files: document \(2\)\.docx/,
+  )
+})
