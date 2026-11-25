@@ -19,6 +19,7 @@ import {
 } from '#/lib/file-names'
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
+import { multipartBody } from '#/lib/multipart-body'
 import { encodeOfficialField } from '#/lib/official-form-fields'
 import {
   isStandaloneAttachmentExtraction,
@@ -444,7 +445,7 @@ export async function convertWithGotenberg(
   try {
     response = await fetch('/api/gotenberg/convert', {
       method: 'POST',
-      body,
+      body: multipartBody(body),
       signal,
       credentials: 'same-origin',
       headers,

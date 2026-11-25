@@ -212,11 +212,13 @@ export function reconcilePdfComposeSources(
     unknownInputs = false,
     singleInput = false,
     mapBookmarks = false,
+    preserveNamedSingleSource = false,
   }: {
     inputs: readonly PdfComposeInput[]
     unknownInputs?: boolean
     singleInput?: boolean
     mapBookmarks?: boolean
+    preserveNamedSingleSource?: boolean
   },
 ): PdfPipelineStage[] {
   const names = inputs.map(({ original, forwarded, sortName }) => ({
@@ -278,7 +280,7 @@ export function reconcilePdfComposeSources(
       }
       const entry = placement as Record<string, unknown>
       const name = typeof entry.source === 'string' ? entry.source.normalize('NFC') : ''
-      if (single) {
+      if (single && (!preserveNamedSingleSource || !name)) {
         // There is exactly one current PDF. Omitting source is the backend's
         // supported way to refer to it regardless of dynamic merged filenames.
         const rest = { ...entry }

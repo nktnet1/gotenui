@@ -164,3 +164,32 @@ test('does not throw while constructing an attachment header from malformed Unic
   const disposition = safeAttachmentDisposition(null, 'merge', 'application/pdf', 'report\ud800')
   assert.equal(downloadFilename(disposition, 'fallback'), 'report\ufffd.pdf')
 })
+
+test.each(['COM0.pdf', 'LPT0.pdf', 'CONIN$.pdf', 'CONOUT$.pdf', 'NUL .pdf'])(
+  'does not return a Windows device filename: %s',
+  (name) => {
+    const header = `attachment; filename*=UTF-8''${encodeURIComponent(name)}`
+    assert.equal(downloadFilename(header, 'fallback.pdf'), `file-${name}`)
+  },
+)
+
+test('does not reintroduce Windows best-fit separators in requested filenames', () => {
+  const disposition = safeAttachmentDisposition(
+    null,
+    'merge',
+    'application/pdf',
+    'report\uff0farchive\u00a5document',
+  )
+  assert.equal(downloadFilename(disposition, 'fallback.pdf'), 'report_archive_document.pdf')
+})
+
+test('neutralises superscript Windows device suffixes', () => {
+  assert.equal(
+    downloadFilename("attachment; filename*=UTF-8''COM%C2%B9.pdf", 'fallback.pdf'),
+    'COM_.pdf',
+  )
+  assert.equal(
+    downloadFilename("attachment; filename*=UTF-8''LPT%C2%B2.pdf", 'fallback.pdf'),
+    'LPT_.pdf',
+  )
+})

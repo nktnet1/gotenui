@@ -1,8 +1,9 @@
 /** Strict request mapping for the Gotenberg 9-only PDF workflows. */
 
-import { filenameKey } from '#/lib/file-names'
+import { filenameKey, forwardedRemoteFilenames } from '#/lib/file-names'
+import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
-import { normalizePdfStageAssets, parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { type ConversionPayload, InputError } from '#/lib/validation'
@@ -75,6 +76,7 @@ export function adaptV9PdfExtra(
   legacy: FormData,
   auxiliary: readonly File[],
   archives: readonly File[] = [],
+  archiveEntryNames: readonly string[] = [],
 ): { path: string; form: FormData } | null {
   if (!V9_PDF_IDS.has(operationId)) return null
   const fields = payload.fields
@@ -134,7 +136,25 @@ export function adaptV9PdfExtra(
       for (const name of ['paperSize', 'paperWidth', 'paperHeight']) {
         if (stage[name]) form.set(name, String(stage[name]))
       }
-      form.set('placements', JSON.stringify(stage.placements))
+      const remotes = forwardedRemoteFilenames(form, payload.downloadFrom)
+      const localNames = form
+        .getAll('files')
+        .flatMap((file) => (file instanceof File ? [file.name] : []))
+      const names = [
+        ...localNames,
+        ...archiveEntryNames,
+        ...remotes.filter((name): name is string => name !== undefined),
+      ]
+      const unknownArchives = archives.length > 0 && archiveEntryNames.length === 0
+      const [reconciled] = reconcilePdfComposeSources([stage], {
+        inputs: names.map((name) => ({ original: name, forwarded: name })),
+        unknownInputs: unknownArchives || remotes.some((name) => !name),
+        singleInput:
+          !unknownArchives && localNames.length + archiveEntryNames.length + remotes.length === 1,
+        preserveNamedSingleSource: true,
+      })
+      if (!reconciled) throw new InputError('Invalid page composition.')
+      form.set('placements', JSON.stringify(reconciled.placements))
       if (fields.v9DropSignatures === true) form.set('dropSignatures', 'true')
       return { path: '/forms/pdf/compose', form }
     }
@@ -385,7 +405,10 @@ export function adaptV9PdfExtra(
   form.set(
     'stages',
     JSON.stringify(
-      normalizePdfStageAssets(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+      parsePdfPipeline(
+        JSON.stringify(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+        { acknowledgedRedaction: fields.confirmRedaction === true },
+      ),
     ),
   )
   return { path: '/forms/pdf/pipe', form }

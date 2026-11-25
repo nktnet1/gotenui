@@ -372,3 +372,232 @@ test('bounds Markdown text previews without treating other content as text', asy
   assert.equal(await conversionTextPreview(new Blob(['<html>']), 'text/html'), undefined)
   assert.equal(await conversionTextPreview(pdf, 'application/pdf'), undefined)
 })
+
+// Standalone tools must not bypass the validation used by explicit pipelines.
+test.each([
+  [{ stampOptions: '{"font":"UnknownFont"}' }, /standard PDF fonts/],
+  [{ stampOptions: '{"color":"red"}' }, /hexadecimal colour/],
+  [{ stampOptions: '{"points":-1}' }, /font size must be positive/],
+  [{ stampOptions: '{"font":"Helvetica","fontname":"Courier"}' }, /conflicting.*font/i],
+] as const)('rejects invalid generated stamp options %j', async (options, error) => {
+  const result = await proxy({
+    operation: 'stamp',
+    fields: {
+      stampSource: 'text',
+      stampExpression: 'DRAFT',
+      v9OverlayAcknowledged: true,
+      ...options,
+    },
+  })
+  assert.equal(result.status, 400)
+  assert.match(result.message, error)
+  assert.equal(result.forwarded, undefined)
+})
+
+test('rejects unknown properties inside nested pipeline bookmarks', async () => {
+  const stages = JSON.stringify([
+    {
+      op: 'set-bookmarks',
+      bookmarks: [
+        { title: 'Parent', pageNumber: 1, children: [{ title: 'Child', pageNumber: 1, page: 2 }] },
+      ],
+    },
+  ])
+  const result = await proxy({ operation: 'pdf-pipeline', fields: { stages } })
+  assert.equal(result.status, 400)
+  assert.match(result.message, /bookmark.*unknown.*page/i)
+  assert.equal(result.forwarded, undefined)
+  assert.match(pdfPipelineEditorError(stages, editorContext) ?? '', /bookmark.*unknown.*page/i)
+})
+
+test('accepts native null bookmark children as an empty child list', async () => {
+  const result = await proxy({
+    operation: 'bookmarks-write',
+    fields: { bookmarks: '[{"title":"Chapter","pageNumber":1,"children":null}]' },
+  })
+  assert.equal(result.status, 200, result.message)
+  assert.deepEqual(JSON.parse(String(result.forwarded?.get('stages'))), [
+    { op: 'set-bookmarks', bookmarks: [{ title: 'Chapter', pageNumber: 1 }] },
+  ])
+})
+
+test.each(['pdf-pipeline', 'office-pdf'] as const)(
+  'a remote-only %s pins inferred named stage assets and earlier downloads',
+  async (operation) => {
+    const name = operation === 'pdf-pipeline' ? 'source.pdf' : 'source.docx'
+    const stages = JSON.stringify([{ op: 'attach', file: 'notes.txt' }])
+    const remotes = [
+      { url: `https://example.test/${name}` },
+      { url: 'https://example.test/notes.txt' },
+    ]
+    const result = await proxy(
+      {
+        operation,
+        ...(operation === 'pdf-pipeline' ? { fields: { stages } } : { conversionStages: stages }),
+        downloadFrom: remotes,
+      },
+      [],
+    )
+    assert.equal(result.status, 200, result.message)
+    assert.deepEqual(JSON.parse(String(result.forwarded?.get('downloadFrom'))), [
+      { ...remotes[0], filename: name },
+      { ...remotes[1], filename: 'notes.txt' },
+    ])
+  },
+)
+
+test('rejects an unpredictable download before a URL-inferred remote stage asset', async () => {
+  const stages = JSON.stringify([{ op: 'attach', file: 'notes.txt' }])
+  const remotes = [
+    { url: 'https://example.test/download?id=1' },
+    { url: 'https://example.test/notes.txt' },
+  ]
+  const result = await proxy(
+    { operation: 'pdf-pipeline', fields: { stages }, downloadFrom: remotes },
+    [],
+  )
+  assert.equal(result.status, 400)
+  assert.match(result.message, /Specify a remote filename/)
+  assert.equal(result.forwarded, undefined)
+  assert.match(
+    pdfPipelineEditorError(stages, {
+      ...editorContext,
+      documentKind: 'pdf',
+      remoteJson: JSON.stringify(remotes),
+    }) ?? '',
+    /Specify a remote filename/,
+  )
+})
+
+test('standalone composition rejects an unknown named source even for a single input', async () => {
+  const result = await proxy({
+    operation: 'compose-pages',
+    fields: { paperSize: 'A4', placements: '[{"source":"missing.pdf","sourcePage":1}]' },
+  })
+  assert.equal(result.status, 400)
+  assert.match(result.message, /not one of the current PDF inputs/)
+  assert.equal(result.forwarded, undefined)
+})
+
+test('standalone composition requires every known input to have a placement', async () => {
+  const result = await proxy(
+    {
+      operation: 'compose-pages',
+      fields: { paperSize: 'A4', placements: '[{"source":"report.pdf","sourcePage":1}]' },
+    },
+    [pdf, new File(['%PDF-1.7\n'], 'annex.pdf')],
+  )
+  assert.equal(result.status, 400)
+  assert.match(result.message, /place every PDF.*annex\.pdf/)
+  assert.equal(result.forwarded, undefined)
+})
+
+test('standalone merge rejects a bookmark label that cannot refer to a forwarded PDF', async () => {
+  const result = await proxy(
+    {
+      operation: 'merge',
+      fields: { v9FileBookmarks: true, v9FileBookmarkLabels: '{"missing.pdf":"Wrong document"}' },
+    },
+    [pdf, new File(['%PDF-1.7\n'], 'annex.pdf')],
+  )
+  assert.equal(result.status, 400)
+  assert.match(result.message, /fileBookmarks.*name.*PDF/i)
+  assert.equal(result.forwarded, undefined)
+})
+
+test('preserves literal percent escapes and quoted filenames across both multipart hops', async () => {
+  const asset = new File(['asset with quote'], 'notes".txt')
+  const other = new File(['different asset'], 'notes%22.txt')
+  const escaped = new File(['%PDF-1.7\n'], 'report%0A.pdf')
+  const stages = JSON.stringify([
+    { op: 'attach', file: asset.name },
+    { op: 'attach', file: other.name },
+  ])
+  let actualNames: string[] | undefined
+  vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+    return proxyConversionRequest(
+      new Request(`${origin}/api/gotenberg/convert`, {
+        ...init,
+        headers: { Origin: origin, 'X-Gotenberg-Url': upstream },
+      }),
+      async (url, upstreamInit) => {
+        if (String(url).endsWith('/version')) return new Response('9.10.0')
+        const wire = new Request(String(url), upstreamInit)
+        const multipart = await wire.clone().text()
+        // Go does not percent-decode ordinary filename parameters. Extended
+        // parameters avoid the differing interpretations in Node and Go.
+        assert.match(multipart, /filename\*=UTF-8''notes%22\.txt/)
+        assert.match(multipart, /filename\*=UTF-8''notes%2522\.txt/)
+        const parsed = await wire.formData()
+        actualNames = parsed.getAll('files').map((file) => (file as File).name)
+        assert.equal(parsed.get('stages'), stages)
+        return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+      },
+    ).catch(proxyErrorResponse)
+  })
+  const result = await convertWithGotenberg(
+    upstream,
+    { operation: 'pdf-pipeline', fields: { stages }, advanced: {} },
+    [escaped],
+    [asset, other],
+    new AbortController().signal,
+  )
+  assert.equal(result.mode, 'download')
+  assert.deepEqual(actualNames, [escaped.name, asset.name, other.name])
+})
+
+test.each(['bookmarks-write', 'pdf-pipeline'] as const)(
+  'validates %s bookmark titles with Go whitespace semantics',
+  async (operation) => {
+    const fields = (title: string) => {
+      const bookmarks = [{ title, pageNumber: 1 }]
+      return operation === 'bookmarks-write'
+        ? { bookmarks: JSON.stringify(bookmarks) }
+        : { stages: JSON.stringify([{ op: 'set-bookmarks', bookmarks }]) }
+    }
+    const invalid = await proxy({ operation, fields: fields('\u0085') })
+    assert.equal(invalid.status, 400)
+    assert.match(invalid.message, /title/)
+    const valid = await proxy({ operation, fields: fields('\ufeff') })
+    assert.equal(valid.status, 200, valid.message)
+  },
+)
+
+test('standalone compose preserves a valid explicit source and supports one dynamically named remote', async () => {
+  const placements = '[{"source":"report.pdf","sourcePage":1}]'
+  const named = await proxy({ operation: 'compose-pages', fields: { paperSize: 'A4', placements } })
+  assert.equal(named.status, 200, named.message)
+  assert.equal(named.forwarded?.get('placements'), placements)
+  const dynamic = await proxy(
+    {
+      operation: 'compose-pages',
+      fields: { paperSize: 'A4', placements: '[{"sourcePage":1}]' },
+      downloadFrom: [{ url: 'https://example.test/download' }],
+    },
+    [],
+  )
+  assert.equal(dynamic.status, 200, dynamic.message)
+})
+
+test('standalone merge accepts labels for independently registered duplicate remote PDFs', async () => {
+  const url = 'https://example.test/report.pdf'
+  const result = await proxy(
+    {
+      operation: 'merge',
+      fields: {
+        v9FileBookmarks: true,
+        v9FileBookmarkLabels: '{"report.pdf":"First","report (2).pdf":"Second"}',
+      },
+      downloadFrom: [
+        { url, filename: 'report.pdf' },
+        { url, filename: 'report.pdf' },
+      ],
+    },
+    [],
+  )
+  assert.equal(result.status, 200, result.message)
+  assert.deepEqual(JSON.parse(String(result.forwarded?.get('stages')))[0].fileBookmarks.labels, {
+    'report.pdf': 'First',
+    'report (2).pdf': 'Second',
+  })
+})

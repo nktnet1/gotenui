@@ -1,5 +1,5 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
-import { filenameKey } from '#/lib/file-names'
+import { filenameKey, forwardedRemoteFilenames, registeredFilenames } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
@@ -12,7 +12,7 @@ import {
   mapFileBookmarkLabels,
   validateFileBookmarks,
 } from '#/lib/pdf-file-bookmarks'
-import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
+import { parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
@@ -94,7 +94,14 @@ export function adaptPdfForm(
   if (operation.id === 'pdf-pipeline') {
     return adaptPdfPipeline(payload, legacy, auxiliary, archives, archiveEntryNames)
   }
-  const extra = adaptV9PdfExtra(operation.id, payload, legacy, auxiliary, archives)
+  const extra = adaptV9PdfExtra(
+    operation.id,
+    payload,
+    legacy,
+    auxiliary,
+    archives,
+    archiveEntryNames,
+  )
   if (extra) return extra
   if (!v9PdfOperations.has(operation.id) || operation.input !== 'pdf') {
     throw new InputError(
@@ -255,6 +262,26 @@ export function adaptPdfForm(
             forwarded: numberedNames[index] ?? (source instanceof File ? source.name : ''),
           })),
         )
+      }
+      if (fileBookmarks?.labels) {
+        const remoteNames = forwardedRemoteFilenames(output, payload.downloadFrom)
+        if (
+          remoteNames.every((name): name is string => name !== undefined) &&
+          (!archives.length || archiveEntryNames.length)
+        ) {
+          const names = [...remoteNames, ...numberedNames, ...archiveEntryNames]
+          // Archive and upload registration order can vary. Check exact
+          // names only when that order cannot change a duplicate assignment.
+          if (!archives.length || new Set(names.map(filenameKey)).size === names.length) {
+            const known = new Set(registeredFilenames(names))
+            for (const name of Object.keys(fileBookmarks.labels)) {
+              if (!known.has(name))
+                throw new InputError(
+                  `merge: fileBookmarks.labels must name a current PDF, got "${name}".`,
+                )
+            }
+          }
+        }
       }
       stages.push({ op: 'merge', ...(fileBookmarks ? { fileBookmarks } : {}) })
       pdfaStage()
@@ -559,7 +586,9 @@ export function adaptPdfForm(
     output.set(
       'stages',
       JSON.stringify(
-        normalizePdfStageAssets(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+        parsePdfPipeline(
+          JSON.stringify(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+        ),
       ),
     )
   return { path: readRoutes[operation.id] ?? '/forms/pdf/pipe', form: output }
@@ -608,6 +637,13 @@ function overlayOptions(raw: string | undefined): {
   for (const key of ['fontname', 'font', 'color'] as const) {
     if (options[key] !== undefined && typeof options[key] !== 'string')
       throw new InputError(`${key} must be text.`)
+  }
+  if (
+    options.fontname !== undefined &&
+    options.font !== undefined &&
+    options.fontname !== options.font
+  ) {
+    throw new InputError('Conflicting font and fontname aliases in overlay options.')
   }
   return {
     ...(opacity !== undefined ? { opacity } : {}),

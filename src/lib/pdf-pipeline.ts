@@ -616,16 +616,21 @@ function validateStage(stage: PdfPipelineStage): void {
           if (
             !object(entry) ||
             typeof entry.title !== 'string' ||
-            !entry.title.trim() ||
+            /^\p{White_Space}*$/u.test(entry.title) ||
             !integer(entry.pageNumber, 1)
           )
             throw new InputError(
               'set-bookmarks: every bookmark needs a title and positive pageNumber.',
             )
+          for (const key of Object.keys(entry)) {
+            if (!['title', 'pageNumber', 'children'].includes(key)) {
+              throw new InputError(`set-bookmarks: unknown bookmark property "${key}".`)
+            }
+          }
           if (!absent(entry.children)) {
             if (!Array.isArray(entry.children))
               throw new InputError('set-bookmarks: invalid children.')
-            pending.push(...entry.children)
+            for (const child of entry.children) pending.push(child)
           }
         }
       }

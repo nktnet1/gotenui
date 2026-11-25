@@ -20,6 +20,7 @@ import {
   type SupportedGotenbergMajor,
   sameGotenbergApiVersion,
 } from '#/lib/gotenberg-version'
+import { multipartBody } from '#/lib/multipart-body'
 import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
@@ -768,7 +769,7 @@ export async function proxyConversionRequest(
   const upstream = await fetcher(joinURL(url, path), {
     method: 'POST',
     ...fetchOptions(request),
-    body: form,
+    body: multipartBody(form),
     // Gotenberg's output filename override also renames a lone extracted
     // attachment. Keep its original name and only override generated outputs.
     headers: upstreamConversionHeaders(

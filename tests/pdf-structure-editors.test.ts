@@ -349,3 +349,20 @@ it('edits native v9 bookmark pages without leaving contradictory page aliases', 
   assert.match(html, /Bookmark 1.1 title/)
   assert.doesNotMatch(html, /Filename-specific pages/)
 })
+
+it('edits native v9 metadata aliases visually without adding conflicting keys', () => {
+  const value = '{"title":"Old","keywords":"a,  b","creationDate":"D:20261001090000Z"}'
+  const html = renderToStaticMarkup(
+    createElement(PdfMetadataEditor, { value, standardOnly: true, onChange: vi.fn() }),
+  )
+  expect(html).toContain('>Title</label>')
+  expect(html).toContain('value="Old"')
+  expect(JSON.parse(updateMetadata(value, 'Title', 'New', { standardOnly: true }))).toEqual({
+    Title: 'New',
+    Keywords: 'a,  b',
+    CreationDate: 'D:20261001090000Z',
+  })
+  expect(() =>
+    updateMetadata('{"Title":"a","title":"b"}', 'Title', 'new', { standardOnly: true }),
+  ).toThrow(/conflicting metadata aliases/i)
+})

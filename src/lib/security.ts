@@ -5,15 +5,18 @@ function cleanDownloadName(candidate: string, fallback: string): string {
   const basename = candidate.split(/[\\/]/).pop() ?? fallback
   const normalized = basename.replace(/\p{Cs}/gu, '\ufffd').normalize('NFC')
   const clean = normalized
-    .replace(/[\\/:*?"<>|\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '_')
-    .replace(/\p{Cc}/gu, '_')
+    // Match Gotenberg's portable character allowlist for names that leave
+    // the proxy, preserving the replacement character used for malformed text.
+    .replace(/[^\p{L}\p{M}\p{Nd} !#$%&'()+,.;=@[\]^_`{}~\ufffd-]/gu, '_')
     .replace(/^[. ]+|[. ]+$/g, '')
   const extension = /\.[\p{L}\p{N}]{1,16}$/u.exec(clean)?.[0] ?? ''
   const root = extension ? clean.slice(0, -extension.length) : clean
   const safe = [...root].slice(0, 140 - [...extension].length).join('') + extension
   const name = safe || fallback
-  const stem = name.split('.')[0] ?? name
-  return /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(stem) ? `file-${name}` : name
+  const stem = (name.split('.')[0] ?? name).replace(/ +$/u, '')
+  return /^(?:con|prn|aux|nul|conin\$|conout\$|(?:com|lpt)[0-9])$/i.test(stem)
+    ? `file-${name}`
+    : name
 }
 
 /** Read only actual Content-Disposition parameters, not lookalikes inside quoted values. */

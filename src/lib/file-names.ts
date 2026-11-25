@@ -79,12 +79,12 @@ export function planRemoteFilenames(
 ): { name: string | undefined; required: boolean }[] {
   const lastNamedAsset = options.supportsFilename
     ? remotes.reduce((last, remote, index) => {
-        const name = effectiveRemoteFilename(remote)
+        const name = possibleRemoteFilename(remote)
         return name !== undefined && options.stageAssetNames.has(filenameKey(name)) ? index : last
       }, -1)
     : -1
   return remotes.map((remote, index) => {
-    const required = options.supportsFilename && (options.pinAll || index < lastNamedAsset)
+    const required = options.supportsFilename && (options.pinAll || index <= lastNamedAsset)
     const infer = options.supportsFilename && (required || options.inferAll)
     return {
       name: effectiveRemoteFilename(remote) ?? (infer ? possibleRemoteFilename(remote) : undefined),

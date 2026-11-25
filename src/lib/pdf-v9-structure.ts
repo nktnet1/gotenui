@@ -1,25 +1,15 @@
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
-import { metadataObject } from '#/lib/pdf-structure-editors'
+import { metadataObject, V9_METADATA_KEY_MAP } from '#/lib/pdf-structure-editors'
 import { InputError } from '#/lib/validation'
 
 /** Shared preflight and wire encoding for writable Gotenberg 9 PDF structure. */
 export function v9MetadataFields(raw: string): Record<string, string> {
   const source = metadataObject(raw)
   const translated: Record<string, string> = {}
-  const mapping: Readonly<Record<string, string>> = {
-    Title: 'title',
-    Author: 'author',
-    Subject: 'subject',
-    Keywords: 'keywords',
-    Creator: 'creator',
-    Producer: 'producer',
-    CreationDate: 'creationDate',
-    ModDate: 'modDate',
-  }
   for (const [name, value] of Object.entries(source)) {
-    const key = Object.hasOwn(mapping, name)
-      ? mapping[name]
-      : Object.values(mapping).includes(name)
+    const key = Object.hasOwn(V9_METADATA_KEY_MAP, name)
+      ? V9_METADATA_KEY_MAP[name]
+      : Object.values(V9_METADATA_KEY_MAP).includes(name)
         ? name
         : null
     if (!key) throw new InputError(`Gotenberg 9 cannot write the v8 metadata key '${name}'.`)
@@ -80,11 +70,11 @@ function toV9Bookmarks(nodes: unknown[]): unknown[] {
       !Number.isSafeInteger(pageNumber) ||
       (pageNumber as number) < 1 ||
       typeof entry.title !== 'string' ||
-      !entry.title.trim()
+      /^\p{White_Space}*$/u.test(entry.title)
     ) {
       throw new InputError('Each bookmark needs a title and a positive page number.')
     }
-    if (entry.children !== undefined && !Array.isArray(entry.children))
+    if (entry.children !== undefined && entry.children !== null && !Array.isArray(entry.children))
       throw new InputError('Bookmark children must be an array.')
     return {
       title: entry.title,

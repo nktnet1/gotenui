@@ -17,6 +17,7 @@ import {
   metadataObject,
   removeBookmarkMapping,
   updateMetadata,
+  v9EditorMetadata,
   validateBookmarkDocument,
   visualBookmarkList,
   visualBookmarkMap,
@@ -68,7 +69,8 @@ export function PdfMetadataEditor({
   const id = useId()
   let metadata: Record<string, unknown> | null = null
   try {
-    metadata = metadataObject(value)
+    const source = metadataObject(value)
+    metadata = standardOnly ? v9EditorMetadata(source) : source
   } catch {
     // Preserve invalid user-authored JSON; repairing it must not discard input.
   }

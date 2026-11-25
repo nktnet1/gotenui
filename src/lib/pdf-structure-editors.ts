@@ -22,6 +22,30 @@ export const GOTENBERG_9_METADATA_FIELDS = [
   ...PDF_METADATA_DATE_FIELDS,
 ]
 
+/** The editor uses the v8 spelling for labels and accepts native v9 aliases. */
+export const V9_METADATA_KEY_MAP: Readonly<Record<string, string>> = {
+  Title: 'title',
+  Author: 'author',
+  Subject: 'subject',
+  Keywords: 'keywords',
+  Creator: 'creator',
+  Producer: 'producer',
+  CreationDate: 'creationDate',
+  ModDate: 'modDate',
+}
+
+export function v9EditorMetadata(data: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = Object.create(null)
+  for (const [name, value] of Object.entries(data)) {
+    const key =
+      Object.entries(V9_METADATA_KEY_MAP).find(([, native]) => native === name)?.[0] ?? name
+    if (Object.hasOwn(normalized, key))
+      throw new Error(`Conflicting metadata aliases for '${key}'.`)
+    normalized[key] = value
+  }
+  return normalized
+}
+
 export type MetadataTextKey = (typeof METADATA_TEXT_FIELDS)[number]['name']
 export type MetadataKey =
   | MetadataTextKey
@@ -105,7 +129,8 @@ export function updateMetadata(
   nextValue: string,
   { standardOnly = false }: { standardOnly?: boolean } = {},
 ): string {
-  const data = { ...metadataObject(text) }
+  const source = metadataObject(text)
+  const data = standardOnly ? v9EditorMetadata(source) : { ...source }
   if (standardOnly ? nextValue === '' : !nextValue.trim()) {
     delete data[key]
   } else if (key === 'Keywords' && !standardOnly) {
@@ -168,14 +193,17 @@ export function validateBookmarkDocument(
       for (const [index, item] of current.list.entries()) {
         const where = `${current.label} item ${index + 1}`
         if (!isRecord(item)) throw new Error(`${where} must be an object.`)
-        if (typeof item.title !== 'string' || !item.title.trim()) {
+        if (
+          typeof item.title !== 'string' ||
+          (allowNativePageNumber ? /^\p{White_Space}*$/u.test(item.title) : !item.title.trim())
+        ) {
           throw new Error(`${where} needs a title.`)
         }
         const page = allowNativePageNumber ? (item.page ?? item.pageNumber) : item.page
         if (!Number.isSafeInteger(page) || (page as number) < 1) {
           throw new Error(`${where} needs a positive whole-number page (starting at 1).`)
         }
-        if (item.children !== undefined)
+        if (item.children !== undefined && !(allowNativePageNumber && item.children === null))
           pending.push({ list: item.children, label: `${where} children` })
       }
     }
