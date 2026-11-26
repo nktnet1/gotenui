@@ -114,12 +114,12 @@ describe('bounded PDF validation summaries', () => {
     const read = vi.fn()
     Object.defineProperties(oversized, {
       size: { value: MAX_PDF_VALIDATION_SUMMARY_BYTES + 1 },
-      text: { value: read },
+      arrayBuffer: { value: read },
     })
     assert.equal(await summarisePdfValidationBlob(oversized), null)
     assert.equal(read.mock.calls.length, 0)
     const unreadable = new Blob(['{}'])
-    Object.defineProperty(unreadable, 'text', {
+    Object.defineProperty(unreadable, 'arrayBuffer', {
       value: () => Promise.reject(new Error('read failed')),
     })
     assert.equal(await summarisePdfValidationBlob(unreadable), null)
@@ -130,4 +130,14 @@ describe('bounded PDF validation summaries', () => {
     assert.equal((await summarisePdfValidationBlob(source))?.[0]?.compliant, true)
     assert.equal(await source.text(), valid())
   })
+})
+
+it('does not summarise a corrupt UTF-8 report as compliant', async () => {
+  const report = new Blob([
+    '{"a',
+    Uint8Array.of(0xff),
+    '.pdf":{"profile":"PDF/A-2b","compliant":true,"violations":[]}}',
+  ])
+  assert.equal(await summarisePdfValidationBlob(report), null)
+  assert.match(await report.text(), /compliant/)
 })

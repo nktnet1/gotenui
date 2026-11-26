@@ -76,6 +76,7 @@ import {
   canImportPdfStructure,
   importReadableBookmarks,
   importReadableMetadata,
+  readPdfStructureResponse,
 } from '#/lib/pdf-read-import'
 import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
 import { cn } from '#/lib/utils'
@@ -479,7 +480,11 @@ export function Workbench({
   const readExistingPdfStructure = async () => {
     const metadata = operation.id === 'metadata-write'
     if (
-      !canImportPdfStructure(operation.id, isV9, files.length) ||
+      !canImportPdfStructure(
+        operation.id,
+        isV9,
+        files.map((file) => file.name),
+      ) ||
       pending ||
       readingStructure ||
       readAbort.current
@@ -509,15 +514,14 @@ export function Workbench({
       signal.throwIfAborted()
       if (result.mode !== 'download')
         throw new Error('Reading requires an immediate JSON response.')
-      if (result.blob.size > 2_000_000)
-        throw new Error('The PDF structure response is too large to edit.')
-      const content: unknown = JSON.parse(await result.blob.text())
+      const content = await readPdfStructureResponse(result.blob)
       signal.throwIfAborted()
       const editable = metadata
         ? importReadableMetadata(content, files[0]?.name ?? '', { standardOnly: isV9 })
         : importReadableBookmarks(
             content,
             files.map((file) => file.name),
+            { native: isV9 },
           )
       setFields((current) => ({ ...current, [metadata ? 'metadata' : 'bookmarks']: editable }))
       toast.success(`Existing ${metadata ? 'metadata' : 'bookmarks'} loaded for editing.`)
@@ -615,7 +619,6 @@ export function Workbench({
     const controller = new AbortController()
     requestAbort.current = controller
     setPending(true)
-    setAcceptedWebhook(null)
     try {
       const candidate = buildCandidate()
       const webhook = candidate.webhook
@@ -641,6 +644,7 @@ export function Workbench({
           status: result.status,
           trace: result.trace,
           receiverHost: safeOutboundHost(webhook?.url ?? ''),
+          ...(webhook?.errorUrl ? { errorReceiverHost: safeOutboundHost(webhook.errorUrl) } : {}),
           ...(webhook?.eventsUrl
             ? { eventsReceiverHost: safeOutboundHost(webhook.eventsUrl) }
             : {}),
@@ -664,6 +668,7 @@ export function Workbench({
       const url = URL.createObjectURL(blob)
       if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
       fileUrl.current = url
+      setAcceptedWebhook(null)
       setLastDownload({
         name,
         size: blob.size,
@@ -1023,7 +1028,11 @@ export function Workbench({
                     pending ||
                     readingStructure ||
                     Boolean(submissionBlocked) ||
-                    !canImportPdfStructure(operation.id, isV9, files.length)
+                    !canImportPdfStructure(
+                      operation.id,
+                      isV9,
+                      files.map((file) => file.name),
+                    )
                   }
                   onClick={readExistingPdfStructure}
                 >
@@ -1038,6 +1047,9 @@ export function Workbench({
                   {operation.id === 'bookmarks-write' &&
                     isV9 &&
                     ' Gotenberg 9 writes one shared bookmark tree to every selected document.'}
+                  {operation.id === 'bookmarks-write' &&
+                    !isV9 &&
+                    ' Select PDFs with distinct filenames.'}
                 </p>
               </div>
             )}

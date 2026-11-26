@@ -80,7 +80,7 @@ GOTENUI_BASIC_AUTH_USERNAME=admin
 GOTENUI_BASIC_AUTH_PASSWORD=replace-with-a-strong-password
 ```
 
-Leave both unset to disable it. Incomplete configuration fails closed. Use HTTPS when exposing the app over a network. Public static assets may remain accessible without a login challenge. Site login is separate from credentials used to connect to Gotenberg.
+Leave both unset to disable it. Incomplete or invalid configuration fails closed. Usernames and passwords accept valid UTF-8 text up to 255 and 2,048 UTF-16 code units respectively, without control characters. Usernames cannot contain a colon. Use HTTPS when exposing the app over a network. Public static assets may remain accessible without a login challenge. Site login is separate from credentials used to connect to Gotenberg.
 
 ## Upstream authentication
 
@@ -92,6 +92,8 @@ GOTENBERG_BASIC_AUTH_URL=https://pdf.example.com
 GOTENBERG_BASIC_AUTH_USERNAME=service
 GOTENBERG_BASIC_AUTH_PASSWORD=replace-with-a-secret
 ```
+
+The legacy Basic Auth target must exactly match an approved URL and cannot be the public Gotenberg demo.
 
 Alternatively, configure named connections using `GOTENUI_SERVER_CONNECTIONS`. Profiles support Basic Auth, bearer tokens and OAuth2 client credentials. For example:
 

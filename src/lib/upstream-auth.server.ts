@@ -1,5 +1,6 @@
 import * as v from 'valibot'
 import { normalizeBackendUrl } from '#/lib/backend-url'
+import { DEMO_GOTENBERG_URL } from '#/lib/proxy-policy'
 import {
   isBasicPassword,
   isBasicUsername,
@@ -56,6 +57,9 @@ export function parseUpstreamBasicAuth(
   }
 
   const target = normalizeBackendUrl(GOTENBERG_BASIC_AUTH_URL)
+  if (target === DEMO_GOTENBERG_URL) {
+    throw new Error('Do not configure upstream Basic Auth for the public Gotenberg demo.')
+  }
   if (!allowed.has(target)) {
     throw new Error('GOTENBERG_BASIC_AUTH_URL must exactly match an allowed Gotenberg base URL.')
   }
@@ -71,5 +75,7 @@ export function basicAuthHeadersForBackend(
   backend: string,
   auth: UpstreamBasicAuth | undefined,
 ): HeadersInit | undefined {
-  return auth?.target === backend ? { Authorization: auth.authorization } : undefined
+  return backend !== DEMO_GOTENBERG_URL && auth?.target === backend
+    ? { Authorization: auth.authorization }
+    : undefined
 }

@@ -1,3 +1,4 @@
+import { filenameKey } from '#/lib/file-names'
 import {
   GOTENBERG_9_METADATA_FIELDS,
   METADATA_TEXT_FIELDS,
@@ -45,16 +46,28 @@ export function importReadableMetadata(
 export function canImportPdfStructure(
   operation: string,
   isV9: boolean,
-  fileCount: number,
+  filenames: readonly string[],
 ): boolean {
+  const fileCount = filenames.length
   if (operation === 'metadata-write' || (isV9 && operation === 'bookmarks-write'))
     return fileCount === 1
-  return operation === 'bookmarks-write' && fileCount > 0
+  return (
+    operation === 'bookmarks-write' &&
+    fileCount > 0 &&
+    new Set(filenames.map(filenameKey)).size === fileCount
+  )
 }
 
 /** Preserve the filename-to-bookmarks map so existing source page numbers stay local. */
-export function importReadableBookmarks(result: unknown, filenames: string[]): string {
+export function importReadableBookmarks(
+  result: unknown,
+  filenames: string[],
+  { native = false }: { native?: boolean } = {},
+): string {
   if (!isObject(result) || !filenames.length) throw new Error('Invalid bookmark read response.')
+  if (new Set(filenames.map(filenameKey)).size !== filenames.length) {
+    throw new Error('Cannot import bookmarks for duplicate PDF filenames. Rename the files first.')
+  }
   const mapped: Record<string, unknown> = Object.create(null)
   for (const filename of filenames) {
     const items = result[filename] ?? result[filename.normalize('NFC')]
@@ -64,7 +77,7 @@ export function importReadableBookmarks(result: unknown, filenames: string[]): s
   }
   const value =
     filenames.length === 1 ? JSON.stringify(mapped[filenames[0] as string]) : JSON.stringify(mapped)
-  validateBookmarkDocument(value)
+  validateBookmarkDocument(value, { allowNativePageNumber: native })
   return value
 }
 
@@ -72,18 +85,20 @@ export function importReadableBookmarks(result: unknown, filenames: string[]): s
 function normalizeReadBookmark(value: unknown): unknown {
   if (!isObject(value)) return value
   const { pageNumber, children, ...rest } = value
-  if (pageNumber === undefined)
-    return {
-      ...rest,
-      ...(children !== undefined
-        ? { children: Array.isArray(children) ? children.map(normalizeReadBookmark) : children }
-        : {}),
-    }
+  if (pageNumber !== undefined && rest.page !== undefined && pageNumber !== rest.page) {
+    throw new Error('The bookmark response contains conflicting page numbers.')
+  }
   return {
     ...rest,
-    page: pageNumber,
-    ...(children !== undefined
+    ...(pageNumber !== undefined ? { page: pageNumber } : {}),
+    ...(children != null
       ? { children: Array.isArray(children) ? children.map(normalizeReadBookmark) : children }
       : {}),
   }
+}
+
+/** A corrupt UTF-8 response must never overwrite existing document structure. */
+export async function readPdfStructureResponse(blob: Blob): Promise<unknown> {
+  if (blob.size > 2_000_000) throw new Error('The PDF structure response is too large to edit.')
+  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await blob.arrayBuffer()))
 }

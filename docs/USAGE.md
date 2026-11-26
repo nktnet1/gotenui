@@ -4,7 +4,7 @@
 
 Open **Connection settings** to select a Gotenberg instance. The public demo is the default unless your deployment provides another URL.
 
-- **Browser connections** store the connection name, URL and authentication mode in your browser. Passwords and bearer tokens remain in tab memory and must be re-entered after refreshing.
+- **Browser connections** store the connection name, URL and authentication mode in your browser. Passwords and bearer tokens remain in tab memory and must be re-entered after refreshing. Authenticated profiles cannot make requests until their credentials are restored.
 - **Managed connections** are configured by the deployment administrator. You can select them without seeing the stored upstream credentials. If a saved managed connection is unavailable, Gotenui retains the selected target instead of switching to the public demo. Select another connection explicitly in settings.
 
 Browser and managed Basic authentication accept valid UTF-8 credentials (up to 255 username and 2,048 password UTF-16 code units) without control characters. Bearer tokens may contain up to 4,096 characters. Browser API requests refuse redirects so connection credentials and uploaded files cannot be forwarded to another destination.
@@ -13,7 +13,7 @@ Your deployment must allow the selected Gotenberg URL. Adding a browser connecti
 
 ## Conversions and PDF tools
 
-HTML and Markdown source imports require UTF-8. A selection of Markdown files must fit within the configured upload limit. Manual edits or a newer import supersede pending imports into the same editor.
+HTML and Markdown source imports, including custom PDF header and footer files, require UTF-8. A selection of Markdown files must fit within the configured upload limit. Manual edits or a newer import supersede pending imports into the same editor.
 
 Choose a tool in the sidebar or open search with **Ctrl+K** or **Cmd+K**. Gotenui provides individual controls for supported Gotenberg settings, including Office exports, Chromium rendering, PDF attachments and post-processing.
 
@@ -81,7 +81,7 @@ Gotenberg 9.3 adds two **server settings**, not conversion form fields:
 
 Gotenui preserves the HTTP error and displays specific advice when these limits are hit. The selected Gotenberg server does not advertise these flags through `/version` or `/health`, so the UI cannot determine their settings in advance. Set these variables on the **Gotenberg server/container**, not on Gotenui.
 
-Before sending uploaded ZIP archives on Gotenberg 9, Gotenui reads only the bounded ZIP directory: PDF pipeline ZIPs must contain source PDFs and any **exactly referenced** stage assets; Office ZIPs must contain supported Office inputs and any exactly referenced conversion-stage assets (unless source documents are provided separately). It ignores macOS `__MACOSX` and `._` metadata, directory entries and symlinks as the upstream extractor does, normalises names to prevent collisions, and rejects unrelated or duplicate filenames that would shadow local uploads or generated HTML/Markdown files. For now, archives with encrypted entries, a ZIP64 directory, more than 1,000 entries or an index over 512 KB must be repackaged or uploaded as individual files. Gotenui does not inspect the documents inside the ZIP; Gotenberg remains responsible for safe extraction and content validation.
+Before sending uploaded ZIP archives on Gotenberg 9, Gotenui reads only the bounded ZIP directory: PDF pipeline ZIPs must contain source PDFs and any **exactly referenced** stage assets; Office ZIPs must contain supported Office inputs and any exactly referenced conversion-stage assets (unless source documents are provided separately). It ignores macOS `__MACOSX` and `._` metadata, directory entries and symlinks as the upstream extractor does, normalises names to prevent collisions, and rejects unrelated or duplicate filenames that would shadow local uploads or generated HTML/Markdown files. ZIP64 directories are supported. Archives with encrypted entries, more than 10,000 entries or an index over 64 MiB must be repackaged or uploaded as individual files. Gotenui does not inspect the documents inside the ZIP; Gotenberg remains responsible for safe extraction and content validation.
 
 ## Results and presets
 

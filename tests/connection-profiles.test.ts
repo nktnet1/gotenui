@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { BACKEND_STORAGE_KEY } from '#/lib/backend-url'
 import {
+  browserConnectionChoice,
   CONNECTIONS_STORAGE_KEY,
   DEFAULT_CONNECTION_ID,
   defaultBrowserConnections,
@@ -136,5 +137,38 @@ test('an unavailable saved managed connection cannot fall back to the public dem
     key: 'server:private',
     name: 'Private PDF',
     id: 'private',
+  })
+})
+
+test('restored authenticated profiles require secrets before constructing an anonymous request', () => {
+  const url = 'https://pdf.example.test'
+  const basic = newBrowserConnection('Private', url, 'basic', 'browser-private')
+  const bearer = { ...basic, auth: 'bearer' as const }
+  for (const [profile, username, secret] of [
+    [basic, '', ''],
+    [basic, 'user', ''],
+    [basic, '', 'password'],
+    [bearer, '', ''],
+  ] as const) {
+    assert.deepEqual(browserConnectionChoice(profile, username, secret), {
+      kind: 'browser',
+      url,
+      credentialsRequired: true,
+    })
+  }
+  assert.deepEqual(browserConnectionChoice(basic, 'user', 'password'), {
+    kind: 'browser',
+    url,
+    authorization: makeBrowserAuthorization('basic', 'user', 'password'),
+  })
+  assert.deepEqual(browserConnectionChoice(bearer, '', 'token'), {
+    kind: 'browser',
+    url,
+    authorization: 'Bearer token',
+  })
+  assert.deepEqual(browserConnectionChoice({ ...basic, auth: 'none' }, '', ''), {
+    kind: 'browser',
+    url,
+    authorization: undefined,
   })
 })

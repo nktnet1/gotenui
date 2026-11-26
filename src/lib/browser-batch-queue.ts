@@ -1,4 +1,4 @@
-import type { ConnectionChoice } from '#/lib/connection-profiles'
+import { type ConnectionChoice, requireConnectionCredentials } from '#/lib/connection-profiles'
 import {
   type ConversionResult,
   conversionBinaryPreviewAllowed,
@@ -95,6 +95,7 @@ function inputBytes(input: PreparedInput): number {
 }
 
 function prepareInput(input: BatchInput): PreparedInput {
+  requireConnectionCredentials(input.connection)
   const { operation, payload } = validatePayload(input.candidate)
   validateFiles(
     operation,

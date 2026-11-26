@@ -233,9 +233,16 @@ export function JobPanel({
                     Check the events receiver ({acceptedWebhook.eventsReceiverHost}) for processing
                     and failure events. Its callback status is not available inside Gotenui.
                   </p>
-                ) : (
+                ) : null}
+                {acceptedWebhook.errorReceiverHost && (
                   <p>
-                    No events callback was configured; check the external receiver and Gotenberg
+                    Check the error receiver ({acceptedWebhook.errorReceiverHost}) for conversion
+                    failures. Its callback status is not available inside Gotenui.
+                  </p>
+                )}
+                {!acceptedWebhook.eventsReceiverHost && !acceptedWebhook.errorReceiverHost && (
+                  <p>
+                    No failure callback was configured. Check the external receiver and Gotenberg
                     logs for failures.
                   </p>
                 )}

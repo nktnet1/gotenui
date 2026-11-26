@@ -30,6 +30,7 @@ import { BrowserBatchQueue } from '#/lib/browser-batch-queue'
 import { DEFAULT_BACKEND_URL } from '#/lib/config'
 import {
   type BrowserConnection,
+  browserConnectionChoice,
   type ConnectionChoice,
   fetchConnectionSettings,
   loadConnections,
@@ -891,14 +892,9 @@ function GotenuiApp({
   const activeBrowser = selectedProfile.kind === 'browser' ? selectedProfile.profile : undefined
   const connection = useMemo<ConnectionChoice>(() => {
     if (serverId) return { kind: 'server', id: serverId }
-    return {
-      kind: 'browser',
-      url: activeBrowser?.url ?? DEFAULT_BACKEND_URL,
-      authorization:
-        activeBrowser?.auth && activeBrowser.auth !== 'none' && credentials.secret
-          ? makeBrowserAuthorization(activeBrowser.auth, credentials.username, credentials.secret)
-          : undefined,
-    }
+    return activeBrowser
+      ? browserConnectionChoice(activeBrowser, credentials.username, credentials.secret)
+      : { kind: 'browser', url: DEFAULT_BACKEND_URL }
   }, [serverId, activeBrowser, credentials])
 
   if (loading)

@@ -82,13 +82,15 @@ export function parsePdfValidationReport(raw: string): PdfValidationResult[] | n
   return reports
 }
 
-/** Do not call blob.text() for an arbitrarily large upstream JSON response. */
+/** Do not decode an arbitrarily large or malformed upstream JSON response. */
 export async function summarisePdfValidationBlob(
   blob: Blob,
 ): Promise<PdfValidationResult[] | null> {
   if (blob.size > MAX_PDF_VALIDATION_SUMMARY_BYTES) return null
   try {
-    return parsePdfValidationReport(await blob.text())
+    return parsePdfValidationReport(
+      new TextDecoder('utf-8', { fatal: true }).decode(await blob.arrayBuffer()),
+    )
   } catch {
     return null
   }

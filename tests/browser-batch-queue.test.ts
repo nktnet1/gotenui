@@ -489,9 +489,9 @@ describe('browser-managed batch queue', () => {
   })
 
   it('does not publish a late validation result after the user cancels the batch job', async () => {
-    const validation = deferred<string>()
+    const validation = deferred<ArrayBuffer>()
     const blob = new Blob(['placeholder'], { type: 'application/json' })
-    Object.defineProperty(blob, 'text', { value: () => validation.promise })
+    Object.defineProperty(blob, 'arrayBuffer', { value: () => validation.promise })
     const completed = vi.fn()
     const { queue } = queueWith(
       async () => ({ mode: 'download', name: 'validation.json', type: 'application/json', blob }),
@@ -510,9 +510,11 @@ describe('browser-managed batch queue', () => {
     expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
     queue.cancel(id)
     validation.resolve(
-      JSON.stringify({
-        'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
-      }),
+      new TextEncoder().encode(
+        JSON.stringify({
+          'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
+        }),
+      ).buffer,
     )
     await tick()
     expect(queue.getSnapshot().jobs[0]).toMatchObject({ status: 'cancelled' })
@@ -524,10 +526,10 @@ describe('browser-managed batch queue', () => {
   it('retains an on-time download when local validation review outlasts the request deadline', async () => {
     const timeout = new AbortController()
     vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
-    const validation = deferred<string>()
+    const validation = deferred<ArrayBuffer>()
     const blob = new Blob(['placeholder'], { type: 'application/json' })
     const read = vi.fn(() => validation.promise)
-    Object.defineProperty(blob, 'text', { value: read })
+    Object.defineProperty(blob, 'arrayBuffer', { value: read })
     const { queue } = queueWith(async () => ({
       mode: 'download',
       name: 'validation.json',
@@ -544,7 +546,11 @@ describe('browser-managed batch queue', () => {
     expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
     timeout.abort(new DOMException('Timed out', 'TimeoutError'))
     validation.resolve(
-      JSON.stringify({ 'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] } }),
+      new TextEncoder().encode(
+        JSON.stringify({
+          'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
+        }),
+      ).buffer,
     )
     await tick()
     expect(queue.getSnapshot().jobs[0]).toMatchObject({
@@ -1128,3 +1134,13 @@ it.each([
     queue.dispose()
   },
 )
+
+it('refuses to enqueue a restored authenticated profile before credentials are restored', () => {
+  const execute = vi.fn(async () => pdf())
+  const { queue } = queueWith(execute)
+  const request = input()
+  request.connection = { kind: 'browser', url: 'http://localhost:3000', credentialsRequired: true }
+  assert.throws(() => queue.enqueue(request), /Re-enter the saved connection credentials/)
+  assert.equal(queue.getSnapshot().jobs.length, 0)
+  assert.equal(execute.mock.calls.length, 0)
+})

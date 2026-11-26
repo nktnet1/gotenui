@@ -36,7 +36,7 @@ export type SavedConnections = { selected: string; browsers: BrowserConnection[]
 export type UiFeatures = { showDebug: boolean; showMetrics: boolean }
 export type ConnectionSettings = { connections: ManagedConnection[]; features: UiFeatures }
 export type ConnectionChoice =
-  | { kind: 'browser'; url: string; authorization?: string }
+  | { kind: 'browser'; url: string; authorization?: string; credentialsRequired?: boolean }
   | { kind: 'server'; id: string }
 
 export function newBrowserConnection(
@@ -213,4 +213,32 @@ export function makeBrowserAuthorization(
   }
   const bytes = new TextEncoder().encode(`${username}:${secret}`)
   return `Basic ${btoa(Array.from(bytes, (value) => String.fromCharCode(value)).join(''))}`
+}
+
+/** Restored profiles retain their authentication mode, not their secret. */
+export function browserConnectionChoice(
+  profile: BrowserConnection,
+  username: string,
+  secret: string,
+): ConnectionChoice {
+  if (profile.auth !== 'none' && (!secret || (profile.auth === 'basic' && !username))) {
+    return { kind: 'browser', url: profile.url, credentialsRequired: true }
+  }
+  return {
+    kind: 'browser',
+    url: profile.url,
+    authorization: makeBrowserAuthorization(profile.auth, username, secret),
+  }
+}
+
+export function requireConnectionCredentials(connection: string | ConnectionChoice): void {
+  if (
+    typeof connection !== 'string' &&
+    connection.kind === 'browser' &&
+    connection.credentialsRequired
+  ) {
+    throw new Error(
+      'Re-enter the saved connection credentials in connection settings before making requests.',
+    )
+  }
 }

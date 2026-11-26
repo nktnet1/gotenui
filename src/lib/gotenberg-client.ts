@@ -10,7 +10,7 @@ import {
   encodeChromiumMediaFeatures,
   normalizeAdvancedMediaFeatures,
 } from '#/lib/chromium-media'
-import type { ConnectionChoice } from '#/lib/connection-profiles'
+import { type ConnectionChoice, requireConnectionCredentials } from '#/lib/connection-profiles'
 import {
   expectedConversionContentType,
   fixedRouteResponseTypes,
@@ -98,6 +98,7 @@ function connectionHint(): string {
 
 /** A selected connection is supplied on each request; no server session is involved. */
 function targetHeaders(connection: string | ConnectionChoice): Headers {
+  requireConnectionCredentials(connection)
   const headers = new Headers()
   if (typeof connection === 'string') {
     headers.set('X-Gotenberg-Url', validatedBackend(connection))
@@ -134,8 +135,8 @@ export async function getGotenbergStatus(
   connection: string | ConnectionChoice,
   signal?: AbortSignal,
 ): Promise<ServerStatus> {
-  const { headers, params } = statusTarget(connection)
   try {
+    const { headers, params } = statusTarget(connection)
     const response = await fetch(`/api/gotenberg/status?${params}`, {
       headers,
       signal,

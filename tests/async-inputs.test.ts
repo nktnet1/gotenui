@@ -403,3 +403,35 @@ test.each(['url', 'errorUrl', 'eventsUrl'])(
     ])
   },
 )
+
+test.each([false, true])(
+  'accepted legacy async results include the configured error receiver (events: %s)',
+  (events) => {
+    const operation = OPERATION_BY_ID.get('url-pdf')
+    assert.ok(operation)
+    const html = renderToStaticMarkup(
+      createElement(JobPanel, {
+        operation,
+        backendVersion: '8.37.0',
+        files: [],
+        auxFiles: [],
+        postFiles: {},
+        documentText: [],
+        pending: false,
+        lastDownload: null,
+        recent: [],
+        onClearResult: () => {},
+        acceptedWebhook: {
+          status: 204,
+          receiverHost: 'output.example.test',
+          errorReceiverHost: safeOutboundHost('https://errors.example.test/private?token=secret'),
+          ...(events ? { eventsReceiverHost: 'events.example.test' } : {}),
+        },
+      }),
+    )
+    assert.match(html, /Check the error receiver/)
+    assert.match(html, /errors.example.test/)
+    assert.doesNotMatch(html, /No failure callback|private\?token=secret/)
+    if (events) assert.match(html, /Check the events receiver/)
+  },
+)

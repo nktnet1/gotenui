@@ -43,3 +43,18 @@ test('incomplete, invalid, or unapproved basic auth configurations fail closed',
     assert.throws(() => parseUpstreamBasicAuth(env, allowed))
   }
 })
+
+test('legacy upstream credentials cannot target the public demo even when it is approved', () => {
+  assert.throws(
+    () =>
+      parseUpstreamBasicAuth(
+        { ...credentials, GOTENBERG_BASIC_AUTH_URL: `${publicUrl}/` },
+        allowed,
+      ),
+    /public Gotenberg demo/,
+  )
+  assert.equal(
+    basicAuthHeadersForBackend(publicUrl, { target: publicUrl, authorization: 'Basic secret' }),
+    undefined,
+  )
+})

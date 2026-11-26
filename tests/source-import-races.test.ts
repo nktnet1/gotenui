@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test, vi } from 'vitest'
+import { readHtmlSource } from '#/lib/html-source-import'
 import { LatestFileImport } from '#/lib/latest-file-import'
 import { readMarkdownSources } from '#/lib/markdown-source-import'
 
@@ -85,4 +86,32 @@ test('Markdown selection validates duplicates and aggregate bytes before reading
   )
   await assert.rejects(readMarkdownSources([first], [], 2), /upload limit/)
   assert.equal(read.mock.calls.length, 0)
+})
+
+test('header and footer imports independently supersede stale or invalid file reads', async () => {
+  const headerImport = new LatestFileImport()
+  const footerImport = new LatestFileImport()
+  const header = vi.fn()
+  const footer = vi.fn()
+  const failed = vi.fn()
+  const slow = deferred<ArrayBuffer>()
+  const file = new File(['old'], 'header.html')
+  file.arrayBuffer = () => slow.promise
+  const pending = headerImport.run(() => readHtmlSource(file), header, failed)
+  await footerImport.run(() => readHtmlSource(new File(['footer'], 'footer.htm')), footer, failed)
+  headerImport.cancel()
+  slow.resolve(new TextEncoder().encode('old').buffer)
+  await pending
+  assert.deepEqual(header.mock.calls, [])
+  assert.deepEqual(footer.mock.calls, [['footer']])
+  await headerImport.run(
+    () => readHtmlSource(new File([Uint8Array.of(0xff)], 'header.html')),
+    header,
+    failed,
+  )
+  assert.equal(failed.mock.calls.length, 1)
+  assert.match(String(failed.mock.calls[0]?.[0]), /UTF-8/)
+  await headerImport.run(() => readHtmlSource(new File(['new'], 'header.html')), header, failed)
+  assert.deepEqual(header.mock.calls, [['new']])
+  assert.deepEqual(footer.mock.calls, [['footer']])
 })

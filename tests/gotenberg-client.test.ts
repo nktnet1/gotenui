@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
+import { browserConnectionChoice, newBrowserConnection } from '#/lib/connection-profiles'
 import {
   convertWithGotenberg,
   createGotenbergForm,
   getGotenbergDebug,
+  getGotenbergMetricsReport,
   getGotenbergStatus,
   probeGotenbergHealth,
   remediationReviewNotice,
@@ -617,3 +619,46 @@ test.each([
     globalThis.fetch = original
   }
 })
+
+test.each(['basic', 'bearer'] as const)(
+  'never contacts the proxy for a restored %s profile with missing credentials',
+  async (auth) => {
+    const profile = newBrowserConnection(
+      'Private',
+      'https://pdf.example.test',
+      auth,
+      'browser-private',
+    )
+    const target = browserConnectionChoice(profile, '', '')
+    const fetchMock = vi.fn<typeof fetch>()
+    const original = globalThis.fetch
+    globalThis.fetch = fetchMock
+    try {
+      const status = await getGotenbergStatus(target)
+      assert.equal(status.online, false)
+      assert.match(status.error ?? '', /Re-enter the saved connection credentials/)
+      await assert.rejects(
+        probeGotenbergHealth(target),
+        /Re-enter the saved connection credentials/,
+      )
+      await assert.rejects(getGotenbergDebug(target), /Re-enter the saved connection credentials/)
+      await assert.rejects(
+        getGotenbergMetricsReport(target),
+        /Re-enter the saved connection credentials/,
+      )
+      await assert.rejects(
+        convertWithGotenberg(
+          target,
+          { operation: 'url-pdf', fields: { url: 'https://example.test' }, advanced: {} },
+          [],
+          [],
+          new AbortController().signal,
+        ),
+        /Re-enter the saved connection credentials/,
+      )
+      assert.equal(fetchMock.mock.calls.length, 0)
+    } finally {
+      globalThis.fetch = original
+    }
+  },
+)

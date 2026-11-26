@@ -1,8 +1,10 @@
+import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { Textarea } from '#/components/ui/textarea'
-import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
+import { readHtmlSource } from '#/lib/html-source-import'
+import { LatestFileImport } from '#/lib/latest-file-import'
 
 type Props = {
   headerHtml: string
@@ -11,29 +13,21 @@ type Props = {
   onFooterChange: (value: string) => void
 }
 
-async function loadHtml(file: File | undefined, label: string, onChange: (value: string) => void) {
-  if (!file) return
-  if (!/\.html?$/i.test(file.name)) {
-    toast.error(`Choose an HTML file for the ${label.toLowerCase()}.`)
-    return
-  }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    toast.error(`${label} HTML exceeds the configured upload limit.`)
-    return
-  }
-  try {
-    onChange(await file.text())
-  } catch {
-    toast.error(`Could not read the ${label.toLowerCase()} file.`)
-  }
-}
-
 export function ChromiumPdfAssets({
   headerHtml,
   footerHtml,
   onHeaderChange,
   onFooterChange,
 }: Props) {
+  const headerImport = useRef(new LatestFileImport())
+  const footerImport = useRef(new LatestFileImport())
+  useEffect(
+    () => () => {
+      headerImport.current.cancel()
+      footerImport.current.cancel()
+    },
+    [],
+  )
   return (
     <section className="space-y-4 border-t border-slate-100 dark:border-slate-800 pt-5">
       <div>
@@ -50,10 +44,10 @@ export function ChromiumPdfAssets({
       <div className="grid gap-4 lg:grid-cols-2">
         {(
           [
-            ['Header', headerHtml, onHeaderChange],
-            ['Footer', footerHtml, onFooterChange],
+            ['Header', headerHtml, onHeaderChange, headerImport.current],
+            ['Footer', footerHtml, onFooterChange, footerImport.current],
           ] as const
-        ).map(([label, html, onChange]) => {
+        ).map(([label, html, onChange, importer]) => {
           const id = `pdf-${label.toLowerCase()}-html`
           return (
             <div key={label} className="space-y-2">
@@ -66,7 +60,10 @@ export function ChromiumPdfAssets({
                 placeholder={
                   '<html>\n<head><style>body { font-size: 11px }</style></head>\n<body>Page <span class="pageNumber"></span></body>\n</html>'
                 }
-                onChange={(event) => onChange(event.target.value)}
+                onChange={(event) => {
+                  importer.cancel()
+                  onChange(event.target.value)
+                }}
                 className="font-mono text-xs"
               />
               <Label htmlFor={`${id}-file`} className="text-xs text-slate-500 dark:text-slate-400">
@@ -80,7 +77,17 @@ export function ChromiumPdfAssets({
                 onChange={(event) => {
                   const file = event.currentTarget.files?.[0]
                   event.currentTarget.value = ''
-                  void loadHtml(file, label, onChange)
+                  if (!file) return
+                  void importer.run(
+                    () => readHtmlSource(file),
+                    onChange,
+                    (error) =>
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : `Could not read the ${label.toLowerCase()} file.`,
+                      ),
+                  )
                 }}
               />
             </div>
