@@ -2,6 +2,7 @@ import { filenameKey, planRemoteFilenames, registeredFilenames } from '#/lib/fil
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { parsePdfConformanceProfiles } from '#/lib/pdf-conformance-profiles'
 import { isV9SourceDocument } from '#/lib/source-documents'
+import { hasMalformedUnicode } from '#/lib/unicode-text'
 import type { RemoteFile } from '#/lib/validation'
 import { zipEntryNames } from '#/lib/zip-input-validation'
 
@@ -93,7 +94,13 @@ export function parsePdfValidationReport(
   } catch {
     return null
   }
-  if (!document || typeof document !== 'object' || Array.isArray(document)) return null
+  if (
+    !document ||
+    typeof document !== 'object' ||
+    Array.isArray(document) ||
+    hasMalformedUnicode(document)
+  )
+    return null
   const entries = Object.entries(document)
   if (
     !entries.length ||

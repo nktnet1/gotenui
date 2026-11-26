@@ -1,5 +1,6 @@
 import * as v from 'valibot'
 import { goFormLength } from '#/lib/go-form-values'
+import { jsonRecord } from '#/lib/json-record'
 import { localUuid } from '#/lib/local-id'
 import { isNumberFieldValue } from '#/lib/number-field-values'
 import { parseConsoleMessageTypes } from '#/lib/official-form-fields'
@@ -21,7 +22,7 @@ const presetSchema = v.strictObject({
   id: v.pipe(v.string(), v.regex(/^preset-[a-f\d-]{36}$/i)),
   operationId: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   name: v.pipe(v.string(), v.minLength(1), v.maxLength(60)),
-  fields: v.record(v.string(), v.union([v.string(), v.boolean()])),
+  fields: jsonRecord(v.union([v.string(), v.boolean()])),
 })
 const savedSchema = v.strictObject({
   version: v.literal(1),

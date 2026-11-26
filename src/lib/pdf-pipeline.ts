@@ -894,6 +894,8 @@ export function parsePdfPipeline(
     return []
   if (!Array.isArray(decoded) || decoded.length < 1)
     throw new InputError('Add at least one ordered PDF processing stage.')
+  const assetNames =
+    context.assetNames && new Set(context.assetNames.map((name) => name.normalize('NFC')))
   const stages: PdfPipelineStage[] = []
   const counts = new Map<string, number>()
   let hasDecryption = false
@@ -957,8 +959,7 @@ export function parsePdfPipeline(
       hasSigning = true
       if (seenFinal !== 'sign') seenFinal = 'sign'
     }
-    if (context.assetNames) {
-      const assetNames = new Set(context.assetNames.map((name) => name.normalize('NFC')))
+    if (assetNames) {
       for (const key of PDF_STAGE_FILE_FIELDS) {
         if (op === 'compose' && key === 'source') continue
         if (

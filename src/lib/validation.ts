@@ -9,7 +9,11 @@ import {
   generatedChromiumFilenames,
   generatedChromiumText,
 } from '#/lib/chromium-documents'
-import { encodeChromiumMediaFeatures, normalizeAdvancedMediaFeatures } from '#/lib/chromium-media'
+import {
+  CHROMIUM_MEDIA_OPTIONS,
+  encodeChromiumMediaFeatures,
+  normalizeAdvancedMediaFeatures,
+} from '#/lib/chromium-media'
 import {
   hasAmbiguousChromiumScope,
   isAllowedChromiumResourceHeader,
@@ -29,6 +33,7 @@ import {
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import { isHttpHeaderValue, isHttpUrl } from '#/lib/http-url'
+import { jsonRecord } from '#/lib/json-record'
 import { isNumberFieldValue, parseGoFormInteger } from '#/lib/number-field-values'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
@@ -73,7 +78,7 @@ const remoteFileSchema = v.object({
   filename: v.optional(v.string()),
   field: v.optional(v.picklist(['embedded', 'watermark', 'stamp'])),
   embedded: v.optional(v.boolean()),
-  extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
+  extraHttpHeaders: v.optional(jsonRecord(v.string())),
 })
 
 const webhookSchema = v.object({
@@ -82,7 +87,7 @@ const webhookSchema = v.object({
   errorUrl: v.optional(v.string()),
   errorMethod: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
   eventsUrl: v.optional(v.string()),
-  extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
+  extraHttpHeaders: v.optional(jsonRecord(v.string())),
 })
 
 export type RemoteFile = v.InferOutput<typeof remoteFileSchema>
@@ -92,8 +97,8 @@ export const payloadSchema = v.object({
   operation: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   // Browser submissions and queued jobs retain the API version they were configured for.
   expectedBackendVersion: v.optional(v.pipe(v.string(), v.maxLength(MAX_GOTENBERG_VERSION_LENGTH))),
-  fields: v.record(v.string(), fieldValue),
-  advanced: v.record(v.string(), advancedValue),
+  fields: jsonRecord(fieldValue),
+  advanced: jsonRecord(advancedValue),
   source: v.optional(v.string()),
   markdownName: v.optional(v.string()),
   markdownFiles: v.optional(v.array(markdownFileSchema)),
@@ -137,6 +142,7 @@ const fieldNamePattern = /^[a-z][a-zA-Z0-9]{0,63}$/
 // also matches U+FEFF and omits U+0085).
 const goWhitespaceOnly = /^\p{White_Space}+$/u
 const forbiddenAdvanced = new Set([
+  ...CHROMIUM_MEDIA_OPTIONS.map(({ name }) => name),
   'files',
   'payload',
   'url',
@@ -1432,7 +1438,7 @@ export function parseAdvanced(text: string): Record<string, string | boolean | n
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new InputError('Advanced parameters must be a JSON object.')
   }
-  const parsed = v.safeParse(v.record(v.string(), advancedValue), value)
+  const parsed = v.safeParse(jsonRecord(advancedValue), value)
   if (!parsed.success) throw new InputError('Advanced values must be strings, booleans or numbers.')
   for (const value of Object.values(parsed.output)) validateAdvancedNumber(value)
   if (hasMalformedUnicode(parsed.output))

@@ -544,3 +544,21 @@ it.each([
 ])('rejects malformed or overflowing duration presets: %s', (waitDelay) => {
   expect(() => capturePresetFields(operation, { waitDelay })).toThrow(/Invalid/)
 })
+
+it.each(['__proto__', 'constructor', 'prototype'])(
+  'rejects unknown stored preset field %s instead of silently removing it',
+  (name) => {
+    const target = storage()
+    const presets = [
+      {
+        id: firstId,
+        operationId: 'url-pdf',
+        name: 'Test',
+        fields: { landscape: true, [name]: 'bad' },
+      },
+    ]
+    target.items.set(PRESETS_STORAGE_KEY, JSON.stringify({ version: 1, presets }))
+    expect(loadPresets(target)).toEqual([])
+    expect(persistPresets(target, presets)).toBe(false)
+  },
+)

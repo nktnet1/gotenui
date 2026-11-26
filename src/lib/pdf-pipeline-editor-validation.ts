@@ -6,25 +6,14 @@ import {
   remoteFilenamePlanReason,
   remoteLocalFilenameCollision,
 } from '#/lib/file-names'
-import { planV9ConversionStages } from '#/lib/gotenberg-conversion-adapter'
-import {
-  parseGotenbergVersion,
-  requiresGotenberg91ForExtraction,
-  requiresGotenberg92ForComposition,
-  requiresGotenberg94ForStampPosition,
-  requiresGotenberg95ForPaperSize,
-  requiresGotenberg96ForSignatureDrop,
-  requiresGotenberg97ForFileBookmarks,
-  requiresGotenberg98ForExtractTextFormat,
-  requiresGotenberg99ForCompressStreams,
-} from '#/lib/gotenberg-version'
+import { previewV9ConversionStages } from '#/lib/gotenberg-conversion-adapter'
+import { parseGotenbergVersion, pipelineMinimumVersionReason } from '#/lib/gotenberg-version'
 import {
   mergeUploadFilenames,
   numbersPipelineInputs,
   remoteMergeFilenames,
 } from '#/lib/merge-order'
 import { officePdfComposeInput, reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
-import { stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import {
   parsePdfPipeline,
   pdfStageAssetNames,
@@ -133,14 +122,12 @@ export function pdfPipelineEditorError(
         splitSpan: splitSpan ?? '',
         splitUnify: splitUnify ?? false,
       }
-      const form = new FormData()
-      for (const [name, value] of Object.entries({
-        ...fields,
-        ...parseAdvanced(advancedJson ?? ''),
-      })) {
-        if (value !== '') form.set(name, String(value))
-      }
-      return planV9ConversionStages(form, documentKind === 'office', parsed, fields)
+      return previewV9ConversionStages(
+        fields,
+        parseAdvanced(advancedJson ?? ''),
+        documentKind === 'office',
+        parsed,
+      )
     })()
     const numbersInputs = numbersPipelineInputs(pipeline, localNames.length, builtInMerge)
     const forwarded = numbersInputs
@@ -190,51 +177,8 @@ export function pdfPipelineEditorError(
       if (collision) return `Remote filename collides with a local document or asset: ${collision}`
     }
     validatePdfStageUploads(parsed, localAssetNames, conversionMode)
-    if (
-      version &&
-      requiresGotenberg91ForExtraction(
-        version,
-        parsed.map(({ op }) => op),
-      )
-    ) {
-      return 'PDF text and attachment extraction require Gotenberg 9.1 or newer.'
-    }
-    if (
-      version &&
-      requiresGotenberg92ForComposition(
-        version,
-        parsed.map(({ op }) => op),
-      )
-    ) {
-      return 'PDF page composition requires Gotenberg 9.2 or newer.'
-    }
-    if (version && requiresGotenberg94ForStampPosition(version, parsed)) {
-      return 'Anchored PDF stamps require Gotenberg 9.4 or newer.'
-    }
-    if (
-      version &&
-      requiresGotenberg95ForPaperSize(
-        version,
-        parsed.filter(({ op }) => op === 'compose').map(({ paperSize }) => paperSize),
-      )
-    ) {
-      return 'A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.'
-    }
-    if (version && requiresGotenberg96ForSignatureDrop(version, parsed)) {
-      return 'Removing digital signatures requires Gotenberg 9.6 or newer.'
-    }
-    if (version && requiresGotenberg97ForFileBookmarks(version, parsed)) {
-      return 'Per-file merge bookmarks require Gotenberg 9.7 or newer.'
-    }
-    if (version && requiresGotenberg98ForExtractTextFormat(version, parsed)) {
-      return 'Extraction formats require Gotenberg 9.8 or newer.'
-    }
-    if (version && requiresGotenberg99ForCompressStreams(version, parsed)) {
-      return 'PDF stream compression control requires Gotenberg 9.9 or newer.'
-    }
-    if (version?.major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(pipeline)) {
-      return 'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.'
-    }
+    const versionReason = version && pipelineMinimumVersionReason(version, pipeline)
+    if (versionReason) return versionReason
     if (documentKind && !archivesPresent) {
       const extensionMatches = (name: string): boolean =>
         documentKind !== 'single' && isV9SourceDocument(documentKind, name, referencedAssets)

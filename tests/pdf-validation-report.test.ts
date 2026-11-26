@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { describe, it, vi } from 'vitest'
+import { describe, it, test, vi } from 'vitest'
 import {
   MAX_PDF_VALIDATION_SUMMARY_BYTES,
   parsePdfValidationReport,
@@ -340,4 +340,26 @@ it('can still summarise remote-only reports with server-selected names', async (
     (await summarisePdfValidationBlob(reportBlob('resolved.PDF'), ['PDF/A-2b'], inputs))?.length,
     1,
   )
+})
+
+test.each([
+  { 'bad\ud800.pdf': { profile: 'PDF/A-2b', compliant: true, violations: [] } },
+  {
+    'report.pdf': {
+      profile: 'PDF/A-2b',
+      compliant: false,
+      violations: [{ description: 'bad\ud800' }],
+    },
+  },
+  {
+    'report.pdf': {
+      profile: 'PDF/A-2b',
+      compliant: true,
+      violations: [{ description: 'warning', severity: '\ud800' }],
+    },
+  },
+])('rejects escaped malformed Unicode in validation report %j', async (report) => {
+  const raw = JSON.stringify(report)
+  assert.equal(parsePdfValidationReport(raw), null)
+  assert.equal(await summarisePdfValidationBlob(new Blob([raw])), null)
 })

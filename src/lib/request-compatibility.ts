@@ -1,16 +1,23 @@
 import {
   chromiumNames,
   officeNames,
+  previewV9ConversionStages,
   v9NativeConversionReason,
 } from '#/lib/gotenberg-conversion-adapter'
-import type { GotenbergVersion } from '#/lib/gotenberg-version'
-import { canWebhookForOperation } from '#/lib/operation-availability'
+import {
+  type GotenbergVersion,
+  parseGotenbergVersion,
+  pipelineMinimumVersionReason,
+  type SupportedGotenbergMajor,
+} from '#/lib/gotenberg-version'
+import { canWebhookForOperation, operationMinimumVersionReason } from '#/lib/operation-availability'
 import { pdfValidationProfileIssue } from '#/lib/pdf-conformance-profiles'
+import { hasGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import { composeStageFromFields, conversionSplitStage, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { pdfPostProcessSchema } from '#/lib/pdf-post-processing'
 import { validateBookmarkDocument } from '#/lib/pdf-structure-editors'
 import { v9BookmarkTree, v9MetadataFields } from '#/lib/pdf-v9-structure'
-import type { ConversionPayload } from '#/lib/validation'
+import { type ConversionPayload, InputError } from '#/lib/validation'
 import { fieldCompatibilityReason } from '#/tools/shared/field-visibility'
 import type { Operation } from '#/tools/types'
 
@@ -183,4 +190,99 @@ export function outboundCompatibilityReasons(
   }
   reasons.push(...advancedCompatibilityReasons(operation, version, payload))
   return reasons
+}
+
+/** Check the selected API contract without an upload. The proxy must always
+ * repeat these checks against the authenticated server's actual version.
+ */
+export function validateRequestCompatibility(
+  operation: Operation,
+  payload: ConversionPayload,
+  version: GotenbergVersion,
+): void {
+  const { major } = version
+  if (major !== 8 && major !== 9) {
+    throw new InputError(`Gotenberg ${major} is not supported.`, 409)
+  }
+  if (!(operation.supportedGotenbergMajors ?? [8]).includes(major)) {
+    throw new InputError(
+      `The ${operation.title} tool is not available on Gotenberg ${major} yet.`,
+      409,
+    )
+  }
+  const versionReason = operationMinimumVersionReason(version, operation)
+  if (versionReason) throw new InputError(versionReason, 409)
+  const fieldReason = requestFieldCompatibilityReason(operation, version, payload.fields)
+  if (fieldReason) throw new InputError(fieldReason, 409)
+  const outboundReason = outboundCompatibilityReasons(operation, version, payload)[0]
+  if (outboundReason)
+    throw new InputError(outboundReason, outboundReason.includes('filename overrides') ? 409 : 400)
+  if (
+    major === 9 &&
+    version.minor < 2 &&
+    [
+      payload.fields.pages,
+      payload.fields.sourcePages,
+      payload.fields.rotatePages,
+      payload.fields.watermarkPages,
+      payload.fields.stampPages,
+      payload.fields.splitSpan,
+      payload.advanced.splitSpan,
+    ].some(hasGotenberg92PageSyntax)
+  ) {
+    throw new InputError(
+      'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.',
+      409,
+    )
+  }
+  if (major === 9) {
+    const stages =
+      operation.id === 'pdf-pipeline' || payload.conversionStages
+        ? parsePdfPipeline(
+            operation.id === 'pdf-pipeline'
+              ? String(payload.fields.stages ?? '')
+              : (payload.conversionStages ?? ''),
+            {
+              allowEmpty: operation.id !== 'pdf-pipeline',
+              acknowledgedRedaction:
+                operation.id === 'pdf-pipeline'
+                  ? payload.fields.acknowledgedRedaction === true
+                  : payload.acknowledgedConversionRedaction,
+            },
+          )
+        : []
+    const reason = pipelineMinimumVersionReason(version, stages)
+    if (reason) throw new InputError(reason, 409)
+    if (operation.input !== 'pdf' && operation.output === 'pdf' && !payload.postProcess) {
+      const planned = previewV9ConversionStages(
+        payload.fields,
+        payload.advanced,
+        operation.id === 'office-pdf',
+        stages,
+      )
+      const plannedReason = pipelineMinimumVersionReason(version, planned)
+      if (plannedReason) throw new InputError(plannedReason, 409)
+    }
+  }
+  if (major === 8 && payload.conversionStages) {
+    throw new InputError('Conversion-time PDF pipeline stages require Gotenberg 9.')
+  }
+  if (major === 9 && payload.postProcess) {
+    throw new InputError(
+      operation.input === 'pdf'
+        ? 'Gotenberg 9 requires an ordered pipeline for additional PDF post-processing. Recreate the settings in the PDF pipeline editor or use a Gotenberg 8 connection.'
+        : 'Legacy PDF post-processing requires Gotenberg 8. Recreate the settings as PDF stages on Gotenberg 9.',
+    )
+  }
+}
+
+/** Without a pinned version, defer version-dependent checks to the proxy. */
+export function validatePinnedRequestCompatibility(
+  operation: Operation,
+  payload: ConversionPayload,
+): SupportedGotenbergMajor | undefined {
+  const version = parseGotenbergVersion(payload.expectedBackendVersion)
+  if (!version) return undefined
+  validateRequestCompatibility(operation, payload, version)
+  return version.major as SupportedGotenbergMajor
 }

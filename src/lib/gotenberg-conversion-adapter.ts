@@ -248,6 +248,20 @@ export function planV9ConversionStages(
   )
 }
 
+/** Plan generated stages without attaching source documents or mutating a request. */
+export function previewV9ConversionStages(
+  fields: ConversionPayload['fields'],
+  advanced: ConversionPayload['advanced'],
+  office: boolean,
+  userStages: readonly PdfPipelineStage[],
+): PdfPipelineStage[] {
+  const form = new FormData()
+  for (const [name, value] of Object.entries({ ...fields, ...advanced })) {
+    if (value !== '') form.set(name, String(value))
+  }
+  return planV9ConversionStages(form, office, userStages, fields)
+}
+
 /** Validate native route settings before encoding or queuing the request.
  * Both the adapter and browser preflight use the same input contract.
  */

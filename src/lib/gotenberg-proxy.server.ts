@@ -14,14 +14,6 @@ import {
   type GotenbergVersion,
   MAX_GOTENBERG_VERSION_LENGTH,
   parseGotenbergVersion,
-  requiresGotenberg91ForExtraction,
-  requiresGotenberg92ForComposition,
-  requiresGotenberg94ForStampPosition,
-  requiresGotenberg95ForPaperSize,
-  requiresGotenberg96ForSignatureDrop,
-  requiresGotenberg97ForFileBookmarks,
-  requiresGotenberg98ForExtractTextFormat,
-  requiresGotenberg99ForCompressStreams,
   type SupportedGotenbergMajor,
   sameGotenbergApiVersion,
 } from '#/lib/gotenberg-version'
@@ -30,13 +22,10 @@ import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
 } from '#/lib/oauth2-client-credentials.server'
-import { operationMinimumVersionReason } from '#/lib/operation-availability'
-import { hasGotenberg92PageSyntax, stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import {
   conversionPipelineResponseTypes,
   isStandaloneAttachmentExtraction,
   type PdfPipelineStage,
-  parsePdfPipeline,
   pdfStageAssetNames,
   pipelineMayPreservePdfHeader,
   pipelineResponseTypes,
@@ -53,10 +42,7 @@ import {
   requireSameOrigin,
 } from '#/lib/proxy-policy'
 import { validateAssetFilenameRegistration } from '#/lib/remote-stage-assets'
-import {
-  outboundCompatibilityReasons,
-  requestFieldCompatibilityReason,
-} from '#/lib/request-compatibility'
+import { validateRequestCompatibility } from '#/lib/request-compatibility'
 import { verifyConversionSignature } from '#/lib/response-signature'
 import { responseMediaType, safeAttachmentDisposition } from '#/lib/security'
 import {
@@ -579,99 +565,7 @@ export async function proxyConversionRequest(
       409,
     )
   }
-  if (!(operation.supportedGotenbergMajors ?? [8]).includes(major)) {
-    throw new ProxyInputError(
-      `The ${operation.title} tool is not available on Gotenberg ${major} yet.`,
-      409,
-    )
-  }
-  const versionReason = operationMinimumVersionReason(version, operation)
-  if (versionReason) throw new InputError(versionReason, 409)
-  const fieldReason = requestFieldCompatibilityReason(operation, version, payload.fields)
-  if (fieldReason) throw new InputError(fieldReason, 409)
-  const outboundReason = outboundCompatibilityReasons(operation, version, payload)[0]
-  if (outboundReason)
-    throw new InputError(outboundReason, outboundReason.includes('filename overrides') ? 409 : 400)
-  if (
-    major === 9 &&
-    version.minor < 2 &&
-    [
-      payload.fields.pages,
-      payload.fields.sourcePages,
-      payload.fields.rotatePages,
-      payload.fields.watermarkPages,
-      payload.fields.stampPages,
-      payload.fields.splitSpan,
-      payload.advanced.splitSpan,
-    ].some(hasGotenberg92PageSyntax)
-  ) {
-    throw new InputError(
-      'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.',
-      409,
-    )
-  }
-  if (major === 9 && (operation.id === 'pdf-pipeline' || payload.conversionStages)) {
-    const stages = parsePdfPipeline(
-      operation.id === 'pdf-pipeline'
-        ? String(payload.fields.stages ?? '')
-        : (payload.conversionStages ?? ''),
-      {
-        allowEmpty: operation.id !== 'pdf-pipeline',
-        acknowledgedRedaction:
-          operation.id === 'pdf-pipeline'
-            ? payload.fields.acknowledgedRedaction === true
-            : payload.acknowledgedConversionRedaction,
-      },
-    )
-    if (
-      requiresGotenberg91ForExtraction(
-        version,
-        stages.map(({ op }) => op),
-      )
-    ) {
-      throw new InputError(
-        'PDF text and attachment extraction require Gotenberg 9.1 or newer.',
-        409,
-      )
-    }
-    if (
-      requiresGotenberg92ForComposition(
-        version,
-        stages.map(({ op }) => op),
-      )
-    ) {
-      throw new InputError('PDF page composition requires Gotenberg 9.2 or newer.', 409)
-    }
-    if (requiresGotenberg94ForStampPosition(version, stages)) {
-      throw new InputError('Anchored PDF stamps require Gotenberg 9.4 or newer.', 409)
-    }
-    if (
-      requiresGotenberg95ForPaperSize(
-        version,
-        stages.filter(({ op }) => op === 'compose').map(({ paperSize }) => paperSize),
-      )
-    ) {
-      throw new InputError('A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.', 409)
-    }
-    if (requiresGotenberg96ForSignatureDrop(version, stages)) {
-      throw new InputError('Removing digital signatures requires Gotenberg 9.6 or newer.', 409)
-    }
-    if (requiresGotenberg97ForFileBookmarks(version, stages)) {
-      throw new InputError('Per-file merge bookmarks require Gotenberg 9.7 or newer.', 409)
-    }
-    if (requiresGotenberg98ForExtractTextFormat(version, stages)) {
-      throw new InputError('Extraction formats require Gotenberg 9.8 or newer.', 409)
-    }
-    if (requiresGotenberg99ForCompressStreams(version, stages)) {
-      throw new InputError('PDF stream compression control requires Gotenberg 9.9 or newer.', 409)
-    }
-    if (major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(stages)) {
-      throw new InputError(
-        'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.',
-        409,
-      )
-    }
-  }
+  validateRequestCompatibility(operation, payload, version)
   // The first preflight permits version-dependent inputs (Office formats,
   // single-PDF merges, named XML/PDF assets). Recheck all file contracts once
   // the authenticated server's actual major version is known.

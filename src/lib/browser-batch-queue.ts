@@ -9,10 +9,10 @@ import {
   remediationReviewNotice,
   WEBHOOK_NOT_ACCEPTED_NOTICE,
 } from '#/lib/gotenberg-client'
-import { supportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { requestedPdfValidationProfiles } from '#/lib/pdf-conformance-profiles'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
+import { validatePinnedRequestCompatibility } from '#/lib/request-compatibility'
 import { type ConversionPayload, validateFiles, validatePayload } from '#/lib/validation'
 
 export const MAX_BATCH_JOBS = 12
@@ -110,7 +110,7 @@ function prepareInput(input: BatchInput): PreparedInput {
     input.postFiles,
     input.stageFiles ?? [],
     input.archives ?? [],
-    supportedGotenbergMajor(payload.expectedBackendVersion),
+    validatePinnedRequestCompatibility(operation, payload),
   )
   // Reject malformed stages now, rather than accepting a job that cannot run.
   browserResponseTypes(operation, payload)

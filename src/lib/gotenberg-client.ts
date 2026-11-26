@@ -23,11 +23,7 @@ import {
   planRemoteFilenames,
   remoteFilenamePlanReason,
 } from '#/lib/file-names'
-import {
-  type GotenbergVersion,
-  type SupportedGotenbergMajor,
-  supportedGotenbergMajor,
-} from '#/lib/gotenberg-version'
+import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { multipartBody } from '#/lib/multipart-body'
 import { encodeOfficialField } from '#/lib/official-form-fields'
@@ -45,6 +41,7 @@ import {
   type PostProcessFiles,
   postProcessFormFields,
 } from '#/lib/pdf-post-processing'
+import { validatePinnedRequestCompatibility } from '#/lib/request-compatibility'
 import { hasAttachmentPreviewSignature } from '#/lib/response-signature'
 import {
   downloadFilename,
@@ -507,7 +504,7 @@ export async function convertWithGotenberg(
     postFiles,
     stageFiles,
     archives,
-    supportedGotenbergMajor(payload.expectedBackendVersion),
+    validatePinnedRequestCompatibility(operation, payload),
   )
   const allowedTypes = browserResponseTypes(operation, payload)
   const body = new FormData()

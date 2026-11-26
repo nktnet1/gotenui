@@ -1,4 +1,5 @@
 /** API compatibility is based on the selected server's /version response, not the UI version. */
+import { stagesUseGotenberg92PageSyntax } from '#/lib/pdf-page-selectors'
 import { isGotenberg95PaperSize } from '#/lib/pdf-paper-sizes'
 export const MAX_GOTENBERG_VERSION_LENGTH = 80
 
@@ -141,4 +142,45 @@ export function requiresGotenberg99ForCompressStreams(
     if (stage.op === 'optimize' && Object.hasOwn(stage, 'compressStreams')) return true
   }
   return false
+}
+
+/** A single stage-version contract for the editor, browser transport and proxy. */
+export function pipelineMinimumVersionReason(
+  version: GotenbergVersion,
+  stages: readonly { op: string; [key: string]: unknown }[],
+): string | null {
+  if (
+    requiresGotenberg91ForExtraction(
+      version,
+      stages.map(({ op }) => op),
+    )
+  )
+    return 'PDF text and attachment extraction require Gotenberg 9.1 or newer.'
+  if (
+    requiresGotenberg92ForComposition(
+      version,
+      stages.map(({ op }) => op),
+    )
+  )
+    return 'PDF page composition requires Gotenberg 9.2 or newer.'
+  if (requiresGotenberg94ForStampPosition(version, stages))
+    return 'Anchored PDF stamps require Gotenberg 9.4 or newer.'
+  if (
+    requiresGotenberg95ForPaperSize(
+      version,
+      stages.filter(({ op }) => op === 'compose').map(({ paperSize }) => paperSize),
+    )
+  )
+    return 'A0, A1 and A2 paper sizes require Gotenberg 9.5 or newer.'
+  if (requiresGotenberg96ForSignatureDrop(version, stages))
+    return 'Removing digital signatures requires Gotenberg 9.6 or newer.'
+  if (requiresGotenberg97ForFileBookmarks(version, stages))
+    return 'Per-file merge bookmarks require Gotenberg 9.7 or newer.'
+  if (requiresGotenberg98ForExtractTextFormat(version, stages))
+    return 'Extraction formats require Gotenberg 9.8 or newer.'
+  if (requiresGotenberg99ForCompressStreams(version, stages))
+    return 'PDF stream compression control requires Gotenberg 9.9 or newer.'
+  if (version.major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(stages))
+    return 'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.'
+  return null
 }

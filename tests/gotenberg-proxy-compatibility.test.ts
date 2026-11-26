@@ -1283,6 +1283,33 @@ test('v9 webhook serializes Unicode callback URLs and UTF-8 extra header values'
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
 })
 
+test('preserves all valid own remote and webhook header names on the upstream wire', async () => {
+  const extraHttpHeaders = JSON.parse(
+    '{"__proto__":"safe","constructor":"other","prototype":"value"}',
+  )
+  const downloadFrom = [
+    { url: 'https://example.test/asset.css', filename: 'asset.css', extraHttpHeaders },
+  ]
+  const webhook = {
+    url: 'https://example.test/success',
+    eventsUrl: 'https://example.test/events',
+    extraHttpHeaders,
+  }
+  const fixture = upstreamFixture('9.10.2', (form, headers) => {
+    assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), downloadFrom)
+    assert.deepEqual(
+      JSON.parse(headers.get('Gotenberg-Webhook-Extra-Http-Headers') ?? ''),
+      extraHttpHeaders,
+    )
+  })
+  const response = await proxyConversionRequest(
+    requestFor('html-pdf', {}, { downloadFrom, webhook }),
+    fixture.fetcher,
+  )
+  assert.equal(response.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
 test('v8 webhook serializes Unicode success and error URLs', async () => {
   const url = 'https://m\u00fcnich.example/\u901a\u77e5'
   const errorUrl = 'https://example.test/\u5931\u6557'

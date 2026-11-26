@@ -302,3 +302,239 @@ test('rejects invalid conversion stage definitions during batch enqueue', () => 
     queue.dispose()
   }
 })
+
+test('validates all own form field names rather than dropping prototype-related names', () => {
+  for (const name of ['__proto__', 'constructor', 'prototype']) {
+    const candidate = request('url-pdf')
+    assert.throws(
+      () => validatePayload({ ...candidate, fields: { ...candidate.fields, [name]: 'value' } }),
+      /Unsupported field/,
+    )
+    assert.throws(() => parseAdvanced(JSON.stringify({ [name]: {} })), /Advanced values/)
+    assert.deepEqual(parseAdvanced(JSON.stringify({ [name]: 'value' })), { [name]: 'value' })
+  }
+  assert.throws(
+    () => validatePayload(request('url-pdf', {}, { advanced: { ['__proto__']: 'value' } })),
+    /Unsupported advanced field/,
+  )
+})
+
+test('keeps prototype-related HTTP header names and validates their actual values', () => {
+  const headers = JSON.parse('{"__proto__":"safe","constructor":"other","prototype":"value"}')
+  const remote = { url: 'https://example.test/input.pdf', extraHttpHeaders: headers }
+  const webhook = { url: 'https://example.test/success', extraHttpHeaders: headers }
+  const { payload, operation } = validatePayload(
+    request('url-pdf', {}, { downloadFrom: [remote], webhook }),
+  )
+  for (const map of [
+    payload.downloadFrom?.[0]?.extraHttpHeaders,
+    payload.webhook?.extraHttpHeaders,
+  ]) {
+    assert.deepEqual(map, headers)
+    assert.equal(Object.getPrototypeOf(map), Object.prototype)
+    assert.equal(Object.getOwnPropertyDescriptor(map, '__proto__')?.value, 'safe')
+  }
+  const forwarded = createGotenbergForm(operation, payload, [], [])
+  assert.deepEqual(JSON.parse(String(forwarded.get('downloadFrom')))[0].extraHttpHeaders, headers)
+  assert.throws(
+    () =>
+      validatePayload(
+        request(
+          'url-pdf',
+          {},
+          {
+            webhook: {
+              ...webhook,
+              extraHttpHeaders: { ...headers, ['__proto__']: 'bad\r\nvalue' },
+            },
+          },
+        ),
+      ),
+    /Invalid extra HTTP header/,
+  )
+  assert.throws(
+    () =>
+      validatePayload(
+        request(
+          'url-pdf',
+          {},
+          { downloadFrom: [{ ...remote, extraHttpHeaders: { ...headers, constructor: 123 } }] },
+        ),
+      ),
+    /Invalid/,
+  )
+})
+
+test.each(['mediaColorScheme', 'mediaReducedMotion', 'mediaColorGamut', 'mediaForcedColors'])(
+  'does not silently discard UI-only Advanced JSON media field %s on non-Chromium routes',
+  (name) => {
+    assert.throws(
+      () => validatePayload(request('merge', {}, { advanced: { [name]: 'value' } })),
+      /Unsupported advanced field/,
+    )
+  },
+)
+
+const stageCases = [
+  ['9.0.9', '9.1.0', { op: 'extract-text' }, /9\.1 or newer/],
+  [
+    '9.1.9',
+    '9.2.0',
+    { op: 'compose', paperSize: 'A4', placements: [{ sourcePage: 1 }] },
+    /9\.2 or newer/,
+  ],
+  ['9.1.9', '9.2.0', { op: 'select', pages: 'odd,!1' }, /9\.2 or newer/],
+  ['9.3.9', '9.4.0', { op: 'stamp-text', text: 'Test', position: 'center' }, /9\.4 or newer/],
+  [
+    '9.4.9',
+    '9.5.0',
+    { op: 'compose', paperSize: 'A0', placements: [{ sourcePage: 1 }] },
+    /9\.5 or newer/,
+  ],
+  ['9.5.9', '9.6.0', { op: 'optimize', dropSignatures: true }, /9\.6 or newer/],
+  ['9.6.9', '9.7.0', { op: 'merge', fileBookmarks: { label: ['filename'] } }, /9\.7 or newer/],
+  ['9.7.9', '9.8.0', { op: 'extract-text', format: 'text' }, /9\.8 or newer/],
+  ['9.8.9', '9.9.0', { op: 'optimize', compressStreams: false }, /9\.9 or newer/],
+] as const
+
+test.each(stageCases)(
+  'rejects stage version mismatch %s before transport or enqueue (supported from %s)',
+  async (oldVersion, newVersion, stage, reason) => {
+    const executor = vi.fn()
+    const queue = new BrowserBatchQueue(executor)
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const connection = { kind: 'browser' as const, url: 'http://localhost:3000' }
+    const file = new File(['%PDF-1.7'], 'input.pdf')
+    try {
+      for (const conversion of [false, true]) {
+        const stages = JSON.stringify([stage])
+        const candidate = conversion
+          ? request('url-pdf', {}, { expectedBackendVersion: oldVersion, conversionStages: stages })
+          : request('pdf-pipeline', { stages }, { expectedBackendVersion: oldVersion })
+        const files = conversion ? [] : [file]
+        const input = { connection, candidate, files, auxiliary: [], postFiles: {} }
+        await assert.rejects(
+          convertWithGotenberg(connection, candidate, files, [], new AbortController().signal),
+          reason,
+        )
+        assert.throws(() => queue.enqueue(input), reason)
+        assert.doesNotThrow(() =>
+          queue.enqueue({
+            ...input,
+            candidate: { ...candidate, expectedBackendVersion: newVersion },
+          }),
+        )
+      }
+      assert.equal(fetcher.mock.calls.length, 0)
+      assert.equal(executor.mock.calls.length, 0)
+      assert.equal(queue.getSnapshot().jobs.length, 2)
+    } finally {
+      queue.dispose()
+      vi.unstubAllGlobals()
+    }
+  },
+)
+
+test.each([
+  ['extract-text', {}, { expectedBackendVersion: '8.40.0' }, /not available on Gotenberg 8/],
+  ['extract-text', {}, { expectedBackendVersion: '9.0.1' }, /9\.1 or newer/],
+  ['optimize', {}, { expectedBackendVersion: '8.35.9' }, /8\.36 or newer/],
+  [
+    'url-pdf',
+    {},
+    {
+      expectedBackendVersion: '9.1.9',
+      downloadFrom: [{ url: 'https://example.test/a', filename: 'file.pdf' }],
+    },
+    /filename overrides require Gotenberg 9\.2/,
+  ],
+  [
+    'url-pdf',
+    {},
+    { expectedBackendVersion: '8.40.0', conversionStages: '[{"op":"optimize"}]' },
+    /Conversion-time PDF pipeline stages require Gotenberg 9/,
+  ],
+  [
+    'url-pdf',
+    {},
+    { expectedBackendVersion: '9.10.2', postProcess: { flatten: true } },
+    /Legacy PDF post-processing requires Gotenberg 8/,
+  ],
+  [
+    'url-pdf',
+    {},
+    { expectedBackendVersion: '9.10.2', webhook: { url: 'https://example.test/hook' } },
+    /require an events callback URL/,
+  ],
+  ['url-pdf', { paperSize: 'A0' }, { expectedBackendVersion: '9.4.9' }, /9\.5 or newer/],
+] as const)(
+  'preflights the pinned %s route and outbound settings %j',
+  async (id, fields, extra, reason) => {
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const queue = new BrowserBatchQueue(vi.fn())
+    const connection = { kind: 'browser' as const, url: 'http://localhost:3000' }
+    const files = id === 'url-pdf' ? [] : [new File(['%PDF-1.7'], 'input.pdf')]
+    const candidate = request(id, fields, extra)
+    try {
+      await assert.rejects(
+        convertWithGotenberg(connection, candidate, files, [], new AbortController().signal),
+        reason,
+      )
+      assert.throws(
+        () => queue.enqueue({ connection, candidate, files, auxiliary: [], postFiles: {} }),
+        reason,
+      )
+      assert.equal(fetcher.mock.calls.length, 0)
+      assert.equal(queue.getSnapshot().jobs.length, 0)
+    } finally {
+      queue.dispose()
+      vi.unstubAllGlobals()
+    }
+  },
+)
+
+test.each([
+  [
+    'office-pdf',
+    { splitMode: 'intervals', splitSpan: '2', pdfaProfile: 'PDF/A-2b', pdfaMethod: 'native' },
+    {},
+    { pdfaMethod: 'auto' },
+    /requires PDF remediation/,
+  ],
+  [
+    'url-pdf',
+    { pdfaProfile: 'PDF/A-2b' },
+    { conversionStages: '[{"op":"remediate","profile":"PDF/A-2b"}]' },
+    { pdfaProfile: '' },
+    /Only one remediate stage/,
+  ],
+] as const)(
+  'preflights generated %s stages as well as user stages',
+  async (id, fields, extra, correction, reason) => {
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const queue = new BrowserBatchQueue(vi.fn())
+    const connection = { kind: 'browser' as const, url: 'http://localhost:3000' }
+    const files = id === 'office-pdf' ? [new File(['document'], 'document.txt')] : []
+    const options = { expectedBackendVersion: '9.10.2', ...extra }
+    const candidate = request(id, fields, options)
+    try {
+      await assert.rejects(
+        convertWithGotenberg(connection, candidate, files, [], new AbortController().signal),
+        reason,
+      )
+      const input = { connection, candidate, files, auxiliary: [], postFiles: {} }
+      assert.throws(() => queue.enqueue(input), reason)
+      assert.equal(fetcher.mock.calls.length, 0)
+      assert.equal(queue.getSnapshot().jobs.length, 0)
+      assert.doesNotThrow(() =>
+        queue.enqueue({ ...input, candidate: request(id, { ...fields, ...correction }, options) }),
+      )
+    } finally {
+      queue.dispose()
+      vi.unstubAllGlobals()
+    }
+  },
+)
