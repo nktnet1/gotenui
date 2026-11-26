@@ -1,7 +1,9 @@
 import * as v from 'valibot'
+import { goFormLength } from '#/lib/go-form-values'
 import { localUuid } from '#/lib/local-id'
 import { isNumberFieldValue } from '#/lib/number-field-values'
 import { parseConsoleMessageTypes } from '#/lib/official-form-fields'
+import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { OPERATION_BY_ID, type Operation, operationDefaults } from '#/tools/registry'
 
 /** Only public, non-sensitive, repeatable operation settings may enter localStorage. */
@@ -26,17 +28,57 @@ const savedSchema = v.strictObject({
   presets: v.pipe(v.array(presetSchema), v.maxLength(MAX_PRESETS)),
 })
 
-const SAFE_TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
-  paperWidth: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  paperHeight: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  marginTop: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  marginBottom: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  marginLeft: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  marginRight: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  nativePageRanges: /^\d[\d,\- ]{0,99}$/,
-  rotatePages: /^\d[\d,\- ]{0,99}$/,
-  splitSpan: /^\d[\d,\- ]{0,99}$/,
-  waitDelay: /^\d+(?:\.\d+)?(?:ms|s|m)$/,
+const legacyPageRange = /^\d[\d,\- ]{0,99}$/
+const safePageRange = (value: string) => legacyPageRange.test(value) || isPdfPageSelector(value)
+const safeLength = (value: string) => {
+  const length = goFormLength(value)
+  return length !== undefined && length >= 0
+}
+
+// time.ParseDuration supports compound durations, fractional components and
+// units smaller than milliseconds. Preset values are bounded to 100 characters.
+function safeDuration(value: string): boolean {
+  const unsigned = value.replace(/^[+-]/, '')
+  if (unsigned === '0') return true
+  if (!unsigned) return false
+  const units: Record<string, bigint> = {
+    ns: 1n,
+    us: 1000n,
+    '\u00b5s': 1000n,
+    '\u03bcs': 1000n,
+    ms: 1_000_000n,
+    s: 1_000_000_000n,
+    m: 60_000_000_000n,
+    h: 3_600_000_000_000n,
+  }
+  const component = /(?:(\d+)(?:\.(\d*))?|\.(\d+))(ns|us|\u00b5s|\u03bcs|ms|s|m|h)/y
+  let end = 0
+  let nanoseconds = 0n
+  const limit = value.startsWith('-') ? 2n ** 63n : 2n ** 63n - 1n
+  while (end < unsigned.length) {
+    const match = component.exec(unsigned)
+    if (!match) return false
+    const fraction = match[2] ?? match[3] ?? ''
+    const unit = units[match[4]]
+    nanoseconds += BigInt(match[1] ?? '0') * unit
+    if (fraction) nanoseconds += (BigInt(fraction) * unit) / 10n ** BigInt(fraction.length)
+    if (nanoseconds > limit) return false
+    end = component.lastIndex
+  }
+  return true
+}
+
+const SAFE_TEXT_FIELDS: Readonly<Record<string, (value: string) => boolean>> = {
+  paperWidth: safeLength,
+  paperHeight: safeLength,
+  marginTop: safeLength,
+  marginBottom: safeLength,
+  marginLeft: safeLength,
+  marginRight: safeLength,
+  nativePageRanges: (value) => legacyPageRange.test(value),
+  rotatePages: safePageRange,
+  splitSpan: (value) => safePageRange(value) || /^\+\d+$/.test(value),
+  waitDelay: safeDuration,
 }
 
 // Destructive-operation acknowledgements are never reusable preferences.
@@ -103,7 +145,7 @@ export function capturePresetFields(
       if (!isNumberFieldValue(definition, value, operation.input !== 'pdf')) {
         throw new Error(`Invalid ${definition.label} preset value.`)
       }
-    } else if (definition.kind === 'text' && !SAFE_TEXT_FIELDS[definition.name]?.test(value)) {
+    } else if (definition.kind === 'text' && !SAFE_TEXT_FIELDS[definition.name]?.(value)) {
       throw new Error(`Invalid ${definition.label} preset value.`)
     }
     fields[definition.name] = value

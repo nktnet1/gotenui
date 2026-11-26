@@ -1,4 +1,5 @@
 /** Gotenberg 9-only PDF tools. v8 tools remain in their original configurations. */
+import { PDF_CONFORMANCE_PROFILES } from '#/lib/pdf-conformance-profiles'
 import { PDF_PAPER_SIZES } from '#/lib/pdf-paper-sizes'
 import { PDF_REWRITING_TOOLS } from '#/lib/pdf-signature-removal'
 import { v9DropSignatures } from '#/tools/shared/fields'
@@ -25,22 +26,7 @@ const profile: FieldDefinition = {
   kind: 'select',
   required: true,
   defaultValue: 'PDF/A-2b',
-  options: [
-    'PDF/A-1a',
-    'PDF/A-1b',
-    'PDF/A-2a',
-    'PDF/A-2b',
-    'PDF/A-2u',
-    'PDF/A-3a',
-    'PDF/A-3b',
-    'PDF/A-3u',
-    'PDF/A-4',
-    'PDF/A-4e',
-    'PDF/A-4f',
-    'PDF/UA-1',
-    'PDF/UA-2',
-    'Factur-X',
-  ],
+  options: PDF_CONFORMANCE_PROFILES,
 }
 const pdfRead = { input: 'pdf' as const, multiple: true, output: 'json' as const }
 const pdfEdit = { input: 'pdf' as const, multiple: true, output: 'pdf' as const }

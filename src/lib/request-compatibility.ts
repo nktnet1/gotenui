@@ -5,6 +5,7 @@ import {
 } from '#/lib/gotenberg-conversion-adapter'
 import type { GotenbergVersion } from '#/lib/gotenberg-version'
 import { canWebhookForOperation } from '#/lib/operation-availability'
+import { pdfValidationProfileIssue } from '#/lib/pdf-conformance-profiles'
 import { composeStageFromFields, conversionSplitStage, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { pdfPostProcessSchema } from '#/lib/pdf-post-processing'
 import { validateBookmarkDocument } from '#/lib/pdf-structure-editors'
@@ -159,6 +160,10 @@ export function outboundCompatibilityReasons(
       reasons.push('Gotenberg 9 webhooks require an events callback URL.')
     if (payload.webhook.errorUrl || payload.webhook.errorMethod)
       reasons.push('Gotenberg 9 removed the separate webhook error callback.')
+  }
+  if (modern && operation.id === 'pdf-validate') {
+    const issue = pdfValidationProfileIssue(payload.fields)
+    if (issue) reasons.push(issue)
   }
   // Match the standalone adapters before users submit or queue a retained draft.
   try {

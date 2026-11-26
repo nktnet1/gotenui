@@ -17,7 +17,11 @@ import { PdfResultPreview } from '#/components/pdf-result-preview'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { ZipResultPreview } from '#/components/zip-result-preview'
-import { MAX_UPLOAD_BYTES, remediationReviewNotice } from '#/lib/gotenberg-client'
+import {
+  MAX_UPLOAD_BYTES,
+  remediationReviewNotice,
+  WEBHOOK_NOT_ACCEPTED_NOTICE,
+} from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import {
   conversionPipelineResponseTypes,
@@ -124,7 +128,8 @@ export function JobPanel({
     (!lastDownload?.validation ||
       lastDownload.validation.some((report) => !report.compliant || report.totalViolations > 0))
   const remediationWarning = remediationReviewNotice(lastDownload?.remediation)
-  const downloadNeedsReview = validationNeedsReview || !!remediationWarning
+  const downloadNeedsReview =
+    validationNeedsReview || !!remediationWarning || lastDownload?.webhookNotAccepted
   return (
     <div className="space-y-5 lg:sticky lg:top-7 lg:self-start">
       <Card>
@@ -297,14 +302,24 @@ export function JobPanel({
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                         {formatBytes(lastDownload.size)} ·{' '}
-                        {downloadNeedsReview
-                          ? 'Report requires review'
-                          : operation.id === 'pdf-validate'
-                            ? 'Validation complete: compliant'
-                            : 'Ready'}
+                        {lastDownload.webhookNotAccepted
+                          ? 'Delivery requires review'
+                          : downloadNeedsReview
+                            ? 'Report requires review'
+                            : operation.id === 'pdf-validate'
+                              ? 'Validation complete: compliant'
+                              : 'Ready'}
                       </p>
                     </div>
                   </div>
+                  {lastDownload.webhookNotAccepted && (
+                    <p
+                      role="alert"
+                      className="mb-4 rounded-lg border border-amber-500/50 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+                    >
+                      {WEBHOOK_NOT_ACCEPTED_NOTICE}
+                    </p>
+                  )}
                   {remediationWarning && (
                     <p
                       role="alert"

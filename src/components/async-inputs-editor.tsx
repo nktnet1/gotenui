@@ -182,7 +182,8 @@ export function RemoteInputsEditor({
             <Label htmlFor={`${id}-remote-url-${row.id}`}>File URL</Label>
             <Input
               id={`${id}-remote-url-${row.id}`}
-              type="url"
+              type="text"
+              inputMode="url"
               value={row.url}
               onChange={(event) => update(index, { url: event.target.value })}
               placeholder="https://files.example.com/report.pdf"
@@ -369,7 +370,8 @@ export function WebhookEditor({
               <Label htmlFor={`${id}-success-url`}>Success callback URL (required)</Label>
               <Input
                 id={`${id}-success-url`}
-                type="url"
+                type="text"
+                inputMode="url"
                 value={value.url}
                 onChange={(event) => update({ url: event.target.value })}
                 placeholder="https://hooks.example.com/success"
@@ -400,7 +402,8 @@ export function WebhookEditor({
                 </Label>
                 <Input
                   id={`${id}-error-url`}
-                  type="url"
+                  type="text"
+                  inputMode="url"
                   value={value.errorUrl}
                   onChange={(event) => update({ errorUrl: event.target.value })}
                   placeholder="https://hooks.example.com/error"
@@ -444,7 +447,8 @@ export function WebhookEditor({
             </Label>
             <Input
               id={`${id}-events-url`}
-              type="url"
+              type="text"
+              inputMode="url"
               value={value.eventsUrl}
               onChange={(event) => update({ eventsUrl: event.target.value })}
               placeholder="https://hooks.example.com/events"

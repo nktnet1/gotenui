@@ -153,10 +153,10 @@ describe('Gotenberg 9 PDF stages', () => {
     ])
   })
 
-  it('normalises the timestamp authority for standalone timestamping and PAdES signing', () => {
+  it('preserves the timestamp authority for standalone timestamping and PAdES signing', () => {
     assert.deepEqual(
       adapted('timestamp', { timestampUrl: 'HTTPS://TSA.EXAMPLE.test:443/issue?key=1' }).stages,
-      [{ op: 'timestamp', timestampUrl: 'https://tsa.example.test/issue?key=1' }],
+      [{ op: 'timestamp', timestampUrl: 'HTTPS://TSA.EXAMPLE.test:443/issue?key=1' }],
     )
     assert.deepEqual(
       adapted('sign', { timestampUrl: 'HTTPS://TSA.EXAMPLE.test:443/issue?key=1' }, [
@@ -166,7 +166,7 @@ describe('Gotenberg 9 PDF stages', () => {
         {
           op: 'sign',
           certificate: 'signer.p12',
-          timestampUrl: 'https://tsa.example.test/issue?key=1',
+          timestampUrl: 'HTTPS://TSA.EXAMPLE.test:443/issue?key=1',
         },
       ],
     )
@@ -427,5 +427,48 @@ describe('PDF compliance result reporting', () => {
     '{"file.pdf":{"compliant":"yes","violations":[]}}',
   ])('rejects malformed or empty compliance reports', (input) => {
     assert.equal(parsePdfValidationReport(input), null)
+  })
+})
+
+describe('requested compliance profile verification', () => {
+  const report = (profile: unknown, violations: unknown[] = []) =>
+    JSON.stringify({
+      'document.pdf': { profile, compliant: true, violations },
+    })
+
+  it.each(
+    [
+      'unknown-profile',
+      [],
+      ['PDF/A-2b', 'PDF/A-2b'],
+      ['PDF/A-4', 'PDF/UA-1'],
+      ['Factur-X', 'PDF/UA-2'],
+      ['PDF/A-2b', 'PDF/UA-1', 'PDF/A-3b'],
+    ].map((profile) => [profile]),
+  )('rejects unsupported or incompatible report profiles: %j', (profile) => {
+    assert.equal(parsePdfValidationReport(report(profile)), null)
+  })
+
+  it.each(['PDF/A-3b', ['PDF/A-2b', 'PDF/UA-1'], 'PDF/UA-1'].map((profile) => [profile]))(
+    'does not summarise a compliant report for an unrequested profile: %j',
+    (profile) => {
+      assert.equal(parsePdfValidationReport(report(profile), ['PDF/A-2b']), null)
+    },
+  )
+
+  it('accepts either order of the requested compatible pair', () => {
+    assert.ok(parsePdfValidationReport(report(['PDF/UA-2', 'PDF/A-4']), ['PDF/A-4', 'PDF/UA-2']))
+    assert.equal(parsePdfValidationReport(report('PDF/A-4'), ['PDF/A-4', 'PDF/UA-2']), null)
+  })
+
+  it('accepts a legacy one-element profile array', () => {
+    assert.ok(parsePdfValidationReport(report(['PDF/A-2b']), ['PDF/A-2b']))
+  })
+
+  it('rejects malformed violation severities', () => {
+    assert.equal(
+      parsePdfValidationReport(report('Factur-X', [{ description: 'Finding', severity: 7 }])),
+      null,
+    )
   })
 })

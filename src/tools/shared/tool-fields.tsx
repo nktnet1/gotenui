@@ -151,10 +151,9 @@ function FieldControl({
                 ? 'password'
                 : field.kind === 'number'
                   ? 'number'
-                  : field.kind === 'url'
-                    ? 'url'
-                    : 'text'
+                  : 'text'
           }
+          inputMode={field.kind === 'url' ? 'url' : undefined}
           min={parsedVersion?.major === 9 ? (field.minGotenberg9 ?? field.min) : field.min}
           max={field.max}
           step={field.kind === 'number' ? (field.integer ? 1 : 'any') : undefined}

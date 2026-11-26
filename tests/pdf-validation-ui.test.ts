@@ -126,3 +126,18 @@ test('direct results use the same raster allowlist as batch previews', () => {
   assert.doesNotMatch(html, /<img/)
   assert.match(html, /Download again/)
 })
+
+test('direct synchronous webhook results retain downloads and show delivery uncertainty', () => {
+  const html = overview('url-pdf', {
+    lastDownload: {
+      name: 'document.pdf',
+      url: 'blob:result',
+      type: 'application/pdf',
+      size: 9,
+      webhookNotAccepted: true,
+    },
+  })
+  assert.match(html, /Delivery requires review/)
+  assert.match(html, /instead of webhook acceptance/)
+  assert.match(html, /Download again/)
+})

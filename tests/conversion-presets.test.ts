@@ -473,3 +473,74 @@ it('round-trips explicitly cleared optional controls rather than restoring UI de
     applyPresetFields(screenshot, { width: '1200', height: '900', format: 'webp' }, restored),
   ).toMatchObject(fields)
 })
+
+it('round-trips valid upstream length units and numeric spellings', () => {
+  const fields = {
+    paperWidth: '6pc',
+    paperHeight: '+1e1in',
+    marginTop: '.5in',
+    marginLeft: '0x1p-1in',
+    marginRight: '1_000mm',
+  }
+  const stored = storage()
+  const saved = upsertPreset([], operation, 'Sizes', fields, firstId)
+  expect(saved[0]?.fields).toEqual(fields)
+  expect(persistPresets(stored, saved)).toBe(true)
+  const [restored] = loadPresets(stored)
+  assert.ok(restored)
+  expect(applyPresetFields(operation, {}, restored)).toMatchObject(fields)
+  for (const value of ['-1in', '1e999in', '0x10in', '1in/password']) {
+    expect(() => capturePresetFields(operation, { marginTop: value })).toThrow(/Invalid/)
+  }
+})
+
+it.each(['odd', 'even', 'last', 'all', '!1, 2-', '-3', '1-3, !2'])(
+  'preserves valid PDF stage page selectors in presets: %s',
+  (pages) => {
+    expect(capturePresetFields(requiredOperation('rotate'), { rotatePages: pages })).toEqual({
+      rotatePages: pages,
+    })
+    expect(capturePresetFields(requiredOperation('split'), { splitSpan: pages })).toEqual({
+      splitSpan: pages,
+    })
+  },
+)
+
+it('preserves signed positive split intervals and rejects arbitrary selector text', () => {
+  expect(capturePresetFields(requiredOperation('split'), { splitSpan: '+3' })).toEqual({
+    splitSpan: '+3',
+  })
+  expect(() =>
+    capturePresetFields(requiredOperation('split'), { splitSpan: 'odd,password' }),
+  ).toThrow(/Invalid/)
+})
+
+it.each([
+  '1m30s',
+  '1.5h',
+  '500us',
+  '1\u00b5s',
+  '1\u03bcs',
+  '1ns',
+  '0',
+  '+0',
+  '-1s',
+  '.5s',
+  '1.s',
+  '9223372036854775807ns',
+  '-9223372036854775808ns',
+])('preserves Go duration settings: %s', (waitDelay) => {
+  expect(capturePresetFields(operation, { waitDelay })).toEqual({ waitDelay })
+})
+
+it.each([
+  '1m 30s',
+  '1day',
+  '1e3s',
+  '2ssecret',
+  '9223372036854775808ns',
+  '-9223372036854775809ns',
+  '1ns9223372036854775807ns',
+])('rejects malformed or overflowing duration presets: %s', (waitDelay) => {
+  expect(() => capturePresetFields(operation, { waitDelay })).toThrow(/Invalid/)
+})

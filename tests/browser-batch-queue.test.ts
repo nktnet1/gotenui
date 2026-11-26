@@ -1144,3 +1144,49 @@ it('refuses to enqueue a restored authenticated profile before credentials are r
   assert.equal(queue.getSnapshot().jobs.length, 0)
   assert.equal(execute.mock.calls.length, 0)
 })
+
+it('retains validation downloads for a different profile without claiming compliance', async () => {
+  const { queue } = queueWith(async () => ({
+    mode: 'download',
+    name: 'report.json',
+    type: 'application/json',
+    blob: new Blob([
+      JSON.stringify({ 'document.pdf': { compliant: true, profile: 'PDF/A-3b', violations: [] } }),
+    ]),
+  }))
+  const request = input()
+  request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+  request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+  queue.enqueue(request)
+  queue.start()
+  await tick()
+  expect(queue.getSnapshot().jobs[0]).toMatchObject({
+    status: 'completed',
+    review: 'PDF validation could not be summarised. Review the downloaded JSON report.',
+  })
+  expect(queue.getSnapshot().jobs[0]?.url).toMatch(/^blob:/)
+  queue.dispose()
+})
+
+it('retains synchronous webhook downloads but does not imply callback delivery', async () => {
+  const { queue } = queueWith(async () => pdf())
+  const request = input()
+  request.candidate = {
+    operation: 'url-pdf',
+    fields: { url: 'https://example.com' },
+    advanced: {},
+    webhook: {
+      url: 'https://receiver.example.test/result',
+      eventsUrl: 'https://receiver.example.test/events',
+    },
+  }
+  queue.enqueue(request)
+  queue.start()
+  await tick()
+  expect(queue.getSnapshot().jobs[0]).toMatchObject({
+    status: 'completed',
+    review: expect.stringContaining('instead of webhook acceptance'),
+  })
+  expect(queue.getSnapshot().jobs[0]?.url).toMatch(/^blob:/)
+  queue.dispose()
+})

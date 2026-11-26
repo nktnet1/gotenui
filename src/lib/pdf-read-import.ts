@@ -2,6 +2,7 @@ import { filenameKey } from '#/lib/file-names'
 import {
   GOTENBERG_9_METADATA_FIELDS,
   METADATA_TEXT_FIELDS,
+  v9EditorMetadata,
   validateBookmarkDocument,
 } from '#/lib/pdf-structure-editors'
 
@@ -21,22 +22,33 @@ export function importReadableMetadata(
     throw new Error(`Gotenberg did not return metadata for ${filename}.`)
   }
   const metadata: Record<string, string | string[]> = {}
-  const editableFields = standardOnly ? GOTENBERG_9_METADATA_FIELDS : METADATA_TEXT_FIELDS
-  for (const { name } of editableFields) {
+  if (standardOnly) {
+    // The v9 read route returns strings for each writable property, omitting
+    // empty values. Do not silently drop corrupt values or conflicting aliases
+    // and replace the existing editor with a partial document.
+    const normalized = v9EditorMetadata(source)
+    for (const { name } of [...GOTENBERG_9_METADATA_FIELDS, { name: 'Keywords' }]) {
+      if (!Object.hasOwn(normalized, name)) continue
+      const value = normalized[name]
+      if (typeof value !== 'string') {
+        throw new Error(`Gotenberg returned invalid metadata for '${name}'.`)
+      }
+      if (value !== '') metadata[name] = value
+    }
+    return JSON.stringify(metadata)
+  }
+  for (const { name } of METADATA_TEXT_FIELDS) {
     const value = source[name] ?? source[name.charAt(0).toLowerCase() + name.slice(1)]
-    if (typeof value === 'string' && (standardOnly ? value !== '' : value.trim()))
-      metadata[name] = value
+    if (typeof value === 'string' && value.trim()) metadata[name] = value
   }
   const keywords = source.Keywords ?? source.keywords
   if (Array.isArray(keywords) && keywords.every((item) => typeof item === 'string')) {
     metadata.Keywords = keywords
-  } else if (typeof keywords === 'string' && (standardOnly ? keywords !== '' : keywords.trim())) {
-    metadata.Keywords = standardOnly
-      ? keywords
-      : keywords
-          .split(',')
-          .map((word) => word.trim())
-          .filter(Boolean)
+  } else if (typeof keywords === 'string' && keywords.trim()) {
+    metadata.Keywords = keywords
+      .split(',')
+      .map((word) => word.trim())
+      .filter(Boolean)
   }
   const editable = JSON.stringify(metadata)
   return editable

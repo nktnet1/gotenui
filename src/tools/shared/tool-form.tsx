@@ -58,11 +58,13 @@ import {
   convertWithGotenberg,
   REQUEST_TIMEOUT_MS,
   remediationReviewNotice,
+  WEBHOOK_NOT_ACCEPTED_NOTICE,
 } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { LatestFileImport } from '#/lib/latest-file-import'
 import { officeAcceptForVersion } from '#/lib/office-formats'
 import { canWebhookForOperation } from '#/lib/operation-availability'
+import { requestedPdfValidationProfiles } from '#/lib/pdf-conformance-profiles'
 import { DEFAULT_PDF_PIPELINE } from '#/lib/pdf-pipeline'
 import { pdfPipelineEditorError } from '#/lib/pdf-pipeline-editor-validation'
 import {
@@ -378,9 +380,8 @@ export function Workbench({
     webhookInput,
     advanced,
   })
-  // Plain conversions and screenshots need the same resource preflight as
-  // conversions with optional PDF stages. Report these errors by the Run action.
-  if (isV9 && hasChromiumNetwork && !conversionStages && !conversionStageFiles.length) {
+  // Screenshots have no PDF stages, but share Chromium resource registration.
+  if (isV9 && hasChromiumNetwork && !supportsConversionPipeline) {
     const assetError = pdfPipelineEditorError('', {
       remoteRows,
       remoteJson: remoteInput,
@@ -434,26 +435,28 @@ export function Workbench({
           documentKind: 'pdf',
         })
       : null
-  const conversionPipelineError =
-    conversionStages || conversionStageFiles.length
-      ? pdfPipelineEditorError(conversionStages, {
-          ...remotePipelineInputs,
-          localAssetNames: conversionStageFiles.map(({ name }) => name),
-          archivesPresent: archives.length > 0,
-          acknowledgedRedaction: acknowledgedConversionRedaction,
-          backendVersion,
-          documentNames: files.map(({ name }) => name),
-          documentKind: operation.id === 'office-pdf' ? 'office' : 'single',
-          chromiumResourceNames,
-          builtInMerge: operation.id === 'office-pdf' && fields.merge === true,
-          splitMode: typeof fields.splitMode === 'string' ? fields.splitMode : undefined,
-          splitSpan: typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,
-          splitUnify: fields.splitUnify === true,
-          outputName: outputName || undefined,
-          conversionFields: activeOperationFields(operation, fields, backendVersion),
-          advancedJson: advanced,
-        })
-      : null
+  const conversionPipelineError = supportsConversionPipeline
+    ? pdfPipelineEditorError(conversionStages, {
+        ...remotePipelineInputs,
+        localAssetNames: conversionStageFiles.map(({ name }) => name),
+        archivesPresent: archives.length > 0,
+        acknowledgedRedaction: acknowledgedConversionRedaction,
+        backendVersion,
+        documentNames: files.map(({ name }) => name),
+        documentKind: operation.id === 'office-pdf' ? 'office' : 'single',
+        chromiumResourceNames,
+        builtInMerge: operation.id === 'office-pdf' && fields.merge === true,
+        splitMode: typeof fields.splitMode === 'string' ? fields.splitMode : undefined,
+        splitSpan: typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,
+        splitUnify: fields.splitUnify === true,
+        outputName: outputName || undefined,
+        conversionFields: activeOperationFields(operation, fields, backendVersion),
+        advancedJson: advanced,
+      })
+    : null
+  if (conversionPipelineError && !conversionStages && !conversionStageFiles.length) {
+    outboundIssues.push(conversionPipelineError)
+  }
   const docsUrl =
     isV9 && operation.input === 'pdf'
       ? `https://gotenberg.dev/docs/pdf/${operation.id === 'extract-attachments' ? 'attachments' : operation.id === 'extract-text' ? 'pages' : operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`
@@ -660,7 +663,10 @@ export function Workbench({
       const binaryPreviewAllowed = await conversionBinaryPreviewAllowed(result)
       const validation =
         operation.id === 'pdf-validate'
-          ? ((await summarisePdfValidationBlob(blob)) ?? undefined)
+          ? ((await summarisePdfValidationBlob(
+              blob,
+              requestedPdfValidationProfiles(candidate.fields),
+            )) ?? undefined)
           : undefined
       // The network response is complete. Preparing a local preview must not
       // discard an otherwise successful download when its request timer expires.
@@ -676,6 +682,7 @@ export function Workbench({
         url,
         blob: type === 'application/zip' && binaryPreviewAllowed ? blob : undefined,
         binaryPreviewAllowed,
+        webhookNotAccepted: Boolean(webhook),
         preview,
         trace,
         remediation,
@@ -695,7 +702,9 @@ export function Workbench({
         elapsed: performance.now() - start,
         trace,
       })
-      if (validation?.some((result) => !result.compliant)) {
+      if (webhook) {
+        toast.warning(WEBHOOK_NOT_ACCEPTED_NOTICE)
+      } else if (validation?.some((result) => !result.compliant)) {
         toast.warning(
           'PDF validation found non-compliant documents. Review the reported violations before relying on them.',
         )

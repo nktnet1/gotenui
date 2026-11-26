@@ -1,3 +1,5 @@
+import { parsePdfConformanceProfiles } from '#/lib/pdf-conformance-profiles'
+
 /** Gotenberg 9 /forms/pdf/validate returns a filename-keyed compliance report. */
 export type PdfValidationResult = {
   filename: string
@@ -13,7 +15,10 @@ export type PdfValidationResult = {
 export const MAX_PDF_VALIDATION_SUMMARY_BYTES = 128_000
 const MAX_PDF_VALIDATION_DOCUMENTS = 200
 
-export function parsePdfValidationReport(raw: string): PdfValidationResult[] | null {
+export function parsePdfValidationReport(
+  raw: string,
+  expectedProfiles?: readonly string[],
+): PdfValidationResult[] | null {
   if (raw.length > MAX_PDF_VALIDATION_SUMMARY_BYTES) return null
   let document: unknown
   try {
@@ -36,12 +41,12 @@ export function parsePdfValidationReport(raw: string): PdfValidationResult[] | n
       return null
     const row = report as Record<string, unknown>
     if (typeof row.compliant !== 'boolean' || !Array.isArray(row.violations)) return null
-    const profiles = Array.isArray(row.profile) ? row.profile : [row.profile]
+    const profiles = parsePdfConformanceProfiles(row.profile)
     if (
-      !profiles.length ||
-      !profiles.every(
-        (profile) => typeof profile === 'string' && !!profile.trim() && profile.length <= 64,
-      )
+      !profiles ||
+      (expectedProfiles &&
+        (profiles.length !== expectedProfiles.length ||
+          !profiles.every((profile) => expectedProfiles.includes(profile))))
     )
       return null
     const violations = row.violations
@@ -63,7 +68,8 @@ export function parsePdfValidationReport(raw: string): PdfValidationResult[] | n
           typeof violation === 'object' &&
           !Array.isArray(violation) &&
           typeof violation.description === 'string' &&
-          !!violation.description.trim(),
+          !!violation.description.trim() &&
+          (violation.severity === undefined || typeof violation.severity === 'string'),
       )
     )
       return null
@@ -85,11 +91,13 @@ export function parsePdfValidationReport(raw: string): PdfValidationResult[] | n
 /** Do not decode an arbitrarily large or malformed upstream JSON response. */
 export async function summarisePdfValidationBlob(
   blob: Blob,
+  expectedProfiles?: readonly string[],
 ): Promise<PdfValidationResult[] | null> {
   if (blob.size > MAX_PDF_VALIDATION_SUMMARY_BYTES) return null
   try {
     return parsePdfValidationReport(
       new TextDecoder('utf-8', { fatal: true }).decode(await blob.arrayBuffer()),
+      expectedProfiles,
     )
   } catch {
     return null

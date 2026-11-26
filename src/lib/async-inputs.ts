@@ -66,7 +66,7 @@ export function remoteInputsPayload(rows: readonly RemoteInputRow[], json: strin
   return rows.map((row): RemoteFile => {
     const headers = headerMap(row.headers)
     return {
-      url: row.url.trim(),
+      url: row.url,
       ...(row.filename
         ? row.filenameMode === 'override'
           ? { filename: row.filename }
@@ -85,16 +85,16 @@ export function webhookPayload(editor: WebhookEditorState, json: string): unknow
   }
   if (!editor.enabled) return undefined
   const headers = headerMap(editor.headers)
-  const errorUrl = editor.errorUrl.trim()
-  if (!errorUrl && !editor.eventsUrl.trim()) {
+  const errorUrl = editor.errorUrl
+  if (!errorUrl && !editor.eventsUrl) {
     throw new InputError('Add an events or error callback URL to receive failure details.')
   }
   return {
-    url: editor.url.trim(),
+    url: editor.url,
     ...(editor.method !== 'POST' ? { method: editor.method } : {}),
     ...(errorUrl ? { errorUrl } : {}),
     ...(errorUrl && editor.errorMethod !== 'POST' ? { errorMethod: editor.errorMethod } : {}),
-    ...(editor.eventsUrl.trim() ? { eventsUrl: editor.eventsUrl.trim() } : {}),
+    ...(editor.eventsUrl ? { eventsUrl: editor.eventsUrl } : {}),
     ...(headers ? { extraHttpHeaders: headers } : {}),
   } satisfies WebhookConfig
 }

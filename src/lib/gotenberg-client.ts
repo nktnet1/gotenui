@@ -409,6 +409,9 @@ export function createGotenbergForm(
   return form
 }
 
+export const WEBHOOK_NOT_ACCEPTED_NOTICE =
+  'Gotenberg returned a synchronous download instead of webhook acceptance. Delivery is not confirmed. Check the receivers before retrying.'
+
 export type RemediationReport = { residual: number; rolledBack: number; incomplete?: boolean }
 
 export type ConversionResult =

@@ -232,7 +232,7 @@ export function pdfPipelineEditorError(
     if (version && requiresGotenberg99ForCompressStreams(version, parsed)) {
       return 'PDF stream compression control requires Gotenberg 9.9 or newer.'
     }
-    if (version?.major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(parsed)) {
+    if (version?.major === 9 && version.minor < 2 && stagesUseGotenberg92PageSyntax(pipeline)) {
       return 'Page exclusions and open-ended ranges require Gotenberg 9.2 or newer.'
     }
     if (documentKind && !archivesPresent) {

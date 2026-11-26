@@ -5,6 +5,10 @@
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
 import { registeredFilenames } from '#/lib/file-names'
 import { goFormLength } from '#/lib/go-form-values'
+import {
+  isPdfConformanceProfile,
+  parsePdfConformanceProfiles,
+} from '#/lib/pdf-conformance-profiles'
 import { validateFileBookmarks } from '#/lib/pdf-file-bookmarks'
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
@@ -318,22 +322,6 @@ export const DEFAULT_PDF_PIPELINE = '[{"op":"optimize"}]'
 const pipelineByOp = new Map<string, (typeof PDF_PIPELINE_STAGES)[number]>(
   PDF_PIPELINE_STAGES.map((stage) => [stage.op, stage]),
 )
-const profiles = new Set([
-  'PDF/A-1a',
-  'PDF/A-1b',
-  'PDF/A-2a',
-  'PDF/A-2b',
-  'PDF/A-2u',
-  'PDF/A-3a',
-  'PDF/A-3b',
-  'PDF/A-3u',
-  'PDF/A-4',
-  'PDF/A-4e',
-  'PDF/A-4f',
-  'PDF/UA-1',
-  'PDF/UA-2',
-  'Factur-X',
-])
 // Gotenberg 9's PDF stage parser accepts exactly these standard PDF fonts.
 const stampFonts = new Set([
   'Helvetica',
@@ -717,17 +705,13 @@ function validateStage(stage: PdfPipelineStage): void {
         !Array.isArray(values) ||
         !values.length ||
         values.length > 2 ||
-        values.some((entry) => typeof entry !== 'string' || !profiles.has(entry))
+        !values.every(isPdfConformanceProfile)
       )
         throw new InputError(
           'remediate: choose a supported profile or compatible PDF/A + PDF/UA pair.',
         )
-      if (values.length === 2) {
-        const a = values.find((entry: string) => entry.startsWith('PDF/A-') || entry === 'Factur-X')
-        const ua = values.find((entry: string) => entry.startsWith('PDF/UA-'))
-        if (!a || !ua || ua !== (a.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1'))
-          throw new InputError('remediate: incompatible PDF/A and PDF/UA profiles.')
-      }
+      if (!parsePdfConformanceProfiles(values))
+        throw new InputError('remediate: incompatible PDF/A and PDF/UA profiles.')
       // Gotenberg resolves the named asset and reads its XML contents. Unlike
       // input PDFs, invoice assets do not need a particular filename suffix.
       if (stage.xml) requiredText(stage, 'xml')

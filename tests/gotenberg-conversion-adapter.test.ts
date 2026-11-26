@@ -546,7 +546,7 @@ test('v9 conversion places conformance remediation before PDF signing and timest
     { op: 'set-metadata', title: 'Final statement' },
     { op: 'remediate', profile: 'PDF/A-2b' },
     { op: 'sign', certificate: 'signer.p12', pades: true },
-    { op: 'timestamp', timestampUrl: 'https://tsa.example.test/' },
+    { op: 'timestamp', timestampUrl: 'https://tsa.example.test' },
   ])
 })
 

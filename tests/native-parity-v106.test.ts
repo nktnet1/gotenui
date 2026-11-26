@@ -503,3 +503,29 @@ it('uses the native whitespace contract when importing v9 bookmarks', () => {
     /needs a title/,
   )
 })
+
+it('rejects corrupt recognised metadata values and aliases in native read responses', () => {
+  for (const source of [
+    { title: 123 },
+    { author: null },
+    { keywords: ['a', 'b'] },
+    { Title: 'First', title: 'Second' },
+  ]) {
+    assert.throws(
+      () => importReadableMetadata({ 'report.pdf': source }, 'report.pdf', { standardOnly: true }),
+      /invalid metadata|Conflicting metadata aliases/,
+    )
+  }
+  assert.deepEqual(
+    JSON.parse(importReadableMetadata({ 'report.pdf': {} }, 'report.pdf', { standardOnly: true })),
+    {},
+  )
+  assert.deepEqual(
+    JSON.parse(
+      importReadableMetadata({ 'report.pdf': { title: 'Valid', futureTag: 1 } }, 'report.pdf', {
+        standardOnly: true,
+      }),
+    ),
+    { Title: 'Valid' },
+  )
+})

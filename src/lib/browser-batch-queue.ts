@@ -6,7 +6,9 @@ import {
   MAX_UPLOAD_BYTES,
   REQUEST_TIMEOUT_MS,
   remediationReviewNotice,
+  WEBHOOK_NOT_ACCEPTED_NOTICE,
 } from '#/lib/gotenberg-client'
+import { requestedPdfValidationProfiles } from '#/lib/pdf-conformance-profiles'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
 import { type ConversionPayload, validateFiles, validatePayload } from '#/lib/validation'
@@ -149,7 +151,10 @@ async function batchReviewNotice(
     if (result.type !== 'application/json') {
       return unreadableValidationMessage
     }
-    const reports = await summarisePdfValidationBlob(result.blob)
+    const reports = await summarisePdfValidationBlob(
+      result.blob,
+      requestedPdfValidationProfiles(input.candidate.fields),
+    )
     if (!reports) return unreadableValidationMessage
     const noncompliant = reports.filter((report) => !report.compliant).length
     if (noncompliant > 0) {
@@ -160,7 +165,11 @@ async function batchReviewNotice(
       return `PDF validation found non-fatal findings in ${withFindings} compliant document(s). Review the downloaded JSON report.`
     }
   }
-  return remediationReviewNotice(result.remediation)
+  const notices = [
+    input.candidate.webhook ? WEBHOOK_NOT_ACCEPTED_NOTICE : undefined,
+    remediationReviewNotice(result.remediation),
+  ].filter(Boolean)
+  return notices.length ? notices.join(' ') : undefined
 }
 
 /** All inputs, including selected credentials, live only in this tab and are never serialized. */

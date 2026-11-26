@@ -360,3 +360,43 @@ it('rejects known local stage assets displaced by duplicate sources even with ar
     /Stage asset filename collides/,
   )
 })
+
+it('preflights built-in conversion stages even when the user pipeline is empty', () => {
+  const draft = {
+    ...base,
+    backendVersion: '9.10.2',
+    documentKind: 'office' as const,
+    documentNames: ['one.docx', 'two.docx'],
+  }
+  assert.match(
+    pdfPipelineEditorError('', {
+      ...draft,
+      builtInMerge: true,
+      conversionFields: { merge: true, pdfaProfile: 'PDF/A-2b', pdfaMethod: 'native' },
+    }) ?? '',
+    /requires PDF remediation/,
+  )
+  assert.equal(
+    pdfPipelineEditorError('', {
+      ...draft,
+      builtInMerge: true,
+      conversionFields: { merge: true, pdfaProfile: 'PDF/A-2b', pdfaMethod: 'auto' },
+    }),
+    null,
+  )
+  assert.match(
+    pdfPipelineEditorError('', {
+      ...draft,
+      backendVersion: '9.1.0',
+      conversionFields: { splitMode: 'pages', splitSpan: '1-' },
+    }) ?? '',
+    /9.2 or newer/,
+  )
+  assert.equal(
+    pdfPipelineEditorError('', {
+      ...draft,
+      conversionFields: { splitMode: 'pages', splitSpan: '1-' },
+    }),
+    null,
+  )
+})

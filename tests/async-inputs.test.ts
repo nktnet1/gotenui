@@ -351,6 +351,7 @@ test.each([
   ' https://files.example.test/document.pdf',
   'https://files.example.test ',
   'https://%66iles.example.test/document.pdf',
+  'https://@files.example.test/document.pdf',
   'https://files.example.test/doc\nument.pdf',
   'https://files.example.test/doc\tument.pdf',
   'https://files.example.test/document%2.pdf',
@@ -433,5 +434,51 @@ test.each([false, true])(
     assert.match(html, /errors.example.test/)
     assert.doesNotMatch(html, /No failure callback|private\?token=secret/)
     if (events) assert.match(html, /Check the events receiver/)
+  },
+)
+
+test.each([
+  'https://files.example.test/document.pdf ',
+  'https://files.example.test/document.pdf?token=\uFEFF',
+  'https://files.example.test/a/%2e%2e/document.pdf?sig=%2F%2B',
+])('structured remote inputs keep the exact raw URL: %j', (url) => {
+  const { downloadFrom } = validateAsyncInputValues(
+    remoteInputsPayload([remoteRow({ url })], ''),
+    undefined,
+  )
+  assert.deepEqual(downloadFrom, [{ url }])
+})
+
+test.each(['url', 'errorUrl', 'eventsUrl'] as const)(
+  'structured webhook validation does not repair invalid %s values',
+  (field) => {
+    const url = 'https://hooks.example.test/a/%2e%2e/complete?sig=%2F%2B'
+    const editor = { ...emptyWebhook, enabled: true, url, errorUrl: url, eventsUrl: url }
+    for (const invalid of [` ${url}`, `${url} `, '   ']) {
+      const payload = webhookPayload({ ...editor, [field]: invalid }, '')
+      assert.equal((payload as Record<string, unknown>)[field], invalid)
+      assert.throws(() => validateAsyncInputValues(undefined, payload), /URL/)
+    }
+    const unicode = `${url}\uFEFF`
+    const payload = webhookPayload({ ...editor, [field]: unicode }, '')
+    assert.equal(validateAsyncInputValues(undefined, payload).webhook?.[field], unicode)
+  },
+)
+
+test.each(['url-pdf', 'url-shot'])(
+  '%s rejects malformed raw Chromium URL fields, without rewriting valid paths',
+  (id) => {
+    for (const url of [
+      'https:example.test',
+      'https:///example.test',
+      'https://@example.test',
+      'https://example.test/file%2',
+      'https://example.test/#%',
+      ' https://example.test',
+    ]) {
+      assert.throws(() => validated(id, { fields: { url } }), /absolute http or https URL/)
+    }
+    const url = 'https://example.test/a/%2e%2e/file?raw=%'
+    assert.equal(validated(id, { fields: { url } }).payload.fields.url, url)
   },
 )

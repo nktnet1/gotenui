@@ -2,6 +2,10 @@
 
 import { filenameKey, forwardedRemoteFilenames } from '#/lib/file-names'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
+import {
+  pdfValidationProfileIssue,
+  requestedPdfValidationProfiles,
+} from '#/lib/pdf-conformance-profiles'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { composeStageFromFields, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
@@ -52,23 +56,6 @@ function validateFields(payload: ConversionPayload, allowed: readonly string[]):
     )
   }
 }
-
-const validProfile = new Set([
-  'PDF/A-1a',
-  'PDF/A-1b',
-  'PDF/A-2a',
-  'PDF/A-2b',
-  'PDF/A-2u',
-  'PDF/A-3a',
-  'PDF/A-3b',
-  'PDF/A-3u',
-  'PDF/A-4',
-  'PDF/A-4e',
-  'PDF/A-4f',
-  'PDF/UA-1',
-  'PDF/UA-2',
-  'Factur-X',
-])
 
 /** Returns null for existing tools so their v8/v9 adapter remains untouched. */
 export function adaptV9PdfExtra(
@@ -176,19 +163,9 @@ export function adaptV9PdfExtra(
     case 'pdf-validate': {
       allow('password', 'profile', 'additionalProfile')
       onlyPdfInputs()
-      const main = value('profile')
-      const additional = value('additionalProfile')
-      if (!validProfile.has(main)) throw new InputError('Choose a supported validation profile.')
-      if (additional) {
-        const paired = main.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1'
-        if ((!main.startsWith('PDF/A-') && main !== 'Factur-X') || additional !== paired) {
-          throw new InputError(
-            `The additional PDF/UA profile must match the PDF/A version (${paired}).`,
-          )
-        }
-      }
-      form.append('profile', main)
-      if (additional) form.append('profile', additional)
+      const issue = pdfValidationProfileIssue(fields)
+      if (issue) throw new InputError(issue)
+      for (const profile of requestedPdfValidationProfiles(fields)) form.append('profile', profile)
       break
     }
     case 'select-pages':

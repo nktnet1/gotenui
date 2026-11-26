@@ -389,3 +389,23 @@ test('standalone composition preflight uses the same length and placement valida
     ),
   ).toMatch(/invalid placements entry/)
 })
+
+test.each([
+  ['PDF/A-4', 'PDF/UA-1'],
+  ['Factur-X', 'PDF/UA-2'],
+  ['PDF/UA-1', 'PDF/UA-1'],
+])('preflights incompatible validation profiles %s + %s', (profile, additionalProfile) => {
+  expect(
+    draftOutboundIssues(operation('pdf-validate'), { profile, additionalProfile }, '9.10.0', draft),
+  ).toContainEqual(expect.stringMatching(/additional PDF\/UA profile/))
+})
+
+test.each([
+  ['PDF/A-4', 'PDF/UA-2'],
+  ['Factur-X', 'PDF/UA-1'],
+  ['PDF/UA-1', ''],
+])('accepts compatible validation profiles %s + %s', (profile, additionalProfile) => {
+  expect(
+    draftOutboundIssues(operation('pdf-validate'), { profile, additionalProfile }, '9.10.0', draft),
+  ).toEqual([])
+})
