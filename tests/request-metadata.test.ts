@@ -60,3 +60,21 @@ test('accepts Gotenberg output filenames with punctuation, Unicode and longer na
     assert.throws(() => validatePayload(payload({ outputName: name })), InputError, name)
   }
 })
+
+test.each(['\r\nv=a', 'v=a,\r\nw=b', 'v=a\n', 'v=a,\u00a0w=b', '\u2003v=a', 'v=a\u000b'])(
+  'rejects unsafe whitespace in raw tracestate %j',
+  (tracestate) => {
+    assert.throws(
+      () => validatePayload(payload({ traceparent: parent, tracestate })),
+      /Invalid W3C tracestate/,
+    )
+  },
+)
+
+test('preserves allowed HTTP whitespace between tracestate members', () => {
+  const tracestate = 'v=a, \tw=b'
+  assert.equal(
+    validatePayload(payload({ traceparent: parent, tracestate })).payload.tracestate,
+    tracestate,
+  )
+})

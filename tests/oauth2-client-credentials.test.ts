@@ -203,6 +203,9 @@ test('rejects upstream token errors and unsafe bodies without leaking responses 
   for (const result of [
     new Response('secret=leak', { status: 401 }),
     new Response('<html>gateway</html>', { headers: { 'Content-Type': 'text/html' } }),
+    new Response(JSON.stringify({ access_token: 'token', token_type: 'Bearer', expires_in: 500 }), {
+      headers: { 'Content-Type': 'application/jsonp' },
+    }),
     Response.json({ access_token: 'token', token_type: 'MAC', expires_in: 500 }),
     Response.json({ access_token: 'bad token', token_type: 'Bearer', expires_in: 500 }),
     Response.json({ access_token: 'token', token_type: 'Bearer', expires_in: -1 }),
@@ -402,4 +405,37 @@ test('OAuth2 Basic credentials follow form encoding, including spaces and punctu
     return credentialsResponse()
   }
   assert.equal(await authorizationForOAuth2(backend, auth, fetcher), 'Bearer jwt.first.signature')
+})
+
+test('a late 401 from an expired token does not invalidate its replacement', async () => {
+  let now = 1_000_000
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  let tokens = 0
+  let enter!: () => void
+  let rejectOld!: (response: Response) => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  const rejected = new Promise<Response>((resolve) => {
+    rejectOld = resolve
+  })
+  const fetcher: typeof fetch = async (input, init) => {
+    if (String(input) === idp) return credentialsResponse(`token-${++tokens}`, 120)
+    if (new Headers(init?.headers).get('authorization') === 'Bearer token-1') {
+      enter()
+      return rejected
+    }
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  }
+  const old = proxyConversionRequest(conversionRequest(), fetcher)
+  await entered
+  now += 110_000
+  try {
+    assert.equal((await proxyConversionRequest(conversionRequest(), fetcher)).status, 200)
+  } finally {
+    rejectOld(new Response('denied', { status: 401 }))
+  }
+  assert.equal((await old).status, 401)
+  assert.equal((await proxyConversionRequest(conversionRequest(), fetcher)).status, 200)
+  assert.equal(tokens, 2)
 })

@@ -53,6 +53,7 @@ import {
 import { chromiumNetworkFields } from '#/lib/chromium-network'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import {
+  conversionBinaryPreviewAllowed,
   conversionTextPreview,
   convertWithGotenberg,
   REQUEST_TIMEOUT_MS,
@@ -649,6 +650,7 @@ export function Workbench({
       }
       const { blob, type, name, trace, remediation } = result
       const preview = await conversionTextPreview(blob, type)
+      const binaryPreviewAllowed = await conversionBinaryPreviewAllowed(result)
       const validation =
         operation.id === 'pdf-validate'
           ? ((await summarisePdfValidationBlob(blob)) ?? undefined)
@@ -664,7 +666,8 @@ export function Workbench({
         size: blob.size,
         type,
         url,
-        blob: type === 'application/zip' ? blob : undefined,
+        blob: type === 'application/zip' && binaryPreviewAllowed ? blob : undefined,
+        binaryPreviewAllowed,
         preview,
         trace,
         remediation,

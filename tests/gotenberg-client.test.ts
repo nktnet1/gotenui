@@ -486,11 +486,13 @@ test('download names follow the returned ZIP or PNG media type, despite stale fi
       const result = await convertWithGotenberg(
         'http://127.0.0.1:3000',
         {
-          operation: 'html-pdf',
+          operation: type === 'image/png' ? 'html-shot' : 'html-pdf',
           fields: {},
           advanced: {},
           source: '<html><body>Export</body></html>',
-          ...(type === 'image/png' ? { outputName: 'report' } : {}),
+          ...(type === 'image/png'
+            ? { outputName: 'report' }
+            : { conversionStages: '[{"op":"extract-attachments"}]' }),
         },
         [],
         [],

@@ -172,6 +172,8 @@ test('oversized, malformed and unrelated metrics responses are rejected as gatew
     new Response(huge, { headers: { 'Content-Type': 'text/plain' } }),
     new Response('<html>SPA fallback</html>', { headers: { 'Content-Type': 'text/html' } }),
     new Response('not metrics', { headers: { 'Content-Type': 'text/plain' } }),
+    new Response(text, { headers: { 'Content-Type': 'text/plain-extra' } }),
+    new Response(text, { headers: { 'Content-Type': 'application/openmetrics-text-extra' } }),
     new Response(new Uint8Array([0xff, 0xfe]), {
       headers: { 'Content-Type': 'text/plain' },
     }),

@@ -93,8 +93,13 @@ export function downloadFilename(header: string | null, fallback: string): strin
   )
 }
 
+/** Compare the media type itself, not a prefix of an unrelated type. */
+export function responseMediaType(contentType: string | null): string | undefined {
+  return contentType?.split(';')[0]?.trim().toLowerCase() || undefined
+}
+
 export function responseExtension(contentType: string | null): string {
-  const type = contentType?.split(';')[0]?.trim().toLowerCase()
+  const type = responseMediaType(contentType)
   if (type === 'application/pdf') return 'pdf'
   if (type === 'application/zip') return 'zip'
   if (type === 'application/json') return 'json'

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import * as v from 'valibot'
 import { ProxyInputError, readLimitedBody } from '#/lib/proxy-policy'
+import { responseMediaType } from '#/lib/security'
+import { isBearerToken, MAX_BEARER_TOKEN_LENGTH } from '#/lib/upstream-credentials'
 
 /** OAuth 2.0 client credentials for a deployment-managed Gotenberg connection.
  * This is not an interactive OIDC user login or a browser-stored refresh token.
@@ -15,7 +17,7 @@ export type OAuth2ClientCredentials = Readonly<{
 }>
 
 const tokenResponseSchema = v.object({
-  access_token: v.pipe(v.string(), v.minLength(1), v.maxLength(4096)),
+  access_token: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_BEARER_TOKEN_LENGTH)),
   token_type: v.string(),
   expires_in: v.union([v.number(), v.pipe(v.string(), v.regex(/^\d+$/))]),
 })
@@ -105,7 +107,7 @@ async function requestToken(
     await response.body?.cancel().catch(() => {})
     return rejectTokenResponse()
   }
-  if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+  if (responseMediaType(response.headers.get('content-type')) !== 'application/json') {
     await response.body?.cancel().catch(() => {})
     return rejectTokenResponse()
   }
@@ -122,7 +124,7 @@ async function requestToken(
     return rejectTokenResponse()
   }
   const { access_token } = parsed.output
-  if (!/^[A-Za-z0-9._~+/-]+=*$/.test(access_token)) return rejectTokenResponse()
+  if (!isBearerToken(access_token)) return rejectTokenResponse()
   const seconds = Number(parsed.output.expires_in)
   if (!Number.isSafeInteger(seconds) || seconds < 1) {
     return rejectTokenResponse()
@@ -170,8 +172,13 @@ export async function authorizationForOAuth2(
 export function invalidateOAuth2Authorization(
   connectionUrl: string,
   auth: OAuth2ClientCredentials | undefined,
+  authorization?: string,
 ): void {
-  if (auth) cached.delete(fingerprint(connectionUrl, auth))
+  if (!auth) return
+  const key = fingerprint(connectionUrl, auth)
+  // An old in-flight request may fail after a replacement token was cached.
+  if (authorization === undefined || cached.get(key)?.authorization === authorization)
+    cached.delete(key)
 }
 
 /** Exported for isolated tests; this module holds no browser-side state. */

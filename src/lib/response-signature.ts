@@ -60,6 +60,24 @@ function matchesSignature(type: string, prefix: Uint8Array): boolean {
   }
 }
 
+/** Check only the prefix needed for an optional preview of an extracted file. */
+export async function hasAttachmentPreviewSignature(blob: Blob, type: string): Promise<boolean> {
+  const size = requiredBytes(type)
+  if (size === 0) return false
+  const pdf = type === 'application/pdf'
+  const prefix = new Uint8Array(
+    await blob.slice(0, pdf ? PDF_PREAMBLE_LIMIT + size - 1 : size).arrayBuffer(),
+  )
+  if (prefix.length < size) return false
+  if (!pdf) return matchesSignature(type, prefix)
+  const opening = new TextDecoder().decode(prefix.subarray(0, 80))
+  if (/^\s*<(?:html[\s>]|!doctype\s+html[\s>])/i.test(opening)) return false
+  for (let offset = 0; offset < PDF_PREAMBLE_LIMIT && offset + size <= prefix.length; offset++) {
+    if (matchesSignature(type, prefix.subarray(offset, offset + size))) return true
+  }
+  return false
+}
+
 /** Inspect only a bounded binary file signature before returning HTTP 200 to the browser.
  * Replay the consumed chunks without buffering the document; preserve backpressure,
  * streaming errors, and downstream cancellation of the original upstream reader.

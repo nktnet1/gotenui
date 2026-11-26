@@ -1,7 +1,11 @@
 import { joinURL } from 'ufo'
 import * as v from 'valibot'
-import { isAttachmentMimeType } from '#/lib/attachment-metadata'
 import { resolveAuthenticatedConnectionTarget } from '#/lib/connection-target.server'
+import {
+  expectedConversionContentType,
+  fixedRouteResponseTypes,
+  isNamedAttachmentResponse,
+} from '#/lib/conversion-response'
 import { createGotenbergForm, REQUEST_TIMEOUT_MS, type ServerStatus } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
 import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
@@ -53,7 +57,7 @@ import {
   requestFieldCompatibilityReason,
 } from '#/lib/request-compatibility'
 import { verifyConversionSignature } from '#/lib/response-signature'
-import { hasAttachmentFilename, safeAttachmentDisposition } from '#/lib/security'
+import { responseMediaType, safeAttachmentDisposition } from '#/lib/security'
 import {
   parseServerConnections,
   publicServerConnections,
@@ -226,9 +230,13 @@ function invalidateUnauthorized(
   target: {
     url: string
     oauth2?: OAuth2ClientCredentials
+    headers?: HeadersInit
   },
 ): void {
-  if (status === 401) invalidateOAuth2Authorization(target.url, target.oauth2)
+  if (status === 401 && target.oauth2) {
+    const authorization = new Headers(target.headers).get('authorization')
+    if (authorization) invalidateOAuth2Authorization(target.url, target.oauth2, authorization)
+  }
 }
 
 function fetchOptions(request: Request): Pick<RequestInit, 'signal' | 'redirect' | 'cache'> {
@@ -377,25 +385,6 @@ async function upstreamErrorText(response: Response): Promise<string> {
   }
 }
 
-function expectedConversionContentType(output: string, format: string | boolean | undefined) {
-  switch (output) {
-    case 'pdf':
-      return 'application/pdf'
-    case 'zip':
-      return 'application/zip'
-    case 'json':
-      return 'application/json'
-    case 'text':
-      return 'text/plain'
-    case 'file':
-      return 'application/octet-stream'
-    case 'image':
-      return `image/${format === 'jpeg' || format === 'webp' ? format : 'png'}`
-    default:
-      throw new Error('Unknown conversion output.')
-  }
-}
-
 /** Gotenberg chooses PDF versus ZIP based on the number of resulting documents.
  * Keep exact media-type checks for all other routes and never accept HTML fallbacks.
  */
@@ -407,12 +396,8 @@ function allowedConversionContentTypes(
   archiveEntryNames: readonly string[] = [],
   forwardedStages: readonly PdfPipelineStage[] = [],
 ): readonly string[] {
-  if (operation.id === 'extract-attachments') return ['*', 'application/zip']
-  if (operation.id === 'extract-text')
-    return [
-      payload.fields.format === 'markdown' ? 'text/markdown' : 'text/plain',
-      'application/zip',
-    ]
+  const routeTypes = fixedRouteResponseTypes(operation.id, payload.fields.format)
+  if (routeTypes) return routeTypes
   if (operation.id === 'pdf-pipeline') return pipelineResponseTypes(forwardedStages)
   if (operation.input !== 'pdf' && forwardedStages.length) {
     const types = conversionPipelineResponseTypes(forwardedStages)
@@ -422,14 +407,6 @@ function allowedConversionContentTypes(
     if (payload.conversionStages || types.length === 1) return types
   }
   const primaryType = expectedConversionContentType(operation.output, payload.fields.format)
-  if (operation.id === 'render-pages') {
-    const imageType = payload.fields.format === 'jpeg' ? 'image/jpeg' : 'image/png'
-    return [imageType, 'application/zip']
-  }
-  if (operation.id === 'compose-pages') return ['application/pdf']
-  // Even an intervals split can produce a PDF when there is just one output.
-  // The proxy cannot know its page count without reading the input document.
-  if (operation.id === 'split') return ['application/pdf', 'application/zip']
   if (operation.output !== 'pdf') return [primaryType]
 
   if (operation.id === 'office-pdf' && archives.length) {
@@ -850,20 +827,13 @@ export async function proxyConversionRequest(
     forwardedStages,
   )
   const upstreamContentType = upstream.headers.get('content-type')
-  const returnedType = upstreamContentType?.split(';')[0]?.trim().toLowerCase()
+  const returnedType = responseMediaType(upstreamContentType)
   // An extracted attachment has its own MIME type, which may be anything.
   // Require an actual filename-bearing attachment response before accepting it,
   // so an HTML SPA fallback can never be mistaken for a successful extraction.
   const attachmentDisposition = upstream.headers.get('content-disposition')
   const wildcardAllowed =
-    allowedTypes.includes('*') &&
-    returnedType !== undefined &&
-    isAttachmentMimeType(returnedType) &&
-    !returnedType.startsWith('*/') &&
-    !returnedType.endsWith('/*') &&
-    // Filename is required for arbitrary content; don't accept inline responses.
-    /^attachment\s*;/i.test(attachmentDisposition ?? '') &&
-    hasAttachmentFilename(attachmentDisposition)
+    allowedTypes.includes('*') && isNamedAttachmentResponse(returnedType, attachmentDisposition)
   if (
     upstream.status !== 200 ||
     !returnedType ||
@@ -1110,11 +1080,8 @@ export async function proxyMetricsRequest(
   }
 
   const MAX_METRICS_RESPONSE_BYTES = 2_000_000
-  const contentType = upstream.headers.get('content-type')?.toLowerCase() ?? ''
-  if (
-    !contentType.startsWith('text/plain') &&
-    !contentType.startsWith('application/openmetrics-text')
-  ) {
+  const contentType = responseMediaType(upstream.headers.get('content-type'))
+  if (contentType !== 'text/plain' && contentType !== 'application/openmetrics-text') {
     await upstream.body?.cancel().catch(() => {})
     throw new ProxyInputError('Gotenberg metrics did not return Prometheus text.', 502)
   }
@@ -1183,7 +1150,7 @@ export async function proxyDebugRequest(
   }
 
   const MAX_DEBUG_RESPONSE_BYTES = 1_000_000
-  if (!upstream.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+  if (responseMediaType(upstream.headers.get('content-type')) !== 'application/json') {
     await upstream.body?.cancel().catch(() => {})
     throw new ProxyInputError('Gotenberg debug did not return JSON.', 502)
   }

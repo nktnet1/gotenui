@@ -671,3 +671,35 @@ describe('Ordered, repeated watermark and stamp groups (v1.0.22)', () => {
     )
   })
 })
+
+test.each(['', ' logo.png'])(
+  'legacy overlays preserve the exact inferred or explicit filename %j',
+  (expression) => {
+    const file = new File(['PNG DATA'], ' logo.png', { type: 'image/png' })
+    const result = form(
+      'url-pdf',
+      { postProcess: { watermark: { source: 'image', expression } } },
+      { watermark: file },
+    )
+    assert.equal(result.get('watermarkExpression'), file.name)
+    assert.deepEqual(
+      (result.getAll('watermark') as File[]).map(({ name }) => name),
+      [file.name],
+    )
+  },
+)
+
+test.each([' logo.png', 'logo.png '])(
+  'does not silently trim a mismatched overlay filename %j',
+  (expression) => {
+    assert.throws(
+      () =>
+        form(
+          'url-pdf',
+          { postProcess: { watermark: { source: 'image', expression } } },
+          { watermark: logo },
+        ),
+      /expression must match|source type/,
+    )
+  },
+)

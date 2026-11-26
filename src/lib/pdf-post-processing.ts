@@ -90,7 +90,7 @@ export function postProcessFormFields(
     const overlays = configuredOverlays(settings, kind)
     for (const overlay of overlays) {
       const expression =
-        overlay.expression ??
+        overlay.expression ||
         (overlays.length === 1 && overlay.source !== 'text'
           ? (overlayUploads(files, kind)[0]?.name ?? '')
           : '')

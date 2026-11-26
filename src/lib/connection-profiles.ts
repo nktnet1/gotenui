@@ -1,5 +1,8 @@
 import * as v from 'valibot'
 import { BACKEND_STORAGE_KEY, normalizeBackendUrl } from '#/lib/backend-url'
+import { localUuid } from '#/lib/local-id'
+import { responseMediaType } from '#/lib/security'
+import { isBasicPassword, isBasicUsername, isBearerToken } from '#/lib/upstream-credentials'
 
 export const CONNECTIONS_STORAGE_KEY = 'gotenui.connections.v1'
 export const DEFAULT_CONNECTION_ID = 'browser-demo'
@@ -40,7 +43,7 @@ export function newBrowserConnection(
   name: string,
   url: string,
   auth: BrowserConnection['auth'] = 'none',
-  id = `browser-${crypto.randomUUID()}`,
+  id = `browser-${localUuid()}`,
 ): BrowserConnection {
   const parsed = v.parse(profileSchema, { id, name, url: normalizeBackendUrl(url), auth })
   return parsed
@@ -129,10 +132,15 @@ export function saveConnections(
 export async function fetchConnectionSettings(signal?: AbortSignal): Promise<ConnectionSettings> {
   const response = await fetch('/api/gotenberg/connections', {
     credentials: 'same-origin',
+    redirect: 'error',
     cache: 'no-store',
     signal,
   })
   if (!response.ok) throw new Error(`Could not load managed connections (HTTP ${response.status}).`)
+  if (responseMediaType(response.headers.get('content-type')) !== 'application/json') {
+    await response.body?.cancel().catch(() => {})
+    throw new Error('The API did not return valid connection settings.')
+  }
   return v.parse(managedSchema, await response.json())
 }
 
@@ -143,15 +151,17 @@ export function makeBrowserAuthorization(
   secret: string,
 ): string | undefined {
   if (mode === 'none') return undefined
-  if (!secret || secret.length > 2048 || /[\r\n]/.test(secret)) {
-    throw new Error('Enter a valid password or token (up to 2,048 characters).')
-  }
   if (mode === 'bearer') {
-    if (!/^[A-Za-z0-9._~+/-]+=*$/.test(secret)) throw new Error('Invalid bearer token.')
+    if (!isBearerToken(secret)) throw new Error('Invalid bearer token (up to 4,096 characters).')
     return `Bearer ${secret}`
   }
-  if (!username || username.length > 255 || username.includes(':')) {
-    throw new Error('Basic Auth needs a username without a colon.')
+  if (!isBasicPassword(secret)) {
+    throw new Error('Enter a valid password (up to 2,048 characters, without control characters).')
+  }
+  if (!isBasicUsername(username)) {
+    throw new Error(
+      'Basic Auth needs a username without a colon or control characters (up to 255 characters).',
+    )
   }
   const bytes = new TextEncoder().encode(`${username}:${secret}`)
   return `Basic ${btoa(Array.from(bytes, (value) => String.fromCharCode(value)).join(''))}`

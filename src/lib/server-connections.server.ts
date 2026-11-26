@@ -6,17 +6,25 @@ import {
 } from '#/lib/oauth2-client-credentials.server'
 import { DEMO_GOTENBERG_URL, ProxyInputError } from '#/lib/proxy-policy'
 import { parseUpstreamBasicAuth } from '#/lib/upstream-auth.server'
+import {
+  isBasicPassword,
+  isBasicUsername,
+  isBearerToken,
+  MAX_BASIC_PASSWORD_LENGTH,
+  MAX_BASIC_USERNAME_LENGTH,
+  MAX_BEARER_TOKEN_LENGTH,
+} from '#/lib/upstream-credentials'
 
 const idSchema = v.pipe(v.string(), v.regex(/^[a-z][a-z0-9-]{0,63}$/))
 const nameSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(64))
 const basicSchema = v.object({
   type: v.literal('basic'),
-  username: v.pipe(v.string(), v.minLength(1), v.maxLength(255)),
-  password: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
+  username: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_BASIC_USERNAME_LENGTH)),
+  password: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_BASIC_PASSWORD_LENGTH)),
 })
 const bearerSchema = v.object({
   type: v.literal('bearer'),
-  token: v.pipe(v.string(), v.minLength(1), v.maxLength(4096)),
+  token: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_BEARER_TOKEN_LENGTH)),
 })
 const oauth2Schema = v.object({
   type: v.literal('oauth2'),
@@ -86,11 +94,11 @@ function authorizationFor(
 ): string | undefined {
   if (!auth) return undefined
   if (auth.type === 'basic') {
-    if (auth.username.includes(':'))
-      throw new Error(`Basic Auth username for ${label} must not contain a colon.`)
+    if (!isBasicUsername(auth.username) || !isBasicPassword(auth.password))
+      throw new Error(`Invalid Basic Auth username or password for ${label}.`)
     return `Basic ${Buffer.from(`${auth.username}:${auth.password}`, 'utf8').toString('base64')}`
   }
-  if (!/^[A-Za-z0-9._~+/-]+=*$/.test(auth.token)) {
+  if (!isBearerToken(auth.token)) {
     throw new Error(`Bearer token for ${label} contains invalid characters.`)
   }
   return `Bearer ${auth.token}`

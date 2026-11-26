@@ -1073,3 +1073,58 @@ it('cancels all waiting jobs before publishing a snapshot that can restart dispa
     queue.dispose()
   }
 })
+
+it.each([
+  {
+    type: 'application/zip',
+    name: 'attachment.zip',
+    content: 'not a ZIP',
+    preview: 'View archive contents',
+    valid: false,
+  },
+  {
+    type: 'application/zip',
+    name: 'attachment.zip',
+    content: 'PK\u0003\u0004',
+    preview: 'View archive contents',
+    valid: true,
+  },
+  {
+    type: 'image/png',
+    name: 'attachment.png',
+    content: 'not a PNG',
+    preview: 'Preview image',
+    valid: false,
+  },
+  {
+    type: 'image/jpeg',
+    name: 'attachment.jpeg',
+    content: new Uint8Array([255, 216, 255]),
+    preview: 'Preview image',
+    valid: true,
+  },
+])(
+  'keeps extracted $name downloadable while gating binary previews on its signature ($valid)',
+  async ({ type, name, content, preview, valid }) => {
+    const blob = new Blob([typeof content === 'string' ? content : new Uint8Array(content)], {
+      type,
+    })
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      attachment: true,
+      blob,
+      type,
+      name,
+    }))
+    const id = queue.enqueue(input())
+    queue.start()
+    await tick()
+    const job = queue.getSnapshot().jobs[0]
+    expect(job).toMatchObject({ status: 'completed', name, type, size: blob.size })
+    const markup = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+    expect(markup).toContain(`Download ${name}`)
+    expect(markup.includes(preview)).toBe(valid)
+    expect(queue.getArchiveBlob(id)).toBe(type === 'application/zip' && valid ? blob : undefined)
+    queue.dispose()
+  },
+)

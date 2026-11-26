@@ -12,6 +12,11 @@ import {
 } from '#/lib/chromium-media'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import {
+  expectedConversionContentType,
+  fixedRouteResponseTypes,
+  isNamedAttachmentResponse,
+} from '#/lib/conversion-response'
+import {
   CHROMIUM_REMOTE_FILENAME_VERSION_REASON,
   filenameKey,
   planRemoteFilenames,
@@ -22,9 +27,11 @@ import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { multipartBody } from '#/lib/multipart-body'
 import { encodeOfficialField } from '#/lib/official-form-fields'
 import {
+  conversionPipelineResponseTypes,
   isStandaloneAttachmentExtraction,
   parsePdfPipeline,
   pdfStageAssetNames,
+  pipelineResponseTypes,
 } from '#/lib/pdf-pipeline'
 import {
   OVERLAY_KINDS,
@@ -33,7 +40,13 @@ import {
   type PostProcessFiles,
   postProcessFormFields,
 } from '#/lib/pdf-post-processing'
-import { downloadFilename, responseExtension, safeAttachmentDisposition } from '#/lib/security'
+import { hasAttachmentPreviewSignature } from '#/lib/response-signature'
+import {
+  downloadFilename,
+  responseExtension,
+  responseMediaType,
+  safeAttachmentDisposition,
+} from '#/lib/security'
 import {
   type ConversionPayload,
   InputError,
@@ -128,6 +141,7 @@ export async function getGotenbergStatus(
       signal,
       cache: 'no-store',
       credentials: 'same-origin',
+      redirect: 'error',
     })
     if (!response.ok) {
       return {
@@ -138,6 +152,10 @@ export async function getGotenbergStatus(
           (await response.text()).trim().slice(0, 1_500) ||
           `Proxy returned HTTP ${response.status}.`,
       }
+    }
+    if (responseMediaType(response.headers.get('content-type')) !== 'application/json') {
+      await response.body?.cancel().catch(() => {})
+      throw new Error('The API did not return a valid Gotenberg status.')
     }
     const parsed = v.safeParse(serverStatusSchema, await response.json())
     if (!parsed.success) throw new Error('The API did not return a valid Gotenberg status.')
@@ -169,6 +187,7 @@ export async function probeGotenbergHealth(
       headers,
       cache: 'no-store',
       credentials: 'same-origin',
+      redirect: 'error',
       signal,
     })
   } catch (error) {
@@ -396,8 +415,24 @@ export type ConversionResult =
       name: string
       trace?: string
       remediation?: RemediationReport
+      /** An extracted file can have a misleading MIME type or no bytes at all. */
+      attachment?: true
     }
   | { mode: 'webhook'; trace?: string; status: 202 | 204 }
+
+/** Optional binary previews of extracted attachments require a matching signature.
+ * Never reject an attachment download because its original bytes are unusual.
+ */
+export async function conversionBinaryPreviewAllowed(
+  result: Extract<ConversionResult, { mode: 'download' }>,
+): Promise<boolean> {
+  if (!result.attachment) return true
+  try {
+    return await hasAttachmentPreviewSignature(result.blob, result.type)
+  } catch {
+    return false
+  }
+}
 
 /** Keep text previews bounded and render them as text, never as HTML. */
 export async function conversionTextPreview(blob: Blob, type: string): Promise<string | undefined> {
@@ -408,6 +443,30 @@ export async function conversionTextPreview(blob: Blob, type: string): Promise<s
     // An optional local preview must not prevent downloading the original Blob.
     return undefined
   }
+}
+
+/** The proxy checks the exact output count after adapting the request. The
+ * browser also checks the response envelope, without guessing that count.
+ */
+function browserResponseTypes(operation: Operation, payload: ConversionPayload): readonly string[] {
+  const { fields } = payload
+  const routeTypes = fixedRouteResponseTypes(operation.id, fields.format)
+  if (routeTypes) return routeTypes
+  if (operation.id === 'pdf-pipeline')
+    return pipelineResponseTypes(
+      parsePdfPipeline(String(fields.stages ?? ''), {
+        acknowledgedRedaction: fields.acknowledgedRedaction === true,
+      }),
+    )
+  if (operation.output === 'pdf' && payload.conversionStages)
+    return conversionPipelineResponseTypes(
+      parsePdfPipeline(payload.conversionStages, {
+        allowEmpty: true,
+        acknowledgedRedaction: payload.acknowledgedConversionRedaction,
+      }),
+    )
+  if (operation.output === 'pdf') return ['application/pdf', 'application/zip']
+  return [expectedConversionContentType(operation.output, fields.format)]
 }
 
 /** The proxy revalidates the JSON and files, and reconstructs a safe Gotenberg form. */
@@ -434,6 +493,7 @@ export async function convertWithGotenberg(
     stageFiles,
     archives,
   )
+  const allowedTypes = browserResponseTypes(operation, payload)
   const body = new FormData()
   body.set('payload', JSON.stringify(payload))
   for (const file of files) body.append('files', file, file.name)
@@ -453,6 +513,7 @@ export async function convertWithGotenberg(
       body: multipartBody(body),
       signal,
       credentials: 'same-origin',
+      redirect: 'error',
       headers,
     })
   } catch (error) {
@@ -466,22 +527,42 @@ export async function convertWithGotenberg(
     throw new Error(trace ? `${message} (Gotenberg trace: ${trace})` : message)
   }
   if (response.status === 202 || response.status === 204) {
+    await response.body?.cancel().catch(() => {})
+    if (!payload.webhook)
+      throw new Error('The Gotenui API returned asynchronous acceptance without a webhook.')
     return {
       mode: 'webhook',
       trace: response.headers.get('Gotenberg-Trace') ?? undefined,
       status: response.status as 202 | 204,
     }
   }
+  const type = responseMediaType(response.headers.get('content-type'))
+  const disposition = response.headers.get('content-disposition')
+  if (
+    response.status !== 200 ||
+    !type ||
+    !response.body ||
+    !(
+      allowedTypes.includes(type) ||
+      (allowedTypes.includes('*') && isNamedAttachmentResponse(type, disposition))
+    )
+  ) {
+    await response.body?.cancel().catch(() => {})
+    throw new Error(
+      'The Gotenui API returned an unexpected conversion response. Check the Nitro deployment.',
+    )
+  }
   const blob = await response.blob()
-  const type = (
-    (response.headers.get('content-type') || blob.type).split(';')[0]?.trim() ||
-    'application/octet-stream'
-  ).toLowerCase()
   const extension = responseExtension(type)
   // The proxy has already chosen a safe filename for the actual output type.
   // Use that filename even with an explicit outputName: a conversion that asks
   // for report.pdf can legitimately return a ZIP of PDFs or rendered images.
   const fallback = `${operation.id}.${extension}`
+  const extractsAttachment = isStandaloneAttachmentExtraction(
+    operation.id,
+    payload.fields.stages,
+    payload.fields.acknowledgedRedaction === true,
+  )
   const filename = downloadFilename(
     safeAttachmentDisposition(
       response.headers.get('content-disposition'),
@@ -490,11 +571,7 @@ export async function convertWithGotenberg(
       payload.outputName,
       // Only direct attachment results retain their upstream filenames.
       // Multi-stage and conversion-time extraction return generated archives.
-      isStandaloneAttachmentExtraction(
-        operation.id,
-        payload.fields.stages,
-        payload.fields.acknowledgedRedaction === true,
-      ),
+      extractsAttachment,
     ),
     fallback,
   )
@@ -505,6 +582,7 @@ export async function convertWithGotenberg(
     name: filename,
     trace: response.headers.get('Gotenberg-Trace') ?? undefined,
     remediation: readRemediationReport(response.headers),
+    ...(extractsAttachment ? { attachment: true as const } : {}),
   }
 }
 
@@ -554,6 +632,7 @@ export async function getGotenbergDebug(
       method: 'POST',
       headers,
       credentials: 'same-origin',
+      redirect: 'error',
       cache: 'no-store',
       signal,
     })
@@ -566,7 +645,8 @@ export async function getGotenbergDebug(
       (await response.text()).trim().slice(0, 500) || `Debug returned HTTP ${response.status}.`,
     )
   }
-  if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+  if (responseMediaType(response.headers.get('content-type')) !== 'application/json') {
+    await response.body?.cancel().catch(() => {})
     throw new Error('Debug did not return JSON. Check the Gotenui API deployment.')
   }
   const data: unknown = await response.json()
@@ -588,6 +668,7 @@ export async function getGotenbergMetricsReport(
       method: 'POST',
       headers,
       credentials: 'same-origin',
+      redirect: 'error',
       cache: 'no-store',
       signal,
     })
@@ -602,8 +683,9 @@ export async function getGotenbergMetricsReport(
   }
   if (
     response.headers.get('x-gotenui-metrics') !== '1' ||
-    !response.headers.get('content-type')?.toLowerCase().startsWith('text/plain')
+    responseMediaType(response.headers.get('content-type')) !== 'text/plain'
   ) {
+    await response.body?.cancel().catch(() => {})
     throw new Error('Metrics did not reach the Gotenui API. Check the Nitro deployment.')
   }
   return {

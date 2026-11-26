@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { codeOutputClasses } from '#/components/code-output'
+import { isPreviewableImage } from '#/components/image-result-preview'
 import { operationIcon } from '#/components/operation-icons'
 import { PdfResultPreview } from '#/components/pdf-result-preview'
 import { Button } from '#/components/ui/button'
@@ -357,25 +358,31 @@ export function JobPanel({
                       ))}
                     </section>
                   )}
-                  {lastDownload.type === 'application/pdf' && (
-                    <PdfResultPreview
-                      key={lastDownload.url}
-                      url={lastDownload.url}
-                      name={lastDownload.name}
-                    />
-                  )}
-                  {lastDownload.type === 'application/zip' && lastDownload.blob && (
-                    <ZipResultPreview key={lastDownload.url} blob={lastDownload.blob} />
-                  )}
-                  {lastDownload.type.startsWith('image/') && (
-                    <img
-                      className="mb-4 max-h-52 w-full rounded-lg border border-slate-100 dark:border-slate-800 object-contain"
-                      src={lastDownload.url}
-                      alt={
-                        operation.id === 'render-pages' ? 'Rendered PDF page' : 'Latest screenshot'
-                      }
-                    />
-                  )}
+                  {lastDownload.binaryPreviewAllowed !== false &&
+                    lastDownload.type === 'application/pdf' && (
+                      <PdfResultPreview
+                        key={lastDownload.url}
+                        url={lastDownload.url}
+                        name={lastDownload.name}
+                      />
+                    )}
+                  {lastDownload.binaryPreviewAllowed !== false &&
+                    lastDownload.type === 'application/zip' &&
+                    lastDownload.blob && (
+                      <ZipResultPreview key={lastDownload.url} blob={lastDownload.blob} />
+                    )}
+                  {lastDownload.binaryPreviewAllowed !== false &&
+                    isPreviewableImage(lastDownload.type) && (
+                      <img
+                        className="mb-4 max-h-52 w-full rounded-lg border border-slate-100 dark:border-slate-800 object-contain"
+                        src={lastDownload.url}
+                        alt={
+                          operation.id === 'render-pages'
+                            ? 'Rendered PDF page'
+                            : 'Latest screenshot'
+                        }
+                      />
+                    )}
                   {lastDownload.preview && (
                     <pre
                       className={cn(codeOutputClasses, 'mb-4 max-h-56 rounded-lg p-3 text-[11px]')}

@@ -25,6 +25,7 @@ export type Download = {
   type: string
   /** Browser-local reference for inspecting a ZIP index; never uploaded or persisted. */
   blob?: Blob
+  binaryPreviewAllowed?: boolean
   preview?: string
   trace?: string
   remediation?: RemediationReport

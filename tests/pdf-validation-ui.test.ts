@@ -92,3 +92,37 @@ test.each([
   const html = overview(id, options)
   assert.ok(html.includes(`>${expected}</span>`), `Expected target output ${expected}`)
 })
+
+test.each([
+  { type: 'application/pdf', text: 'Preview PDF' },
+  { type: 'application/zip', text: 'View archive contents' },
+  { type: 'image/png', text: 'alt="Latest screenshot"' },
+])(
+  'direct result hides an unverified attachment preview for $type without hiding its download',
+  ({ type, text }) => {
+    const download = {
+      name: 'attachment',
+      url: 'blob:attachment',
+      type,
+      size: 5,
+      blob: new Blob(['hello']),
+    }
+    const valid = overview('extract-attachments', {
+      lastDownload: { ...download, binaryPreviewAllowed: true },
+    })
+    assert.ok(valid.includes(text))
+    const invalid = overview('extract-attachments', {
+      lastDownload: { ...download, binaryPreviewAllowed: false },
+    })
+    assert.ok(!invalid.includes(text))
+    assert.match(invalid, /Download again/)
+  },
+)
+
+test('direct results use the same raster allowlist as batch previews', () => {
+  const html = overview('extract-attachments', {
+    lastDownload: { name: 'attachment.svg', url: 'blob:svg', type: 'image/svg+xml', size: 6 },
+  })
+  assert.doesNotMatch(html, /<img/)
+  assert.match(html, /Download again/)
+})

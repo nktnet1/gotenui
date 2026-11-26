@@ -21,8 +21,8 @@ import {
   filenameKey,
   remoteLocalFilenameCollision,
 } from '#/lib/file-names'
-import { goFiniteFloat } from '#/lib/go-form-values'
 import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import { isNumberFieldValue, maxGoInt } from '#/lib/number-field-values'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
   parseConsoleMessageTypes,
@@ -123,10 +123,6 @@ export class InputError extends Error {
 
 const extension = /\.[a-z0-9]+$/i
 const fieldNamePattern = /^[a-z][a-zA-Z0-9]{0,63}$/
-const decimalIntegerPattern = /^[+-]?\d+$/
-const decimalNumberPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
-const minGoInt = -(1n << 63n)
-const maxGoInt = (1n << 63n) - 1n
 // Go strings.TrimSpace uses Unicode White_Space, unlike JavaScript \s (which
 // also matches U+FEFF and omits U+0085).
 const goWhitespaceOnly = /^\p{White_Space}+$/u
@@ -513,7 +509,7 @@ function validatePostProcessFiles(
       if (overlay.source === 'text') continue
       // One legacy v1.0.21 upload may omit the filename expression.
       const expression =
-        overlay.expression?.trim() ||
+        overlay.expression ||
         (rows.length === 1 && uploads.length === 1 && !remoteCount ? uploads[0]?.name : '')
       if (!expression) {
         throw new InputError(
@@ -1189,29 +1185,12 @@ export function validatePayload(input: unknown): {
       if (field.kind === 'url' && value && !isHttpUrl(value)) {
         throw new InputError('Enter an absolute http or https URL.')
       }
-      if (field.kind === 'number' && value) {
-        // Gotenberg binds these form fields with strconv.Atoi or strconv.ParseFloat.
-        // Number() additionally accepts hex, whitespace and exponent notation for ints.
-        const integer = field.integer === true
-        const validSpelling = (integer ? decimalIntegerPattern : decimalNumberPattern).test(value)
-        // Native conversion fields go directly to Go. PDF tool controls are
-        // also translated into JSON numbers, so retain their decimal grammar.
-        const n =
-          !integer && operation.input !== 'pdf'
-            ? goFiniteFloat(value)
-            : validSpelling
-              ? Number(value)
-              : undefined
-        const goInt = integer && validSpelling ? BigInt(value) : undefined
-        if (
-          n === undefined ||
-          !Number.isFinite(n) ||
-          (field.min !== undefined && n < field.min) ||
-          (field.max !== undefined && n > field.max) ||
-          (goInt !== undefined && (goInt < minGoInt || goInt > maxGoInt))
-        ) {
-          throw new InputError(`${field.label} is outside its permitted range.`)
-        }
+      if (
+        field.kind === 'number' &&
+        value &&
+        !isNumberFieldValue(field, value, operation.input !== 'pdf')
+      ) {
+        throw new InputError(`${field.label} is outside its permitted range.`)
       }
       if (field.kind === 'color' && value && !/^#[0-9a-f]{6}$/i.test(value)) {
         throw new InputError(`${field.label} must be a six-digit hex colour.`)
@@ -1387,6 +1366,9 @@ function validateRequestMetadata(payload: ConversionPayload): void {
   }
   if (payload.tracestate !== undefined) {
     if (!payload.traceparent) throw new InputError('tracestate requires traceparent.')
+    if (/[^\x20-\x7e\t]/.test(payload.tracestate)) {
+      throw new InputError('Invalid W3C tracestate entry.')
+    }
     const members = payload.tracestate.split(',')
     if (members.length > 32 || members.length === 0) {
       throw new InputError('tracestate supports at most 32 entries.')

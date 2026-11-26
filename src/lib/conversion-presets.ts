@@ -1,4 +1,6 @@
 import * as v from 'valibot'
+import { localUuid } from '#/lib/local-id'
+import { isNumberFieldValue } from '#/lib/number-field-values'
 import { parseConsoleMessageTypes } from '#/lib/official-form-fields'
 import { OPERATION_BY_ID, type Operation, operationDefaults } from '#/tools/registry'
 
@@ -82,13 +84,7 @@ export function capturePresetFields(
       if (!definition.options?.includes(value))
         throw new Error(`Invalid ${definition.label} preset value.`)
     } else if (definition.kind === 'number') {
-      if (
-        !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ||
-        !Number.isFinite(Number(value)) ||
-        (definition.min !== undefined && Number(value) < definition.min) ||
-        (definition.max !== undefined && Number(value) > definition.max) ||
-        (definition.integer === true && !Number.isInteger(Number(value)))
-      ) {
+      if (!isNumberFieldValue(definition, value, operation.input !== 'pdf')) {
         throw new Error(`Invalid ${definition.label} preset value.`)
       }
     } else if (definition.kind === 'text' && !SAFE_TEXT_FIELDS[definition.name]?.test(value)) {
@@ -162,7 +158,7 @@ export function upsertPreset(
   operation: Operation,
   name: string,
   current: Record<string, string | boolean>,
-  newId = `preset-${crypto.randomUUID()}`,
+  newId = `preset-${localUuid()}`,
 ): ConversionPreset[] {
   const trimmed = name.trim()
   if (

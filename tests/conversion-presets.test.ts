@@ -386,3 +386,17 @@ describe('browser-local operation presets', () => {
     expect(html).not.toContain(sensitive.url)
   })
 })
+
+it('round-trips valid negative, signed and scientific numeric field values', () => {
+  const fields = { openBookmarkLevels: '-1', nativeWatermarkRotateAngle: '-2.5e1' }
+  const [preset] = upsertPreset([], office, 'Angles', fields, firstId)
+  assert.deepEqual(preset.fields, fields)
+  assert.equal(applyPresetFields(office, {}, preset).openBookmarkLevels, '-1')
+  assert.equal(applyPresetFields(office, {}, preset).nativeWatermarkRotateAngle, '-2.5e1')
+  const watermark = requiredOperation('watermark')
+  assert.deepEqual(capturePresetFields(watermark, { v9OverlayX: '-15.5', v9OverlayY: '+2' }), {
+    v9OverlayX: '-15.5',
+    v9OverlayY: '+2',
+  })
+  assert.throws(() => capturePresetFields(office, { openBookmarkLevels: '1e0' }), /Invalid/)
+})

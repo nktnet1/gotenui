@@ -1,6 +1,7 @@
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import {
   type ConversionResult,
+  conversionBinaryPreviewAllowed,
   convertWithGotenberg,
   MAX_UPLOAD_BYTES,
   REQUEST_TIMEOUT_MS,
@@ -26,6 +27,7 @@ export type BatchJob = {
   url?: string
   size?: number
   type?: string
+  binaryPreviewAllowed?: boolean
   trace?: string
   webhookStatus?: 202 | 204
   error?: string
@@ -301,6 +303,7 @@ export class BrowserBatchQueue {
           }
         } else {
           const review = await batchReviewNotice(input, result)
+          const binaryPreviewAllowed = await conversionBinaryPreviewAllowed(result)
           if (this.disposed || controller.signal.aborted) return
           // The response was received before the deadline. Local report review
           // must not convert a successful request into a network timeout.
@@ -318,7 +321,8 @@ export class BrowserBatchQueue {
             )
           }
           const url = this.createUrl(result.blob)
-          record.archive = result.type === 'application/zip' ? result.blob : undefined
+          record.archive =
+            result.type === 'application/zip' && binaryPreviewAllowed ? result.blob : undefined
           record.view = {
             id: record.view.id,
             operation: record.view.operation,
@@ -327,6 +331,7 @@ export class BrowserBatchQueue {
             name: result.name,
             size: result.blob.size,
             type: result.type,
+            ...(binaryPreviewAllowed ? {} : { binaryPreviewAllowed: false }),
             trace: result.trace,
             review,
             url,
