@@ -19,8 +19,7 @@ import {
   safeFilename as checkFilename,
   effectiveRemoteFilename,
   filenameKey,
-  possibleRemoteFilename,
-  registeredFilenames,
+  remoteLocalFilenameCollision,
 } from '#/lib/file-names'
 import { goFiniteFloat } from '#/lib/go-form-values'
 import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
@@ -263,9 +262,17 @@ function validateAsyncInputs(payload: Pick<ConversionPayload, 'downloadFrom' | '
   }
   const webhook = payload.webhook
   if (webhook) {
-    requireHttpUrl(webhook.url, 'Webhook URL')
-    if (webhook.errorUrl) requireHttpUrl(webhook.errorUrl, 'Webhook error URL')
-    if (webhook.eventsUrl) requireHttpUrl(webhook.eventsUrl, 'Webhook events URL')
+    for (const [label, url] of [
+      ['Webhook URL', webhook.url],
+      ['Webhook error URL', webhook.errorUrl],
+      ['Webhook events URL', webhook.eventsUrl],
+    ] as const) {
+      if (!url && label !== 'Webhook URL') continue
+      requireHttpUrl(url ?? '', label)
+      // Fetch and Go strip trailing HTTP header whitespace. Do not silently
+      // change the callback target or invalidate a signature.
+      if (url?.endsWith(' ')) throw new InputError(`${label} must percent-encode trailing spaces.`)
+    }
     validateHeaderMap(webhook.extraHttpHeaders)
   }
 }
@@ -778,19 +785,13 @@ export function validateFiles(
     // Remote downloads are registered before local stage assets on every v9
     // route. Keep ordinary duplicate PDF/Office sources allowed, since Gotenberg
     // numbers them, but protect resources referenced by their exact filenames.
-    const localNames = new Set([
-      ...generatedNames.map(filenameKey),
-      ...auxiliary.map(({ name }) => filenameKey(name)),
-      ...stageFiles.map(({ name }) => filenameKey(name)),
+    const collision = remoteLocalFilenameCollision(payload.downloadFrom, [
+      ...generatedNames,
+      ...auxiliary.map(({ name }) => name),
+      ...stageFiles.map(({ name }) => name),
     ])
-    const remoteNames = payload.downloadFrom.flatMap((remote) => {
-      const name = possibleRemoteFilename(remote)
-      return name ? [name] : []
-    })
-    for (const name of registeredFilenames(remoteNames)) {
-      if (localNames.has(name)) {
-        throw new InputError(`Remote filename collides with a local document or asset: ${name}`)
-      }
+    if (collision) {
+      throw new InputError(`Remote filename collides with a local document or asset: ${collision}`)
     }
   }
   if (

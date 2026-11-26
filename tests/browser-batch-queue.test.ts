@@ -521,6 +521,58 @@ describe('browser-managed batch queue', () => {
     queue.dispose()
   })
 
+  it('retains an on-time download when local validation review outlasts the request deadline', async () => {
+    const timeout = new AbortController()
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+    const validation = deferred<string>()
+    const blob = new Blob(['placeholder'], { type: 'application/json' })
+    const read = vi.fn(() => validation.promise)
+    Object.defineProperty(blob, 'text', { value: read })
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      name: 'validation.json',
+      type: 'application/json',
+      blob,
+    }))
+    const request = input()
+    request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    queue.enqueue(request)
+    queue.start()
+    await tick()
+    expect(read).toHaveBeenCalledOnce()
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
+    timeout.abort(new DOMException('Timed out', 'TimeoutError'))
+    validation.resolve(
+      JSON.stringify({ 'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] } }),
+    )
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({
+      status: 'completed',
+      name: 'validation.json',
+    })
+    expect(queue.getSnapshot().jobs[0]?.url).toBeDefined()
+    queue.dispose()
+  })
+
+  it('still rejects a response that arrives after its request deadline', async () => {
+    const timeout = new AbortController()
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+    const held = deferred<ConversionResult>()
+    const { queue } = queueWith(() => held.promise)
+    queue.enqueue(input())
+    queue.start()
+    timeout.abort(new DOMException('Timed out', 'TimeoutError'))
+    held.resolve(pdf())
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({
+      status: 'failed',
+      error: 'Gotenberg did not respond within three minutes.',
+    })
+    expect(queue.getSnapshot().jobs[0]?.url).toBeUndefined()
+    queue.dispose()
+  })
+
   it('preserves remediation warning counts on completed batch downloads', async () => {
     const { queue } = queueWith(async () => ({
       ...pdf(),

@@ -430,3 +430,46 @@ test('allows duplicate ZIP resources when their numbered names do not shadow oth
   assert.equal(response.status, 200)
   await response.body?.cancel()
 })
+
+test('pins earlier URL-derived downloads when a remote-only Chromium request names a later resource', () => {
+  const url = 'https://assets.example.test/theme.css'
+  const named = { url: 'https://assets.example.test/download', filename: 'logo.png' }
+  const dynamic = { url: 'https://assets.example.test/another' }
+  const { operation, payload } = sourcePayload('url-pdf', {
+    downloadFrom: [{ url }, named, dynamic],
+  })
+  const form = createGotenbergForm(operation, payload, [], [], 4_000_000, {}, [], 9, {
+    major: 9,
+    minor: 10,
+    patch: 0,
+  })
+  assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), [
+    { url, filename: 'theme.css' },
+    named,
+    dynamic,
+  ])
+})
+
+test.each(['url-pdf', 'url-shot'])(
+  'rejects unknown predecessor filenames for explicitly named remote-only %s resources',
+  async (operation) => {
+    await assert.rejects(
+      proxyConversionRequest(
+        proxyRequest({
+          operation,
+          fields: { url: 'https://example.test/' },
+          advanced: {},
+          downloadFrom: [
+            { url: 'https://assets.example.test/download' },
+            { url: 'https://assets.example.test/logo', filename: 'logo.png' },
+          ],
+        }),
+        async (url) => {
+          if (String(url).endsWith('/version')) return new Response('9.10.0')
+          assert.fail('Unpredictable filename must be rejected before conversion.')
+        },
+      ),
+      /Specify a remote filename/,
+    )
+  },
+)

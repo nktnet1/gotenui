@@ -355,6 +355,17 @@ export function Workbench({
     conversionStageFiles,
     auxiliary: auxFiles,
   })
+  const chromiumResourceNames = hasChromiumNetwork
+    ? [
+        ...generatedChromiumFilenames(operation.input, {
+          markdownName,
+          markdownFiles,
+          headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
+          footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
+        }),
+        ...auxFiles.map(({ name }) => name),
+      ]
+    : []
   const outboundIssues = draftOutboundIssues(operation, fields, verifiedVersion, {
     remoteRows,
     remoteInput,
@@ -362,6 +373,21 @@ export function Workbench({
     webhookInput,
     advanced,
   })
+  // Plain conversions and screenshots need the same resource preflight as
+  // conversions with optional PDF stages. Report these errors by the Run action.
+  if (isV9 && hasChromiumNetwork && !conversionStages && !conversionStageFiles.length) {
+    const assetError = pdfPipelineEditorError('', {
+      remoteRows,
+      remoteJson: remoteInput,
+      localAssetNames: [],
+      archivesPresent: archives.length > 0,
+      acknowledgedRedaction: false,
+      backendVersion,
+      documentKind: 'single',
+      chromiumResourceNames,
+    })
+    if (assetError) outboundIssues.push(assetError)
+  }
   const discardIncompatibleSettings = () => {
     if (actionUnavailable || pending) return
     setFields((current) => {
@@ -413,18 +439,7 @@ export function Workbench({
           backendVersion,
           documentNames: files.map(({ name }) => name),
           documentKind: operation.id === 'office-pdf' ? 'office' : 'single',
-          chromiumResourceNames:
-            operation.id === 'office-pdf'
-              ? []
-              : [
-                  ...generatedChromiumFilenames(operation.input, {
-                    markdownName,
-                    markdownFiles,
-                    headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
-                    footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
-                  }),
-                  ...auxFiles.map(({ name }) => name),
-                ],
+          chromiumResourceNames,
           builtInMerge: operation.id === 'office-pdf' && fields.merge === true,
           splitMode: typeof fields.splitMode === 'string' ? fields.splitMode : undefined,
           splitSpan: typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,
@@ -638,7 +653,9 @@ export function Workbench({
         operation.id === 'pdf-validate'
           ? ((await summarisePdfValidationBlob(blob)) ?? undefined)
           : undefined
-      if (signal.aborted) return
+      // The network response is complete. Preparing a local preview must not
+      // discard an otherwise successful download when its request timer expires.
+      if (controller.signal.aborted) return
       const url = URL.createObjectURL(blob)
       if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
       fileUrl.current = url

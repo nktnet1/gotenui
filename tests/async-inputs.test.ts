@@ -385,3 +385,21 @@ test.each([
     webhook: { url },
   })
 })
+
+test.each(['url', 'errorUrl', 'eventsUrl'])(
+  'rejects raw trailing spaces in the %s callback header',
+  (field) => {
+    const url = 'https://hooks.example.test/complete'
+    assert.throws(
+      () => validateAsyncInputValues(undefined, { url, [field]: `${url} ` }),
+      /must percent-encode trailing spaces/,
+    )
+    assert.deepEqual(validateAsyncInputValues(undefined, { url, [field]: `${url}%20` }).webhook, {
+      url,
+      [field]: `${url}%20`,
+    })
+    assert.deepEqual(validateAsyncInputValues([{ url: `${url} ` }], undefined).downloadFrom, [
+      { url: `${url} ` },
+    ])
+  },
+)

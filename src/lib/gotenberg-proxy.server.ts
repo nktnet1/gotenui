@@ -263,14 +263,15 @@ function upstreamConversionHeaders(
   if (payload.tracestate) headers.set('tracestate', payload.tracestate)
   const webhook = payload.webhook
   if (webhook) {
-    headers.set('Gotenberg-Webhook-Url', new URL(webhook.url).href)
+    // Keep the original target, including signed paths and query escapes.
+    headers.set('Gotenberg-Webhook-Url', utf8HeaderValue(webhook.url))
     if (webhook.method) headers.set('Gotenberg-Webhook-Method', webhook.method)
     if (version === 8 && webhook.errorUrl)
-      headers.set('Gotenberg-Webhook-Error-Url', new URL(webhook.errorUrl).href)
+      headers.set('Gotenberg-Webhook-Error-Url', utf8HeaderValue(webhook.errorUrl))
     if (version === 8 && webhook.errorMethod)
       headers.set('Gotenberg-Webhook-Error-Method', webhook.errorMethod)
     if (webhook.eventsUrl)
-      headers.set('Gotenberg-Webhook-Events-Url', new URL(webhook.eventsUrl).href)
+      headers.set('Gotenberg-Webhook-Events-Url', utf8HeaderValue(webhook.eventsUrl))
     if (webhook.extraHttpHeaders) {
       headers.set(
         'Gotenberg-Webhook-Extra-Http-Headers',

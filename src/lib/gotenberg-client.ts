@@ -295,13 +295,14 @@ export function createGotenbergForm(
       stageAssetNames.has(filenameKey(name)),
     )
     // Pin preceding downloads too: their registered names must not displace
-    // a later named remote stage asset. Later downloads cannot take that name.
+    // a later named remote stage asset or explicit Chromium resource.
     const filenamePlan = planRemoteFilenames(payload.downloadFrom, {
       supportsFilename,
       inferAll: files.length > 0 || archives.length > 0,
       pinAll:
         chromiumNamesAtRisk || auxiliary.length > 0 || stageFiles.length > 0 || namedArchiveAssets,
       stageAssetNames,
+      protectNamedRemotes: major === 9 && isChromium,
     })
     if (chromiumNamesAtRisk && !supportsFilename) {
       throw new InputError(CHROMIUM_REMOTE_FILENAME_VERSION_REASON, 409)
@@ -400,9 +401,13 @@ export type ConversionResult =
 
 /** Keep text previews bounded and render them as text, never as HTML. */
 export async function conversionTextPreview(blob: Blob, type: string): Promise<string | undefined> {
-  return ['application/json', 'text/plain', 'text/markdown'].includes(type)
-    ? blob.slice(0, 16_000).text()
-    : undefined
+  if (!['application/json', 'text/plain', 'text/markdown'].includes(type)) return undefined
+  try {
+    return await blob.slice(0, 16_000).text()
+  } catch {
+    // An optional local preview must not prevent downloading the original Blob.
+    return undefined
+  }
 }
 
 /** The proxy revalidates the JSON and files, and reconstructs a safe Gotenberg form. */

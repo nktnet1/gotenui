@@ -99,7 +99,11 @@ The advanced inputs support fetching remote files and delivering conversion resu
 
 Remote files are downloaded by **Gotenberg**, not by your browser. The Gotenberg instance must permit the remote destination. Gotenberg 9.2+ accepts a downloaded filename override and otherwise uses the response's Content-Disposition filename or a filename with an extension from the URL. Earlier versions require the response's Content-Disposition filename. On older 9.x connections, an expected filename is only a preflight hint. Switching to an older connection with an explicit override blocks the draft until you clear it or explicitly choose **Use as expected filename instead**. Existing API clients using the legacy `name` hint keep their original behaviour.
 
+Gotenui pins predictable remote filenames on Gotenberg 9.2+ when Chromium uploads, archives or conversion stages need stable resource names. It also pins downloads preceding an explicitly named remote Chromium resource, so an unpredictable Content-Disposition filename cannot displace that resource. Provide an explicit filename for any such download whose URL has no usable filename. Remote-only requests without protected names can still use server-resolved filenames.
+
 Webhook requests may return **Accepted** before the conversion finishes. Gotenui does not receive webhook callbacks or maintain a job history. Check the destination service for delivery results. In Gotenberg 9, PDF inspection tools return JSON immediately and do **not** support webhooks; their advanced form hides that option and blocks a configured v8-specific webhook draft until you switch back or discard it. Other v9 webhook operations still require an events callback URL. On a healthy v8 or v9 connection, Gotenui selects the matching API automatically without a generic migration warning; unsupported settings and versions are explained only where relevant.
+
+The proxy forwards callback URLs without normalising their path or query, preserving signed URLs. Percent-encode trailing spaces in callback URLs because HTTP headers strip trailing ASCII whitespace.
 
 ## Diagnostics
 

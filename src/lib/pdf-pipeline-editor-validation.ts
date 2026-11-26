@@ -4,6 +4,7 @@ import {
   chromiumOutputPdfName,
   planRemoteFilenames,
   remoteFilenamePlanReason,
+  remoteLocalFilenameCollision,
 } from '#/lib/file-names'
 import { planV9ConversionStages } from '#/lib/gotenberg-conversion-adapter'
 import {
@@ -91,19 +92,21 @@ export function pdfPipelineEditorError(
       validateAsyncInputValues(remoteInputsPayload(remoteRows, remoteJson), undefined)
         .downloadFrom ?? []
     const sourceRemotes = remotes.filter(({ field, embedded }) => !field && !embedded)
-    if (
+    const chromiumNamesAtRisk =
       documentKind === 'single' &&
-      sourceRemotes.length &&
-      version?.major === 9 &&
-      version.minor < 2
-    ) {
+      (chromiumResourceNames.length > 0 ||
+        archivesPresent ||
+        !!stages ||
+        localAssetNames.length > 0)
+    if (chromiumNamesAtRisk && sourceRemotes.length && version?.major === 9 && version.minor < 2) {
       return CHROMIUM_REMOTE_FILENAME_VERSION_REASON
     }
     const filenamePlan = planRemoteFilenames(sourceRemotes, {
       supportsFilename: version?.major === 9 && version.minor >= 2,
       inferAll: localNames.length > 0 || archivesPresent,
-      pinAll: localAssetNames.length > 0 || documentKind === 'single',
+      pinAll: localAssetNames.length > 0 || chromiumNamesAtRisk,
       stageAssetNames: referencedAssets,
+      protectNamedRemotes: documentKind === 'single',
     })
     const filenameReason = remoteFilenamePlanReason(filenamePlan)
     if (filenameReason) return filenameReason
@@ -139,22 +142,26 @@ export function pdfPipelineEditorError(
       }
       return planV9ConversionStages(form, documentKind === 'office', parsed, fields)
     })()
-    const forwarded = numbersPipelineInputs(pipeline, localNames.length, builtInMerge)
+    const numbersInputs = numbersPipelineInputs(pipeline, localNames.length, builtInMerge)
+    const forwarded = numbersInputs
       ? mergeUploadFilenames(localNames, [
           ...remoteMergeFilenames(sourceRemotes),
           ...localAssetNames,
         ])
       : localNames
+    // Archives can change the reserved names used for merge renaming, but
+    // cannot remove collisions involving already-known unrenamed uploads.
+    const knownForwarded = archivesPresent && numbersInputs ? [] : forwarded
+    if (documentKind === 'pdf' || documentKind === 'office') {
+      validatePipelineSourceUploads(parsed, knownForwarded, remoteFilenames)
+    }
+    const remoteNames = remoteStageAssets(
+      sourceRemotes,
+      [...referencedAssets],
+      [...localAssetNames, ...knownForwarded, ...chromiumResourceNames],
+      remoteFilenames,
+    )
     if (!archivesPresent) {
-      if (documentKind === 'pdf' || documentKind === 'office') {
-        validatePipelineSourceUploads(parsed, forwarded, remoteFilenames)
-      }
-      const remoteNames = remoteStageAssets(
-        sourceRemotes,
-        [...referencedAssets],
-        [...localAssetNames, ...forwarded],
-        remoteFilenames,
-      )
       parsePdfPipeline(stages, {
         assetNames: [...localAssetNames, ...remoteNames],
         allowUnresolvedAssets: remoteFilenames.some((name) => !name),
@@ -171,11 +178,16 @@ export function pdfPipelineEditorError(
       // Downloads register first regardless of which upload field comes next.
       validateKnownAssetFilenameRegistration(
         pinned,
-        archivesPresent ? [] : [...forwarded, ...chromiumResourceNames, ...localAssetNames],
+        [...knownForwarded, ...chromiumResourceNames, ...localAssetNames],
         [],
         [...referencedAssets],
         documentKind === 'single',
       )
+      const collision = remoteLocalFilenameCollision(sourceRemotes, [
+        ...chromiumResourceNames,
+        ...localAssetNames,
+      ])
+      if (collision) return `Remote filename collides with a local document or asset: ${collision}`
     }
     validatePdfStageUploads(parsed, localAssetNames, conversionMode)
     if (

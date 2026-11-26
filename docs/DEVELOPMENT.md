@@ -34,7 +34,7 @@ For tag-driven GitHub releases and container publishing, see [Releasing](RELEASI
 
 | Command                    | Purpose                                                             |
 | -------------------------- | ------------------------------------------------------------------- |
-| `pnpm format`              | Apply Biome formatting and safe fixes                               |
+| `pnpm check --write`       | Apply Biome formatting and safe fixes                               |
 | `pnpm check`               | Check formatting and lint rules                                     |
 | `pnpm typecheck`           | Run TypeScript checks                                               |
 | `pnpm test:unit`           | Run unit tests without Docker                                       |

@@ -267,3 +267,96 @@ it('uses numbered merge upload names rather than rejecting safe duplicate source
     null,
   )
 })
+
+it.each(['pdf', 'office'] as const)(
+  'rejects known %s source collisions even with archives',
+  (documentKind) => {
+    const filename = documentKind === 'office' ? 'document.docx' : 'document.pdf'
+    assert.match(
+      pdfPipelineEditorError(JSON.stringify([{ op: 'attach', file: filename }]), {
+        ...base,
+        documentKind,
+        backendVersion: '9.10.0',
+        archivesPresent: true,
+        documentNames: [filename],
+      }) ?? '',
+      /source|primary/i,
+    )
+  },
+)
+
+it('checks known Chromium resources alongside uninspected archives', () => {
+  const url = 'https://documents.example.test/style.css'
+  assert.match(
+    pdfPipelineEditorError('', {
+      ...base,
+      documentKind: 'single',
+      backendVersion: '9.10.0',
+      archivesPresent: true,
+      remoteJson: JSON.stringify([{ url }, { url }]),
+      chromiumResourceNames: ['style (2).css'],
+    }) ?? '',
+    /Chromium asset filename collides/,
+  )
+})
+
+it('rejects same-name remote and generated Chromium resources without PDF stages', () => {
+  const options = {
+    ...base,
+    documentKind: 'single' as const,
+    backendVersion: '9.10.0',
+    chromiumResourceNames: ['index.html'],
+    remoteJson: '[{"url":"https://example.test/index.html"}]',
+  }
+  for (const archivesPresent of [false, true]) {
+    assert.match(
+      pdfPipelineEditorError('', { ...options, archivesPresent }) ?? '',
+      /Remote filename collides with a local document or asset: index\.html/,
+    )
+  }
+})
+
+it.each(['9.1.0', '9.10.0'])(
+  'preserves dynamic remote-only Chromium filenames on %s',
+  (backendVersion) => {
+    const options = {
+      ...base,
+      documentKind: 'single' as const,
+      backendVersion,
+      remoteRows: [remoteRow(1, '')],
+    }
+    assert.equal(pdfPipelineEditorError('', options), null)
+    assert.match(
+      pdfPipelineEditorError('', { ...options, chromiumResourceNames: ['index.html'] }) ?? '',
+      /filename/i,
+    )
+  },
+)
+
+it('protects explicit remote-only Chromium resources from earlier unpredictable downloads', () => {
+  const options = {
+    ...base,
+    documentKind: 'single' as const,
+    backendVersion: '9.10.0',
+    remoteRows: [remoteRow(1, ''), remoteRow(2, 'style.css')],
+  }
+  assert.match(pdfPipelineEditorError('', options) ?? '', /Specify a remote filename/)
+  assert.equal(
+    pdfPipelineEditorError('', { ...options, remoteRows: [...options.remoteRows].reverse() }),
+    null,
+  )
+})
+
+it('rejects known local stage assets displaced by duplicate sources even with archives', () => {
+  assert.match(
+    pdfPipelineEditorError('[{"op":"attach","file":"document (2).pdf"}]', {
+      ...base,
+      documentKind: 'pdf',
+      backendVersion: '9.10.0',
+      archivesPresent: true,
+      documentNames: ['document.pdf', 'document.pdf'],
+      localAssetNames: ['document (2).pdf'],
+    }) ?? '',
+    /Stage asset filename collides/,
+  )
+})

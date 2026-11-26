@@ -1263,8 +1263,14 @@ test('v9 webhook serializes Unicode callback URLs and UTF-8 extra header values'
   const eventsUrl = 'https://m\u00fcnich.example/\u5b8c\u4e86'
   const extraHttpHeaders = { 'X-Locale': '\u65e5\u672c\u8a9e' }
   const fixture = upstreamFixture('9.9.0', (_form, headers) => {
-    assert.equal(headers.get('Gotenberg-Webhook-Url'), new URL(url).href)
-    assert.equal(headers.get('Gotenberg-Webhook-Events-Url'), new URL(eventsUrl).href)
+    assert.equal(
+      Buffer.from(headers.get('Gotenberg-Webhook-Url') ?? '', 'latin1').toString('utf8'),
+      url,
+    )
+    assert.equal(
+      Buffer.from(headers.get('Gotenberg-Webhook-Events-Url') ?? '', 'latin1').toString('utf8'),
+      eventsUrl,
+    )
     const raw = headers.get('Gotenberg-Webhook-Extra-Http-Headers')
     assert.ok(raw)
     assert.deepEqual(JSON.parse(Buffer.from(raw, 'latin1').toString('utf8')), extraHttpHeaders)
@@ -1281,8 +1287,14 @@ test('v8 webhook serializes Unicode success and error URLs', async () => {
   const url = 'https://m\u00fcnich.example/\u901a\u77e5'
   const errorUrl = 'https://example.test/\u5931\u6557'
   const fixture = upstreamFixture('8.40.0', (_form, headers) => {
-    assert.equal(headers.get('Gotenberg-Webhook-Url'), new URL(url).href)
-    assert.equal(headers.get('Gotenberg-Webhook-Error-Url'), new URL(errorUrl).href)
+    assert.equal(
+      Buffer.from(headers.get('Gotenberg-Webhook-Url') ?? '', 'latin1').toString('utf8'),
+      url,
+    )
+    assert.equal(
+      Buffer.from(headers.get('Gotenberg-Webhook-Error-Url') ?? '', 'latin1').toString('utf8'),
+      errorUrl,
+    )
   })
   const reply = await proxyConversionRequest(
     requestFor('html-pdf', {}, { webhook: { url, errorUrl } }),
@@ -1783,3 +1795,31 @@ test.each([
     /unexpected conversion response/,
   )
 })
+
+test.each(['8.40.0', '9.10.0'])(
+  'preserves signed callback targets on Gotenberg %s',
+  async (version) => {
+    const url = 'HTTPS://Hooks.Example.test:443/raw/../%2e%2e/output?key=a%2fb%2Bc&sig=x+y'
+    const secondaryUrl = 'https://hooks.example.test/one/%2E/two/../event?sig=%2F%2b&empty='
+    const legacy = version.startsWith('8.')
+    const fixture = upstreamFixture(version, (_form, headers) => {
+      assert.equal(headers.get('Gotenberg-Webhook-Url'), url)
+      assert.equal(
+        headers.get(legacy ? 'Gotenberg-Webhook-Error-Url' : 'Gotenberg-Webhook-Events-Url'),
+        secondaryUrl,
+      )
+    })
+    const reply = await proxyConversionRequest(
+      requestFor(
+        'html-pdf',
+        {},
+        {
+          webhook: { url, ...(legacy ? { errorUrl: secondaryUrl } : { eventsUrl: secondaryUrl }) },
+        },
+      ),
+      fixture.fetcher,
+    )
+    assert.equal(reply.status, 200)
+    assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+  },
+)

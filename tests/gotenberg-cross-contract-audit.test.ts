@@ -378,6 +378,18 @@ test('bounds Markdown text previews without treating other content as text', asy
   assert.equal(await conversionTextPreview(pdf, 'application/pdf'), undefined)
 })
 
+test('keeps a download usable when its optional text preview cannot be read', async () => {
+  const blob = new Blob(['result'])
+  Object.defineProperty(blob, 'slice', {
+    value: () => ({
+      text: async () => {
+        throw new Error('Cannot read preview')
+      },
+    }),
+  })
+  assert.equal(await conversionTextPreview(blob, 'text/plain'), undefined)
+})
+
 // Standalone tools must not bypass the validation used by explicit pipelines.
 test.each([
   [{ stampOptions: '{"font":"UnknownFont"}' }, /standard PDF fonts/],

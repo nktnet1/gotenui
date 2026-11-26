@@ -279,6 +279,7 @@ export class BrowserBatchQueue {
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     const signal = AbortSignal.any([controller.signal, timeout])
     void (async () => {
+      let responseReceived = false
       try {
         // A synchronous subscriber may cancel a job during the running-state notification.
         if (this.disposed || signal.aborted) return
@@ -287,6 +288,7 @@ export class BrowserBatchQueue {
         if (signal.aborted) {
           throw new Error('Gotenberg did not respond within three minutes.')
         }
+        responseReceived = true
         const elapsed = performance.now() - started
         if (result.mode === 'webhook') {
           record.view = {
@@ -300,7 +302,8 @@ export class BrowserBatchQueue {
         } else {
           const review = await batchReviewNotice(input, result)
           if (this.disposed || controller.signal.aborted) return
-          if (signal.aborted) throw new Error('Gotenberg did not respond within three minutes.')
+          // The response was received before the deadline. Local report review
+          // must not convert a successful request into a network timeout.
           // Reserve the result budget immediately before setting the completed state.
           // Validation can be asynchronous: checking before the await lets two
           // concurrent jobs both claim the same remaining memory allowance.
@@ -338,7 +341,8 @@ export class BrowserBatchQueue {
       } catch (error) {
         if (this.disposed || controller.signal.aborted) return
         const message =
-          timeout.aborted || (error instanceof Error && error.name === 'TimeoutError')
+          !responseReceived &&
+          (timeout.aborted || (error instanceof Error && error.name === 'TimeoutError'))
             ? 'Gotenberg did not respond within three minutes.'
             : error instanceof Error
               ? error.message.slice(0, 500)

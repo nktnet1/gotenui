@@ -161,12 +161,16 @@ export function planRemoteFilenames(
     inferAll: boolean
     pinAll: boolean
     stageAssetNames: ReadonlySet<string>
+    protectNamedRemotes?: boolean
   },
 ): { name: string | undefined; required: boolean }[] {
   const lastNamedAsset = options.supportsFilename
     ? remotes.reduce((last, remote, index) => {
         const name = possibleRemoteFilename(remote)
-        return name !== undefined && options.stageAssetNames.has(filenameKey(name)) ? index : last
+        return (options.protectNamedRemotes && effectiveRemoteFilename(remote)) ||
+          (name !== undefined && options.stageAssetNames.has(filenameKey(name)))
+          ? index
+          : last
       }, -1)
     : -1
   return remotes.map((remote, index) => {
@@ -229,6 +233,19 @@ export function registeredFilenames(names: readonly string[]): string[] {
     nextSuffix.set(name, suffix + 1)
     return candidate
   })
+}
+
+/** Remote files register before uploads, including automatically numbered duplicates. */
+export function remoteLocalFilenameCollision(
+  remotes: readonly RemoteFilenameInput[],
+  localNames: readonly string[],
+): string | undefined {
+  const local = new Set(localNames.map(filenameKey))
+  const remoteNames = remotes.flatMap((remote) => {
+    const name = possibleRemoteFilename(remote)
+    return name ? [name] : []
+  })
+  return registeredFilenames(remoteNames).find((name) => local.has(name))
 }
 
 /** Preserve upload arrival order. Gotenberg compares NFC-normalised filenames
