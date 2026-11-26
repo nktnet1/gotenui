@@ -581,3 +581,17 @@ test('preserves a leading U+FEFF in ZIP entry filenames instead of treating it a
     ['report.pdf', '\uFEFFreport.pdf'],
   )
 })
+
+test('matches Go filename replacement for incomplete UTF-8 sequences in ZIP metadata', async () => {
+  const bytes = new Uint8Array(await zipFixture({ 'aa.pdf': '%PDF-1.7' }).arrayBuffer())
+  const name = new TextEncoder().encode('aa.pdf')
+  // Replace the same filename in both ZIP headers without changing lengths.
+  for (let offset = 0; offset <= bytes.length - name.length; offset++) {
+    if (name.every((byte, index) => bytes[offset + index] === byte)) {
+      bytes.set([0xe2, 0x82], offset)
+    }
+  }
+  assert.deepEqual(await check('pdf-pipeline', [new File([bytes], 'legacy.zip')]), [
+    '\ufffd\ufffd.pdf',
+  ])
+})

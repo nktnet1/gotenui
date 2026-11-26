@@ -413,7 +413,7 @@ export function Workbench({
           splitMode: typeof fields.splitMode === 'string' ? fields.splitMode : undefined,
           splitSpan: typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,
           splitUnify: fields.splitUnify === true,
-          outputName: outputName.trim() || undefined,
+          outputName: outputName || undefined,
           conversionFields: activeOperationFields(operation, fields, backendVersion),
           advancedJson: advanced,
         })
@@ -541,7 +541,7 @@ export function Workbench({
       advanced: parseAdvanced(advanced),
       downloadFrom,
       webhook,
-      outputName: outputName.trim() || undefined,
+      outputName: outputName || undefined,
       requestTrace: requestTrace.trim() || undefined,
       traceparent: traceparent.trim() || undefined,
       tracestate: tracestate.trim() || undefined,

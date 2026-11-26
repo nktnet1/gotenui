@@ -42,6 +42,76 @@ export function effectiveRemoteFilename(remote: {
   return remote.filename || remote.name || undefined
 }
 
+const filenameDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+
+/** Go replaces each invalid UTF-8 byte with RuneError, whereas TextDecoder
+ * can collapse several bytes into a single replacement character. Preserve
+ * the exact names Gotenberg registers, including a leading BOM.
+ */
+export function decodeFilenameBytes(bytes: Uint8Array): string {
+  try {
+    return filenameDecoder.decode(bytes)
+  } catch {
+    let name = ''
+    for (let offset = 0; offset < bytes.length; ) {
+      const first = bytes[offset] as number
+      if (first < 0x80) {
+        name += String.fromCharCode(first)
+        offset++
+        continue
+      }
+      const width =
+        first >= 0xc2 && first <= 0xdf
+          ? 2
+          : first >= 0xe0 && first <= 0xef
+            ? 3
+            : first >= 0xf0 && first <= 0xf4
+              ? 4
+              : 0
+      let valid = width > 0 && offset + width <= bytes.length
+      let point = first & (0x7f >> width)
+      for (let index = 1; valid && index < width; index++) {
+        const next = bytes[offset + index] as number
+        valid = next >= 0x80 && next <= 0xbf
+        point = (point << 6) | (next & 0x3f)
+      }
+      if (
+        valid &&
+        (width !== 3 || point >= 0x800) &&
+        (width !== 4 || point >= 0x10000) &&
+        !(point >= 0xd800 && point <= 0xdfff) &&
+        point <= 0x10ffff
+      ) {
+        name += String.fromCodePoint(point)
+        offset += width
+      } else {
+        name += '\ufffd'
+        offset++
+      }
+    }
+    return name
+  }
+}
+
+/** url.Parse decodes percent escapes to bytes, even for invalid UTF-8. */
+function decodeRemotePath(path: string): string | undefined {
+  if (/%(?![0-9a-f]{2})/i.test(path)) return undefined
+  const bytes = new TextEncoder().encode(path)
+  let length = 0
+  for (let index = 0; index < bytes.length; index++) {
+    if (bytes[index] === 0x25) {
+      bytes[length++] = Number.parseInt(
+        String.fromCharCode(bytes[index + 1] as number, bytes[index + 2] as number),
+        16,
+      )
+      index += 2
+    } else {
+      bytes[length++] = bytes[index] as number
+    }
+  }
+  return decodeFilenameBytes(bytes.subarray(0, length))
+}
+
 /** Gotenberg 9 can also infer the filename from the URL path if no override
  * or Content-Disposition filename is present. Use this only when checking for
  * potential name collisions, not when resolving an exact stage asset.
@@ -62,7 +132,8 @@ export function possibleRemoteFilename(remote: {
     if (!['http:', 'https:'].includes(parsed.protocol)) return undefined
     const rawPath = /^https?:\/\/[^/?#]+(\/[^?#]*)?/i.exec(remote.url)?.[1]
     if (!rawPath) return undefined
-    const pathname = decodeURIComponent(rawPath)
+    const pathname = decodeRemotePath(rawPath)
+    if (pathname === undefined) return undefined
     const base = pathname.replace(/\/+$/u, '').split('/').at(-1) ?? ''
     const filename = [...(base.split('\\').at(-1) ?? '')]
       .filter((character) => {

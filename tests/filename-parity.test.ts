@@ -234,3 +234,15 @@ test('remote filename inference preserves Go URL path segments before taking the
     'report.pdf',
   )
 })
+
+test('infers remote names using Go replacement semantics for invalid UTF-8 bytes', () => {
+  for (const [path, name] of [
+    ['/report%FF.pdf', 'report\ufffd.pdf'],
+    ['/report%E2%82.pdf', 'report\ufffd\ufffd.pdf'],
+    ['/caf%C3%A9%ED%A0%80.pdf', 'caf\u00e9\ufffd\ufffd\ufffd.pdf'],
+    ['/report%EF%BB%BF%F0%9F%98%80%F0%9F.pdf', 'report\ufeff\u{1f600}\ufffd\ufffd.pdf'],
+  ]) {
+    assert.equal(possibleRemoteFilename({ url: `https://example.test${path}` }), name, path)
+  }
+  assert.equal(possibleRemoteFilename({ url: 'https://example.test/report%ZZ.pdf' }), undefined)
+})

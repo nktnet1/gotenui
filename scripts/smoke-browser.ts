@@ -1234,10 +1234,12 @@ async function run(): Promise<void> {
       const png = Uint8Array.from(atob('${samplePng.toString('base64')}'), char => char.charCodeAt(0))
       const zip = Uint8Array.from(atob('${Buffer.from(browserImageZip()).toString('base64')}'), char => char.charCodeAt(0))
       window.__smokeResultKind = 'image'
+      window.__smokeOutputNames = []
       window.__restoreSmokeConversionFetch = () => { window.fetch = delegate }
       window.fetch = (input, options) => {
         if (String(input) === '/api/gotenberg/convert') {
           const archive = window.__smokeResultKind === 'zip'
+          window.__smokeOutputNames.push(JSON.parse(options.body.get('payload')).outputName)
           return Promise.resolve(new Response(archive ? zip : png, {
             headers: {
               'content-type': archive ? 'application/zip' : 'image/png',
@@ -1258,13 +1260,24 @@ async function run(): Promise<void> {
       'v9 screenshot form',
     )
     await page.evaluate(`(() => {
+      const output = document.querySelector('#output-filename')
+      if (!output) throw new Error('Missing screenshot output filename')
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(output, '\u00a0render\u00a0')
+      output.dispatchEvent(new Event('input', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#output-filename')?.value === '\u00a0render\u00a0'`,
+      'screenshot output name contains non-ASCII whitespace',
+    )
+    await page.evaluate(`(() => {
       const submit = document.querySelector('form button[type=submit]')
       if (!submit || submit.disabled) throw new Error('Screenshot submit button is unavailable')
       submit.click()
     })()`)
     await page.waitUntil(
       `document.querySelector('[alt="Latest screenshot"]')?.naturalWidth === 2 &&
-        document.querySelector('a[download="render.png"]')?.textContent.includes('Download again')`,
+        document.querySelector('a[download="_render_.png"]')?.textContent.includes('Download again')`,
       'direct PNG result preview and download name',
     )
     checks++
@@ -1286,7 +1299,7 @@ async function run(): Promise<void> {
       start.click()
     })()`)
     await page.waitUntil(
-      `document.querySelector('#gotenui-batch-queue a[download="render.png"]') &&
+      `document.querySelector('#gotenui-batch-queue a[download="_render_.png"]') &&
         document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]')?.textContent.includes('Preview image')`,
       'completed PNG batch offers an opt-in preview',
     )
@@ -1299,7 +1312,7 @@ async function run(): Promise<void> {
       `document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]').click()`,
     )
     await page.waitUntil(
-      `document.querySelector('#gotenui-batch-queue img[alt="Preview of render.png"]')?.naturalWidth === 2`,
+      `document.querySelector('#gotenui-batch-queue img[alt="Preview of _render_.png"]')?.naturalWidth === 2`,
       'batch PNG preview loads its existing Blob URL',
     )
     await page.evaluate(
@@ -1308,6 +1321,11 @@ async function run(): Promise<void> {
     await page.waitUntil(
       "document.querySelector('#gotenui-batch-queue img') === null",
       'batch PNG preview closes',
+    )
+    assert.deepEqual(
+      await page.evaluate('window.__smokeOutputNames'),
+      ['\u00a0render\u00a0', '\u00a0render\u00a0'],
+      'Both immediate and queued requests must preserve non-ASCII filename whitespace.',
     )
     checks++
 

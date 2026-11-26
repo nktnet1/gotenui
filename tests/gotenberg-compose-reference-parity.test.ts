@@ -1418,3 +1418,42 @@ describe('composition coverage within each split branch', () => {
     assert.deepEqual(result.stages, stages)
   })
 })
+
+it.each(['pdf-pipeline', 'office-pdf'] as const)(
+  'requires enough placements for known %s inputs even when an unnamed download is present',
+  async (operation) => {
+    const names = operation === 'office-pdf' ? ['one.docx', 'two.docx'] : ['one.pdf', 'two.pdf']
+    const source = operation === 'office-pdf' ? 'one.docx.pdf' : 'one.pdf'
+    const remotes = [{ url: 'https://files.example.test/dynamic' }]
+    const stages = [compose(source)]
+    const result = await forwarded({ operation, names, remotes, stages, version: '9.10.0' })
+    assert.equal(result.status, 400, result.error)
+    assert.equal(result.calls, 0)
+    assert.match(result.error, /place every PDF/)
+    assert.match(
+      pdfPipelineEditorError(JSON.stringify(stages), {
+        localAssetNames: [],
+        archivesPresent: false,
+        remoteRows: [],
+        remoteJson: JSON.stringify(remotes),
+        acknowledgedRedaction: false,
+        backendVersion: '9.10.0',
+        documentKind: operation === 'office-pdf' ? 'office' : 'pdf',
+        documentNames: names,
+      }) ?? '',
+      /place every PDF/,
+    )
+  },
+)
+
+it('still allows complete compositions with additional dynamically named source PDFs', async () => {
+  const result = await forwarded({
+    operation: 'pdf-pipeline',
+    names: ['one.pdf', 'two.pdf'],
+    remotes: [{ url: 'https://files.example.test/dynamic' }],
+    stages: [composeMany('one.pdf', 'two.pdf', 'three.pdf')],
+    version: '9.10.0',
+  })
+  assert.equal(result.status, 200, result.error)
+  assert.equal(result.calls, 1)
+})

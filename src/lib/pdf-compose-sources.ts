@@ -422,7 +422,8 @@ export function reconcilePdfComposeSources(
       placed.add(source)
       return { ...entry, source }
     })
-    if (!sourcesKnown && !unknownInputs && !single && placed.size < minimumDocuments) {
+    // Unknown downloads can add documents, but cannot reduce the known minimum.
+    if (!sourcesKnown && !single && placed.size < minimumDocuments) {
       throw new InputError('compose: placements must place every PDF, including all split outputs.')
     }
     if (sourcesKnown && !single) {

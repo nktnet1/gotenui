@@ -1,5 +1,6 @@
 import { generatedChromiumFilenames } from '#/lib/chromium-documents'
 import {
+  decodeFilenameBytes,
   effectiveRemoteFilename,
   filenameKey,
   possibleRemoteFilename,
@@ -19,8 +20,6 @@ const MAX_COMMENT_BYTES = 65_535
 // the actual extraction quota (10,000 entries by default) and body limit.
 const MAX_DIRECTORY_BYTES = 64 * 1024 * 1024
 const MAX_ENTRIES = 10_000
-// ZIP names are individual byte strings, not text streams with a BOM.
-const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true })
 
 function invalidArchive(name: string, detail: string): never {
   throw new InputError(`ZIP archive ${name}: ${detail}`)
@@ -173,7 +172,7 @@ async function zipEntryNames(archive: File): Promise<string[]> {
     const commentLength = directory.getUint16(cursor + 32, true)
     const next = cursor + 46 + nameLength + extraLength + commentLength
     if (next > length) invalidArchive(archive.name, 'the ZIP index contains a truncated entry.')
-    const name = decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLength))
+    const name = decodeFilenameBytes(bytes.subarray(cursor + 46, cursor + 46 + nameLength))
     // Gotenberg skips anything for which Go archive/zip's Mode().IsRegular()
     // is false. Unix and macOS creators use Unix file types, while FAT, NTFS
     // and VFAT creators use the DOS directory attribute, even when the entry
