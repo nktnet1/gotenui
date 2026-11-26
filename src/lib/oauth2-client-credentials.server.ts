@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import * as v from 'valibot'
+import { parseHttpEndpoint } from '#/lib/http-url'
 import { ProxyInputError, readLimitedBody } from '#/lib/proxy-policy'
 import { responseMediaType } from '#/lib/security'
 import { isBearerToken, MAX_BEARER_TOKEN_LENGTH } from '#/lib/upstream-credentials'
@@ -31,21 +32,8 @@ const pending = new Map<string, Promise<string>>()
 
 /** Do not make a token service URL or credentials browser-configurable. */
 export function parseOAuth2TokenUrl(value: string): string {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    throw new Error('OAuth2 tokenUrl must be an absolute HTTPS URL.')
-  }
-  if (
-    url.protocol !== 'https:' ||
-    !url.hostname ||
-    !url.pathname ||
-    url.username ||
-    url.password ||
-    url.hash ||
-    url.search
-  ) {
+  const url = parseHttpEndpoint(value.trim())
+  if (url?.protocol !== 'https:') {
     throw new Error('OAuth2 tokenUrl must be an HTTPS URL without credentials, query or fragment.')
   }
   return url.href

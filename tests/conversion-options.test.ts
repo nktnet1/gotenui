@@ -8,7 +8,7 @@ import {
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
-import { validatePayload } from '#/lib/validation'
+import { parseAdvanced, validatePayload } from '#/lib/validation'
 
 function request(operation: string, extra: Record<string, string | boolean> = {}) {
   const definition = OPERATION_BY_ID.get(operation)
@@ -728,4 +728,24 @@ test('keeps valid Unicode header values and tabs, and rejects malformed cookie p
       /valid name, value, domain/,
     )
   }
+})
+
+test.each(['9007199254740993', '-9007199254740993', '1e20'])(
+  'rejects unsafe advanced numeric integers in both browser and proxy',
+  (raw) => {
+    assert.throws(() => parseAdvanced(`{"futureInteger":${raw}}`), /safe JSON range/)
+    assert.throws(
+      () => validatePayload({ ...request('url-pdf'), advanced: { futureInteger: Number(raw) } }),
+      /safe JSON range/,
+    )
+  },
+)
+
+test('preserves exact large advanced integer strings and ordinary scalar values', () => {
+  const advanced = parseAdvanced(
+    '{"futureInteger":"9223372036854775807","futureDecimal":1.25,"futureFlag":false,"futureSafeInteger":9007199254740991}',
+  )
+  const { payload, operation } = validatePayload({ ...request('url-pdf'), advanced })
+  const form = createGotenbergForm(operation, payload, [], [])
+  for (const [name, value] of Object.entries(advanced)) assert.equal(form.get(name), String(value))
 })

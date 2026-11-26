@@ -119,6 +119,13 @@ describe('deployment-defined OpenTelemetry Prometheus exporter', () => {
       'file:///etc/passwd',
       '//server:9464/metrics',
       'https://server:9464/metrics#key',
+      'http:server:9464/metrics',
+      'http:///server:9464/metrics',
+      'http://@server:9464/metrics',
+      'http://server:9464/metrics?',
+      'http://server:9464/metrics#',
+      'http://ser\nver:9464/metrics',
+      'http://server:9464\\metrics',
     ]) {
       expect(() => parseMetricsUrl(bad)).toThrow(/metricsUrl/)
     }

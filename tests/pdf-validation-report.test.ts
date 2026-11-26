@@ -27,6 +27,10 @@ describe('bounded PDF validation summaries', () => {
 
   it.each([
     ['empty filename', { '': { profile: 'PDF/A-2b', compliant: true, violations: [] } }],
+    [
+      'non-PDF filename',
+      { 'report.txt': { profile: 'PDF/A-2b', compliant: true, violations: [] } },
+    ],
     ['blank profile', { 'a.pdf': { profile: ' ', compliant: true, violations: [] } }],
     ['empty profile list', { 'a.pdf': { profile: [], compliant: true, violations: [] } }],
     [
@@ -254,10 +258,13 @@ it('requires known input counts without guessing the server-selected remote file
     files: [pdfFile('local.pdf'), pdfFile('other.pdf')],
     downloadFrom: [{ url: 'https://example.test/download' }],
   }
-  assert.equal(
-    await summarisePdfValidationBlob(reportBlob('local.pdf'), ['PDF/A-2b'], inputs),
-    null,
-  )
+  for (const names of [
+    ['local.pdf'],
+    ['local.pdf', 'unrelated.pdf'],
+    ['local.pdf', 'unrelated.pdf', 'resolved.pdf'],
+  ]) {
+    assert.equal(await summarisePdfValidationBlob(reportBlob(...names), ['PDF/A-2b'], inputs), null)
+  }
   assert.equal(
     (
       await summarisePdfValidationBlob(
@@ -280,4 +287,57 @@ it('preserves the download when local archive metadata cannot be inspected', asy
     null,
   )
   assert.match(await blob.text(), /local\.pdf/)
+})
+
+it('requires known filenames even when archive registration order cannot be determined', async () => {
+  const inputs = {
+    files: [pdfFile('a.pdf'), pdfFile('a (2).pdf')],
+    archives: [zipFixture({ 'a.pdf': '%PDF-1.7', 'b.pdf': '%PDF-1.7' })],
+  }
+  assert.equal(
+    await summarisePdfValidationBlob(
+      reportBlob('a.pdf', 'a (2).pdf', 'a (3).pdf', 'unrelated.pdf'),
+      ['PDF/A-2b'],
+      inputs,
+    ),
+    null,
+  )
+  for (const names of [
+    ['a.pdf', 'a (2).pdf', 'a (3).pdf', 'b.pdf'],
+    ['a.pdf', 'a (2).pdf', 'a (2) (2).pdf', 'b.pdf'],
+  ]) {
+    assert.equal(
+      (await summarisePdfValidationBlob(reportBlob(...names), ['PDF/A-2b'], inputs))?.length,
+      4,
+    )
+  }
+})
+
+it('requires the original known filename without guessing its numbered duplicates', async () => {
+  const inputs = {
+    files: [pdfFile('a.pdf'), pdfFile('a.pdf')],
+    downloadFrom: [{ url: 'https://example.test/download' }],
+  }
+  assert.equal(
+    await summarisePdfValidationBlob(reportBlob('a (2).pdf', 'a (3).pdf'), ['PDF/A-2b'], inputs),
+    null,
+  )
+  assert.equal(
+    (
+      await summarisePdfValidationBlob(
+        reportBlob('a.pdf', 'a (2).pdf', 'a (3).pdf'),
+        ['PDF/A-2b'],
+        inputs,
+      )
+    )?.length,
+    3,
+  )
+})
+
+it('can still summarise remote-only reports with server-selected names', async () => {
+  const inputs = { files: [], downloadFrom: [{ url: 'https://example.test/download' }] }
+  assert.equal(
+    (await summarisePdfValidationBlob(reportBlob('resolved.PDF'), ['PDF/A-2b'], inputs))?.length,
+    1,
+  )
 })

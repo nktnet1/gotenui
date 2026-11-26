@@ -1,5 +1,6 @@
 import * as v from 'valibot'
 import { normalizeBackendUrl } from '#/lib/backend-url'
+import { isHttpHeaderValue, parseHttpEndpoint } from '#/lib/http-url'
 import {
   type OAuth2ClientCredentials,
   parseOAuth2TokenUrl,
@@ -63,21 +64,8 @@ export type PublicServerConnection = Readonly<{
  * The dedicated OTEL Prometheus exporter serves /metrics on port 9464 by default.
  */
 export function parseMetricsUrl(value: string): string {
-  let parsed: URL
-  try {
-    parsed = new URL(value)
-  } catch {
-    throw new Error('metricsUrl must be an absolute HTTP(S) /metrics URL.')
-  }
-  if (
-    !['http:', 'https:'].includes(parsed.protocol) ||
-    !parsed.hostname ||
-    parsed.pathname !== '/metrics' ||
-    parsed.search ||
-    parsed.hash ||
-    parsed.username ||
-    parsed.password
-  ) {
+  const parsed = parseHttpEndpoint(value.trim())
+  if (parsed?.pathname !== '/metrics') {
     throw new Error(
       'metricsUrl must be an absolute HTTP(S) /metrics URL without credentials or query parameters.',
     )
@@ -139,13 +127,7 @@ export function parseServerConnections(
         entry.auth.scope,
         entry.auth.audience,
       ]) {
-        if (
-          value !== undefined &&
-          [...value].some((char) => {
-            const code = char.charCodeAt(0)
-            return code < 32 || code === 127
-          })
-        ) {
+        if (value !== undefined && (!isHttpHeaderValue(value) || value.includes('\t'))) {
           throw new Error(`Invalid OAuth2 credential or parameter for ${entry.id}.`)
         }
       }

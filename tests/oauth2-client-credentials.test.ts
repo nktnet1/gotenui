@@ -87,6 +87,14 @@ test('managed OAuth2 config is server-only, scoped and strictly validated', () =
     'https://idp.test/token#fragment',
     '/oauth2/token',
     'file:///etc/passwd',
+    'https:idp.test/token',
+    'https:///idp.test/token',
+    'https://@idp.test/token',
+    'https://idp.test/token?',
+    'https://idp.test/token#',
+    'https://id\np.test/token',
+    'https://idp.test/token\ud800',
+    'https://idp.test\\token',
   ]) {
     assert.throws(() => parseOAuth2TokenUrl(value), /HTTPS/)
   }
@@ -95,6 +103,10 @@ test('managed OAuth2 config is server-only, scoped and strictly validated', () =
     { ...basicAuth, scope: 'scope\u0000bad' },
     { ...basicAuth, tokenUrl: 'http://metadata.internal/oauth2/token' },
     { ...basicAuth, clientSecret: 'bad\rsecret' },
+    { ...basicAuth, clientId: 'bad\ud800id' },
+    { ...basicAuth, clientSecret: 'bad\udfffsecret' },
+    { ...basicAuth, scope: 'bad\ud800scope' },
+    { ...basicAuth, audience: 'bad\udfffaudience' },
   ]) {
     assert.throws(() =>
       parseServerConnections({ GOTENUI_SERVER_CONNECTIONS: settings(badAuth) }, allowed),
@@ -438,4 +450,20 @@ test('a late 401 from an expired token does not invalidate its replacement', asy
   assert.equal((await old).status, 401)
   assert.equal((await proxyConversionRequest(conversionRequest(), fetcher)).status, 200)
   assert.equal(tokens, 2)
+})
+
+test('preserves well-formed Unicode OAuth2 credentials and canonical HTTPS endpoints', () => {
+  const auth = {
+    ...basicAuth,
+    clientId: '\u7528\u6237',
+    clientSecret: '\ud83d\udd10',
+    scope: '\u03b1',
+    audience: '\u03b2',
+  }
+  const { connections } = parseServerConnections(
+    { GOTENUI_SERVER_CONNECTIONS: settings(auth) },
+    parseAllowedBackends(backend),
+  )
+  assert.deepEqual(connections[0]?.oauth2, auth)
+  assert.equal(parseOAuth2TokenUrl('https://[::1]:443/path%3Ftoken'), 'https://[::1]/path%3Ftoken')
 })

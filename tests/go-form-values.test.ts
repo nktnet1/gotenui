@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { goFiniteFloat, goFormLength, isGoFormBoolean } from '#/lib/go-form-values'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
+import { isNumberFieldValue, parseGoFormInteger } from '#/lib/number-field-values'
 import { v8WatermarkRotationTenths } from '#/lib/official-form-fields'
 import { validatePayload } from '#/lib/validation'
 
@@ -101,4 +102,33 @@ test('v8 watermark rotation never silently rounds non-tenths or overflows its in
     ['0x1.8p2', 60],
   ] as const)
     assert.equal(v8WatermarkRotationTenths(value), tenths, value)
+})
+
+test.each([
+  ['9223372036854775807', 9223372036854775807n],
+  ['-9223372036854775808', -9223372036854775808n],
+  ['+00001', 1n],
+  ['-000', 0n],
+  [`${'0'.repeat(100_000)}12`, 12n],
+] as const)('accepts signed Go int64 values without losing precision', (raw, expected) => {
+  assert.equal(parseGoFormInteger(raw), expected)
+  assert.equal(isNumberFieldValue({ integer: true }, raw, true), true)
+})
+
+test.each([
+  '9223372036854775808',
+  '-9223372036854775809',
+  '1_000',
+  '1e2',
+  '1\n',
+  '9'.repeat(100_000),
+])('rejects malformed or overflowing Go integer values', (raw) => {
+  assert.equal(parseGoFormInteger(raw), undefined)
+  assert.equal(isNumberFieldValue({ integer: true }, raw, true), false)
+})
+
+test('distinguishes native int64 forms from safe JSON integer options', () => {
+  assert.equal(isNumberFieldValue({ integer: true }, '9223372036854775807', true), true)
+  assert.equal(isNumberFieldValue({ integer: true }, '9223372036854775807', false), false)
+  assert.equal(isNumberFieldValue({ integer: true }, '9007199254740991', false), true)
 })

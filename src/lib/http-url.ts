@@ -55,3 +55,25 @@ export function isHttpHeaderValue(value: string): boolean {
     })
   )
 }
+
+/** Parse a configured fetch destination without letting WHATWG URL repair a
+ * missing authority, strip credentials or change malformed input characters.
+ * Unlike outbound Go URLs, these endpoints are intentionally canonicalised.
+ */
+export function parseHttpEndpoint(value: string): URL | undefined {
+  const authority = /^https?:\/\/([^/?#]+)(?:[/?#]|$)/i.exec(value)?.[1]
+  if (
+    !authority ||
+    authority.includes('@') ||
+    /[\\?#]/u.test(value) ||
+    !isHttpHeaderValue(value) ||
+    value.includes('\t')
+  )
+    return undefined
+  try {
+    const parsed = new URL(value)
+    return parsed.hostname && !parsed.username && !parsed.password ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}

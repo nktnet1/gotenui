@@ -29,7 +29,7 @@ import {
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
 import { isHttpHeaderValue, isHttpUrl } from '#/lib/http-url'
-import { isNumberFieldValue, maxGoInt } from '#/lib/number-field-values'
+import { isNumberFieldValue, parseGoFormInteger } from '#/lib/number-field-values'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
   parseConsoleMessageTypes,
@@ -1127,8 +1127,7 @@ export function validateAdvancedParameters(
     ) {
       throw new InputError(`Unsupported advanced field: ${name}`)
     }
-    if (typeof value === 'number' && !Number.isFinite(value))
-      throw new InputError('Advanced values must be finite.')
+    validateAdvancedNumber(value)
   }
 }
 
@@ -1249,7 +1248,8 @@ export function validatePayload(input: unknown): {
   }
   if (['office-pdf', 'split'].includes(operation.id) && splitMode === 'intervals') {
     const interval = String(splitSpan ?? '')
-    if (!/^\+?\d+$/.test(interval) || BigInt(interval) < 1n || BigInt(interval) > maxGoInt) {
+    const parsedInterval = parseGoFormInteger(interval)
+    if (parsedInterval === undefined || parsedInterval < 1n) {
       throw new InputError('Split interval must be a positive whole number.')
     }
   }
@@ -1385,6 +1385,16 @@ function validateRequestMetadata(payload: ConversionPayload): void {
   }
 }
 
+function validateAdvancedNumber(value: string | boolean | number): void {
+  if (typeof value !== 'number') return
+  if (!Number.isFinite(value)) throw new InputError('Advanced values must be finite.')
+  if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+    throw new InputError(
+      'Advanced integers outside the safe JSON range must be supplied as strings.',
+    )
+  }
+}
+
 export function parseAdvanced(text: string): Record<string, string | boolean | number> {
   if (!text.trim()) return {}
   let value: unknown
@@ -1398,5 +1408,6 @@ export function parseAdvanced(text: string): Record<string, string | boolean | n
   }
   const parsed = v.safeParse(v.record(v.string(), advancedValue), value)
   if (!parsed.success) throw new InputError('Advanced values must be strings, booleans or numbers.')
+  for (const value of Object.values(parsed.output)) validateAdvancedNumber(value)
   return parsed.output
 }

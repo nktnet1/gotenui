@@ -62,7 +62,14 @@ async function validationCoverage(inputs: ValidationInputs): Promise<ValidationC
   )
   const pdfNames = registeredFilenames(knownNames).filter((name) => isV9SourceDocument('pdf', name))
   const minimumDocuments = pdfNames.length
-  if (remoteNames.some((name) => name === undefined)) return { minimumDocuments }
+  // A known original name must exist in the registered workspace, even if
+  // an earlier download or a numbered duplicate occupies that name first.
+  // Only the additional numbered names depend on registration order.
+  const requiredNames = [...new Set(knownNames.map(filenameKey))].filter((name) =>
+    isV9SourceDocument('pdf', name),
+  )
+  if (remoteNames.some((name) => name === undefined))
+    return { minimumDocuments, filenames: requiredNames }
   const ambiguousRegistration =
     localNames.length > 0 &&
     archiveNames.length > 0 &&
@@ -70,7 +77,7 @@ async function validationCoverage(inputs: ValidationInputs): Promise<ValidationC
   return {
     minimumDocuments,
     exactDocuments: minimumDocuments,
-    ...(!ambiguousRegistration ? { filenames: pdfNames } : {}),
+    filenames: ambiguousRegistration ? requiredNames : pdfNames,
   }
 }
 
@@ -99,7 +106,7 @@ export function parsePdfValidationReport(
   const reports: PdfValidationResult[] = []
   for (const [filename, report] of entries) {
     if (
-      !filename.trim() ||
+      !isV9SourceDocument('pdf', filename) ||
       filename.length > 255 ||
       !report ||
       typeof report !== 'object' ||

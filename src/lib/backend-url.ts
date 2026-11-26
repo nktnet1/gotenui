@@ -1,3 +1,5 @@
+import { parseHttpEndpoint } from '#/lib/http-url'
+
 /** Normalize a Gotenberg base URL without accepting credentials or opaque schemes. */
 export function normalizeBackendUrl(input: string): string {
   const value = input.trim()
@@ -7,17 +9,9 @@ export function normalizeBackendUrl(input: string): string {
   if (!/^https?:\/\//i.test(value) || value.includes('\\')) {
     throw new Error('Use an absolute HTTP or HTTPS Gotenberg URL.')
   }
-  let parsed: URL
-  try {
-    parsed = new URL(value)
-  } catch {
-    throw new Error('Enter a valid absolute Gotenberg URL.')
-  }
-  if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
-    throw new Error('The Gotenberg URL must use HTTP or HTTPS.')
-  }
-  if (parsed.username || parsed.password || value.includes('?') || value.includes('#')) {
-    throw new Error('Do not include credentials, query strings or fragments in the URL.')
+  const parsed = parseHttpEndpoint(value)
+  if (!parsed) {
+    throw new Error('Enter a valid absolute Gotenberg URL without credentials, query or fragment.')
   }
   return parsed.toString().replace(/\/+$/, '')
 }
