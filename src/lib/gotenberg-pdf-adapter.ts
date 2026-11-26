@@ -237,6 +237,22 @@ export function adaptPdfForm(
         throw new InputError('Enable per-file merge bookmarks before specifying their labels.')
       }
       let fileBookmarks: FileBookmarks | undefined
+      const remoteNames = forwardedRemoteFilenames(output, payload.downloadFrom)
+      const names = [
+        ...remoteNames.filter((name): name is string => name !== undefined),
+        ...numberedNames,
+        ...archiveEntryNames,
+      ]
+      const namesKnown =
+        remoteNames.every((name) => name !== undefined) &&
+        (!archives.length || new Set(names.map(filenameKey)).size === names.length)
+      // Actual registered names take precedence over the aliases for numbered
+      // local uploads. Only infer numbered duplicates when registration is known.
+      const exactNames = new Set(
+        (namesKnown ? registeredFilenames(names) : names.map(filenameKey)).filter((name) =>
+          isV9SourceDocument('pdf', name),
+        ),
+      )
       if (fields.v9FileBookmarks === true) {
         const label = optional('v9FileBookmarkSource')
         let labels: unknown
@@ -262,25 +278,15 @@ export function adaptPdfForm(
                 : '',
             forwarded: numberedNames[index] ?? (source instanceof File ? source.name : ''),
           })),
+          { preferForwarded: true, exactNames },
         )
       }
-      if (fileBookmarks?.labels) {
-        const remoteNames = forwardedRemoteFilenames(output, payload.downloadFrom)
-        if (remoteNames.every((name): name is string => name !== undefined)) {
-          const names = [...remoteNames, ...numberedNames, ...archiveEntryNames]
-          // Archive and upload registration order can vary. Check exact
-          // names only when that order cannot change a duplicate assignment.
-          if (!archives.length || new Set(names.map(filenameKey)).size === names.length) {
-            const known = new Set(
-              registeredFilenames(names).filter((name) => isV9SourceDocument('pdf', name)),
+      if (fileBookmarks?.labels && namesKnown) {
+        for (const name of Object.keys(fileBookmarks.labels)) {
+          if (!exactNames.has(name))
+            throw new InputError(
+              `merge: fileBookmarks.labels must name a current PDF, got "${name}".`,
             )
-            for (const name of Object.keys(fileBookmarks.labels)) {
-              if (!known.has(name))
-                throw new InputError(
-                  `merge: fileBookmarks.labels must name a current PDF, got "${name}".`,
-                )
-            }
-          }
         }
       }
       stages.push({ op: 'merge', ...(fileBookmarks ? { fileBookmarks } : {}) })

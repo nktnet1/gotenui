@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { goFiniteFloat, goFormLength, isGoFormBoolean } from '#/lib/go-form-values'
+import { createGotenbergForm } from '#/lib/gotenberg-client'
+import { v8WatermarkRotationTenths } from '#/lib/official-form-fields'
+import { validatePayload } from '#/lib/validation'
 
 test('Go floating-point validation accepts decimal and hexadecimal numeric spellings', () => {
   for (const [raw, expected] of [
@@ -69,4 +72,33 @@ test('Go boolean validation retains every accepted spelling', () => {
     assert.equal(isGoFormBoolean(value), true)
   for (const value of ['', 'yes', 'on', ' true', 'TrUe', 'false\n', '2'])
     assert.equal(isGoFormBoolean(value), false)
+})
+
+test('native Chromium and LibreOffice numeric controls accept Go float spellings', () => {
+  const cases = [
+    { operation: 'url-pdf', fields: { url: 'https://example.test', scale: '0x1.8p0' } },
+    { operation: 'url-shot', fields: { url: 'https://example.test', deviceScaleFactor: '1_0e-1' } },
+    {
+      operation: 'office-pdf',
+      fields: { nativeWatermarkText: 'DRAFT', nativeWatermarkRotateAngle: '0x1.8p2' },
+    },
+  ]
+  for (const candidate of cases) {
+    const { payload, operation } = validatePayload({ ...candidate, advanced: {} })
+    const files = operation.input === 'office' ? [new File(['Office document'], 'report.docx')] : []
+    const form = createGotenbergForm(operation, payload, files, [], 4_000_000, {}, [], 9)
+    const key = Object.keys(candidate.fields).at(-1) as string
+    assert.equal(form.get(key), payload.fields[key])
+  }
+})
+
+test('v8 watermark rotation never silently rounds non-tenths or overflows its integer encoding', () => {
+  for (const value of ['0.000000001', '0.30000000000000004', '1e30'])
+    assert.equal(v8WatermarkRotationTenths(value), null, value)
+  for (const [value, tenths] of [
+    ['0.3', 3],
+    ['-22.5', -225],
+    ['0x1.8p2', 60],
+  ] as const)
+    assert.equal(v8WatermarkRotationTenths(value), tenths, value)
 })

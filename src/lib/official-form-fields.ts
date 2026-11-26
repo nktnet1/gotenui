@@ -1,3 +1,5 @@
+import { goFiniteFloat } from '#/lib/go-form-values'
+
 /** Human-friendly Chromium reliability controls. Gotenberg expects JSON arrays. */
 export const CONSOLE_MESSAGE_TYPES = ['log', 'debug', 'info', 'warning', 'error', 'assert'] as const
 export type ConsoleMessageType = (typeof CONSOLE_MESSAGE_TYPES)[number]
@@ -79,12 +81,13 @@ export function parseIgnoredDomains(input: string): string[] {
 
 /** Gotenberg 8 sends native LibreOffice watermark angles in tenths of a degree. */
 export const V8_WATERMARK_ROTATION_ERROR =
-  'Gotenberg 8 native watermark rotation supports one decimal place.'
+  'Gotenberg 8 native watermark rotation supports one decimal place within the safe integer range.'
 
 export function v8WatermarkRotationTenths(value: string | boolean): number | null {
-  const tenths = Number(value) * 10
-  const rounded = Math.round(tenths)
-  return Number.isFinite(tenths) && Math.abs(tenths - rounded) <= 1e-7 ? rounded : null
+  const angle = typeof value === 'string' ? goFiniteFloat(value) : undefined
+  if (angle === undefined) return null
+  const rounded = Math.round(angle * 10)
+  return Number.isSafeInteger(rounded) && rounded / 10 === angle ? rounded : null
 }
 
 export function encodeOfficialField(

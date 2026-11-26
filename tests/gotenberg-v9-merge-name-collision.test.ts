@@ -353,3 +353,23 @@ test.each(['pdf', 'office'] as const)(
     assert.deepEqual(output.stages, stages)
   },
 )
+
+test.each(['remote', 'archive'] as const)(
+  'standalone merge gives actual %s filenames precedence over local aliases',
+  async (kind) => {
+    const labels = { 'report.pdf': 'External', '01_report.pdf': 'Local' }
+    const output = await forwardedFiles(
+      pdfMergeRequest({
+        sourceNames: ['report.pdf'],
+        ...(kind === 'remote'
+          ? { remotes: [{ url: 'https://example.test/report.pdf' }] }
+          : { archives: [zipFixture({ 'report.pdf': '%PDF-1.7\n' })] }),
+        fields: { v9FileBookmarks: true, v9FileBookmarkLabels: JSON.stringify(labels) },
+      }),
+      '9.10.0',
+      '/forms/pdf/pipe',
+    )
+    assert.deepEqual(output.filenames, ['01_report.pdf'])
+    assert.deepEqual(output.stages, [{ op: 'merge', fileBookmarks: { labels } }])
+  },
+)

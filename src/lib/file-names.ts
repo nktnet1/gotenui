@@ -56,7 +56,13 @@ export function possibleRemoteFilename(remote: {
   try {
     // Go's url.Parse decodes Path, then path.Base strips trailing slashes.
     // SanitizeFilename subsequently strips backslashes and control characters.
-    const pathname = decodeURIComponent(new URL(remote.url).pathname)
+    // WHATWG URL.pathname removes dot segments (including encoded dots),
+    // unlike Go's url.Parse. Inspect the supplied path without rewriting it.
+    const parsed = new URL(remote.url)
+    if (!['http:', 'https:'].includes(parsed.protocol)) return undefined
+    const rawPath = /^https?:\/\/[^/?#]+(\/[^?#]*)?/i.exec(remote.url)?.[1]
+    if (!rawPath) return undefined
+    const pathname = decodeURIComponent(rawPath)
     const base = pathname.replace(/\/+$/u, '').split('/').at(-1) ?? ''
     const filename = [...(base.split('\\').at(-1) ?? '')]
       .filter((character) => {

@@ -22,6 +22,7 @@ import {
   possibleRemoteFilename,
   registeredFilenames,
 } from '#/lib/file-names'
+import { goFiniteFloat } from '#/lib/go-form-values'
 import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
@@ -1172,10 +1173,17 @@ export function validatePayload(input: unknown): {
         // Number() additionally accepts hex, whitespace and exponent notation for ints.
         const integer = field.integer === true
         const validSpelling = (integer ? decimalIntegerPattern : decimalNumberPattern).test(value)
-        const n = Number(value)
+        // Native conversion fields go directly to Go. PDF tool controls are
+        // also translated into JSON numbers, so retain their decimal grammar.
+        const n =
+          !integer && operation.input !== 'pdf'
+            ? goFiniteFloat(value)
+            : validSpelling
+              ? Number(value)
+              : undefined
         const goInt = integer && validSpelling ? BigInt(value) : undefined
         if (
-          !validSpelling ||
+          n === undefined ||
           !Number.isFinite(n) ||
           (field.min !== undefined && n < field.min) ||
           (field.max !== undefined && n > field.max) ||

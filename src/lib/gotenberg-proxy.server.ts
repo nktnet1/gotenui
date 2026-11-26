@@ -465,7 +465,7 @@ function conversionResponseLength(
   allowEmpty = false,
 ): number | undefined {
   if (header === null) return undefined
-  if (!/^(0|[1-9]\d*)$/.test(header)) {
+  if (!/^\d+$/.test(header)) {
     throw new ProxyInputError('Gotenberg returned an invalid response length.', 502)
   }
   const length = Number(header)

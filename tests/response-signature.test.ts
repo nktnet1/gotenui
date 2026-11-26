@@ -289,3 +289,16 @@ test('preamble verification still rejects HTML fallbacks and headers too far int
     )
   }
 })
+
+test('conversion response accepts a zero-padded valid Content-Length', async () => {
+  const pdf = '%PDF-1.7\n'
+  const response = await proxyConversionRequest(
+    requestFor(),
+    async () =>
+      new Response(pdf, {
+        headers: { 'Content-Type': 'application/pdf', 'Content-Length': `00${pdf.length}` },
+      }),
+  ).catch(proxyErrorResponse)
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), pdf)
+})

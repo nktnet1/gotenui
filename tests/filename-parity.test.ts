@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { addRemoteAttachmentMetadata } from '#/lib/attachment-metadata'
-import { combineUploadSelection, filenameKey } from '#/lib/file-names'
+import { combineUploadSelection, filenameKey, possibleRemoteFilename } from '#/lib/file-names'
 import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
 import { addBookmarkMapping } from '#/lib/pdf-structure-editors'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
@@ -218,5 +218,19 @@ test('rejects malformed Unicode filenames before multipart serialization', () =>
     () =>
       validatePayload({ operation: 'merge', fields: {}, advanced: {}, outputName: 'report\udc00' }),
     /Unicode/,
+  )
+})
+
+test('remote filename inference preserves Go URL path segments before taking the basename', () => {
+  for (const path of ['/report.pdf/.', '/report.pdf/%2e', '/a/report.pdf/%2E%2E']) {
+    assert.equal(possibleRemoteFilename({ url: `https://example.test${path}` }), undefined, path)
+  }
+  assert.equal(
+    possibleRemoteFilename({ url: 'https://example.test/a/../report.pdf?token=x' }),
+    'report.pdf',
+  )
+  assert.equal(
+    possibleRemoteFilename({ url: 'https://example.test/a%2Freport.pdf/' }),
+    'report.pdf',
   )
 })

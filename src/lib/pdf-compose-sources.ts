@@ -116,6 +116,46 @@ function materialize(template: string, parts: readonly string[]): string {
   return template.replaceAll(partMarker, () => parts[index++] ?? '')
 }
 
+/** Each split emits contiguous zero-based indices. Fixed ranges require all
+ * children, while interval splits can have different counts in each branch.
+ * Check only the provided paths rather than expanding potentially huge trees.
+ */
+function completeSplitCoverage(
+  names: ReadonlySet<string>,
+  template: string,
+  partCounts: readonly (number | undefined)[],
+): boolean {
+  type PartTree = Map<string, PartTree>
+  const root: PartTree = new Map()
+  for (const name of names) {
+    const parts = matchTemplate(name, template, partCounts)
+    if (!parts) continue
+    let branch = root
+    for (const part of parts) {
+      let child = branch.get(part)
+      if (!child) {
+        child = new Map()
+        branch.set(part, child)
+      }
+      branch = child
+    }
+  }
+  let level = [root]
+  for (const count of partCounts) {
+    const next: PartTree[] = []
+    for (const branch of level) {
+      if (!branch.size || (count !== undefined && branch.size !== count)) return false
+      for (let index = 0; index < branch.size; index++) {
+        const child = branch.get(String(index))
+        if (!child) return false
+        next.push(child)
+      }
+    }
+    level = next
+  }
+  return true
+}
+
 /** Current Gotenberg filenames take precedence over convenient original-name
  * aliases when a numbered upload has the same spelling as another input.
  */
@@ -387,8 +427,8 @@ export function reconcilePdfComposeSources(
     }
     if (sourcesKnown && !single) {
       // Gotenberg requires every current document to be placed at least once.
-      // Interval splits have unknown cardinality but always produce at least
-      // one output. Compare lower bounds without expanding all filenames.
+      // Check every known split branch. Interval counts remain unknown, but
+      // the supplied indices must start at zero and cannot contain gaps.
       for (const { original, forwarded, partCounts = [] } of sources) {
         if (!partCounts.length) {
           if (!placed.has(forwarded)) {
@@ -398,14 +438,7 @@ export function reconcilePdfComposeSources(
           }
           continue
         }
-        const expected = partCounts.reduce<number>(
-          (total, count) => Math.min(placed.size + 1, total * (count ?? 1)),
-          1,
-        )
-        const actual = [...placed].filter((name) =>
-          matchTemplate(name, forwarded, partCounts),
-        ).length
-        if (actual < expected) {
+        if (!completeSplitCoverage(placed, forwarded, partCounts)) {
           const example = materialize(
             original,
             partCounts.map(() => '0'),

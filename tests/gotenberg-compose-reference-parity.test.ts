@@ -106,6 +106,11 @@ const compose = (source?: string) => ({
   placements: [source === undefined ? { x: 12 } : { source, x: 12 }],
 })
 
+const composeMany = (...sources: string[]) => ({
+  ...compose(),
+  placements: sources.map((source) => ({ source, x: 12 })),
+})
+
 describe('Gotenberg 9.2 compose source reconciliation', () => {
   it('uses a nonempty remote name hint when the official filename override is empty', async () => {
     const officeStage = {
@@ -166,14 +171,18 @@ describe('Gotenberg 9.2 compose source reconciliation', () => {
   it('maps a renamed Office source to the zero-based split output after merge', async () => {
     const result = await forwarded({
       names: ['z.docx', 'a.docx'],
-      stages: [{ op: 'merge' }, { op: 'split', every: 1 }, compose('z.docx_1.pdf')],
+      stages: [
+        { op: 'merge' },
+        { op: 'split', every: 1 },
+        composeMany('z.docx_0.pdf', 'z.docx_1.pdf'),
+      ],
     })
     assert.equal(result.status, 200)
     assert.deepEqual(result.names, ['01_z.docx', '02_a.docx'])
     assert.deepEqual(result.stages, [
       { op: 'merge' },
       { op: 'split', every: 1 },
-      compose('01_z.docx_1.pdf'),
+      composeMany('01_z.docx_0.pdf', '01_z.docx_1.pdf'),
     ])
   })
 
@@ -261,13 +270,17 @@ describe('Gotenberg 9.2 compose source reconciliation', () => {
     const result = await forwarded({
       operation: 'pdf-pipeline',
       names: ['z.pdf', 'a.pdf'],
-      stages: [{ op: 'merge' }, { op: 'split', every: 1 }, compose('z_2.pdf')],
+      stages: [
+        { op: 'merge' },
+        { op: 'split', every: 1 },
+        composeMany('z_0.pdf', 'z_1.pdf', 'z_2.pdf'),
+      ],
     })
     assert.equal(result.status, 200)
     assert.deepEqual(result.stages, [
       { op: 'merge' },
       { op: 'split', every: 1 },
-      compose('01_z_2.pdf'),
+      composeMany('01_z_0.pdf', '01_z_1.pdf', '01_z_2.pdf'),
     ])
   })
 
@@ -570,7 +583,7 @@ describe('compose stage filename validation', () => {
       JSON.stringify([
         { op: 'split', every: 1 },
         { op: 'split', every: 1 },
-        compose('report_0_1.pdf'),
+        composeMany('report_0_0.pdf', 'report_0_1.pdf'),
         { op: 'split', every: 1 },
         compose('report_0_0_0.pdf'),
       ]),
@@ -578,7 +591,7 @@ describe('compose stage filename validation', () => {
     const output = reconcilePdfComposeSources(stages, {
       inputs: [{ original: 'report.pdf', forwarded: 'report.pdf' }],
     })
-    assert.deepEqual(output[2], compose('report_0_1.pdf'))
+    assert.deepEqual(output[2], composeMany('report_0_0.pdf', 'report_0_1.pdf'))
     assert.deepEqual(output[4], compose('report_0_0_0.pdf'))
   })
 })
@@ -1328,5 +1341,80 @@ describe('complete composition coverage and upload registration', () => {
       }) ?? '',
       /not one of the current PDF inputs/,
     )
+  })
+})
+
+describe('composition coverage within each split branch', () => {
+  it.each([
+    ['skips the first interval part', [{ op: 'split', every: 1 }], ['report_1.pdf']],
+    [
+      'skips an interior interval part',
+      [{ op: 'split', every: 1 }],
+      ['report_0.pdf', 'report_2.pdf'],
+    ],
+    [
+      'omits a fixed-range branch',
+      [
+        { op: 'split', ranges: ['1-2', '3-4'] },
+        { op: 'split', every: 1 },
+      ],
+      ['report_0_0.pdf', 'report_0_1.pdf'],
+    ],
+    [
+      'omits a nested fixed-range part',
+      [
+        { op: 'split', every: 2 },
+        { op: 'split', ranges: ['1', '2'] },
+      ],
+      ['report_0_0.pdf', 'report_1_0.pdf', 'report_1_1.pdf'],
+    ],
+  ] as const)(
+    'rejects a composition that %s in both editor and proxy',
+    async (_description, splits, names) => {
+      const stages = [...splits, { ...compose(), placements: names.map((source) => ({ source })) }]
+      const result = await forwarded({
+        operation: 'pdf-pipeline',
+        names: ['report.pdf'],
+        version: '9.10.0',
+        stages,
+      })
+      assert.equal(result.status, 400, result.error)
+      assert.equal(result.calls, 0)
+      assert.match(result.error, /place every PDF/)
+      assert.match(
+        pdfPipelineEditorError(JSON.stringify(stages), {
+          localAssetNames: [],
+          archivesPresent: false,
+          remoteRows: [],
+          remoteJson: '',
+          acknowledgedRedaction: false,
+          backendVersion: '9.10.0',
+          documentKind: 'pdf',
+          documentNames: ['report.pdf'],
+        }) ?? '',
+        /place every PDF/,
+      )
+    },
+  )
+
+  it('accepts complete fixed branches with different interval counts and repeated placements', async () => {
+    const stages = [
+      { op: 'split', ranges: ['1-2', '3'] },
+      { op: 'split', every: 1 },
+      {
+        ...compose(),
+        placements: ['report_0_0.pdf', 'report_0_1.pdf', 'report_1_0.pdf', 'report_0_0.pdf'].map(
+          (source) => ({ source }),
+        ),
+      },
+    ]
+    const result = await forwarded({
+      operation: 'pdf-pipeline',
+      names: ['report.pdf'],
+      version: '9.10.0',
+      stages,
+    })
+    assert.equal(result.status, 200, result.error)
+    assert.deepEqual(result.stages, stages)
   })
 })
