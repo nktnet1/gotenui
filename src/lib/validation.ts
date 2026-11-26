@@ -21,7 +21,11 @@ import {
   filenameKey,
   remoteLocalFilenameCollision,
 } from '#/lib/file-names'
-import { parseGotenbergVersion, type SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import {
+  MAX_GOTENBERG_VERSION_LENGTH,
+  parseGotenbergVersion,
+  type SupportedGotenbergMajor,
+} from '#/lib/gotenberg-version'
 import { isNumberFieldValue, maxGoInt } from '#/lib/number-field-values'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
@@ -81,7 +85,7 @@ export type WebhookConfig = v.InferOutput<typeof webhookSchema>
 export const payloadSchema = v.object({
   operation: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   // Browser submissions and queued jobs retain the API version they were configured for.
-  expectedBackendVersion: v.optional(v.pipe(v.string(), v.maxLength(80))),
+  expectedBackendVersion: v.optional(v.pipe(v.string(), v.maxLength(MAX_GOTENBERG_VERSION_LENGTH))),
   fields: v.record(v.string(), fieldValue),
   advanced: v.record(v.string(), advancedValue),
   source: v.optional(v.string()),

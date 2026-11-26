@@ -400,3 +400,76 @@ it('round-trips valid negative, signed and scientific numeric field values', () 
   })
   assert.throws(() => capturePresetFields(office, { openBookmarkLevels: '1e0' }), /Invalid/)
 })
+
+it('never saves destructive redaction acknowledgements as reusable settings', () => {
+  for (const [id, field] of [
+    ['redact', 'confirmRedaction'],
+    ['pdf-pipeline', 'acknowledgedRedaction'],
+  ] as const) {
+    const op = requiredOperation(id)
+    expect(op.fields.some((definition) => definition.name === field)).toBe(true)
+    expect(reusableFieldNames(op)).toEqual([])
+    expect(capturePresetFields(op, { [field]: true })).toEqual({})
+    expect(() => upsertPreset([], op, 'Unsafe', { [field]: true }, firstId)).toThrow(
+      /no reusable settings/,
+    )
+    expect(
+      persistPresets(storage(), [
+        { id: firstId, operationId: id, name: 'Unsafe', fields: { [field]: true } },
+      ]),
+    ).toBe(false)
+  }
+})
+
+it('migrates obsolete acknowledgement-only presets without losing valid settings', () => {
+  const stored = storage()
+  const valid = upsertPreset([], operation, 'Print', { landscape: true }, firstId)
+  stored.setItem(
+    PRESETS_STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        ...valid,
+        { id: secondId, operationId: 'redact', name: 'Legacy', fields: { confirmRedaction: true } },
+        {
+          id: 'preset-00000000-0000-4000-8000-000000000003',
+          operationId: 'pdf-pipeline',
+          name: 'Legacy',
+          fields: { acknowledgedRedaction: false },
+        },
+      ],
+    }),
+  )
+  expect(loadPresets(stored)).toEqual(valid)
+})
+
+it('does not migrate malformed or unknown settings as legacy acknowledgements', () => {
+  const stored = storage()
+  for (const fields of [
+    { confirmRedaction: 'true' },
+    { confirmRedaction: true, private: 'secret' },
+  ]) {
+    stored.setItem(
+      PRESETS_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        presets: [{ id: firstId, operationId: 'redact', name: 'Unsafe', fields }],
+      }),
+    )
+    expect(loadPresets(stored)).toEqual([])
+  }
+})
+
+it('round-trips explicitly cleared optional controls rather than restoring UI defaults', () => {
+  const screenshot = requiredOperation('url-shot')
+  const stored = storage()
+  const fields = { width: '', height: '', format: '' }
+  const saved = upsertPreset([], screenshot, 'Backend defaults', fields, firstId)
+  expect(saved[0]?.fields).toEqual(fields)
+  expect(persistPresets(stored, saved)).toBe(true)
+  const [restored] = loadPresets(stored)
+  assert.ok(restored)
+  expect(
+    applyPresetFields(screenshot, { width: '1200', height: '900', format: 'webp' }, restored),
+  ).toMatchObject(fields)
+})

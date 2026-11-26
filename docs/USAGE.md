@@ -5,13 +5,15 @@
 Open **Connection settings** to select a Gotenberg instance. The public demo is the default unless your deployment provides another URL.
 
 - **Browser connections** store the connection name, URL and authentication mode in your browser. Passwords and bearer tokens remain in tab memory and must be re-entered after refreshing.
-- **Managed connections** are configured by the deployment administrator. You can select them without seeing the stored upstream credentials.
+- **Managed connections** are configured by the deployment administrator. You can select them without seeing the stored upstream credentials. If a saved managed connection is unavailable, Gotenui retains the selected target instead of switching to the public demo. Select another connection explicitly in settings.
 
 Browser and managed Basic authentication accept valid UTF-8 credentials (up to 255 username and 2,048 password UTF-16 code units) without control characters. Bearer tokens may contain up to 4,096 characters. Browser API requests refuse redirects so connection credentials and uploaded files cannot be forwarded to another destination.
 
 Your deployment must allow the selected Gotenberg URL. Adding a browser connection does not add it to the server's allowlist.
 
 ## Conversions and PDF tools
+
+HTML and Markdown source imports require UTF-8. A selection of Markdown files must fit within the configured upload limit. Manual edits or a newer import supersede pending imports into the same editor.
 
 Choose a tool in the sidebar or open search with **Ctrl+K** or **Cmd+K**. Gotenui provides individual controls for supported Gotenberg settings, including Office exports, Chromium rendering, PDF attachments and post-processing.
 
@@ -87,7 +89,7 @@ Completed operations download automatically. PDFs and supported raster images (P
 
 Gotenberg 9 PDF validation reports are summarised only when their JSON is readable and at most 128 KB; the full downloaded report remains available otherwise. Non-compliant findings, invalid reports, and incomplete remediation diagnostic headers are shown as **Review required**, not as proof of successful conformance. Always validate the downloaded PDF when conformance matters. For timestamp stages, enter an absolute HTTP(S) timestamp authority URL without credentials, fragments, whitespace or backslashes. Gotenberg's network restrictions still govern where it can connect.
 
-**Saved presets** store reusable operation settings in this browser, including valid signed numeric values. They do not store uploaded files, passwords, tokens or callback details. Presets are available only for the tool on which they were saved.
+**Saved presets** store reusable operation settings in this browser, including valid signed numeric values. They do not store uploaded files, passwords, tokens, destructive redaction acknowledgements or callback details. Explicitly cleared optional settings remain cleared when restored. Presets are available only for the tool on which they were saved.
 
 ## Batch queue
 

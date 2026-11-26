@@ -126,6 +126,7 @@ describe('diagnostics visibility and accessible tabs', () => {
 
 describe('higher-contrast connection controls', () => {
   const browsers: BrowserConnection[] = [
+    { id: 'browser-demo', name: 'Demo', url: 'https://demo.gotenberg.dev', auth: 'none' },
     { id: 'browser-default', name: 'Default', url: 'https://example.org', auth: 'none' },
   ]
 
@@ -182,6 +183,38 @@ describe('higher-contrast connection controls', () => {
     expect(
       [...(actions ?? '').matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]),
     ).toEqual(['Test connection', 'Use connection'])
+  })
+
+  it('shows a missing managed selection explicitly and disables unavailable actions', () => {
+    const html = renderToStaticMarkup(
+      createElement(ConnectionManager, {
+        browserProfiles: browsers,
+        managedProfiles: [],
+        selected: 'server:private',
+        onApply: vi.fn(),
+        onUpsert: vi.fn(),
+        onRemove: vi.fn(),
+      }),
+    )
+    expect(html).toContain(
+      '<option value="server:private" selected="">Unavailable server connection</option>',
+    )
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Test connection<\/button>/)
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Use connection<\/button>/)
+  })
+
+  it('does not offer removal of the last browser profile in migrated storage', () => {
+    const html = renderToStaticMarkup(
+      createElement(ConnectionManager, {
+        browserProfiles: browsers.slice(1),
+        managedProfiles: [],
+        selected: 'browser-default',
+        onApply: vi.fn(),
+        onUpsert: vi.fn(),
+        onRemove: vi.fn(),
+      }),
+    )
+    expect(html).not.toMatch(/>Remove<\/button>/)
   })
 
   it('provides distinguishable light and dark styles for important secondary actions', () => {

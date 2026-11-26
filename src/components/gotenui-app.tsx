@@ -31,13 +31,14 @@ import { DEFAULT_BACKEND_URL } from '#/lib/config'
 import {
   type BrowserConnection,
   type ConnectionChoice,
-  DEFAULT_CONNECTION_ID,
   fetchConnectionSettings,
   loadConnections,
   type ManagedConnection,
   makeBrowserAuthorization,
+  removeBrowserConnection,
   type SavedConnections,
   saveConnections,
+  selectedConnectionProfile,
   type UiFeatures,
 } from '#/lib/connection-profiles'
 import { type ObservedConnectionStatus, statusForConnection } from '#/lib/connection-status'
@@ -828,10 +829,9 @@ function GotenuiApp({
           loaded.selected.startsWith('server:') &&
           !profiles.some((profile) => `server:${profile.id}` === loaded.selected)
         ) {
-          const updated = { ...loaded, selected: DEFAULT_CONNECTION_ID }
-          setSaved(updated)
-          saveConnections(browserStorage(), updated)
-          toast.warning('The previously selected server connection is no longer available.')
+          toast.warning(
+            'The previously selected server connection is no longer available. Select another connection in settings.',
+          )
         }
       })
       .catch((error) => {
@@ -876,23 +876,21 @@ function GotenuiApp({
     toast.success('Browser connection saved.')
   }
   const remove = (id: string) => {
-    if (id === DEFAULT_CONNECTION_ID) return
-    const browsers = saved.browsers.filter((item) => item.id !== id)
-    if (browsers.length === saved.browsers.length) return
-    setCredentials({ username: '', secret: '' })
-    setConnectionEpoch((value) => value + 1)
-    persist({ browsers, selected: saved.selected === id ? DEFAULT_CONNECTION_ID : saved.selected })
+    const next = removeBrowserConnection(saved, id)
+    if (next === saved) return
+    if (next.selected !== saved.selected) {
+      setCredentials({ username: '', secret: '' })
+      setConnectionEpoch((value) => value + 1)
+    }
+    persist(next)
     toast.success('Connection removed.')
   }
 
-  const server = saved.selected.startsWith('server:')
-    ? managed.find((item) => `server:${item.id}` === saved.selected)
-    : undefined
-  const browser = saved.browsers.find((item) => item.id === saved.selected)
-  const activeBrowser = browser ?? saved.browsers[0]
-  const selectionKey = server ? saved.selected : (activeBrowser?.id ?? DEFAULT_CONNECTION_ID)
+  const selectedProfile = selectedConnectionProfile(saved, managed)
+  const serverId = selectedProfile.kind === 'server' ? selectedProfile.id : undefined
+  const activeBrowser = selectedProfile.kind === 'browser' ? selectedProfile.profile : undefined
   const connection = useMemo<ConnectionChoice>(() => {
-    if (server) return { kind: 'server', id: server.id }
+    if (serverId) return { kind: 'server', id: serverId }
     return {
       kind: 'browser',
       url: activeBrowser?.url ?? DEFAULT_BACKEND_URL,
@@ -901,7 +899,7 @@ function GotenuiApp({
           ? makeBrowserAuthorization(activeBrowser.auth, credentials.username, credentials.secret)
           : undefined,
     }
-  }, [server, activeBrowser, credentials])
+  }, [serverId, activeBrowser, credentials])
 
   if (loading)
     return (
@@ -915,8 +913,8 @@ function GotenuiApp({
   return (
     <Workspace
       connection={connection}
-      connectionName={server?.name ?? activeBrowser?.name ?? 'Gotenberg demo'}
-      selectedConnection={selectionKey}
+      connectionName={selectedProfile.name}
+      selectedConnection={selectedProfile.key}
       connectionEpoch={connectionEpoch}
       browserProfiles={saved.browsers}
       managedProfiles={managed}

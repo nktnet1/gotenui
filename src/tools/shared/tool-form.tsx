@@ -60,6 +60,7 @@ import {
   remediationReviewNotice,
 } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
+import { LatestFileImport } from '#/lib/latest-file-import'
 import { officeAcceptForVersion } from '#/lib/office-formats'
 import { canWebhookForOperation } from '#/lib/operation-availability'
 import { DEFAULT_PDF_PIPELINE } from '#/lib/pdf-pipeline'
@@ -164,6 +165,7 @@ export function Workbench({
     operationDefaults(operation),
   )
   const [source, setSource] = useState(EXAMPLE_HTML)
+  const htmlImport = useRef(new LatestFileImport())
   const [markdownName, setMarkdownName] = useState(DEFAULT_MARKDOWN_NAME)
   const [markdownFiles, setMarkdownFiles] = useState<MarkdownSource[]>([])
   const nextMarkdownId = useRef(0)
@@ -230,6 +232,7 @@ export function Workbench({
   }, [connectionKey, clearResult])
   useEffect(() => {
     setFields(operationDefaults(operation))
+    htmlImport.current.cancel()
     setSource(operation.input === 'markdown' ? EXAMPLE_MARKDOWN : EXAMPLE_HTML)
     setMarkdownName(DEFAULT_MARKDOWN_NAME)
     setMarkdownFiles([])
@@ -911,10 +914,15 @@ export function Workbench({
                   spellCheck={false}
                   rows={14}
                   value={source}
-                  onChange={(event) => setSource(event.target.value)}
+                  onChange={(event) => {
+                    htmlImport.current.cancel()
+                    setSource(event.target.value)
+                  }}
                   className="min-h-72 resize-y p-5 font-mono text-xs leading-6 focus-visible:border-sky-500"
                 />
-                {operation.input === 'html' && <HtmlSourceImport onImport={setSource} />}
+                {operation.input === 'html' && (
+                  <HtmlSourceImport onImport={setSource} importer={htmlImport.current} />
+                )}
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {operation.input === 'html'
                     ? 'HTML renders with Chromium, including inline CSS and scripts.'

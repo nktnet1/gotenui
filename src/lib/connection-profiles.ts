@@ -81,7 +81,15 @@ export function loadConnections(
         return { ...item, url: normalizeBackendUrl(item.url) }
       })
       if (browsers.length === 0) return fallback
-      return { selected: parsed.output.selected, browsers }
+      const selected = parsed.output.selected
+      return {
+        selected:
+          /^server:[a-z][a-z0-9-]{0,63}$/.test(selected) ||
+          browsers.some((item) => item.id === selected)
+            ? selected
+            : (browsers[0]?.id ?? DEFAULT_CONNECTION_ID),
+        browsers,
+      }
     }
     // Migrate the URL preference from v1.0.9 without copying any credentials.
     const legacy = storage?.getItem(BACKEND_STORAGE_KEY)
@@ -129,6 +137,43 @@ export function saveConnections(
   }
 }
 
+/** Removing an inactive profile must not change the selected connection. */
+export function removeBrowserConnection(saved: SavedConnections, id: string): SavedConnections {
+  if (id === DEFAULT_CONNECTION_ID || saved.browsers.length <= 1) return saved
+  const browsers = saved.browsers.filter((profile) => profile.id !== id)
+  if (browsers.length === saved.browsers.length) return saved
+  return {
+    browsers,
+    selected:
+      saved.selected === id
+        ? (browsers.find((profile) => profile.id === DEFAULT_CONNECTION_ID)?.id ??
+          browsers[0]?.id ??
+          DEFAULT_CONNECTION_ID)
+        : saved.selected,
+  }
+}
+
+/** A missing managed profile must never silently retarget requests to a browser profile. */
+export function selectedConnectionProfile(
+  saved: SavedConnections,
+  managed: ManagedConnection[],
+):
+  | { kind: 'server'; key: string; name: string; id: string }
+  | { kind: 'browser'; key: string; name: string; profile: BrowserConnection } {
+  if (saved.selected.startsWith('server:')) {
+    const id = saved.selected.slice(7)
+    return {
+      kind: 'server',
+      key: saved.selected,
+      name: managed.find((profile) => profile.id === id)?.name ?? 'Unavailable server connection',
+      id,
+    }
+  }
+  const profile = saved.browsers.find((item) => item.id === saved.selected) ?? saved.browsers[0]
+  if (!profile) throw new Error('No browser connection is configured.')
+  return { kind: 'browser', key: profile.id, name: profile.name, profile }
+}
+
 export async function fetchConnectionSettings(signal?: AbortSignal): Promise<ConnectionSettings> {
   const response = await fetch('/api/gotenberg/connections', {
     credentials: 'same-origin',
@@ -137,7 +182,10 @@ export async function fetchConnectionSettings(signal?: AbortSignal): Promise<Con
     signal,
   })
   if (!response.ok) throw new Error(`Could not load managed connections (HTTP ${response.status}).`)
-  if (responseMediaType(response.headers.get('content-type')) !== 'application/json') {
+  if (
+    response.status !== 200 ||
+    responseMediaType(response.headers.get('content-type')) !== 'application/json'
+  ) {
     await response.body?.cancel().catch(() => {})
     throw new Error('The API did not return valid connection settings.')
   }

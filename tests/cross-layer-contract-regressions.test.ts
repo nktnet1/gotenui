@@ -309,3 +309,39 @@ test('optional attachment signature read errors do not discard completed downloa
   )
   assert.equal(await blob.text(), '%PDF-1.7')
 })
+
+test.each([201, 206])(
+  'browser diagnostics reject otherwise valid non-200 responses (HTTP %i)',
+  async (status) => {
+    let cancelled = 0
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const path = String(input)
+      const data = path.includes('/status')
+        ? { online: true, version: '9.10.0', modules: [] }
+        : path.includes('/connections')
+          ? { connections: [], features: { showDebug: true, showMetrics: true } }
+          : {}
+      const metrics = path.includes('/metrics')
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(metrics ? 'metric 1' : JSON.stringify(data)))
+        },
+        cancel() {
+          cancelled++
+        },
+      })
+      return new Response(body, {
+        status,
+        headers: {
+          'Content-Type': metrics ? 'text/plain' : 'application/json',
+          'X-Gotenui-Metrics': '1',
+        },
+      })
+    })
+    assert.equal((await getGotenbergStatus(connection)).online, false)
+    await assert.rejects(getGotenbergDebug(connection), /did not return JSON/)
+    await assert.rejects(getGotenbergMetrics(connection), /did not reach/)
+    await assert.rejects(fetchConnectionSettings(), /valid connection settings/)
+    assert.equal(cancelled, 4)
+  },
+)

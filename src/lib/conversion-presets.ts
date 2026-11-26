@@ -39,11 +39,15 @@ const SAFE_TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
   waitDelay: /^\d+(?:\.\d+)?(?:ms|s|m)$/,
 }
 
-/** Exclude secrets and free-form JSON; the bounded Chromium message enum is safe to persist. */
+// Destructive-operation acknowledgements are never reusable preferences.
+const REDACTION_ACKNOWLEDGEMENTS = new Set(['confirmRedaction', 'acknowledgedRedaction'])
+
+/** Exclude secrets, acknowledgements and free-form JSON. */
 export function reusableFieldNames(operation: Operation): string[] {
   return operation.fields
     .filter(
       (field) =>
+        !REDACTION_ACKNOWLEDGEMENTS.has(field.name) &&
         !field.name.startsWith('v9OverlayAcknowledged') &&
         field.name !== 'v9FlattenFormsOnly' &&
         field.name !== 'v9DropSignatures' &&
@@ -66,7 +70,19 @@ export function capturePresetFields(
   for (const definition of operation.fields) {
     if (!permitted.has(definition.name)) continue
     const value = current[definition.name]
-    if (value === undefined || value === '') continue
+    if (value === undefined) continue
+    if (value === '') {
+      // An explicit blank differs from an omitted control with a UI default.
+      // Keep it only when the field can be cleared.
+      if (
+        !definition.required &&
+        typeof definition.defaultValue === 'string' &&
+        definition.defaultValue !== ''
+      ) {
+        fields[definition.name] = ''
+      }
+      continue
+    }
     if (definition.kind === 'toggle') {
       if (typeof value !== 'boolean') throw new Error(`Invalid ${definition.label} preset value.`)
       fields[definition.name] = value
@@ -95,20 +111,31 @@ export function capturePresetFields(
   return fields
 }
 
-function validatedPresets(value: unknown): ConversionPreset[] | null {
+function validatedPresets(value: unknown, migrate = false): ConversionPreset[] | null {
   const result = v.safeParse(savedSchema, value)
   if (!result.success) return null
   const ids = new Set<string>()
   const names = new Set<string>()
+  const presets: ConversionPreset[] = []
   for (const preset of result.output.presets) {
     const operation = OPERATION_BY_ID.get(preset.operationId)
-    if (!operation || preset.name !== preset.name.trim() || !reusableFieldNames(operation).length)
-      return null
+    if (!operation || preset.name !== preset.name.trim()) return null
     if (ids.has(preset.id)) return null
     ids.add(preset.id)
     const key = `${preset.operationId}:${preset.name.toLocaleLowerCase()}`
     if (names.has(key)) return null
     names.add(key)
+    // Previous versions allowed these two acknowledgements in local storage.
+    // Migrate only that known legacy data, never arbitrary unknown settings.
+    if (migrate) {
+      for (const field of operation.fields) {
+        if (
+          REDACTION_ACKNOWLEDGEMENTS.has(field.name) &&
+          typeof preset.fields[field.name] === 'boolean'
+        )
+          delete preset.fields[field.name]
+      }
+    }
     // Stored data is untrusted, so reject unknown, sensitive or invalid fields instead of stripping.
     try {
       const filtered = capturePresetFields(operation, preset.fields)
@@ -121,15 +148,25 @@ function validatedPresets(value: unknown): ConversionPreset[] | null {
     } catch {
       return null
     }
+    if (!reusableFieldNames(operation).length) {
+      if (
+        migrate &&
+        operation.fields.some((field) => REDACTION_ACKNOWLEDGEMENTS.has(field.name)) &&
+        !Object.keys(preset.fields).length
+      )
+        continue
+      return null
+    }
+    presets.push(preset)
   }
-  return result.output.presets
+  return presets
 }
 
 export function loadPresets(storage: Pick<Storage, 'getItem'> | null): ConversionPreset[] {
   try {
     const raw = storage?.getItem(PRESETS_STORAGE_KEY)
     if (!raw || raw.length > 64_000) return []
-    return validatedPresets(JSON.parse(raw)) ?? []
+    return validatedPresets(JSON.parse(raw), true) ?? []
   } catch {
     return []
   }

@@ -153,7 +153,10 @@ export async function getGotenbergStatus(
           `Proxy returned HTTP ${response.status}.`,
       }
     }
-    if (responseMediaType(response.headers.get('content-type')) !== 'application/json') {
+    if (
+      response.status !== 200 ||
+      responseMediaType(response.headers.get('content-type')) !== 'application/json'
+    ) {
       await response.body?.cancel().catch(() => {})
       throw new Error('The API did not return a valid Gotenberg status.')
     }
@@ -645,7 +648,10 @@ export async function getGotenbergDebug(
       (await response.text()).trim().slice(0, 500) || `Debug returned HTTP ${response.status}.`,
     )
   }
-  if (responseMediaType(response.headers.get('content-type')) !== 'application/json') {
+  if (
+    response.status !== 200 ||
+    responseMediaType(response.headers.get('content-type')) !== 'application/json'
+  ) {
     await response.body?.cancel().catch(() => {})
     throw new Error('Debug did not return JSON. Check the Gotenui API deployment.')
   }
@@ -682,6 +688,7 @@ export async function getGotenbergMetricsReport(
     )
   }
   if (
+    response.status !== 200 ||
     response.headers.get('x-gotenui-metrics') !== '1' ||
     responseMediaType(response.headers.get('content-type')) !== 'text/plain'
   ) {

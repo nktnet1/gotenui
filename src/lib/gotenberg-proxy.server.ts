@@ -12,6 +12,7 @@ import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
 import { describePdfUpstreamError } from '#/lib/gotenberg-v93-errors'
 import {
   type GotenbergVersion,
+  MAX_GOTENBERG_VERSION_LENGTH,
   parseGotenbergVersion,
   requiresGotenberg91ForExtraction,
   requiresGotenberg92ForComposition,
@@ -304,7 +305,7 @@ async function conversionTargetVersion(
     headers: target.headers,
     credentials: 'omit',
   })
-  if (!response.ok) {
+  if (response.status !== 200) {
     invalidateUnauthorized(response.status, target)
     await response.body?.cancel().catch(() => {})
     throw new ProxyInputError(
@@ -321,7 +322,7 @@ async function conversionTargetVersion(
   const parsed = parseGotenbergVersion(raw)
   if (!parsed || (parsed.major !== 8 && parsed.major !== 9)) {
     throw new ProxyInputError(
-      `Unsupported Gotenberg version: ${raw.slice(0, 80) || 'Unknown'}. Use v8 or v9.`,
+      `Unsupported Gotenberg version: ${raw.slice(0, MAX_GOTENBERG_VERSION_LENGTH) || 'Unknown'}. Use v8 or v9.`,
       409,
     )
   }
@@ -352,7 +353,7 @@ function copyUpstreamDiagnostics(upstream: Response, headers: Headers): void {
     }
   }
   const version = upstream.headers.get('gotenberg-version')
-  if (version && version.length <= 80 && /^v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version)) {
+  if (version && parseGotenbergVersion(version)) {
     headers.set('Gotenberg-Version', version)
   }
 }
@@ -958,7 +959,9 @@ export async function proxyStatusRequest(
         versionAuthFailure = response.status
         await response.body?.cancel().catch(() => {})
       } else if (response.status === 200) {
-        version = (await boundedStatusText(response, 1_024)).trim().slice(0, 80) || 'Unknown'
+        const reported = (await boundedStatusText(response, 1_024)).trim()
+        // Never turn a truncated version into a valid API version.
+        if (reported && reported.length <= MAX_GOTENBERG_VERSION_LENGTH) version = reported
       } else {
         // The optional version probe must not retain an unread upstream response.
         await response.body?.cancel().catch(() => {})

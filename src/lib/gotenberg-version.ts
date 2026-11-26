@@ -1,5 +1,7 @@
 /** API compatibility is based on the selected server's /version response, not the UI version. */
 import { isGotenberg95PaperSize } from '#/lib/pdf-paper-sizes'
+export const MAX_GOTENBERG_VERSION_LENGTH = 80
+
 export type SupportedGotenbergMajor = 8 | 9
 
 export type GotenbergVersion = {
@@ -10,8 +12,9 @@ export type GotenbergVersion = {
 
 /** Accept release and prerelease versions; do not guess a major from arbitrary text. */
 export function parseGotenbergVersion(version: string | undefined): GotenbergVersion | null {
+  if (!version || version.length > MAX_GOTENBERG_VERSION_LENGTH) return null
   const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.exec(
-    version ?? '',
+    version,
   )
   if (!match) return null
   const major = Number(match[1])

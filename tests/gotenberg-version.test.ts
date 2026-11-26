@@ -168,3 +168,10 @@ describe('per-operation API compatibility', () => {
     assert.equal(backendCompatibilityNotice({ ...status('9.0.0'), online: false }), null)
   })
 })
+
+it('all version consumers reject overlong values without truncating them', () => {
+  const exact = `9.10.0-${'a'.repeat(73)}`
+  assert.equal(exact.length, 80)
+  assert.deepEqual(parseGotenbergVersion(exact), { major: 9, minor: 10, patch: 0 })
+  assert.equal(parseGotenbergVersion(`${exact}a`), null)
+})
