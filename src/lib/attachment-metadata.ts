@@ -1,4 +1,5 @@
 import { filenameKey, safeFilename } from '#/lib/file-names'
+import { hasMalformedUnicode } from '#/lib/unicode-text'
 /** Gotenberg 8.31+ PDF/A-3 attachment metadata, keyed by exact upload filename. */
 export const ATTACHMENT_RELATIONSHIPS = [
   'Source',
@@ -18,6 +19,7 @@ export function isAttachmentMimeType(value: string): boolean {
     /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:\s*;\s*[!#$%&'*+.^_`|~0-9A-Za-z-]+=(?:[!#$%&'*+.^_`|~0-9A-Za-z-]+|"(?:[^"\\\r\n]|\\.)*"))*$/.test(
       value,
     ) &&
+    !hasMalformedUnicode(value) &&
     ![...value].some((character) => {
       const code = character.charCodeAt(0)
       return code < 32 || code === 127
@@ -31,7 +33,13 @@ export function parseAttachmentMetadata(
   if (!raw?.trim()) return {}
   try {
     const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      hasMalformedUnicode(parsed)
+    )
+      return null
     for (const details of Object.values(parsed)) {
       if (!details || typeof details !== 'object' || Array.isArray(details)) return null
       if (

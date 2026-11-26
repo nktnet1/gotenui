@@ -65,6 +65,20 @@ export function isAllowedChromiumResourceHeader(name: string): boolean {
   )
 }
 
+/** Canonicalise decoded SameSite values before the Go raw-JSON regex runs. */
+export function encodeChromiumCookies(raw: string): string {
+  const cookies = JSON.parse(raw) as { sameSite?: string }[]
+  return JSON.stringify(
+    cookies.map((cookie) => {
+      if (cookie.sameSite === undefined) return cookie
+      return {
+        ...cookie,
+        sameSite: cookie.sameSite.charAt(0).toUpperCase() + cookie.sameSite.slice(1).toLowerCase(),
+      }
+    }),
+  )
+}
+
 export function chromiumNetworkFields(
   cookies: readonly ChromiumCookie[],
   headers: readonly ChromiumResourceHeader[],
@@ -76,7 +90,7 @@ export function chromiumNetworkFields(
         name: name.trim(),
         value,
         domain: domain.trim(),
-        ...(path.trim() ? { path: path.trim() } : {}),
+        ...(path ? { path } : {}),
         ...(secure ? { secure } : {}),
         ...(httpOnly ? { httpOnly } : {}),
         ...(sameSite ? { sameSite } : {}),

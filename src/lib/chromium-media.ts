@@ -1,3 +1,4 @@
+import { hasMalformedUnicode } from '#/lib/unicode-text'
 /** Common CSS media features supported by Chromium's emulatedMediaFeatures form field.
  * Keep the human-facing selections separate from Gotenberg's JSON wire format.
  */
@@ -57,7 +58,14 @@ export function normalizeAdvancedMediaFeatures(value: string): string {
   }
   const result: Record<string, string> = Object.create(null)
   function add(name: unknown, value: unknown) {
-    if (typeof name !== 'string' || !name || typeof value !== 'string' || name in result) {
+    if (
+      typeof name !== 'string' ||
+      !name ||
+      typeof value !== 'string' ||
+      name in result ||
+      hasMalformedUnicode(name) ||
+      hasMalformedUnicode(value)
+    ) {
       throw new Error('Duplicate or invalid Chromium media feature name/value pair.')
     }
     result[name] = value

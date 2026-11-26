@@ -1,3 +1,4 @@
+import { hasMalformedUnicode } from '#/lib/unicode-text'
 /** Gotenberg 9 PDF pipeline catalogue and shared client/server validation.
  * Keep this aligned with pkg/modules/pdf/stages.go and stage_types.go.
  */
@@ -905,6 +906,8 @@ export function parsePdfPipeline(
       throw new InputError(`Stage ${index + 1} must select a supported PDF operation.`)
     const stage = normalizePdfStageAssets([value as PdfPipelineStage])[0] as PdfPipelineStage
     validateStage(stage)
+    if (hasMalformedUnicode(stage))
+      throw new InputError(`Stage ${index + 1} contains malformed Unicode.`)
     const op = stage.op
     const previous = counts.get(op) ?? 0
     if (previous && ['remediate', 'encrypt', 'sign', 'timestamp'].includes(op))

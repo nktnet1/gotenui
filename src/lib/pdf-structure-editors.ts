@@ -1,4 +1,5 @@
 import { filenameKey, safeFilename } from '#/lib/file-names'
+import { hasMalformedUnicode } from '#/lib/unicode-text'
 
 /** Common writable ExifTool/XMP keys for Gotenberg 8. */
 export const METADATA_TEXT_FIELDS = [
@@ -119,6 +120,7 @@ export function metadataObject(text: string): Record<string, unknown> {
       throw new Error(`Metadata key "${key}" is not a writable PDF metadata tag.`)
     }
   }
+  if (hasMalformedUnicode(value)) throw new Error('Metadata contains malformed Unicode.')
   return value as Record<string, unknown>
 }
 
@@ -183,6 +185,7 @@ export function validateBookmarkDocument(
   } catch {
     throw new Error('Bookmarks must contain valid JSON.')
   }
+  if (hasMalformedUnicode(value)) throw new Error('Bookmarks contain malformed Unicode.')
   const checkList = (list: unknown, label: string): void => {
     const pending: { list: unknown; label: string }[] = [{ list, label }]
     while (pending.length) {

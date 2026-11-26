@@ -10,6 +10,7 @@ import {
   encodeChromiumMediaFeatures,
   normalizeAdvancedMediaFeatures,
 } from '#/lib/chromium-media'
+import { encodeChromiumCookies } from '#/lib/chromium-network'
 import { type ConnectionChoice, requireConnectionCredentials } from '#/lib/connection-profiles'
 import {
   expectedConversionContentType,
@@ -22,7 +23,11 @@ import {
   planRemoteFilenames,
   remoteFilenamePlanReason,
 } from '#/lib/file-names'
-import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import {
+  type GotenbergVersion,
+  type SupportedGotenbergMajor,
+  supportedGotenbergMajor,
+} from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
 import { multipartBody } from '#/lib/multipart-body'
 import { encodeOfficialField } from '#/lib/official-form-fields'
@@ -268,9 +273,11 @@ export function createGotenbergForm(
     // Gotenberg 9 parses arbitrary finite degree values itself.
     form.set(
       key,
-      major === 9 && key === 'nativeWatermarkRotateAngle'
-        ? encoded
-        : encodeOfficialField(definition, encoded),
+      isChromium && key === 'cookies'
+        ? encodeChromiumCookies(encoded)
+        : major === 9 && key === 'nativeWatermarkRotateAngle'
+          ? encoded
+          : encodeOfficialField(definition, encoded),
     )
   }
   if (isChromium) {
@@ -453,7 +460,10 @@ export async function conversionTextPreview(blob: Blob, type: string): Promise<s
 /** The proxy checks the exact output count after adapting the request. The
  * browser also checks the response envelope, without guessing that count.
  */
-function browserResponseTypes(operation: Operation, payload: ConversionPayload): readonly string[] {
+export function browserResponseTypes(
+  operation: Operation,
+  payload: ConversionPayload,
+): readonly string[] {
   const { fields } = payload
   const routeTypes = fixedRouteResponseTypes(operation.id, fields.format)
   if (routeTypes) return routeTypes
@@ -497,6 +507,7 @@ export async function convertWithGotenberg(
     postFiles,
     stageFiles,
     archives,
+    supportedGotenbergMajor(payload.expectedBackendVersion),
   )
   const allowedTypes = browserResponseTypes(operation, payload)
   const body = new FormData()

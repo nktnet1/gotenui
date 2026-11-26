@@ -1,5 +1,6 @@
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { metadataObject, V9_METADATA_KEY_MAP } from '#/lib/pdf-structure-editors'
+import { hasMalformedUnicode } from '#/lib/unicode-text'
 import { InputError } from '#/lib/validation'
 
 /** Shared preflight and wire encoding for writable Gotenberg 9 PDF structure. */
@@ -45,6 +46,7 @@ export function v9BookmarkTree(raw: string): unknown[] {
     )
   }
   if (!decoded.length) throw new InputError('Gotenberg 9 requires at least one bookmark.')
+  if (hasMalformedUnicode(decoded)) throw new InputError('Bookmarks contain malformed Unicode.')
   return toV9Bookmarks(decoded)
 }
 

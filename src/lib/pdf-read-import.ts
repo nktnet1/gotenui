@@ -5,6 +5,7 @@ import {
   v9EditorMetadata,
   validateBookmarkDocument,
 } from '#/lib/pdf-structure-editors'
+import { hasMalformedUnicode } from '#/lib/unicode-text'
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -112,5 +113,10 @@ function normalizeReadBookmark(value: unknown): unknown {
 /** A corrupt UTF-8 response must never overwrite existing document structure. */
 export async function readPdfStructureResponse(blob: Blob): Promise<unknown> {
   if (blob.size > 2_000_000) throw new Error('The PDF structure response is too large to edit.')
-  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await blob.arrayBuffer()))
+  const decoded: unknown = JSON.parse(
+    new TextDecoder('utf-8', { fatal: true }).decode(await blob.arrayBuffer()),
+  )
+  if (hasMalformedUnicode(decoded))
+    throw new Error('PDF structure response contains malformed Unicode.')
+  return decoded
 }

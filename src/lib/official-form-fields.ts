@@ -1,4 +1,5 @@
 import { goFiniteFloat } from '#/lib/go-form-values'
+import { isHttpUrl } from '#/lib/http-url'
 
 /** Human-friendly Chromium reliability controls. Gotenberg expects JSON arrays. */
 export const CONSOLE_MESSAGE_TYPES = ['log', 'debug', 'info', 'warning', 'error', 'assert'] as const
@@ -62,17 +63,18 @@ export function parseIgnoredDomains(input: string): string[] {
       throw new Error('Enter comma-separated asset exclusion domains or URLs.')
     }
     const candidate = value.replace(/^\*\./u, '').replace(/^\./u, '')
+    const fullUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)
     const url = candidate.startsWith('//')
       ? `https:${candidate}`
-      : /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)
-        ? candidate
+      : fullUrl
+        ? // Go accepts any scheme here, since only the hostname is used.
+          candidate.replace(/^[a-z][a-z0-9+.-]*:/i, 'https:')
         : `https://${candidate}`
-    try {
-      const parsed = new URL(url)
-      if (!parsed.hostname || parsed.username || parsed.password) {
-        throw new Error('Invalid asset exclusion hostname.')
-      }
-    } catch {
+    if (
+      (candidate !== value && (candidate.includes('://') || candidate.startsWith('//'))) ||
+      (candidate.includes('://') && !fullUrl && !candidate.startsWith('//')) ||
+      !isHttpUrl(url)
+    ) {
       throw new Error('Enter comma-separated asset exclusion domains or URLs.')
     }
   }

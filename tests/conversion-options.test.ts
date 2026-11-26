@@ -372,7 +372,10 @@ test('accepts long Chromium cookie values and case-insensitive SameSite settings
   const { payload, operation } = validatePayload(fields)
   assert.deepEqual(
     JSON.parse(String(createGotenbergForm(operation, payload, [], []).get('cookies'))),
-    cookies,
+    [
+      { ...cookies[0], sameSite: 'Lax' },
+      { ...cookies[1], sameSite: 'None' },
+    ],
   )
   assert.throws(
     () =>

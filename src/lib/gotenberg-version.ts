@@ -24,6 +24,14 @@ export function parseGotenbergVersion(version: string | undefined): GotenbergVer
   return { major, minor, patch }
 }
 
+/** A validated pinned version can also inform local preflight. */
+export function supportedGotenbergMajor(
+  version: string | undefined,
+): SupportedGotenbergMajor | undefined {
+  const major = parseGotenbergVersion(version)?.major
+  return major === 8 || major === 9 ? major : undefined
+}
+
 /** Minor releases introduce API features. Patch releases use the same adapter contract. */
 export function sameGotenbergApiVersion(a: GotenbergVersion, b: GotenbergVersion): boolean {
   return a.major === b.major && a.minor === b.minor

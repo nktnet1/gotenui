@@ -1,4 +1,5 @@
 import { normalizeBackendUrl } from '#/lib/backend-url'
+import { parseHttpEndpoint } from '#/lib/http-url'
 
 export const DEMO_GOTENBERG_URL = 'https://demo.gotenberg.dev'
 export const DEFAULT_MAX_REQUEST_BYTES = 4_200_000
@@ -129,21 +130,8 @@ export function limitResponseStream(
 
 /** A trusted deployment setting, never a browser-supplied forwarded host/protocol. */
 function publicOrigin(configured: string): string {
-  let parsed: URL
-  try {
-    parsed = new URL(configured)
-  } catch {
-    throw new Error('GOTENUI_PUBLIC_ORIGIN must be a valid HTTP(S) origin.')
-  }
-  if (
-    !/^https?:\/\/[^/?#]+\/?$/i.test(configured) ||
-    !['http:', 'https:'].includes(parsed.protocol) ||
-    parsed.username ||
-    parsed.password ||
-    parsed.pathname !== '/' ||
-    parsed.search ||
-    parsed.hash
-  ) {
+  const parsed = parseHttpEndpoint(configured)
+  if (!parsed || !/^https?:\/\/[^/?#]+\/?$/i.test(configured) || parsed.pathname !== '/') {
     throw new Error('GOTENUI_PUBLIC_ORIGIN must be a valid HTTP(S) origin.')
   }
   return parsed.origin

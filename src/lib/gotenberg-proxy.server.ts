@@ -686,20 +686,12 @@ export async function proxyConversionRequest(
     archives,
     major,
   )
-  if (archives.length && major !== 9) {
-    throw new InputError('ZIP archive inputs require Gotenberg 9.')
-  }
   // ZIPs are still extracted and checked by Gotenberg. Before forwarding,
   // inspect only their bounded directory metadata to catch wrong source types,
   // collisions with generated documents, and invalid ZIP structures.
   const archiveEntryNames = archives.length
     ? await validateZipInputs(operation, payload, files, auxiliary, stageFiles, archives)
     : []
-  if (major === 9 && postFiles.embeds?.length) {
-    throw new InputError(
-      'Gotenberg 9 does not accept the legacy embeds field. Use an attach stage with a named pipeline stage file, or use a Gotenberg 8 connection.',
-    )
-  }
   const legacy = createGotenbergForm(
     operation,
     payload,

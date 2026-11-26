@@ -47,6 +47,7 @@ import {
   pdfPostProcessSchema,
 } from '#/lib/pdf-post-processing'
 import { metadataObject, validateBookmarkDocument } from '#/lib/pdf-structure-editors'
+import { hasMalformedUnicode } from '#/lib/unicode-text'
 import {
   isFieldRequired,
   isFieldVisible,
@@ -384,6 +385,7 @@ function requireJsonObject(value: string, label: string): Record<string, unknown
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new InputError(`${label} must be a JSON object.`)
   }
+  if (hasMalformedUnicode(parsed)) throw new InputError(`${label} contains malformed Unicode.`)
   return parsed as Record<string, unknown>
 }
 
@@ -618,6 +620,14 @@ export function validateFiles(
   const minFiles = operation.input === 'pdf' && operation.id === 'merge' && major === 8 ? 2 : 1
   if (archives.length && !supportsArchiveInputs(operation)) {
     throw new InputError('ZIP archive inputs are not supported for this operation.')
+  }
+  if (archives.length && major === 8) {
+    throw new InputError('ZIP archive inputs require Gotenberg 9.')
+  }
+  if (major === 9 && postFiles.embeds?.length) {
+    throw new InputError(
+      'Gotenberg 9 does not accept the legacy embeds field. Use an attach stage with a named pipeline stage file, or use a Gotenberg 8 connection.',
+    )
   }
   if (operation.id === 'embed' && payload?.fields.embedsMetadata) {
     const names = validatedAttachmentMetadata(String(payload.fields.embedsMetadata))
@@ -1128,6 +1138,8 @@ export function validateAdvancedParameters(
       throw new InputError(`Unsupported advanced field: ${name}`)
     }
     validateAdvancedNumber(value)
+    if (hasMalformedUnicode(value))
+      throw new InputError('Advanced values contain malformed Unicode.')
   }
 }
 
@@ -1333,6 +1345,20 @@ export function validatePayload(input: unknown): {
   }
   validateRequestMetadata(payload)
   validateAsyncInputs(payload)
+  if (hasMalformedUnicode(payload)) throw new InputError('Request text contains malformed Unicode.')
+  // Known JSON form fields are sent to Go as JSON text rather than decoded
+  // browser values. Check escaped surrogates after the field-specific checks.
+  for (const field of operation.fields) {
+    const value = payload.fields[field.name]
+    if (
+      field.kind === 'json' &&
+      typeof value === 'string' &&
+      value &&
+      hasMalformedUnicode(JSON.parse(value))
+    ) {
+      throw new InputError(`${field.label} contains malformed Unicode.`)
+    }
+  }
   return { payload, operation }
 }
 
@@ -1409,5 +1435,7 @@ export function parseAdvanced(text: string): Record<string, string | boolean | n
   const parsed = v.safeParse(v.record(v.string(), advancedValue), value)
   if (!parsed.success) throw new InputError('Advanced values must be strings, booleans or numbers.')
   for (const value of Object.values(parsed.output)) validateAdvancedNumber(value)
+  if (hasMalformedUnicode(parsed.output))
+    throw new InputError('Advanced parameters contain malformed Unicode.')
   return parsed.output
 }

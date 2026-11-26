@@ -1,5 +1,6 @@
 import { type ConnectionChoice, requireConnectionCredentials } from '#/lib/connection-profiles'
 import {
+  browserResponseTypes,
   type ConversionResult,
   conversionBinaryPreviewAllowed,
   convertWithGotenberg,
@@ -8,6 +9,7 @@ import {
   remediationReviewNotice,
   WEBHOOK_NOT_ACCEPTED_NOTICE,
 } from '#/lib/gotenberg-client'
+import { supportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { requestedPdfValidationProfiles } from '#/lib/pdf-conformance-profiles'
 import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
@@ -108,7 +110,10 @@ function prepareInput(input: BatchInput): PreparedInput {
     input.postFiles,
     input.stageFiles ?? [],
     input.archives ?? [],
+    supportedGotenbergMajor(payload.expectedBackendVersion),
   )
+  // Reject malformed stages now, rather than accepting a job that cannot run.
+  browserResponseTypes(operation, payload)
   return {
     // Copy the values and collections now, not when the job starts. File bytes remain in memory.
     candidate: structuredClone(payload),
