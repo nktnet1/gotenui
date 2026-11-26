@@ -5,6 +5,7 @@
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
 import { registeredFilenames } from '#/lib/file-names'
 import { goFormLength } from '#/lib/go-form-values'
+import { safeOutboundHost } from '#/lib/http-url'
 import {
   isPdfConformanceProfile,
   parsePdfConformanceProfiles,
@@ -1070,8 +1071,12 @@ export function conversionPipelineResponseTypes(
 export function safePipelinePreview(stages: readonly PdfPipelineStage[]): string {
   return JSON.stringify(
     stages,
-    (key, value: unknown) =>
-      /password|^key$/i.test(key) && typeof value === 'string' ? '••••••' : value,
+    (key, value: unknown) => {
+      if (typeof value !== 'string') return value
+      if (/password|^key$/i.test(key)) return '••••••'
+      if (key === 'timestampUrl' && value) return safeOutboundHost(value)
+      return value
+    },
     2,
   )
 }

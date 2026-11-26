@@ -375,7 +375,10 @@ describe('browser-managed batch queue', () => {
     const { queue } = queueWith(async () => result, completed)
     const request = input()
     request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
-    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    request.files = [
+      new File(['%PDF-1.7\n'], 'customer-a.pdf'),
+      new File(['%PDF-1.7\n'], 'customer-b.pdf'),
+    ]
     queue.enqueue(request)
     queue.start()
     await tick()
@@ -1186,6 +1189,30 @@ it('retains synchronous webhook downloads but does not imply callback delivery',
   expect(queue.getSnapshot().jobs[0]).toMatchObject({
     status: 'completed',
     review: expect.stringContaining('instead of webhook acceptance'),
+  })
+  expect(queue.getSnapshot().jobs[0]?.url).toMatch(/^blob:/)
+  queue.dispose()
+})
+
+it('keeps a partial compliance report downloadable but requires review', async () => {
+  const { queue } = queueWith(async () => ({
+    mode: 'download',
+    name: 'validation.json',
+    type: 'application/json',
+    blob: new Blob([
+      JSON.stringify({ 'first.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] } }),
+    ]),
+  }))
+  const request = input()
+  request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+  request.files = [new File(['%PDF-1.7\n'], 'first.pdf'), new File(['%PDF-1.7\n'], 'second.pdf')]
+  queue.enqueue(request)
+  queue.start()
+  await tick()
+  expect(queue.getSnapshot().jobs[0]).toMatchObject({
+    status: 'completed',
+    name: 'validation.json',
+    review: 'PDF validation could not be summarised. Review the downloaded JSON report.',
   })
   expect(queue.getSnapshot().jobs[0]?.url).toMatch(/^blob:/)
   queue.dispose()

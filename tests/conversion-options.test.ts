@@ -653,3 +653,79 @@ test('rejects non-string SameSite values even when they stringify to a supported
     /cookie/i,
   )
 })
+
+test.each(['\u0085scope', '\u017fcope', '\u0085\u017fCoPe\u0085'])(
+  'matches the upstream Unicode scope key %j',
+  (key) => {
+    const value = `secret;${key}=^https://example.test/`
+    assert.throws(() => chromiumNetworkFields([], [{ ...header, value }]), /URL scope/)
+    assert.doesNotThrow(() =>
+      validatePayload(
+        request('url-pdf', {
+          extraHttpHeaders: JSON.stringify({ Authorization: value }),
+        }),
+      ),
+    )
+    assert.throws(
+      () =>
+        validatePayload(
+          request('url-pdf', {
+            extraHttpHeaders: JSON.stringify({ 'X-Custom': `${value};scope=.*` }),
+          }),
+        ),
+      /at most one URL scope/,
+    )
+  },
+)
+
+test('does not treat a BOM as whitespace in scope names or regex patterns', () => {
+  assert.throws(
+    () =>
+      validatePayload(
+        request('url-pdf', {
+          extraHttpHeaders: JSON.stringify({ Authorization: 'secret;\uFEFFscope=.*' }),
+        }),
+      ),
+    /explicit URL scope/,
+  )
+  const scope = '^https://example.test/\uFEFF'
+  const fields = chromiumNetworkFields([], [{ ...header, scope }])
+  assert.deepEqual(JSON.parse(fields.extraHttpHeaders), {
+    Authorization: `${header.value};scope=${scope}`,
+  })
+  assert.doesNotThrow(() => validatePayload(request('url-pdf', fields)))
+})
+
+test.each(['\x00', '\x0b', '\x1f', '\x7f', '\ud800'])(
+  'rejects malformed resource header characters %j in both paths',
+  (char) => {
+    const value = `private${char}`
+    assert.throws(() => chromiumNetworkFields([], [{ ...header, value }]), /header value/)
+    assert.throws(
+      () =>
+        validatePayload(
+          request('url-pdf', {
+            extraHttpHeaders: JSON.stringify({
+              Authorization: `${value};scope=^https://example.test/`,
+            }),
+          }),
+        ),
+      /header value/,
+    )
+  },
+)
+
+test('keeps valid Unicode header values and tabs, and rejects malformed cookie paths and values', () => {
+  const fields = chromiumNetworkFields([], [{ ...header, value: 'opaque\t\ud83d\ude00' }])
+  assert.doesNotThrow(() => validatePayload(request('url-pdf', fields)))
+  for (const entry of [
+    { ...cookie, value: '\u0085' },
+    { ...cookie, value: '\ud800' },
+    { ...cookie, path: '/a\x00b' },
+  ]) {
+    assert.throws(
+      () => validatePayload(request('url-pdf', { cookies: JSON.stringify([entry]) })),
+      /valid name, value, domain/,
+    )
+  }
+})

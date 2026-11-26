@@ -1,4 +1,9 @@
+import { filenameKey, planRemoteFilenames, registeredFilenames } from '#/lib/file-names'
+import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { parsePdfConformanceProfiles } from '#/lib/pdf-conformance-profiles'
+import { isV9SourceDocument } from '#/lib/source-documents'
+import type { RemoteFile } from '#/lib/validation'
+import { zipEntryNames } from '#/lib/zip-input-validation'
 
 /** Gotenberg 9 /forms/pdf/validate returns a filename-keyed compliance report. */
 export type PdfValidationResult = {
@@ -15,9 +20,64 @@ export type PdfValidationResult = {
 export const MAX_PDF_VALIDATION_SUMMARY_BYTES = 128_000
 const MAX_PDF_VALIDATION_DOCUMENTS = 200
 
+type ValidationInputs = {
+  files: readonly File[]
+  archives?: readonly File[]
+  downloadFrom?: readonly RemoteFile[]
+  expectedBackendVersion?: string
+}
+
+type ValidationCoverage = {
+  minimumDocuments: number
+  exactDocuments?: number
+  filenames?: readonly string[]
+}
+
+/** Count all determinable PDFs and check exact registered names when possible.
+ * Go registers remote downloads first, but iterates multipart file fields in
+ * map order. With colliding uploads and archives, the count is deterministic
+ * even when the exact numbered filenames are not.
+ */
+async function validationCoverage(inputs: ValidationInputs): Promise<ValidationCoverage> {
+  const localNames = inputs.files.map(({ name }) => name)
+  const archiveNames: string[] = []
+  for (const archive of inputs.archives ?? []) {
+    for (const name of await zipEntryNames(archive)) {
+      archiveNames.push(name.split(/[/\\]/).at(-1) ?? name)
+    }
+  }
+  const remotes = inputs.downloadFrom ?? []
+  const version = parseGotenbergVersion(inputs.expectedBackendVersion)
+  const remoteNames =
+    version?.major === 9 && version.minor >= 2
+      ? planRemoteFilenames(remotes, {
+          supportsFilename: true,
+          inferAll: localNames.length > 0 || Boolean(inputs.archives?.length),
+          pinAll: false,
+          stageAssetNames: new Set(),
+        }).map(({ name }) => name)
+      : remotes.map(({ filename }) => filename || undefined)
+  const knownNames = [...remoteNames, ...localNames, ...archiveNames].filter(
+    (name): name is string => name !== undefined,
+  )
+  const pdfNames = registeredFilenames(knownNames).filter((name) => isV9SourceDocument('pdf', name))
+  const minimumDocuments = pdfNames.length
+  if (remoteNames.some((name) => name === undefined)) return { minimumDocuments }
+  const ambiguousRegistration =
+    localNames.length > 0 &&
+    archiveNames.length > 0 &&
+    new Set(knownNames.map(filenameKey)).size !== knownNames.length
+  return {
+    minimumDocuments,
+    exactDocuments: minimumDocuments,
+    ...(!ambiguousRegistration ? { filenames: pdfNames } : {}),
+  }
+}
+
 export function parsePdfValidationReport(
   raw: string,
   expectedProfiles?: readonly string[],
+  coverage?: ValidationCoverage,
 ): PdfValidationResult[] | null {
   if (raw.length > MAX_PDF_VALIDATION_SUMMARY_BYTES) return null
   let document: unknown
@@ -28,7 +88,14 @@ export function parsePdfValidationReport(
   }
   if (!document || typeof document !== 'object' || Array.isArray(document)) return null
   const entries = Object.entries(document)
-  if (!entries.length || entries.length > MAX_PDF_VALIDATION_DOCUMENTS) return null
+  if (
+    !entries.length ||
+    entries.length > MAX_PDF_VALIDATION_DOCUMENTS ||
+    (coverage && entries.length < coverage.minimumDocuments) ||
+    (coverage?.exactDocuments !== undefined && entries.length !== coverage.exactDocuments) ||
+    coverage?.filenames?.some((filename) => !Object.hasOwn(document, filename))
+  )
+    return null
   const reports: PdfValidationResult[] = []
   for (const [filename, report] of entries) {
     if (
@@ -92,12 +159,14 @@ export function parsePdfValidationReport(
 export async function summarisePdfValidationBlob(
   blob: Blob,
   expectedProfiles?: readonly string[],
+  inputs?: ValidationInputs,
 ): Promise<PdfValidationResult[] | null> {
   if (blob.size > MAX_PDF_VALIDATION_SUMMARY_BYTES) return null
   try {
     return parsePdfValidationReport(
       new TextDecoder('utf-8', { fatal: true }).decode(await blob.arrayBuffer()),
       expectedProfiles,
+      inputs ? await validationCoverage(inputs) : undefined,
     )
   } catch {
     return null

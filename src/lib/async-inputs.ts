@@ -99,13 +99,4 @@ export function webhookPayload(editor: WebhookEditorState, json: string): unknow
   } satisfies WebhookConfig
 }
 
-/** A preview must never reproduce callback secrets, pre-signed URL paths/queries, or header values. */
-export function safeOutboundHost(url: string): string {
-  try {
-    const parsed = new URL(url)
-    if (!['https:', 'http:'].includes(parsed.protocol)) return '(invalid URL)'
-    return parsed.origin
-  } catch {
-    return '(invalid URL)'
-  }
-}
+export { safeOutboundHost } from '#/lib/http-url'

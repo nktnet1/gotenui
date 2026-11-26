@@ -5,6 +5,7 @@ import {
   parsePdfValidationReport,
   summarisePdfValidationBlob,
 } from '#/lib/pdf-validation-report'
+import { zipFixture } from './fixtures/zip'
 
 const valid = () =>
   JSON.stringify({
@@ -140,4 +141,143 @@ it('does not summarise a corrupt UTF-8 report as compliant', async () => {
   ])
   assert.equal(await summarisePdfValidationBlob(report), null)
   assert.match(await report.text(), /compliant/)
+})
+
+const pdfFile = (name: string) => new File(['%PDF-1.7\n'], name)
+const reportBlob = (...names: string[]) =>
+  new Blob([
+    JSON.stringify(
+      Object.fromEntries(
+        names.map((name) => [name, { profile: 'PDF/A-2b', compliant: true, violations: [] }]),
+      ),
+    ),
+  ])
+
+it('requires every registered upload in the report, not just the right profile', async () => {
+  const inputs = { files: [pdfFile('first.pdf'), pdfFile('second.pdf')] }
+  for (const names of [
+    ['first.pdf'],
+    ['first.pdf', 'unrelated.pdf'],
+    ['first.pdf', 'second.pdf', 'unrelated.pdf'],
+  ]) {
+    assert.equal(await summarisePdfValidationBlob(reportBlob(...names), ['PDF/A-2b'], inputs), null)
+  }
+  assert.equal(
+    (await summarisePdfValidationBlob(reportBlob('second.pdf', 'first.pdf'), ['PDF/A-2b'], inputs))
+      ?.length,
+    2,
+  )
+})
+
+it('matches NFC-normalised and numbered upload names, including occupied suffixes', async () => {
+  const files = [pdfFile('cafe\u0301.pdf'), pdfFile('caf\u00e9 (2).pdf'), pdfFile('caf\u00e9.pdf')]
+  assert.equal(
+    (
+      await summarisePdfValidationBlob(
+        reportBlob('caf\u00e9.pdf', 'caf\u00e9 (2).pdf', 'caf\u00e9 (3).pdf'),
+        ['PDF/A-2b'],
+        { files },
+      )
+    )?.length,
+    3,
+  )
+})
+
+it('counts known ZIP PDFs and ignores non-document archive entries', async () => {
+  const inputs = {
+    files: [pdfFile('local.pdf')],
+    archives: [
+      zipFixture({
+        'sub/archived.PDF': '%PDF-1.7',
+        'readme.txt': 'text',
+        '__MACOSX/._archived.PDF': 'metadata',
+      }),
+    ],
+  }
+  assert.equal(
+    await summarisePdfValidationBlob(reportBlob('local.pdf'), ['PDF/A-2b'], inputs),
+    null,
+  )
+  assert.equal(
+    (
+      await summarisePdfValidationBlob(
+        reportBlob('local.pdf', 'archived.PDF'),
+        ['PDF/A-2b'],
+        inputs,
+      )
+    )?.length,
+    2,
+  )
+})
+
+it('checks the count rather than assuming registration order for colliding archive and upload names', async () => {
+  const inputs = {
+    files: [pdfFile('a.pdf'), pdfFile('a (2).pdf')],
+    archives: [zipFixture({ 'a.pdf': '%PDF-1.7', 'a (2).pdf': '%PDF-1.7' })],
+  }
+  for (const names of [
+    ['a.pdf', 'a (2).pdf', 'a (3).pdf', 'a (2) (2).pdf'],
+    ['a.pdf', 'a (2).pdf', 'a (3).pdf', 'a (2) (2).pdf', 'extra.pdf'],
+  ]) {
+    const result = await summarisePdfValidationBlob(reportBlob(...names), ['PDF/A-2b'], inputs)
+    assert.equal(result?.length ?? null, names.length === 4 ? 4 : null)
+  }
+})
+
+it('checks explicitly pinned and inferred remote names in the known v9.2+ request', async () => {
+  const inputs = {
+    files: [pdfFile('local.pdf')],
+    expectedBackendVersion: '9.10.2',
+    downloadFrom: [
+      { url: 'https://example.test/download', filename: 'remote.pdf' },
+      { url: 'https://example.test/inferred.PDF' },
+    ],
+  }
+  assert.equal(
+    await summarisePdfValidationBlob(reportBlob('local.pdf', 'remote.pdf'), ['PDF/A-2b'], inputs),
+    null,
+  )
+  assert.equal(
+    (
+      await summarisePdfValidationBlob(
+        reportBlob('local.pdf', 'remote.pdf', 'inferred.PDF'),
+        ['PDF/A-2b'],
+        inputs,
+      )
+    )?.length,
+    3,
+  )
+})
+
+it('requires known input counts without guessing the server-selected remote filenames', async () => {
+  const inputs = {
+    files: [pdfFile('local.pdf'), pdfFile('other.pdf')],
+    downloadFrom: [{ url: 'https://example.test/download' }],
+  }
+  assert.equal(
+    await summarisePdfValidationBlob(reportBlob('local.pdf'), ['PDF/A-2b'], inputs),
+    null,
+  )
+  assert.equal(
+    (
+      await summarisePdfValidationBlob(
+        reportBlob('local.pdf', 'other.pdf', 'resolved.pdf'),
+        ['PDF/A-2b'],
+        inputs,
+      )
+    )?.length,
+    3,
+  )
+})
+
+it('preserves the download when local archive metadata cannot be inspected', async () => {
+  const blob = reportBlob('local.pdf')
+  assert.equal(
+    await summarisePdfValidationBlob(blob, ['PDF/A-2b'], {
+      files: [pdfFile('local.pdf')],
+      archives: [new File(['bad archive'], 'archive.zip')],
+    }),
+    null,
+  )
+  assert.match(await blob.text(), /local\.pdf/)
 })

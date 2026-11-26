@@ -482,3 +482,39 @@ test.each(['url-pdf', 'url-shot'])(
     assert.equal(validated(id, { fields: { url } }).payload.fields.url, url)
   },
 )
+
+test.each(['\ud800', '\udfff'])(
+  'rejects invalid Unicode rather than rewriting outbound URL bytes: %j',
+  (char) => {
+    const url = `https://files.example.test/file?signature=${char}`
+    assert.throws(() => validateAsyncInputValues([{ url }], undefined), /URL/)
+    assert.throws(() => validateAsyncInputValues(undefined, { url }), /URL/)
+    assert.throws(
+      () => validatePayload({ operation: 'url-pdf', fields: { url }, advanced: {} }),
+      /URL/,
+    )
+  },
+)
+
+test('preserves valid Unicode in outbound HTTP headers and rejects lone surrogates', () => {
+  const url = 'https://files.example.test/document.pdf'
+  for (const value of ['opaque\ud800', 'opaque\udfff']) {
+    const extraHttpHeaders = { 'X-Token': value }
+    assert.throws(
+      () => validateAsyncInputValues([{ url, extraHttpHeaders }], undefined),
+      /header name or value/,
+    )
+    assert.throws(
+      () => validateAsyncInputValues(undefined, { url, extraHttpHeaders }),
+      /header name or value/,
+    )
+  }
+  const extraHttpHeaders = { 'X-Token': 'opaque\ud83d\ude00' }
+  assert.deepEqual(validateAsyncInputValues([{ url, extraHttpHeaders }], undefined).downloadFrom, [
+    { url, extraHttpHeaders },
+  ])
+  assert.deepEqual(validateAsyncInputValues(undefined, { url, extraHttpHeaders }).webhook, {
+    url,
+    extraHttpHeaders,
+  })
+})

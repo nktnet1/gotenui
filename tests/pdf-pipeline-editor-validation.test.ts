@@ -400,3 +400,18 @@ it('preflights built-in conversion stages even when the user pipeline is empty',
     null,
   )
 })
+
+it.each(['[]', 'null', '   '])(
+  'does not impose the v9.2 filename requirement for an empty pipeline %j',
+  (stages) => {
+    assert.equal(
+      pdfPipelineEditorError(stages, {
+        ...base,
+        backendVersion: '9.1.0',
+        documentKind: 'single',
+        remoteJson: '[{"url":"https://example.test/download"}]',
+      }),
+      null,
+    )
+  },
+)

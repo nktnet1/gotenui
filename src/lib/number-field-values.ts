@@ -19,6 +19,7 @@ export function isNumberFieldValue(
   return (
     n !== undefined &&
     Number.isFinite(n) &&
+    (!integer || native || Number.isSafeInteger(n)) &&
     (field.min === undefined || n >= field.min) &&
     (field.max === undefined || n <= field.max) &&
     (goInt === undefined || (goInt >= minGoInt && goInt <= maxGoInt))

@@ -163,3 +163,18 @@ test('a remote PDF stage asset with an empty filename override is not an input d
     /Upload at least 1 input file/,
   )
 })
+
+test.each([
+  ['insert-pages', 'at'],
+  ['render-pages', 'dpi'],
+] as const)(
+  'rejects unsafe JSON integers for %s %s before adapting the form',
+  (operation, field) => {
+    const required: Record<string, string> = operation === 'render-pages' ? { format: 'png' } : {}
+    assert.throws(
+      () => validatePayload(request(operation, { ...required, [field]: '9007199254740992' })),
+      /outside its permitted range/,
+    )
+    assert.doesNotThrow(() => validatePayload(request(operation, { ...required, [field]: '+2' })))
+  },
+)

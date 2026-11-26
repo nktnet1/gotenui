@@ -1001,3 +1001,14 @@ describe('visual pipeline builder', () => {
     assert.match(redactionMarkup, /type="checkbox"/)
   })
 })
+
+it('masks signed timestamp authority paths and queries without changing the pipeline', () => {
+  const url = 'https://tsa.example.test/private-path?signature=secret'
+  const stages = parsePdfPipeline(
+    JSON.stringify([{ op: 'sign', certificate: 'certificate.p12', timestampUrl: url }]),
+  )
+  const preview = safePipelinePreview(stages)
+  assert.match(preview, /https:\/\/tsa\.example\.test/)
+  assert.doesNotMatch(preview, /private-path|signature=secret/)
+  assert.deepEqual(stages, [{ op: 'sign', certificate: 'certificate.p12', timestampUrl: url }])
+})

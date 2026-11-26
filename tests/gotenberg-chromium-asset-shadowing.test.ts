@@ -473,3 +473,21 @@ test.each(['url-pdf', 'url-shot'])(
     )
   },
 )
+
+test.each(['[]', 'null', '   '])(
+  'v9.1 allows an unnamed remote resource with an empty conversion pipeline %j',
+  (conversionStages) => {
+    const { operation, payload } = sourcePayload('url-pdf', {
+      conversionStages,
+      downloadFrom: [{ url: 'https://assets.example.test/download' }],
+    })
+    const form = createGotenbergForm(operation, payload, [], [], 4_000_000, {}, [], 9, {
+      major: 9,
+      minor: 1,
+      patch: 0,
+    })
+    assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), [
+      { url: 'https://assets.example.test/download' },
+    ])
+  },
+)

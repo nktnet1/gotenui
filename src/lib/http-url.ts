@@ -5,6 +5,7 @@ export function isHttpUrl(value: string): boolean {
   const raw = /^https?:\/\/([^/?#]+)([^?#]*)(?:\?[^#]*)?(?:#([\s\S]*))?$/i.exec(value)
   if (
     !raw ||
+    /\p{Cs}/u.test(value) ||
     raw[1]?.includes('\\') ||
     raw[1]?.includes(' ') ||
     raw[1]?.includes('@') ||
@@ -31,4 +32,26 @@ export function isHttpUrl(value: string): boolean {
   } catch {
     return false
   }
+}
+
+/** A preview must never reproduce callback secrets, pre-signed URL paths/queries, or header values. */
+export function safeOutboundHost(url: string): string {
+  try {
+    const parsed = new URL(url)
+    if (!['https:', 'http:'].includes(parsed.protocol)) return '(invalid URL)'
+    return parsed.origin
+  } catch {
+    return '(invalid URL)'
+  }
+}
+
+/** HTTP field values must survive UTF-8 encoding without replacement. */
+export function isHttpHeaderValue(value: string): boolean {
+  return (
+    !/\p{Cs}/u.test(value) &&
+    ![...value].some((char) => {
+      const code = char.charCodeAt(0)
+      return (code < 32 && code !== 9) || code === 127
+    })
+  )
 }

@@ -44,7 +44,7 @@ function ignoredArchiveEntry(name: string): boolean {
 }
 
 /** Read a bounded central directory, including names past the first 30 entries. */
-async function zipEntryNames(archive: File): Promise<string[]> {
+export async function zipEntryNames(archive: File): Promise<string[]> {
   const tailStart = Math.max(0, archive.size - END_RECORD_BYTES - MAX_COMMENT_BYTES)
   const tail = new Uint8Array(await archive.slice(tailStart).arrayBuffer())
   const view = new DataView(tail.buffer, tail.byteOffset, tail.byteLength)

@@ -44,7 +44,7 @@ test('compliant Factur-X findings remain visible with review guidance', () => {
   assert.match(html, /Report requires review/)
   assert.match(html, /Compliant with findings/)
   assert.match(html, /Optional rule warning/)
-  assert.doesNotMatch(html, /Validation complete: compliant</)
+  assert.doesNotMatch(html, /Reported PDFs: compliant</)
 })
 
 function overview(id: string, options: Record<string, unknown> = {}) {
@@ -140,4 +140,24 @@ test('direct synchronous webhook results retain downloads and show delivery unce
   assert.match(html, /Delivery requires review/)
   assert.match(html, /instead of webhook acceptance/)
   assert.match(html, /Download again/)
+})
+
+test('successful validation describes the reported documents without certifying unknown inputs', () => {
+  const validation = parsePdfValidationReport(
+    JSON.stringify({
+      'resolved.pdf': { profile: 'PDF/A-2b', compliant: true, violations: [] },
+    }),
+  )
+  assert.ok(validation)
+  const html = overview('pdf-validate', {
+    lastDownload: {
+      name: 'report.json',
+      url: 'blob:report',
+      type: 'application/json',
+      size: 100,
+      validation,
+    },
+  })
+  assert.match(html, /Reported PDFs: compliant/)
+  assert.doesNotMatch(html, /Report requires review/)
 })

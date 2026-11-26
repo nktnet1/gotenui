@@ -154,6 +154,12 @@ async function batchReviewNotice(
     const reports = await summarisePdfValidationBlob(
       result.blob,
       requestedPdfValidationProfiles(input.candidate.fields),
+      {
+        files: input.files,
+        archives: input.archives,
+        downloadFrom: input.candidate.downloadFrom,
+        expectedBackendVersion: input.candidate.expectedBackendVersion,
+      },
     )
     if (!reports) return unreadableValidationMessage
     const noncompliant = reports.filter((report) => !report.compliant).length

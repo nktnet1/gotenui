@@ -291,6 +291,18 @@ export function createGotenbergForm(
     // and conversion-stage assets. Pin names that can shadow local assets on
     // v9.2+. Older PDF/Office workflows must retain their existing remote
     // semantics because 9.1 does not support the filename override.
+    const stagesJson =
+      operation.id === 'pdf-pipeline' ? payload.fields.stages : payload.conversionStages
+    const stages =
+      (supportsFilename || (major === 9 && isChromium)) && typeof stagesJson === 'string'
+        ? parsePdfPipeline(stagesJson, {
+            allowEmpty: operation.id !== 'pdf-pipeline',
+            acknowledgedRedaction:
+              operation.id === 'pdf-pipeline'
+                ? payload.fields.acknowledgedRedaction === true
+                : payload.acknowledgedConversionRedaction,
+          })
+        : []
     const chromiumNamesAtRisk =
       major === 9 &&
       isChromium &&
@@ -298,22 +310,8 @@ export function createGotenbergForm(
         files.length > 0 ||
         auxiliary.length > 0 ||
         archives.length > 0 ||
-        payload.conversionStages !== undefined)
-    const stagesJson =
-      operation.id === 'pdf-pipeline' ? payload.fields.stages : payload.conversionStages
-    const stageAssetNames = new Set(
-      supportsFilename && typeof stagesJson === 'string'
-        ? pdfStageAssetNames(
-            parsePdfPipeline(stagesJson, {
-              allowEmpty: operation.id !== 'pdf-pipeline',
-              acknowledgedRedaction:
-                operation.id === 'pdf-pipeline'
-                  ? payload.fields.acknowledgedRedaction === true
-                  : payload.acknowledgedConversionRedaction,
-            }),
-          )
-        : [],
-    )
+        stages.length > 0)
+    const stageAssetNames = new Set(supportsFilename ? pdfStageAssetNames(stages) : [])
     const namedArchiveAssets = archiveEntryNames.some((name) =>
       stageAssetNames.has(filenameKey(name)),
     )

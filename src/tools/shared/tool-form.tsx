@@ -86,6 +86,7 @@ import {
   InputError,
   parseAdvanced,
   supportsArchiveInputs,
+  validateAsyncInputValues,
   type WebhookConfig,
 } from '#/lib/validation'
 import {
@@ -545,7 +546,10 @@ export function Workbench({
     if (readAbort.current) throw new InputError('Wait for the PDF structure read to finish.')
     const issues = [...compatibility.reasons, ...outboundIssues]
     if (issues.length) throw new InputError(issues.join(' '))
-    const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
+    const { downloadFrom } = validateAsyncInputValues(
+      remoteInputsPayload(remoteRows, remoteInput),
+      undefined,
+    )
     const webhook = !canWebhook
       ? undefined
       : (webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined)
@@ -666,6 +670,12 @@ export function Workbench({
           ? ((await summarisePdfValidationBlob(
               blob,
               requestedPdfValidationProfiles(candidate.fields),
+              {
+                files,
+                archives: canUploadArchives ? archives : [],
+                downloadFrom: candidate.downloadFrom,
+                expectedBackendVersion: candidate.expectedBackendVersion,
+              },
             )) ?? undefined)
           : undefined
       // The network response is complete. Preparing a local preview must not

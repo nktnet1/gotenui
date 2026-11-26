@@ -14,6 +14,8 @@ import {
   hasAmbiguousChromiumScope,
   isAllowedChromiumResourceHeader,
   isChromiumCredentialHeader,
+  isChromiumScopeKey,
+  trimChromiumWhitespace,
 } from '#/lib/chromium-network'
 import {
   safeFilename as checkFilename,
@@ -26,7 +28,7 @@ import {
   parseGotenbergVersion,
   type SupportedGotenbergMajor,
 } from '#/lib/gotenberg-version'
-import { isHttpUrl } from '#/lib/http-url'
+import { isHttpHeaderValue, isHttpUrl } from '#/lib/http-url'
 import { isNumberFieldValue, maxGoInt } from '#/lib/number-field-values'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
@@ -210,13 +212,7 @@ function validateHeaderMap(headers: Record<string, string> | undefined): void {
   if (!headers) return
   const seen = new Set<string>()
   for (const [name, value] of Object.entries(headers)) {
-    if (
-      !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
-      [...value].some((character) => {
-        const code = character.charCodeAt(0)
-        return (code < 32 && code !== 9) || code === 127
-      })
-    ) {
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || !isHttpHeaderValue(value)) {
       throw new InputError('Invalid extra HTTP header name or value.')
     }
     const key = name.toLowerCase()
@@ -844,7 +840,8 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
         typeof entry.name !== 'string' ||
         !/^[a-z0-9!#$%&'*+.^_`|~-]+$/i.test(entry.name) ||
         typeof entry.value !== 'string' ||
-        !entry.value.trim() ||
+        !trimChromiumWhitespace(entry.value) ||
+        /\p{Cs}/u.test(entry.value) ||
         [...entry.value].some(
           (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === ';',
         ) ||
@@ -856,7 +853,8 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
         (entry.path !== undefined &&
           (typeof entry.path !== 'string' ||
             !entry.path.startsWith('/') ||
-            /[\r\n]/.test(entry.path))) ||
+            !isHttpHeaderValue(entry.path) ||
+            entry.path.includes('\t'))) ||
         (entry.secure !== undefined && typeof entry.secure !== 'boolean') ||
         (entry.httpOnly !== undefined && typeof entry.httpOnly !== 'boolean') ||
         (entry.sameSite !== undefined &&
@@ -887,7 +885,7 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       throw new InputError('Invalid or unsafe Chromium resource header name.')
     }
     names.add(lower)
-    if (typeof headerValue !== 'string' || /[\r\n]/.test(headerValue)) {
+    if (typeof headerValue !== 'string' || !isHttpHeaderValue(headerValue)) {
       throw new InputError('Invalid Chromium resource header value.')
     }
     // Gotenberg splits header values at semicolons and accepts case-insensitive
@@ -896,12 +894,12 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     const tokens = headerValue.split(';')
     const scopes = tokens.flatMap((token, index) => {
       const separator = token.indexOf('=')
-      const key = (separator < 0 ? token : token.slice(0, separator)).trim().toLowerCase()
-      if (key !== 'scope') return []
+      const key = separator < 0 ? token : token.slice(0, separator)
+      if (!isChromiumScopeKey(key)) return []
       if (separator < 0) {
         throw new InputError('Chromium resource header URL scope needs a regex after scope=.')
       }
-      const scope = token.slice(separator + 1).trim()
+      const scope = trimChromiumWhitespace(token.slice(separator + 1))
       if (hasAmbiguousChromiumScope(scope)) {
         throw new InputError(
           'Chromium resource header URL scopes cannot contain semicolons or whitespace; use regex escapes.',
@@ -924,7 +922,10 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     }
     // Anything after scope= becomes another header value token upstream, not
     // part of the URL regex. Never silently broaden a credential's scope.
-    if (authHeader && tokens.slice(scoped.index + 1).some((token) => token.trim() !== '')) {
+    if (
+      authHeader &&
+      tokens.slice(scoped.index + 1).some((token) => trimChromiumWhitespace(token) !== '')
+    ) {
       throw new InputError('Chromium authentication headers must place the URL scope last.')
     }
     // A scope-only header is valid upstream: it sends an empty header value

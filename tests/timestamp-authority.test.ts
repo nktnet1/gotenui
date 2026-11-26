@@ -58,3 +58,12 @@ describe('timestamp authority URLs', () => {
     )
   })
 })
+
+it.each(['\ud800', '\udfff'])(
+  'rejects malformed Unicode in timestamp authority URLs: %j',
+  (char) => {
+    const url = `https://tsa.example.test/timestamp?sig=${char}`
+    assert.throws(() => timestampAuthorityUrl(url), /timestamp authority URL/i)
+    assert.throws(() => parse(url), /timestamp authority URL/i)
+  },
+)

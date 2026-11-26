@@ -96,7 +96,7 @@ export function pdfPipelineEditorError(
       documentKind === 'single' &&
       (chromiumResourceNames.length > 0 ||
         archivesPresent ||
-        !!stages ||
+        parsed.length > 0 ||
         localAssetNames.length > 0)
     if (chromiumNamesAtRisk && sourceRemotes.length && version?.major === 9 && version.minor < 2) {
       return CHROMIUM_REMOTE_FILENAME_VERSION_REASON

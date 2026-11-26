@@ -307,7 +307,7 @@ export function JobPanel({
                           : downloadNeedsReview
                             ? 'Report requires review'
                             : operation.id === 'pdf-validate'
-                              ? 'Validation complete: compliant'
+                              ? 'Reported PDFs: compliant'
                               : 'Ready'}
                       </p>
                     </div>
