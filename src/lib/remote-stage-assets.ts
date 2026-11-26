@@ -46,13 +46,30 @@ export function validateAssetFilenameRegistration(
 ): void {
   const rawStages = form.get('stages')
   const stages = typeof rawStages === 'string' ? (JSON.parse(rawStages) as PdfPipelineStage[]) : []
-  const protectedNames = new Set(pdfStageAssetNames(stages).map(filenameKey))
-  if (!protectedNames.size && !chromium) return
   const remotes = JSON.parse(String(form.get('downloadFrom') ?? '[]')) as RemoteFile[]
   const remoteNames = remotes.flatMap(({ filename }) => (filename ? [filename] : []))
   const uploads = form
     .getAll('files')
     .flatMap((entry) => (entry instanceof File ? [entry.name] : []))
+  validateKnownAssetFilenameRegistration(
+    remoteNames,
+    uploads,
+    archiveEntryNames,
+    pdfStageAssetNames(stages),
+    chromium,
+  )
+}
+
+/** Shared registration check for the editor and the final multipart request. */
+export function validateKnownAssetFilenameRegistration(
+  remoteNames: readonly string[],
+  uploads: readonly string[],
+  archiveEntryNames: readonly string[],
+  assetNames: readonly string[],
+  chromium: boolean,
+): void {
+  const protectedNames = new Set(assetNames.map(filenameKey))
+  if (!protectedNames.size && !chromium) return
   const orders = [
     [...remoteNames, ...uploads, ...archiveEntryNames],
     [...remoteNames, ...archiveEntryNames, ...uploads],

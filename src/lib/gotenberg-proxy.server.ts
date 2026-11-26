@@ -798,11 +798,7 @@ export async function proxyConversionRequest(
     const returnedVersion = upstream.headers.get('Gotenberg-Version')
     if (returnedVersion !== null) {
       const parsed = parseGotenbergVersion(returnedVersion)
-      if (
-        !parsed ||
-        parsed.major !== major ||
-        (expected && !sameGotenbergApiVersion(parsed, expected))
-      ) {
+      if (!parsed || !sameGotenbergApiVersion(parsed, version)) {
         await upstream.body?.cancel().catch(() => {})
         const detail = !parsed
           ? 'Gotenberg returned an invalid version header.'

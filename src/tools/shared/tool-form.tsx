@@ -45,7 +45,11 @@ import {
   webhookPayload,
 } from '#/lib/async-inputs'
 import type { BrowserBatchQueue } from '#/lib/browser-batch-queue'
-import { DEFAULT_MARKDOWN_NAME, generatedChromiumText } from '#/lib/chromium-documents'
+import {
+  DEFAULT_MARKDOWN_NAME,
+  generatedChromiumFilenames,
+  generatedChromiumText,
+} from '#/lib/chromium-documents'
 import { chromiumNetworkFields } from '#/lib/chromium-network'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import {
@@ -409,6 +413,18 @@ export function Workbench({
           backendVersion,
           documentNames: files.map(({ name }) => name),
           documentKind: operation.id === 'office-pdf' ? 'office' : 'single',
+          chromiumResourceNames:
+            operation.id === 'office-pdf'
+              ? []
+              : [
+                  ...generatedChromiumFilenames(operation.input, {
+                    markdownName,
+                    markdownFiles,
+                    headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
+                    footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
+                  }),
+                  ...auxFiles.map(({ name }) => name),
+                ],
           builtInMerge: operation.id === 'office-pdf' && fields.merge === true,
           splitMode: typeof fields.splitMode === 'string' ? fields.splitMode : undefined,
           splitSpan: typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,

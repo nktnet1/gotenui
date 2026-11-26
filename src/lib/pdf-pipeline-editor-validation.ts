@@ -30,7 +30,10 @@ import {
   validatePdfStageUploads,
   validatePipelineSourceUploads,
 } from '#/lib/pdf-pipeline'
-import { remoteStageAssets } from '#/lib/remote-stage-assets'
+import {
+  remoteStageAssets,
+  validateKnownAssetFilenameRegistration,
+} from '#/lib/remote-stage-assets'
 import { isV9SourceDocument, sourceDocumentReason } from '#/lib/source-documents'
 import { type ConversionPayload, parseAdvanced, validateAsyncInputValues } from '#/lib/validation'
 
@@ -48,6 +51,7 @@ export function pdfPipelineEditorError(
     backendVersion,
     documentNames,
     documentKind,
+    chromiumResourceNames = [],
     builtInMerge,
     splitMode,
     splitSpan,
@@ -65,6 +69,8 @@ export function pdfPipelineEditorError(
     /** Source uploads, as opposed to separately uploaded stage assets. */
     documentNames?: readonly string[]
     documentKind?: 'office' | 'pdf' | 'single'
+    /** Generated Chromium files and ordinary auxiliary uploads. */
+    chromiumResourceNames?: readonly string[]
     builtInMerge?: boolean
     splitMode?: string
     splitSpan?: string
@@ -155,6 +161,21 @@ export function pdfPipelineEditorError(
         allowEmpty: conversionMode,
         acknowledgedRedaction,
       })
+    }
+    if (version?.major === 9) {
+      const pinned =
+        version.minor >= 2
+          ? remoteFilenames.filter((name): name is string => name !== undefined)
+          : []
+      // Archive entries are not available to synchronous editor validation.
+      // Downloads register first regardless of which upload field comes next.
+      validateKnownAssetFilenameRegistration(
+        pinned,
+        archivesPresent ? [] : [...forwarded, ...chromiumResourceNames, ...localAssetNames],
+        [],
+        [...referencedAssets],
+        documentKind === 'single',
+      )
     }
     validatePdfStageUploads(parsed, localAssetNames, conversionMode)
     if (

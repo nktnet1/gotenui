@@ -191,3 +191,79 @@ it('retains dynamically named downloads where no local or remote asset needs pro
     null,
   )
 })
+
+it.each(['pdf', 'office', 'single'] as const)(
+  'rejects a named remote stage asset displaced by earlier duplicate %s downloads',
+  (documentKind) => {
+    const filename = documentKind === 'office' ? 'document.docx' : 'document.pdf'
+    const asset = filename.replace('.', ' (2).')
+    const url = `https://documents.example.test/${filename}`
+    for (const archivesPresent of [false, true]) {
+      assert.match(
+        pdfPipelineEditorError(JSON.stringify([{ op: 'attach', file: asset }]), {
+          ...base,
+          documentKind,
+          backendVersion: '9.10.0',
+          archivesPresent,
+          remoteJson: JSON.stringify([{ url }, { url }, { url, filename: asset }]),
+        }) ?? '',
+        /Stage asset filename collides after Gotenberg numbers duplicate files/,
+      )
+    }
+  },
+)
+
+it('allows duplicate source downloads when they do not displace a named stage asset', () => {
+  const url = 'https://documents.example.test/document.pdf'
+  assert.equal(
+    pdfPipelineEditorError('[{"op":"attach","file":"document (2).pdf"}]', {
+      ...base,
+      documentKind: 'pdf',
+      backendVersion: '9.10.0',
+      remoteJson: JSON.stringify([{ url, filename: 'document (2).pdf' }, { url }, { url }]),
+    }),
+    null,
+  )
+})
+
+it('rejects a numbered remote resource that shadows an explicitly named Chromium upload', () => {
+  const url = 'https://documents.example.test/style.css'
+  const options = {
+    ...base,
+    documentKind: 'single' as const,
+    backendVersion: '9.10.0',
+    remoteJson: JSON.stringify([{ url }, { url }]),
+  }
+  assert.match(
+    pdfPipelineEditorError('[{"op":"optimize"}]', {
+      ...options,
+      chromiumResourceNames: ['index.html', 'style (2).css'],
+    }) ?? '',
+    /Chromium asset filename collides after Gotenberg numbers duplicate files: style \(2\)\.css/,
+  )
+  assert.equal(
+    pdfPipelineEditorError('[{"op":"optimize"}]', {
+      ...options,
+      chromiumResourceNames: ['index.html', 'other.css'],
+    }),
+    null,
+  )
+})
+
+it('uses numbered merge upload names rather than rejecting safe duplicate source uploads', () => {
+  const options = {
+    ...base,
+    documentKind: 'pdf' as const,
+    backendVersion: '9.10.0',
+    localAssetNames: ['document (2).pdf'],
+    documentNames: ['document.pdf', 'document.pdf'],
+  }
+  assert.match(
+    pdfPipelineEditorError('[{"op":"attach","file":"document (2).pdf"}]', options) ?? '',
+    /Stage asset filename collides after Gotenberg numbers duplicate files/,
+  )
+  assert.equal(
+    pdfPipelineEditorError('[{"op":"merge"},{"op":"attach","file":"document (2).pdf"}]', options),
+    null,
+  )
+})

@@ -12,7 +12,7 @@ import {
 } from '#/lib/async-inputs'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { OPERATION_BY_ID } from '#/lib/operations'
-import { validatePayload } from '#/lib/validation'
+import { validateAsyncInputValues, validatePayload } from '#/lib/validation'
 import { JobPanel } from '#/tools/shared/job-panel'
 
 function remoteRow(overrides: Partial<RemoteInputRow> = {}): RemoteInputRow {
@@ -341,4 +341,47 @@ test('all-whitespace remote filenames are rejected instead of silently omitted',
       }),
     /Remote filename must not be blank/,
   )
+})
+
+test.each([
+  'https:files.example.test/document.pdf',
+  'https:/files.example.test/document.pdf',
+  'https:///files.example.test/document.pdf',
+  'https://\\files.example.test/document.pdf',
+  ' https://files.example.test/document.pdf',
+  'https://files.example.test ',
+  'https://%66iles.example.test/document.pdf',
+  'https://files.example.test/doc\nument.pdf',
+  'https://files.example.test/doc\tument.pdf',
+  'https://files.example.test/document%2.pdf',
+  'https://files.example.test/document.pdf#%',
+])('rejects malformed raw HTTP-client URLs: %j', (url) => {
+  assert.throws(
+    () => validateAsyncInputValues([{ url }], undefined),
+    /downloadFrom URL must be an absolute http or https URL/,
+  )
+  for (const field of ['url', 'errorUrl', 'eventsUrl']) {
+    assert.throws(
+      () =>
+        validateAsyncInputValues(undefined, {
+          url: 'https://hooks.example.test/complete',
+          [field]: url,
+        }),
+      /Webhook .*must be an absolute http or https URL/,
+    )
+  }
+})
+
+test.each([
+  'HTTPS://files.example.test/document%20name.pdf?signature=a%2Fb%2Bc#section%20one',
+  'https://files.example.test/document.pdf?raw=%',
+  'http://[::1]:8080/report.pdf',
+  'https://files.example.test/%FF.pdf',
+  'https://%C3%A9.example.test/document.pdf',
+  'https://files.example.test/document.pdf#\u2028',
+])('keeps valid HTTP-client URLs unchanged: %j', (url) => {
+  assert.deepEqual(validateAsyncInputValues([{ url }], { url }), {
+    downloadFrom: [{ url }],
+    webhook: { url },
+  })
 })

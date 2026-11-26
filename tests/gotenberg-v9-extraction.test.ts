@@ -435,7 +435,7 @@ test('still rejects cross-major worker switches during a conversion', async () =
   )
 })
 
-test('accepts same-major response headers without pinning a minor version', async () => {
+test('rejects same-major minor version drift even for unpinned extraction requests', async () => {
   const upstream = fixture(
     '9.1.0',
     () =>
@@ -443,9 +443,10 @@ test('accepts same-major response headers without pinning a minor version', asyn
         headers: { 'Content-Type': 'text/plain', 'Gotenberg-Version': '9.3.0' },
       }),
   )
-  const response = await proxyConversionRequest(requestFor('extract-text'), upstream.fetcher)
-  assert.equal(response.status, 200)
-  assert.equal(await response.text(), 'extracted text')
+  await assert.rejects(proxyConversionRequest(requestFor('extract-text'), upstream.fetcher), {
+    status: 409,
+    message: /changed from 9\.1 to 9\.3 during conversion/,
+  })
 })
 
 test('validates both extraction options and terminal-only rules', () => {

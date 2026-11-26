@@ -1446,80 +1446,86 @@ test.each(['Unknown', '10.0.0', '9', ''])(
   },
 )
 
-test('detects minor version drift between the probe and conversion response', async () => {
-  let cancelled = false
-  const source = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode('%PDF-1.7\n'))
-    },
-    cancel() {
-      cancelled = true
-    },
-  })
-  const fetcher: typeof fetch = async (input) =>
-    String(input).endsWith('/version')
-      ? new Response('9.10.0')
-      : new Response(source, {
-          headers: { 'Content-Type': 'application/pdf', 'Gotenberg-Version': '9.9.0' },
-        })
-  await assert.rejects(
-    proxyConversionRequest(
-      requestFor('html-pdf', {}, { expectedBackendVersion: '9.10.0' }),
+test.each([undefined, '9.10.0'])(
+  'detects minor version drift with expectedBackendVersion=%s',
+  async (expectedBackendVersion) => {
+    let cancelled = false
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('%PDF-1.7\n'))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const fetcher: typeof fetch = async (input) =>
+      String(input).endsWith('/version')
+        ? new Response('9.10.0')
+        : new Response(source, {
+            headers: { 'Content-Type': 'application/pdf', 'Gotenberg-Version': '9.9.0' },
+          })
+    await assert.rejects(
+      proxyConversionRequest(requestFor('html-pdf', {}, { expectedBackendVersion }), fetcher),
+      (error: unknown) => {
+        assert.ok(error instanceof Error && 'status' in error)
+        assert.equal(error.status, 409)
+        assert.match(error.message, /changed from 9\.10 to 9\.9 during conversion/)
+        return true
+      },
+    )
+    assert.equal(cancelled, true)
+  },
+)
+
+test.each([undefined, '9.10.0'])(
+  'accepts a response from a different patch with expectedBackendVersion=%s',
+  async (expectedBackendVersion) => {
+    const fetcher: typeof fetch = async (input) =>
+      String(input).endsWith('/version')
+        ? new Response('9.10.0')
+        : new Response('%PDF-1.7\n', {
+            headers: { 'Content-Type': 'application/pdf', 'Gotenberg-Version': 'v9.10.2' },
+          })
+    const response = await proxyConversionRequest(
+      requestFor('html-pdf', {}, { expectedBackendVersion }),
       fetcher,
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof Error && 'status' in error)
-      assert.equal(error.status, 409)
-      assert.match(error.message, /changed from 9\.10 to 9\.9 during conversion/)
-      return true
-    },
-  )
-  assert.equal(cancelled, true)
-})
+    )
+    assert.equal(response.status, 200)
+    await response.body?.cancel()
+  },
+)
 
-test('accepts a response from a different patch of the same API version', async () => {
-  const fetcher: typeof fetch = async (input) =>
-    String(input).endsWith('/version')
-      ? new Response('9.10.0')
-      : new Response('%PDF-1.7\n', {
-          headers: { 'Content-Type': 'application/pdf', 'Gotenberg-Version': 'v9.10.2' },
-        })
-  const response = await proxyConversionRequest(
-    requestFor('html-pdf', {}, { expectedBackendVersion: '9.10.0' }),
-    fetcher,
-  )
-  assert.equal(response.status, 200)
-  await response.body?.cancel()
-})
-
-test('minor drift after a webhook acceptance warns that processing may already have started', async () => {
-  const fetcher: typeof fetch = async (input) =>
-    String(input).endsWith('/version')
-      ? new Response('9.10.0')
-      : new Response(null, { status: 202, headers: { 'Gotenberg-Version': '9.9.0' } })
-  await assert.rejects(
-    proxyConversionRequest(
-      requestFor(
-        'html-pdf',
-        {},
-        {
-          expectedBackendVersion: '9.10.0',
-          webhook: {
-            url: 'https://hooks.example.test/complete',
-            eventsUrl: 'https://hooks.example.test/events',
+test.each([undefined, '9.10.0'])(
+  'warns about possible webhook acceptance with expectedBackendVersion=%s',
+  async (expectedBackendVersion) => {
+    const fetcher: typeof fetch = async (input) =>
+      String(input).endsWith('/version')
+        ? new Response('9.10.0')
+        : new Response(null, { status: 202, headers: { 'Gotenberg-Version': '9.9.0' } })
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor(
+          'html-pdf',
+          {},
+          {
+            expectedBackendVersion,
+            webhook: {
+              url: 'https://hooks.example.test/complete',
+              eventsUrl: 'https://hooks.example.test/events',
+            },
           },
-        },
+        ),
+        fetcher,
       ),
-      fetcher,
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof Error && 'status' in error)
-      assert.equal(error.status, 502)
-      assert.match(error.message, /may already have been accepted/)
-      return true
-    },
-  )
-})
+      (error: unknown) => {
+        assert.ok(error instanceof Error && 'status' in error)
+        assert.equal(error.status, 502)
+        assert.match(error.message, /may already have been accepted/)
+        return true
+      },
+    )
+  },
+)
 
 test('raw Office conformance aliases cannot be overwritten by generated profiles', async () => {
   const file = new File(['Document'], 'document.txt')

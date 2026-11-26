@@ -201,7 +201,27 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
 
 /** Validate outbound URL and per-request header metadata without fetching remote content here. */
 function requireHttpUrl(url: string, label: string): void {
-  if (!isHttpUrl(url)) throw new InputError(`${label} must be an absolute http or https URL.`)
+  // These URLs are forwarded verbatim to Go's HTTP client, not navigated by
+  // Chromium. WHATWG URL silently repairs opaque URLs, missing authorities,
+  // backslashes in the authority and ASCII control characters.
+  const raw = /^https?:\/\/([^/?#]+)([^?#]*)(?:\?[^#]*)?(?:#([\s\S]*))?$/i.exec(url)
+  if (
+    !raw ||
+    raw[1]?.includes('\\') ||
+    raw[1]?.includes(' ') ||
+    // Go rejects percent-encoded ASCII in hostnames, unlike WHATWG URL.
+    /%[0-7][0-9a-f]/i.test(raw[1] ?? '') ||
+    [...url].some((character) => {
+      const code = character.charCodeAt(0)
+      return code < 32 || code === 127
+    }) ||
+    // Go validates percent escapes in the path and fragment, not RawQuery.
+    /%(?![0-9a-f]{2})/i.test(raw[2] ?? '') ||
+    /%(?![0-9a-f]{2})/i.test(raw[3] ?? '') ||
+    !isHttpUrl(url)
+  ) {
+    throw new InputError(`${label} must be an absolute http or https URL.`)
+  }
 }
 
 function validateHeaderMap(headers: Record<string, string> | undefined): void {
