@@ -18,3 +18,8 @@ export function hasMalformedUnicode(value: unknown): boolean {
   }
   return false
 }
+
+/** Go's strings.TrimSpace uses Unicode White_Space, not JavaScript trim. */
+export function trimGoWhitespace(value: string): string {
+  return value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
+}

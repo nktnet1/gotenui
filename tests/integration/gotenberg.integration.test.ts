@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { inflateRawSync } from 'node:zlib'
 import { afterAll, beforeAll, expect, inject, test } from 'vitest'
+import { conversionRequestBody } from '#/lib/conversion-request-body'
 import {
   proxyConversionRequest,
   proxyDebugRequest,
@@ -15,7 +16,7 @@ import {
 } from '#/lib/gotenberg-proxy.server'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { OPERATIONS, type Operation, operationDefaults } from '#/lib/operations'
-import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
+import type { PostProcessFiles } from '#/lib/pdf-post-processing'
 import { parsePdfValidationReport } from '#/lib/pdf-validation-report'
 import type { ConversionPayload } from '#/lib/validation'
 import { inspectZipResult } from '#/lib/zip-result-manifest'
@@ -66,6 +67,7 @@ function request(
   archives: File[] = [],
 ): Request {
   const payload: ConversionPayload = {
+    ...overrides,
     operation: operation.id,
     fields:
       (operation.id === 'watermark' && overrides.postProcess?.watermarks) ||
@@ -73,34 +75,15 @@ function request(
         ? (overrides.fields ?? {})
         : { ...operationDefaults(operation), ...overrides.fields },
     advanced: overrides.advanced ?? {},
-    ...(overrides.source ? { source: overrides.source } : {}),
-    ...(overrides.markdownName ? { markdownName: overrides.markdownName } : {}),
-    ...(overrides.markdownFiles ? { markdownFiles: overrides.markdownFiles } : {}),
-    ...(overrides.markdownTemplate ? { markdownTemplate: overrides.markdownTemplate } : {}),
-    ...(overrides.headerHtml ? { headerHtml: overrides.headerHtml } : {}),
-    ...(overrides.footerHtml ? { footerHtml: overrides.footerHtml } : {}),
-    ...(overrides.postProcess ? { postProcess: overrides.postProcess } : {}),
-    ...(overrides.conversionStages ? { conversionStages: overrides.conversionStages } : {}),
-    ...(overrides.acknowledgedConversionRedaction ? { acknowledgedConversionRedaction: true } : {}),
-    ...(overrides.downloadFrom ? { downloadFrom: overrides.downloadFrom } : {}),
-    ...(overrides.webhook ? { webhook: overrides.webhook } : {}),
-    ...(overrides.outputName ? { outputName: overrides.outputName } : {}),
-    ...(overrides.requestTrace ? { requestTrace: overrides.requestTrace } : {}),
-    ...(overrides.traceparent ? { traceparent: overrides.traceparent } : {}),
-    ...(overrides.tracestate ? { tracestate: overrides.tracestate } : {}),
   }
-  const body = new FormData()
-  body.set('payload', JSON.stringify(payload))
-  for (const file of inputFiles) body.append('files', file, file.name)
-  for (const file of auxiliary) body.append('auxiliary', file, file.name)
-  for (const file of stageFiles) body.append('stageFile', file, file.name)
-  for (const file of archives) body.append('archives', file, file.name)
-  for (const kind of OVERLAY_KINDS) {
-    for (const file of overlayUploads(postFiles, kind)) body.append(kind, file, file.name)
-  }
-  for (const file of postFiles.embeds ?? []) body.append('embeds', file, file.name)
-  if (postFiles.facturxXml)
-    body.append('facturxXml', postFiles.facturxXml, postFiles.facturxXml.name)
+  const body = conversionRequestBody(
+    payload,
+    inputFiles,
+    auxiliary,
+    postFiles,
+    stageFiles,
+    archives,
+  )
   return new Request(`${proxyOrigin}/api/gotenberg/convert`, {
     method: 'POST',
     headers: {
@@ -120,68 +103,15 @@ function officeZipFixture(
   names: readonly string[] = ['document.txt'],
   contents: Readonly<Record<string, string | Uint8Array>> = {},
 ): File {
-  const locals: Uint8Array[] = []
-  const directories: Uint8Array[] = []
-  let offset = 0
-  for (const name of names) {
-    const filename = new TextEncoder().encode(name)
-    const raw = contents[name] ?? `Converted from ${name} in an Office ZIP archive.`
-    const content = typeof raw === 'string' ? new TextEncoder().encode(raw) : raw
-    let checksum = 0xffffffff
-    for (const byte of content) {
-      checksum ^= byte
-      for (let index = 0; index < 8; index++) {
-        checksum = checksum & 1 ? (checksum >>> 1) ^ 0xedb88320 : checksum >>> 1
-      }
-    }
-    const crc = (checksum ^ 0xffffffff) >>> 0
-    const local = new Uint8Array(30 + filename.length + content.length)
-    const first = new DataView(local.buffer)
-    first.setUint32(0, 0x04034b50, true)
-    first.setUint16(4, 20, true)
-    first.setUint32(14, crc, true)
-    first.setUint32(18, content.length, true)
-    first.setUint32(22, content.length, true)
-    first.setUint16(26, filename.length, true)
-    local.set(filename, 30)
-    local.set(content, 30 + filename.length)
-    locals.push(local)
-
-    const directory = new Uint8Array(46 + filename.length)
-    const central = new DataView(directory.buffer)
-    central.setUint32(0, 0x02014b50, true)
-    central.setUint16(4, 20, true)
-    central.setUint16(6, 20, true)
-    central.setUint32(16, crc, true)
-    central.setUint32(20, content.length, true)
-    central.setUint32(24, content.length, true)
-    central.setUint16(28, filename.length, true)
-    central.setUint32(42, offset, true)
-    directory.set(filename, 46)
-    directories.push(directory)
-    offset += local.length
-  }
-  const end = new Uint8Array(22)
-  const footer = new DataView(end.buffer)
-  footer.setUint32(0, 0x06054b50, true)
-  footer.setUint16(8, names.length, true)
-  footer.setUint16(10, names.length, true)
-  footer.setUint32(
-    12,
-    directories.reduce((sum, entry) => sum + entry.length, 0),
-    true,
+  return zipFixture(
+    Object.fromEntries(
+      names.map((name) => [
+        name,
+        contents[name] ?? `Converted from ${name} in an Office ZIP archive.`,
+      ]),
+    ),
+    'office-documents.zip',
   )
-  footer.setUint32(16, offset, true)
-  const chunks = [...locals, ...directories, end]
-  const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0))
-  let position = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, position)
-    position += chunk.length
-  }
-  return new File([bytes], 'office-documents.zip', {
-    type: 'application/zip',
-  })
 }
 
 function inputFor(operation: Operation): {

@@ -64,7 +64,29 @@ function sampleName(line: string): string | undefined {
   return position === line.length ? head[1] : undefined
 }
 
-const metadata = new RegExp(`^# (HELP|TYPE|UNIT) (${metricName})(?:[ \\t]+(.*)|$)`)
+const metadata = new RegExp(
+  `^[ \t]*#[ \t]*(HELP|TYPE|UNIT)[ \t]+(${metricName})(?:[ \t]+([^\r\n]*)|$)$`,
+)
+const metadataDirective = /^[ \t]*#[ \t]*(?:HELP|TYPE|UNIT)(?:[ \t]|$)/
+const metricTypes = new Set([
+  'counter',
+  'gauge',
+  'histogram',
+  'gaugehistogram',
+  'summary',
+  'info',
+  'stateset',
+  'unknown',
+  'untyped',
+])
+
+function metricDeclaration(line: string): RegExpExecArray | null {
+  const declaration = metadata.exec(line)
+  if (declaration?.[1] === 'TYPE' && !metricTypes.has(declaration[3]?.replace(/[ \t]+$/, '') ?? ''))
+    return null
+  return declaration
+}
+
 const derivedSuffixes: Readonly<Record<string, readonly string[]>> = {
   counter: ['total', 'created'],
   histogram: ['bucket', 'count', 'sum', 'created'],
@@ -83,7 +105,7 @@ export function summarizePrometheusMetrics(text: string): {
   const derived = new Set<string>()
   let samples = 0
   for (const line of text.split(/\r?\n/)) {
-    const declaration = metadata.exec(line)
+    const declaration = metricDeclaration(line)
     if (declaration) {
       const [, kind, family, details] = declaration
       declared.add(family)
@@ -110,18 +132,30 @@ export function summarizePrometheusMetrics(text: string): {
 }
 
 /** Reject HTML fallbacks and unrelated text masquerading as a metrics response. */
-export function isPrometheusMetrics(text: string): boolean {
+export function isPrometheusMetrics(text: string, openMetrics = false): boolean {
   const lines = text.split(/\r?\n/)
-  if (text.trim() === '# EOF' || lines.some((line) => metadata.test(line))) return true
-  // For untyped exposition, require sample syntax on every non-comment line
-  // rather than mistaking one metric-like line inside unrelated text for a scrape.
-  let foundSample = false
+  if (!openMetrics && text.trim() === '# EOF') return true
+  // Metadata does not excuse malformed sample lines. A gateway may append
+  // an error page to an otherwise valid scrape, or include a HELP line in it.
+  let recognized = false
+  let ended = false
   for (const line of lines) {
-    if (!line.trim() || line.trimStart().startsWith('#')) continue
+    if (!line.trim()) continue
+    if (ended) return false
+    if (openMetrics && line === '# EOF') {
+      ended = true
+      recognized = true
+      continue
+    }
+    if (line.trimStart().startsWith('#')) {
+      if (metricDeclaration(line)) recognized = true
+      else if (metadataDirective.test(line)) return false
+      continue
+    }
     if (sampleName(line) === undefined) return false
-    foundSample = true
+    recognized = true
   }
-  return foundSample
+  return recognized && (!openMetrics || ended)
 }
 
 export function filterPrometheusMetrics(text: string, query: string): string {

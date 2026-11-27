@@ -1,11 +1,11 @@
 import * as v from 'valibot'
-import { normalizeBackendUrl } from '#/lib/backend-url'
+import { isPublicDemoBackend, normalizeBackendUrl } from '#/lib/backend-url'
 import { isHttpHeaderValue, parseHttpEndpoint } from '#/lib/http-url'
 import {
   type OAuth2ClientCredentials,
   parseOAuth2TokenUrl,
 } from '#/lib/oauth2-client-credentials.server'
-import { DEMO_GOTENBERG_URL, ProxyInputError } from '#/lib/proxy-policy'
+import { ProxyInputError } from '#/lib/proxy-policy'
 import { parseUpstreamBasicAuth } from '#/lib/upstream-auth.server'
 import {
   isBasicPassword,
@@ -18,16 +18,16 @@ import {
 
 const idSchema = v.pipe(v.string(), v.regex(/^[a-z][a-z0-9-]{0,63}$/))
 const nameSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(64))
-const basicSchema = v.object({
+const basicSchema = v.strictObject({
   type: v.literal('basic'),
   username: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_BASIC_USERNAME_LENGTH)),
   password: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_BASIC_PASSWORD_LENGTH)),
 })
-const bearerSchema = v.object({
+const bearerSchema = v.strictObject({
   type: v.literal('bearer'),
   token: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_BEARER_TOKEN_LENGTH)),
 })
-const oauth2Schema = v.object({
+const oauth2Schema = v.strictObject({
   type: v.literal('oauth2'),
   tokenUrl: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
   clientId: v.pipe(v.string(), v.minLength(1), v.maxLength(512)),
@@ -36,7 +36,7 @@ const oauth2Schema = v.object({
   audience: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(1024))),
   authMethod: v.optional(v.picklist(['client_secret_basic', 'client_secret_post'])),
 })
-const connectionSchema = v.object({
+const connectionSchema = v.strictObject({
   id: idSchema,
   name: nameSchema,
   url: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
@@ -114,7 +114,7 @@ export function parseServerConnections(
     if (!allowed.has(url)) {
       throw new Error(`Server connection ${entry.id} must exactly match GOTENBERG_ALLOWED_URLS.`)
     }
-    if (entry.auth && url === DEMO_GOTENBERG_URL) {
+    if (entry.auth && isPublicDemoBackend(url)) {
       throw new Error('Do not configure upstream credentials for the public Gotenberg demo.')
     }
     if (entry.metricsAuth && !entry.metricsUrl) {
@@ -143,6 +143,13 @@ export function parseServerConnections(
             authMethod: entry.auth.authMethod ?? 'client_secret_basic',
           }
         : undefined
+    const metricsUrl = entry.metricsUrl ? parseMetricsUrl(entry.metricsUrl) : undefined
+    if (
+      (oauth2 && isPublicDemoBackend(oauth2.tokenUrl)) ||
+      (entry.metricsAuth && metricsUrl && isPublicDemoBackend(metricsUrl))
+    ) {
+      throw new Error('Do not configure upstream credentials for the public Gotenberg demo.')
+    }
     return {
       id: entry.id,
       name: entry.name,
@@ -150,7 +157,7 @@ export function parseServerConnections(
       authorization:
         entry.auth?.type === 'oauth2' ? undefined : authorizationFor(entry.auth, entry.id),
       oauth2,
-      metricsUrl: entry.metricsUrl ? parseMetricsUrl(entry.metricsUrl) : undefined,
+      metricsUrl,
       metricsAuthorization: authorizationFor(entry.metricsAuth, `${entry.id} metrics`),
     }
   })

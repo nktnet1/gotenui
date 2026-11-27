@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import type { ConversionPayload } from '#/lib/validation'
-import { validateZipInputs } from '#/lib/zip-input-validation'
+import { validateZipInputs, zipEntryNames } from '#/lib/zip-input-validation'
+import { inspectZipResult } from '#/lib/zip-result-manifest'
 import { OPERATION_BY_ID } from '#/tools/registry'
 import { zipFixture } from './fixtures/zip'
 
@@ -51,6 +52,46 @@ test('accepts ZIPs with a trailing stub after the end record or ZIP comment', as
   ])
 })
 
+test('accepts a maximum ZIP comment followed by a short trailer', async () => {
+  const original = new Uint8Array(await zipFixture({ 'input.pdf': '%PDF-1.7' }).arrayBuffer())
+  const bytes = new Uint8Array(original.length + 65_535 + 512)
+  bytes.set(original)
+  new DataView(bytes.buffer).setUint16(original.length - 2, 65_535, true)
+  bytes.fill(65, original.length)
+  assert.deepEqual(await check('pdf-pipeline', [new File([bytes], 'comment.zip')]), ['input.pdf'])
+  assert.equal((await inspectZipResult(new Blob([bytes]))).entries[0]?.name, 'input.pdf')
+})
+
+test('rejects a truncated newest end record instead of inspecting an older directory', async () => {
+  const original = zipFixture({ 'input.pdf': '%PDF-1.7' })
+  const truncated = new Uint8Array(22)
+  const end = new DataView(truncated.buffer)
+  end.setUint32(0, 0x06054b50, true)
+  end.setUint16(20, 1024, true)
+  await assert.rejects(
+    check('pdf-pipeline', [new File([original, truncated], 'truncated-comment.zip')]),
+    /central directory is missing/,
+  )
+  await assert.rejects(inspectZipResult(new Blob([original, truncated])), /directory is missing/)
+})
+
+test('does not interpret a classic directory entry comment as a ZIP64 locator', async () => {
+  const original = new Uint8Array(await zipFixture({ 'input.pdf': '%PDF-1.7' }).arrayBuffer())
+  const oldEnd = original.length - 22
+  const directory = new DataView(original.buffer).getUint32(oldEnd + 16, true)
+  const bytes = new Uint8Array(original.length + 20)
+  bytes.set(original.subarray(0, oldEnd))
+  bytes.set(original.subarray(oldEnd), oldEnd + 20)
+  const view = new DataView(bytes.buffer)
+  view.setUint16(directory + 32, 20, true)
+  view.setUint32(oldEnd, 0x07064b50, true)
+  view.setUint32(oldEnd + 16, 1, true)
+  view.setUint32(oldEnd + 20 + 12, oldEnd - directory + 20, true)
+  assert.deepEqual(await check('pdf-pipeline', [new File([bytes], 'comment-locator.zip')]), [
+    'input.pdf',
+  ])
+})
+
 test('accepts signed ZIP central directories without ignoring unexpected trailing records', async () => {
   const original = new Uint8Array(await zipFixture({ 'input.pdf': '%PDF-1.7' }).arrayBuffer())
   const endOffset = original.length - 22
@@ -71,6 +112,7 @@ test('accepts signed ZIP central directories without ignoring unexpected trailin
     true,
   )
   assert.deepEqual(await check('pdf-pipeline', [new File([signed], 'signed.zip')]), ['input.pdf'])
+  assert.equal((await inspectZipResult(new Blob([signed]))).entries[0]?.name, 'input.pdf')
 
   const invalid = signed.slice()
   new DataView(invalid.buffer).setUint16(endOffset + 4, 5, true)
@@ -78,6 +120,7 @@ test('accepts signed ZIP central directories without ignoring unexpected trailin
     check('pdf-pipeline', [new File([invalid], 'invalid-signature.zip')]),
     /trailing data/,
   )
+  await assert.rejects(inspectZipResult(new Blob([invalid])), /Unexpected ZIP directory contents/)
 })
 
 test('accepts empty ZIPs when other source inputs are available', async () => {
@@ -100,6 +143,7 @@ test('accepts self-extracting ZIPs with a prefixed stub and relative directory o
   const stub = new TextEncoder().encode('MZ\x90\x00valid stub prefix')
   const archive = new File([stub, original], 'self-extracting.zip')
   assert.deepEqual(await check('pdf-pipeline', [archive]), ['document.pdf'])
+  assert.equal((await inspectZipResult(archive)).entries[0]?.name, 'document.pdf')
 })
 
 test('accepts PDF-only pipeline ZIPs, known Office files, and Chromium assets', async () => {
@@ -493,16 +537,21 @@ test('accepts a valid ZIP64 end record and rejects an overlapping central direct
   end.setUint32(12, 0xffffffff, true)
   end.setUint32(16, 0xffffffff, true)
   assert.deepEqual(await check('pdf-pipeline', [new File([bytes], 'valid.zip')]), ['source.pdf'])
-  assert.deepEqual(
-    await check('pdf-pipeline', [
-      new File([new TextEncoder().encode('MZstub'), bytes], 'sfx64.zip'),
-    ]),
-    ['source.pdf'],
+  const prefix = new TextEncoder().encode('MZstub')
+  await assert.rejects(
+    check('pdf-pipeline', [new File([prefix, bytes], 'bad-sfx64.zip')]),
+    /ZIP64 end record is invalid/,
   )
+  // Go accepts a preamble when the ZIP64 locator identifies the physical record.
+  const prefixed = bytes.slice()
+  new DataView(prefixed.buffer).setBigUint64(oldEnd + 56 + 8, BigInt(oldEnd + prefix.length), true)
+  assert.deepEqual(await check('pdf-pipeline', [new File([prefix, prefixed], 'sfx64.zip')]), [
+    'source.pdf',
+  ])
 
-  // ZIP64 locator is 20 bytes before the end record. A maximum-length ZIP
-  // comment can push it outside the bounded first tail read.
-  const maxComment = new Uint8Array(bytes.length + 65_535)
+  // A maximum-length ZIP comment and trailer can push the ZIP64 locator
+  // outside the bounded first tail read.
+  const maxComment = new Uint8Array(bytes.length + 65_535 + 990)
   maxComment.set(bytes)
   new DataView(maxComment.buffer).setUint16(bytes.length - 2, 65_535, true)
   maxComment.fill(65, bytes.length)
@@ -528,7 +577,7 @@ test('limits central-directory memory and never reads or unpacks entry contents'
   }
   await check('pdf-pipeline', [archive])
   assert.deepEqual(readSizes.length, 2)
-  assert.ok(readSizes.every((size) => size <= 65_557))
+  assert.ok(readSizes.every((size) => size <= 65 * 1024))
   assert.ok(readSizes.reduce((sum, size) => sum + size, 0) < 70_000)
 })
 
@@ -594,4 +643,83 @@ test('matches Go filename replacement for incomplete UTF-8 sequences in ZIP meta
   assert.deepEqual(await check('pdf-pipeline', [new File([bytes], 'legacy.zip')]), [
     '\ufffd\ufffd.pdf',
   ])
+})
+
+test('prefers the declared absolute ZIP directory over a second directory after a gap, like Go', async () => {
+  const original = new Uint8Array(await zipFixture({ 'index.html': 'original' }).arrayBuffer())
+  const end = original.length - 22
+  const offset = new DataView(original.buffer).getUint32(end + 16, true)
+  const shadow = original.slice(offset, end)
+  shadow.set(new TextEncoder().encode('other.html'), 46)
+  const gap = new TextEncoder().encode('non-directory padding')
+  // Go stops at the gap and reads the first directory, not the shadow next to EOCD.
+  for (const trailing of [[], [shadow]]) {
+    const archive = new File(
+      [original.subarray(0, end), gap, ...trailing, original.subarray(end)],
+      'offset.zip',
+    )
+    await assert.rejects(check('html-pdf', [archive]), /duplicate or reserved filename: index.html/)
+    assert.equal((await inspectZipResult(archive)).entries[0]?.name, 'index.html')
+  }
+})
+
+test('treats unrecognised Unix type bits as regular files, like Go', async () => {
+  const data = new Uint8Array(await zipFixture({ 'input.pdf': '%PDF-1.7' }).arrayBuffer())
+  const view = new DataView(data.buffer)
+  const offset = view.getUint32(data.length - 6, true)
+  view.setUint16(offset + 4, 0x0314, true)
+  view.setUint32(offset + 38, 0o030644 << 16, true)
+  assert.deepEqual(await check('pdf-pipeline', [new File([data], 'unknown-mode.zip')]), [
+    'input.pdf',
+  ])
+})
+
+/** Replace the first central header's ordinary 32-bit field with a ZIP64
+ * sentinel, optionally inserting the corresponding ZIP64 extra record.
+ */
+async function entryZip64(field: number, extra: Uint8Array): Promise<File> {
+  const original = new Uint8Array(await zipFixture({ 'input.pdf': '%PDF-1.7' }).arrayBuffer())
+  const end = original.length - 22
+  const directory = new DataView(original.buffer).getUint32(end + 16, true)
+  const bytes = new Uint8Array(original.length + extra.length)
+  bytes.set(original.subarray(0, end))
+  bytes.set(extra, end)
+  bytes.set(original.subarray(end), end + extra.length)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(directory + field, 0xffffffff, true)
+  view.setUint16(directory + 30, extra.length, true)
+  view.setUint32(end + extra.length + 12, end - directory + extra.length, true)
+  return new File([bytes], 'entry-zip64.zip')
+}
+
+test.each([20, 42])(
+  'rejects ZIP64 central entries missing a required extended field at offset %s',
+  async (field) => {
+    const missing = await entryZip64(field, new Uint8Array())
+    await assert.rejects(zipEntryNames(missing), /incomplete ZIP64 extra data/)
+    await assert.rejects(inspectZipResult(missing), /Invalid ZIP64 directory entry/)
+    await assert.rejects(
+      zipEntryNames(await entryZip64(field, new Uint8Array([1, 0, 4, 0, 1, 0, 0, 0]))),
+      /incomplete ZIP64 extra data/,
+    )
+  },
+)
+
+test('mirrors Go ZIP64 per-entry extra data handling without requiring a ZIP64 end record', async () => {
+  const extra = new Uint8Array(12)
+  const view = new DataView(extra.buffer)
+  view.setUint16(0, 1, true)
+  view.setUint16(2, 8, true)
+  view.setBigUint64(4, 8n, true)
+  const compressed = await entryZip64(20, extra)
+  assert.deepEqual(await zipEntryNames(compressed), ['input.pdf'])
+  assert.equal((await inspectZipResult(compressed)).entries[0]?.name, 'input.pdf')
+  view.setBigUint64(4, 0n, true)
+  assert.deepEqual(await zipEntryNames(await entryZip64(42, extra)), ['input.pdf'])
+  // Go deliberately tolerates a missing uncompressed size, not an incomplete tag.
+  assert.deepEqual(await zipEntryNames(await entryZip64(24, new Uint8Array())), ['input.pdf'])
+  await assert.rejects(
+    zipEntryNames(await entryZip64(24, new Uint8Array([1, 0, 0, 0]))),
+    /incomplete ZIP64 extra data/,
+  )
 })

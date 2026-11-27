@@ -9,9 +9,11 @@ import {
   addBookmarkMapping,
   type BookmarkEdit,
   type BookmarkNode,
+  bookmarkTitleBlank,
   editBookmarks,
   editFileBookmarks,
   GOTENBERG_9_METADATA_FIELDS,
+  MAX_VISUAL_BOOKMARK_DEPTH,
   METADATA_TEXT_FIELDS,
   type MetadataKey,
   metadataObject,
@@ -175,10 +177,12 @@ function BookmarkItems({
   items,
   parent,
   onEdit,
+  native,
 }: {
   items: BookmarkNode[]
   parent: number[]
   onEdit: (edit: BookmarkEdit) => void
+  native: boolean
 }) {
   const id = useId()
   return (
@@ -186,6 +190,7 @@ function BookmarkItems({
       {items.map((item, index) => {
         const path = [...parent, index]
         const label = `Bookmark ${path.map((i) => i + 1).join('.')}`
+        const titleInvalid = bookmarkTitleBlank(item.title, native)
         const pageInvalid = !Number.isSafeInteger(item.page) || Number(item.page) < 1
         return (
           <li
@@ -198,7 +203,7 @@ function BookmarkItems({
                 <Input
                   id={`${id}-${index}-title`}
                   value={item.title}
-                  aria-invalid={!item.title.trim()}
+                  aria-invalid={titleInvalid}
                   onChange={(event) =>
                     onEdit({ kind: 'update', path, field: 'title', value: event.target.value })
                   }
@@ -260,18 +265,24 @@ function BookmarkItems({
                 Enter a positive whole-number page, starting at 1.
               </p>
             )}
-            {!item.title.trim() && (
+            {titleInvalid && (
               <p className="text-xs text-rose-700 dark:text-rose-300">Enter a bookmark title.</p>
             )}
             {item.children.length > 0 && (
               <div className="ml-2 space-y-2 border-l-2 border-sky-200 pl-3 dark:border-sky-800">
-                <BookmarkItems items={item.children} parent={path} onEdit={onEdit} />
+                <BookmarkItems
+                  items={item.children}
+                  parent={path}
+                  onEdit={onEdit}
+                  native={native}
+                />
               </div>
             )}
             <Button
               type="button"
               size="sm"
               variant="outline"
+              disabled={path.length >= MAX_VISUAL_BOOKMARK_DEPTH}
               onClick={() => onEdit({ kind: 'add', parent: path })}
             >
               <Plus className="size-4" /> Add child
@@ -326,7 +337,7 @@ export function PdfBookmarksEditor({
   }
   const addMapping = () => {
     try {
-      const name = newFilename.trim()
+      const name = newFilename
       const next = addBookmarkMapping(value, name)
       onChange(next)
       setSelectedFilename(name)
@@ -458,7 +469,7 @@ export function PdfBookmarksEditor({
               </p>
             ) : (
               <>
-                <BookmarkItems items={items} parent={[]} onEdit={edit} />
+                <BookmarkItems items={items} parent={[]} onEdit={edit} native={!allowFilenameMap} />
                 <Button
                   type="button"
                   variant="outline"

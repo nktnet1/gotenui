@@ -67,6 +67,7 @@ export function parseHttpEndpoint(value: string): URL | undefined {
     authority.includes('@') ||
     authority.includes(' ') ||
     /[\\?#]/u.test(value) ||
+    /%(?![0-9a-f]{2})/i.test(value) ||
     !isHttpHeaderValue(value) ||
     value.includes('\t')
   )

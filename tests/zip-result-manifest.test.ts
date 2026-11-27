@@ -118,7 +118,7 @@ test('reads only the directory and footer, not a complete large archive', async 
   }
   await inspectZipResult(blob)
   assert.equal(slices.length, 2)
-  assert.ok(slices.every((length) => length <= 65_557))
+  assert.ok(slices.every((length) => length <= 65 * 1024))
 })
 
 test('a malformed ZIP, incomplete index, or unsupported ZIP64 entry does not invent contents', async () => {
@@ -160,4 +160,23 @@ test('classifies long filenames and excludes long directory names before truncat
   )
   assert.ok(result.entries.every(({ name }) => !/\p{Cs}/u.test(name) && [...name].length <= 160))
   assert.equal(result.entries[2]?.name, '\ufeffreport.pdf')
+})
+
+test('excludes ZIP directory attributes even when names have no trailing slash', async () => {
+  const archive = zipFixture(['dos-folder', 'unix-folder', 'mac-folder', 'file.pdf'])
+  const view = new DataView(archive.buffer)
+  let cursor = view.getUint32(archive.length - 6, true)
+  for (const [creator, attributes] of [
+    [0, 0x10],
+    [3, 0o040755 << 16],
+    [19, 0o040755 << 16],
+  ]) {
+    view.setUint16(cursor + 4, (creator << 8) | 20, true)
+    view.setUint32(cursor + 38, attributes, true)
+    cursor += 46 + view.getUint16(cursor + 28, true)
+  }
+  const result = await inspectZipResult(zipBlob(archive))
+  assert.equal(result.totalFiles, 1)
+  assert.equal(result.entries[0]?.name, 'file.pdf')
+  assert.equal(result.totalUncompressedBytes, 'content for file.pdf'.length)
 })

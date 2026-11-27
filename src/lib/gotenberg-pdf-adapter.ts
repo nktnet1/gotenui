@@ -19,6 +19,7 @@ import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-r
 import { isPdfStampPosition } from '#/lib/pdf-stamp-position'
 import { v9BookmarkTree, v9MetadataFields } from '#/lib/pdf-v9-structure'
 import { isV9SourceDocument } from '#/lib/source-documents'
+import { trimGoWhitespace } from '#/lib/unicode-text'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
 import { V9_PDF_IDS } from '#/tools/v9-pdf-config'
@@ -152,6 +153,10 @@ export function adaptPdfForm(
   const optional = (name: string): string | undefined => {
     const value = fields[name]
     return typeof value === 'string' && value.trim() ? value.trim() : undefined
+  }
+  const optionalPages = (name: string): string | undefined => {
+    const value = fields[name]
+    return typeof value === 'string' ? trimGoWhitespace(value) || undefined : undefined
   }
   // Secrets are exact byte strings: even an all-whitespace password is valid.
   const optionalPassword = (name: 'password' | 'userPassword' | 'ownerPassword') => {
@@ -340,10 +345,11 @@ export function adaptPdfForm(
     }
     case 'rotate': {
       permitted('rotateAngle', 'rotatePages')
+      const pages = optionalPages('rotatePages')
       stages.push({
         op: 'rotate',
         angle: Number(fields.rotateAngle),
-        ...(optional('rotatePages') ? { pages: optional('rotatePages') } : {}),
+        ...(pages ? { pages } : {}),
       })
       break
     }
@@ -434,8 +440,9 @@ export function adaptPdfForm(
       ) {
         throw new InputError('The PDF overlay source page must be a non-negative whole number.')
       }
+      const pages = optionalPages(`${kind}Pages`)
       const common: Record<string, unknown> = {
-        ...(optional(`${kind}Pages`) ? { pages: optional(`${kind}Pages`) } : {}),
+        ...(pages ? { pages } : {}),
         ...(position ? { position } : {}),
         ...(!position || optional('v9OverlayX') !== undefined
           ? { x: coordinate(fields.v9OverlayX, 48) }

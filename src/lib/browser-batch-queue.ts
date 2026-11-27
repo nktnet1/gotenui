@@ -10,7 +10,7 @@ import {
   WEBHOOK_NOT_ACCEPTED_NOTICE,
 } from '#/lib/gotenberg-client'
 import { requestedPdfValidationProfiles } from '#/lib/pdf-conformance-profiles'
-import type { PostProcessFiles } from '#/lib/pdf-post-processing'
+import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
 import { validatePinnedRequestCompatibility } from '#/lib/request-compatibility'
 import { type ConversionPayload, validateFiles, validatePayload } from '#/lib/validation'
@@ -79,16 +79,7 @@ function inputBytes(input: PreparedInput): number {
     ...input.auxiliary,
     ...(input.stageFiles ?? []),
     ...(input.archives ?? []),
-    ...(Array.isArray(input.postFiles.watermark)
-      ? input.postFiles.watermark
-      : input.postFiles.watermark
-        ? [input.postFiles.watermark]
-        : []),
-    ...(Array.isArray(input.postFiles.stamp)
-      ? input.postFiles.stamp
-      : input.postFiles.stamp
-        ? [input.postFiles.stamp]
-        : []),
+    ...OVERLAY_KINDS.flatMap((kind) => overlayUploads(input.postFiles, kind)),
     ...(input.postFiles.embeds ?? []),
     ...(input.postFiles.facturxXml ? [input.postFiles.facturxXml] : []),
   ]

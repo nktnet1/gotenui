@@ -246,3 +246,16 @@ test('infers remote names using Go replacement semantics for invalid UTF-8 bytes
   }
   assert.equal(possibleRemoteFilename({ url: 'https://example.test/report%ZZ.pdf' }), undefined)
 })
+
+test('single-file selection preserves the previous file on multi-file or empty drops', () => {
+  const previous = new File(['old'], 'old.pdf')
+  const first = new File(['one'], 'one.pdf')
+  const second = new File(['two'], 'two.pdf')
+  assert.deepEqual(combineUploadSelection([previous], [first, second]), [previous])
+  assert.deepEqual(
+    combineUploadSelection([previous], [first, second], { multiple: false, maxFiles: 4 }),
+    [previous],
+  )
+  assert.deepEqual(combineUploadSelection([previous], [], { multiple: false }), [previous])
+  assert.deepEqual(combineUploadSelection([previous], [], { multiple: true }), [previous])
+})

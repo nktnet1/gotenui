@@ -1,4 +1,9 @@
-import { filenameKey, planRemoteFilenames, registeredFilenames } from '#/lib/file-names'
+import {
+  filenameKey,
+  planRemoteFilenames,
+  registeredFilenames,
+  safeFilename,
+} from '#/lib/file-names'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { parsePdfConformanceProfiles } from '#/lib/pdf-conformance-profiles'
 import { isV9SourceDocument } from '#/lib/source-documents'
@@ -114,12 +119,18 @@ export function parsePdfValidationReport(
   for (const [filename, report] of entries) {
     if (
       !isV9SourceDocument('pdf', filename) ||
-      filename.length > 255 ||
       !report ||
       typeof report !== 'object' ||
       Array.isArray(report)
     )
       return null
+    // The upstream stores originals independently of filesystem NAME_MAX.
+    // Keep long names within the overall summary bound, but never accept paths.
+    try {
+      safeFilename(filename)
+    } catch {
+      return null
+    }
     const row = report as Record<string, unknown>
     if (typeof row.compliant !== 'boolean' || !Array.isArray(row.violations)) return null
     const profiles = parsePdfConformanceProfiles(row.profile)

@@ -456,20 +456,30 @@ function conversionResponseLength(
  */
 function multipartBoundary(contentType: string): string | undefined {
   if (contentType.length > 512) return undefined
+  // MIME parameter whitespace is ASCII space/tab, not Unicode White_Space.
+  // In particular, do not turn a malformed NBSP-delimited header into a valid
+  // request when passing the canonical boundary to the native decoder.
+  const trimOws = (value: string) => value.replace(/^[ \t]+|[ \t]+$/g, '')
   const [mediaType, ...parameters] = contentType.split(';')
-  if (mediaType?.trim().toLowerCase() !== 'multipart/form-data') return undefined
+  if (trimOws(mediaType).toLowerCase() !== 'multipart/form-data') return undefined
 
   let boundary: string | undefined
   let charset = false
   for (const parameter of parameters) {
     const separator = parameter.indexOf('=')
     if (separator < 1) return undefined
-    const name = parameter.slice(0, separator).trim().toLowerCase()
-    const rawValue = parameter.slice(separator + 1).trim()
+    const name = trimOws(parameter.slice(0, separator)).toLowerCase()
+    const rawValue = trimOws(parameter.slice(separator + 1))
     const value =
       rawValue.startsWith('"') && rawValue.endsWith('"') ? rawValue.slice(1, -1) : rawValue
     if (name === 'boundary') {
-      if (boundary || !/^[A-Za-z0-9'()+_,./:=?-]{1,200}$/.test(value)) return undefined
+      if (
+        boundary ||
+        !/^[A-Za-z0-9'()+_,./:=? -]{1,200}$/.test(value) ||
+        value.endsWith(' ') ||
+        (value.includes(' ') && rawValue === value)
+      )
+        return undefined
       boundary = value
     } else if (name === 'charset') {
       if (charset || value.toLowerCase() !== 'utf-8') return undefined
@@ -497,7 +507,7 @@ export async function proxyConversionRequest(
     throw new ProxyInputError(`Request exceeds the ${maxBytes} byte upload limit.`, 413)
   }
   const bytes = await readLimitedBody(request.body, maxBytes)
-  const fields = await parseMultipartRequest(bytes, boundary, contentType)
+  const fields = await parseMultipartRequest(bytes, boundary)
   let candidate: unknown
   const files: File[] = []
   const auxiliary: File[] = []
@@ -534,9 +544,8 @@ export async function proxyConversionRequest(
         postFiles.facturxXml = value
       } else {
         const uploads = postFiles[key]
-        postFiles[key] = uploads
-          ? [...(Array.isArray(uploads) ? uploads : [uploads]), value]
-          : [value]
+        if (Array.isArray(uploads)) uploads.push(value)
+        else postFiles[key] = uploads ? [uploads, value] : [value]
       }
     } else {
       throw new ProxyInputError('The multipart request contains unsupported fields.')
@@ -986,7 +995,7 @@ export async function proxyMetricsRequest(
   } catch {
     throw new ProxyInputError('Gotenberg metrics did not contain valid UTF-8.', 502)
   }
-  if (!isPrometheusMetrics(text)) {
+  if (!isPrometheusMetrics(text, contentType === 'application/openmetrics-text')) {
     throw new ProxyInputError('Gotenberg returned an unexpected metrics response.', 502)
   }
   return new Response(text, {

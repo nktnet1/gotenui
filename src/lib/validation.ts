@@ -65,7 +65,7 @@ export { isHttpUrl } from '#/lib/http-url'
 
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
-const markdownFileSchema = v.object({
+const markdownFileSchema = v.strictObject({
   name: v.pipe(v.string(), v.minLength(1)),
   content: v.string(),
 })
@@ -93,7 +93,7 @@ const webhookSchema = v.strictObject({
 export type RemoteFile = v.InferOutput<typeof remoteFileSchema>
 export type WebhookConfig = v.InferOutput<typeof webhookSchema>
 
-export const payloadSchema = v.object({
+export const payloadSchema = v.strictObject({
   operation: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   // Browser submissions and queued jobs retain the API version they were configured for.
   expectedBackendVersion: v.optional(v.pipe(v.string(), v.maxLength(MAX_GOTENBERG_VERSION_LENGTH))),
@@ -180,6 +180,9 @@ function markdownName(name: string): string {
 
 function validateChromiumDocuments(operation: Operation, payload: ConversionPayload): void {
   const isMarkdown = operation.input === 'markdown'
+  if (!isMarkdown && operation.input !== 'html' && payload.source !== undefined) {
+    throw new InputError('Source text requires an HTML or Markdown operation.')
+  }
   if (
     !isMarkdown &&
     (payload.markdownName !== undefined ||

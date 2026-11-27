@@ -10,6 +10,7 @@ import {
   makeBrowserAuthorization,
   newBrowserConnection,
   removeBrowserConnection,
+  requireConnectionCredentials,
   saveConnections,
   selectedConnectionProfile,
 } from '#/lib/connection-profiles'
@@ -171,4 +172,21 @@ test('restored authenticated profiles require secrets before constructing an ano
     url,
     authorization: undefined,
   })
+})
+
+test('browser preflight rejects credentials for every public demo base path', () => {
+  for (const url of [demo, `${demo}/prefix`, 'https://demo.gotenberg.dev.:8443']) {
+    assert.throws(
+      () => requireConnectionCredentials({ kind: 'browser', url, authorization: 'Bearer secret' }),
+      /public Gotenberg demo/,
+    )
+    assert.doesNotThrow(() => requireConnectionCredentials({ kind: 'browser', url }))
+  }
+  assert.doesNotThrow(() =>
+    requireConnectionCredentials({
+      kind: 'browser',
+      url: 'https://demo.gotenberg.dev.example.test',
+      authorization: 'Bearer secret',
+    }),
+  )
 })

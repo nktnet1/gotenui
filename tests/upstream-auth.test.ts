@@ -58,3 +58,20 @@ test('legacy upstream credentials cannot target the public demo even when it is 
     undefined,
   )
 })
+
+test('legacy upstream credentials cannot target another spelling of the public demo', () => {
+  for (const target of [`${publicUrl}/prefix`, 'https://demo.gotenberg.dev.']) {
+    assert.throws(
+      () =>
+        parseUpstreamBasicAuth(
+          { ...credentials, GOTENBERG_BASIC_AUTH_URL: target },
+          parseAllowedBackends(target),
+        ),
+      /public Gotenberg demo/,
+    )
+    assert.equal(
+      basicAuthHeadersForBackend(target, { target, authorization: 'Basic secret' }),
+      undefined,
+    )
+  }
+})

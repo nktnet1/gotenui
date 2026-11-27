@@ -6,12 +6,13 @@ import { dirname, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { styleText } from 'node:util'
+import { conversionRequestBody } from '#/lib/conversion-request-body'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = resolve(projectRoot, '.output/server/index.mjs')
 const pdf = Buffer.from('%PDF-1.7\n%Gotenui smoke test\n')
 const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00])
-type UpstreamRequest = { path: string; headers: IncomingHttpHeaders; body: string }
+type UpstreamRequest = { path: string; headers: IncomingHttpHeaders; body: Buffer }
 const seen: UpstreamRequest[] = []
 let followedRedirects = 0
 let cancelledUpstreams = 0
@@ -86,7 +87,7 @@ const upstream = createServer(async (request, response) => {
     seen.push({
       path: request.url,
       headers: request.headers,
-      body: body.toString('utf8'),
+      body,
     })
     const trace = request.headers['gotenberg-trace']
     if (trace === 'smoke-pending-headers') {
@@ -207,11 +208,8 @@ function conversionBody(
   fields: Record<string, unknown>,
   files: File[] = [],
   extras: Record<string, unknown> = {},
-): FormData {
-  const form = new FormData()
-  form.set('payload', JSON.stringify({ operation, fields, advanced: {}, ...extras }))
-  for (const file of files) form.append('files', file, file.name)
-  return form
+): FormData | Blob {
+  return conversionRequestBody({ operation, fields, advanced: {}, ...extras }, files)
 }
 
 async function get(url: string, options: RequestInit = {}): Promise<Response> {
@@ -401,7 +399,7 @@ async function run(): Promise<void> {
     assert.equal(serverRequest.headers.authorization, 'Bearer server-only-smoke-token')
     assert.equal(serverRequest.headers['gotenberg-output-filename'], 'release-smoke')
     assert.equal(serverRequest.headers['gotenberg-trace'], 'smoke-request')
-    assert.match(serverRequest.body, /name="url"/)
+    assert.match(serverRequest.body.toString('utf8'), /name="url"/)
     checks++
 
     // Reverse proxies can quote the standard multipart boundary and include
@@ -563,6 +561,37 @@ async function run(): Promise<void> {
     assert.equal(office.status, 200)
     assert.equal(office.headers.get('content-type'), 'application/zip')
     assert.deepEqual(Buffer.from(await office.arrayBuffer()), zip)
+    checks++
+
+    // Exercise both real HTTP multipart encoders, not just FormData objects
+    // observed by mocked fetch. Decode the upstream request independently of
+    // the proxy's multipart workaround and compare file names and bytes.
+    const documents = [
+      new File([new Uint8Array([0x00, 0xff, 0xfe, 0x0a, 0x0d])], 'contract.docx'),
+      new File(['Gotenui multipart fixture\n'], 'résumé %22.txt'),
+    ]
+    const wireResult = await get(convertUrl, {
+      method: 'POST',
+      headers: { ...sameOrigin, 'X-Gotenui-Connection-Id': 'smoke' },
+      body: conversionBody('office-pdf', {}, documents),
+    })
+    assert.equal(wireResult.status, 200, 'Multipart round trip must reach the upstream')
+    assert.deepEqual(Buffer.from(await wireResult.arrayBuffer()), zip)
+    const wireRequest = seen.at(-1)
+    assert.ok(wireRequest)
+    const wireType = wireRequest.headers['content-type']
+    assert.ok(wireType)
+    const decoded = await new Response(new Uint8Array(wireRequest.body), {
+      headers: { 'Content-Type': wireType },
+    }).formData()
+    const forwarded = decoded.getAll('files')
+    assert.equal(forwarded.length, documents.length)
+    for (const [index, document] of documents.entries()) {
+      const file = forwarded[index]
+      assert.ok(file instanceof File)
+      assert.equal(file.name, document.name)
+      assert.deepEqual(await file.arrayBuffer(), await document.arrayBuffer())
+    }
     checks++
 
     const hostileName = await get(convertUrl, {

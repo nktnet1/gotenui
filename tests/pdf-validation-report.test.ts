@@ -48,8 +48,12 @@ describe('bounded PDF validation summaries', () => {
       { 'a.pdf': { profile: 'PDF/A-2b', compliant: false, violations: [{ description: ' ' }] } },
     ],
     [
-      'long filename',
-      { [`${'a'.repeat(256)}.pdf`]: { profile: 'PDF/A-2b', compliant: true, violations: [] } },
+      'filename with a path',
+      { 'docs/report.pdf': { profile: 'PDF/A-2b', compliant: true, violations: [] } },
+    ],
+    [
+      'filename with a control character',
+      { 'report\n.pdf': { profile: 'PDF/A-2b', compliant: true, violations: [] } },
     ],
     [
       'too many documents',
@@ -362,4 +366,17 @@ test.each([
   const raw = JSON.stringify(report)
   assert.equal(parsePdfValidationReport(raw), null)
   assert.equal(await summarisePdfValidationBlob(new Blob([raw])), null)
+})
+
+test('summarizes long original filenames within the report size limit, like Gotenberg 9', async () => {
+  const filename = `${'a'.repeat(500)}.pdf`
+  const report = new Blob(
+    [JSON.stringify({ [filename]: { profile: 'PDF/A-2b', compliant: true, violations: [] } })],
+    { type: 'application/json' },
+  )
+  const result = await summarisePdfValidationBlob(report, ['PDF/A-2b'], {
+    files: [new File(['%PDF'], filename)],
+  })
+  assert.equal(result?.[0]?.filename, filename)
+  assert.equal(result?.[0]?.compliant, true)
 })

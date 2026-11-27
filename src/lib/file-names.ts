@@ -256,6 +256,7 @@ export function combineUploadSelection(
   incoming: readonly File[],
   options: { multiple?: boolean; allowDuplicateNames?: boolean; maxFiles?: number } = {},
 ): File[] {
+  if (!incoming.length || (!options.multiple && incoming.length > 1)) return [...existing]
   const names = new Set<string>()
   return [...(options.multiple ? existing : []), ...incoming]
     .filter((file) => {

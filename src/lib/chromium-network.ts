@@ -1,4 +1,5 @@
 import { isHttpHeaderValue } from '#/lib/http-url'
+import { trimGoWhitespace } from '#/lib/unicode-text'
 
 /** Ephemeral browser-side inputs. These are form fields for Chromium, not proxy HTTP headers. */
 export type ChromiumCookie = {
@@ -19,7 +20,7 @@ export type ChromiumResourceHeader = {
 
 /** Go's strings.TrimSpace uses Unicode White_Space, not JavaScript trim. */
 export function trimChromiumWhitespace(value: string): string {
-  return value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
+  return trimGoWhitespace(value)
 }
 
 /** Match strings.EqualFold, including Unicode simple folding of long s. */

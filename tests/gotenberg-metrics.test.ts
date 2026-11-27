@@ -334,3 +334,52 @@ test('an isolated metric-like line does not make an unrelated text response a sc
   assert.equal(isPrometheusMetrics('<html>\nmetric 1\n</html>'), false)
   assert.equal(isPrometheusMetrics('# arbitrary comment\nmetric 1\n'), true)
 })
+
+test('recognized metric metadata does not excuse an unrelated response body', () => {
+  for (const body of [
+    `${text}<html>error</html>`,
+    '# HELP foo A metric\nnot metrics',
+    '# TYPE foo gauge\nfoo{broken} 1',
+  ])
+    assert.equal(isPrometheusMetrics(body), false)
+  assert.equal(isPrometheusMetrics(`${text}# EOF\n`, true), true)
+  assert.equal(isPrometheusMetrics('# EOF\nfoo 1'), true)
+  assert.equal(isPrometheusMetrics('# EOF\nfoo 1', true), false)
+  assert.equal(isPrometheusMetrics(text, true), false)
+  assert.equal(
+    isPrometheusMetrics('# comment\n# HELP foo A metric\n# TYPE foo gauge\nfoo 1\n'),
+    true,
+  )
+})
+
+test('metrics proxy rejects a truncated OpenMetrics response without its terminator', async () => {
+  const result = await proxyMetricsRequest(
+    metricsRequest(),
+    versioned(
+      async () =>
+        new Response(text, {
+          headers: { 'Content-Type': 'application/openmetrics-text; version=1.0.0' },
+        }),
+    ),
+  ).catch(proxyErrorResponse)
+  assert.equal(result.status, 502)
+})
+
+test('rejects malformed TYPE metadata and recognizes valid tab-separated metadata', () => {
+  for (const body of [
+    '# TYPE foo',
+    '# TYPE foo nonsense',
+    '# TYPE foo gauge extra',
+    '# TYPE foo gauge\u2028invalid',
+    '# TYPE foo invalid\nfoo 1',
+  ]) {
+    assert.equal(isPrometheusMetrics(body), false)
+  }
+  const body = '#\tTYPE\tlatency histogram\nlatency_count 3\nlatency_sum 4\n'
+  assert.equal(isPrometheusMetrics(body), true)
+  assert.deepEqual(summarizePrometheusMetrics(body), { families: 1, samples: 2 })
+  assert.deepEqual(summarizePrometheusMetrics('# TYPE invalid nonsense'), {
+    families: 0,
+    samples: 0,
+  })
+})

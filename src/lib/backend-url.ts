@@ -16,6 +16,19 @@ export function normalizeBackendUrl(input: string): string {
   return parsed.toString().replace(/\/+$/, '')
 }
 
+/** The public demo is a host, not just a single base path. Never attach
+ * credentials to alternate ports, paths or DNS-equivalent trailing dots.
+ */
+export const DEMO_GOTENBERG_URL = 'https://demo.gotenberg.dev'
+
+export function isPublicDemoBackend(value: string): boolean {
+  try {
+    return new URL(value).hostname.replace(/\.+$/, '') === new URL(DEMO_GOTENBERG_URL).hostname
+  } catch {
+    return false
+  }
+}
+
 export const BACKEND_STORAGE_KEY = 'gotenui.backend-url.v1'
 
 /** Some browser privacy modes throw when merely accessing window.localStorage. */

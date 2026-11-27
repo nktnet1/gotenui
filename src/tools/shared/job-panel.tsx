@@ -350,7 +350,7 @@ export function JobPanel({
                               : 'border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200',
                           )}
                         >
-                          <p className="font-semibold">
+                          <p className="break-all font-semibold">
                             {result.filename}:{' '}
                             {result.compliant
                               ? result.totalViolations > 0

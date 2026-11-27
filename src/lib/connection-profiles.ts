@@ -1,5 +1,5 @@
 import * as v from 'valibot'
-import { BACKEND_STORAGE_KEY, normalizeBackendUrl } from '#/lib/backend-url'
+import { BACKEND_STORAGE_KEY, isPublicDemoBackend, normalizeBackendUrl } from '#/lib/backend-url'
 import { localUuid } from '#/lib/local-id'
 import { responseMediaType } from '#/lib/security'
 import { isBasicPassword, isBasicUsername, isBearerToken } from '#/lib/upstream-credentials'
@@ -240,5 +240,13 @@ export function requireConnectionCredentials(connection: string | ConnectionChoi
     throw new Error(
       'Re-enter the saved connection credentials in connection settings before making requests.',
     )
+  }
+  if (
+    typeof connection !== 'string' &&
+    connection.kind === 'browser' &&
+    connection.authorization &&
+    isPublicDemoBackend(connection.url)
+  ) {
+    throw new Error('Do not send credentials to the public Gotenberg demo.')
   }
 }

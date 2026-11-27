@@ -93,9 +93,9 @@ GOTENBERG_BASIC_AUTH_USERNAME=service
 GOTENBERG_BASIC_AUTH_PASSWORD=replace-with-a-secret
 ```
 
-The legacy Basic Auth target must exactly match an approved URL and cannot be the public Gotenberg demo.
+The legacy Basic Auth target must exactly match an approved URL. Upstream credentials cannot be sent to the public demo host, including alternate ports or base paths. This restriction also applies to managed OAuth2 token endpoints and separately authenticated metrics exporters.
 
-Alternatively, configure named connections using `GOTENUI_SERVER_CONNECTIONS`. Profiles support Basic Auth, bearer tokens and OAuth2 client credentials. For example:
+Alternatively, configure named connections using `GOTENUI_SERVER_CONNECTIONS`. Profiles support Basic Auth, bearer tokens and OAuth2 client credentials. Unknown profile and authentication properties are rejected instead of silently ignored. For example:
 
 ```dotenv
 GOTENBERG_ALLOWED_URLS=https://pdf.example.com

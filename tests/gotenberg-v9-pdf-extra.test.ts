@@ -118,6 +118,30 @@ describe('Gotenberg 9 read endpoints', () => {
 })
 
 describe('Gotenberg 9 PDF stages', () => {
+  it('preserves nonempty signature metadata even when it consists of whitespace or BOM', () => {
+    const { operation, payload } = validatePayload(
+      request('sign', {
+        reason: '  ',
+        location: '\t',
+        contactInfo: '\u00a0',
+        signerName: '\ufeff',
+      }).payload,
+    )
+    const form = new FormData()
+    form.append('files', new File(['pdf'], 'input.pdf'))
+    const result = adaptPdfForm(operation, payload, form, 9, [new File(['cert'], 'cert.p12')])
+    assert.deepEqual(JSON.parse(String(result.form.get('stages'))), [
+      {
+        op: 'sign',
+        certificate: 'cert.p12',
+        reason: '  ',
+        location: '\t',
+        contactInfo: '\u00a0',
+        name: '\ufeff',
+      },
+    ])
+  })
+
   it.each([
     ['select-pages', { pages: '2,1' }, { op: 'select', pages: '2,1' }],
     ['delete-pages', { pages: 'odd' }, { op: 'delete', pages: 'odd' }],

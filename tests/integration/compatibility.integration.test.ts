@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, inject, test, vi } from 'vitest'
+import { conversionRequestBody } from '#/lib/conversion-request-body'
 import { proxyConversionRequest, proxyStatusRequest } from '#/lib/gotenberg-proxy.server'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
@@ -33,19 +34,17 @@ async function convert(
 ) {
   const operation = OPERATION_BY_ID.get(id)
   if (!operation) throw new Error(`Missing operation ${id}`)
-  const body = new FormData()
-  body.set(
-    'payload',
-    JSON.stringify({
+  const body = conversionRequestBody(
+    {
       operation: id,
       fields: { ...operationDefaults(operation), ...fields },
       advanced: {},
       ...(operation.input === 'html'
         ? { source: '<!doctype html><html><body><h1>Compatibility fixture</h1></body></html>' }
         : {}),
-    }),
+    },
+    files,
   )
-  for (const file of files) body.append('files', file, file.name)
   return proxyConversionRequest(
     new Request(`${origin}/api/gotenberg/convert`, {
       method: 'POST',

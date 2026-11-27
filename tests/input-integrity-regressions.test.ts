@@ -538,3 +538,41 @@ test.each([
     }
   },
 )
+
+test('rejects unknown conversion payload and Markdown source properties instead of discarding them', () => {
+  assert.throws(() => validatePayload(request('url-pdf', {}, { expectedBackendVerison: '9.10.2' })))
+  assert.throws(() =>
+    validatePayload(
+      request(
+        'markdown-pdf',
+        {},
+        {
+          markdownFiles: [{ name: 'chapter.md', content: '# Chapter', encoding: 'utf-8' }],
+        },
+      ),
+    ),
+  )
+  assert.doesNotThrow(() =>
+    validatePayload(
+      request(
+        'markdown-pdf',
+        {},
+        {
+          markdownFiles: [{ name: 'chapter.md', content: '# Chapter' }],
+        },
+      ),
+    ),
+  )
+})
+
+test('rejects text sources for operations that would discard them', () => {
+  for (const operation of ['url-pdf', 'office-pdf', 'merge']) {
+    assert.throws(
+      () => validatePayload(request(operation, {}, { source: 'document' })),
+      /Source text requires/,
+    )
+  }
+  for (const operation of ['html-pdf', 'markdown-pdf']) {
+    assert.equal(validatePayload(request(operation, {}, { source: '' })).payload.source, '')
+  }
+})

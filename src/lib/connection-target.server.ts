@@ -1,3 +1,4 @@
+import { isPublicDemoBackend } from '#/lib/backend-url'
 import { authorizationForOAuth2 } from '#/lib/oauth2-client-credentials.server'
 import { DEMO_GOTENBERG_URL, ProxyInputError, requireAllowedBackend } from '#/lib/proxy-policy'
 import { requireServerConnection, type ServerConnection } from '#/lib/server-connections.server'
@@ -74,7 +75,7 @@ export function resolveConnectionTarget(
   }
   const url = requireAllowedBackend(urlCandidate ?? DEMO_GOTENBERG_URL, settings.allowed)
   const authorization = parseBrowserAuthorization(suppliedAuth)
-  if (authorization && url === DEMO_GOTENBERG_URL) {
+  if (authorization && isPublicDemoBackend(url)) {
     throw new ProxyInputError('Do not send credentials to the public Gotenberg demo.')
   }
   return { url, headers: authorization ? { Authorization: authorization } : undefined }

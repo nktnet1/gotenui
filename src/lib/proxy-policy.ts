@@ -1,7 +1,7 @@
-import { normalizeBackendUrl } from '#/lib/backend-url'
+import { DEMO_GOTENBERG_URL, normalizeBackendUrl } from '#/lib/backend-url'
 import { parseHttpEndpoint } from '#/lib/http-url'
 
-export const DEMO_GOTENBERG_URL = 'https://demo.gotenberg.dev'
+export { DEMO_GOTENBERG_URL } from '#/lib/backend-url'
 export const DEFAULT_MAX_REQUEST_BYTES = 4_200_000
 export const DEFAULT_MAX_RESPONSE_BYTES = 100_000_000
 

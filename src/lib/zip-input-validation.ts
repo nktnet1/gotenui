@@ -9,13 +9,18 @@ import {
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
 import { type ConversionPayload, InputError } from '#/lib/validation'
+import {
+  findZipEndRecord,
+  hasZipDirectoryHeaderAt,
+  ZIP_END_SEARCH_BYTES,
+  zipDirectoryEntries,
+  zipEntryIsDirectory,
+} from '#/lib/zip-directory'
 import type { Operation } from '#/tools/registry'
 
 /** Inspect ZIP metadata, not file contents. Gotenberg remains responsible for
  * extracting entries, enforcing expansion limits and verifying file contents.
  */
-const END_RECORD_BYTES = 22
-const MAX_COMMENT_BYTES = 65_535
 // Keep the in-browser ZIP metadata inspection bounded; Gotenberg enforces
 // the actual extraction quota (10,000 entries by default) and body limit.
 const MAX_DIRECTORY_BYTES = 64 * 1024 * 1024
@@ -45,21 +50,10 @@ function ignoredArchiveEntry(name: string): boolean {
 
 /** Read a bounded central directory, including names past the first 30 entries. */
 export async function zipEntryNames(archive: File): Promise<string[]> {
-  const tailStart = Math.max(0, archive.size - END_RECORD_BYTES - MAX_COMMENT_BYTES)
+  const tailStart = Math.max(0, archive.size - ZIP_END_SEARCH_BYTES)
   const tail = new Uint8Array(await archive.slice(tailStart).arrayBuffer())
   const view = new DataView(tail.buffer, tail.byteOffset, tail.byteLength)
-  let end = -1
-  for (let offset = tail.length - END_RECORD_BYTES; offset >= 0; offset--) {
-    if (
-      view.getUint32(offset, true) === 0x06054b50 &&
-      // Like Go's archive/zip, allow bytes after the ZIP comment. The
-      // directory itself must still be complete and within the archive.
-      offset + END_RECORD_BYTES + view.getUint16(offset + 20, true) <= tail.length
-    ) {
-      end = offset
-      break
-    }
-  }
+  const end = findZipEndRecord(view)
   if (end < 0)
     invalidArchive(archive.name, 'is not a ZIP file: the ZIP central directory is missing.')
   const filesOnDisk = view.getUint16(end + 8, true)
@@ -73,9 +67,8 @@ export async function zipEntryNames(archive: File): Promise<string[]> {
   // ZIP64 extends the classic EOCD with a locator and a 64-bit end record.
   // Read only its fixed header, then the bounded central directory itself.
   const locatorAt = end - 20
-  // The maximum ZIP comment fills the entire tail buffer. When an end record
-  // requests ZIP64 and its locator falls just before that buffer, read only
-  // the 20 missing bytes instead of rejecting a valid archive.
+  // The locator can fall before the bounded tail read when a long comment
+  // or trailer follows the end record. Read its 20 bytes separately.
   const needsZip64 = count === 0xffff || length === 0xffffffff || offset === 0xffffffff
   const locatorBytes =
     locatorAt >= 0
@@ -88,30 +81,20 @@ export async function zipEntryNames(archive: File): Promise<string[]> {
     locatorBytes.byteOffset,
     locatorBytes.byteLength,
   )
-  const zip64 = locatorBytes.length === 20 && locator.getUint32(0, true) === 0x07064b50
+  const zip64 =
+    needsZip64 && locatorBytes.length === 20 && locator.getUint32(0, true) === 0x07064b50
   let directoryEnd = endOffset
   if (zip64) {
     if (locator.getUint32(4, true) !== 0 || locator.getUint32(16, true) !== 1) {
       invalidArchive(archive.name, 'multi-volume ZIP64 archives are not supported.')
     }
-    // ZIP64 locator offsets may be relative to an executable preamble, just
-    // like the ordinary central-directory offset. For the standard fixed-size
-    // end record, its physical location is immediately before the locator.
-    const declaredOffset = safeZip64Integer(locator.getBigUint64(8, true), archive.name)
+    // Unlike the classic directory offset, Go reads the ZIP64 end record
+    // at the locator's declared position. Do not invent another record offset.
+    const zip64Offset = safeZip64Integer(locator.getBigUint64(8, true), archive.name)
     const beforeLocator = endOffset - 20
-    let zip64Offset = declaredOffset
-    let recordBytes = new Uint8Array(
+    const recordBytes = new Uint8Array(
       await archive.slice(zip64Offset, zip64Offset + 56).arrayBuffer(),
     )
-    if (
-      (recordBytes.length !== 56 ||
-        new DataView(recordBytes.buffer).getUint32(0, true) !== 0x06064b50) &&
-      beforeLocator >= 56 &&
-      declaredOffset !== beforeLocator - 56
-    ) {
-      zip64Offset = beforeLocator - 56
-      recordBytes = new Uint8Array(await archive.slice(zip64Offset, zip64Offset + 56).arrayBuffer())
-    }
     if (recordBytes.length !== 56 || zip64Offset + 56 > beforeLocator) {
       invalidArchive(archive.name, 'the ZIP64 end record is invalid.')
     }
@@ -155,46 +138,38 @@ export async function zipEntryNames(archive: File): Promise<string[]> {
   if (baseOffset < 0 || directoryEnd > archive.size || directoryEnd < length) {
     invalidArchive(archive.name, 'the ZIP central directory is invalid.')
   }
-  const directoryOffset = offset + baseOffset
+  const directoryOffset =
+    baseOffset > 0 && (await hasZipDirectoryHeaderAt(archive, offset))
+      ? offset
+      : offset + baseOffset
   const bytes = new Uint8Array(
     await archive.slice(directoryOffset, directoryOffset + length).arrayBuffer(),
   )
   if (bytes.byteLength !== length) invalidArchive(archive.name, 'the ZIP index is incomplete.')
   const directory = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const names: string[] = []
-  let cursor = 0
-  for (let index = 0; index < count; index++) {
-    if (cursor + 46 > length || directory.getUint32(cursor, true) !== 0x02014b50) {
-      invalidArchive(archive.name, 'the ZIP index contains an invalid entry.')
-    }
-    const nameLength = directory.getUint16(cursor + 28, true)
-    const extraLength = directory.getUint16(cursor + 30, true)
-    const commentLength = directory.getUint16(cursor + 32, true)
-    const next = cursor + 46 + nameLength + extraLength + commentLength
-    if (next > length) invalidArchive(archive.name, 'the ZIP index contains a truncated entry.')
-    const name = decodeFilenameBytes(bytes.subarray(cursor + 46, cursor + 46 + nameLength))
+  for (const entry of zipDirectoryEntries(directory, count, (detail) =>
+    invalidArchive(archive.name, detail),
+  )) {
+    const name = decodeFilenameBytes(entry.nameBytes)
     // Gotenberg skips anything for which Go archive/zip's Mode().IsRegular()
     // is false. Unix and macOS creators use Unix file types, while FAT, NTFS
     // and VFAT creators use the DOS directory attribute, even when the entry
     // name has no trailing slash.
-    const creator = directory.getUint16(cursor + 4, true) >>> 8
-    const externalAttributes = directory.getUint32(cursor + 38, true)
+    const { creator, attributes: externalAttributes, flags } = entry
     const unixType = (externalAttributes >>> 16) & 0o170000
     const unixNonRegular =
-      (creator === 3 || creator === 19) && unixType !== 0 && unixType !== 0o100000
-    const dosDirectory =
-      (creator === 0 || creator === 11 || creator === 14) && (externalAttributes & 0x10) !== 0
+      (creator === 3 || creator === 19) &&
+      [0o010000, 0o020000, 0o060000, 0o120000, 0o140000].includes(unixType)
     if (
-      name.endsWith('/') ||
+      zipEntryIsDirectory(creator, externalAttributes, name) ||
       name.endsWith('\\') ||
       unixNonRegular ||
-      dosDirectory ||
       ignoredArchiveEntry(name)
     ) {
-      cursor = next
       continue
     }
-    if (directory.getUint16(cursor + 8, true) & 1) {
+    if (flags & 1) {
       invalidArchive(archive.name, 'encrypted ZIP entries are not supported.')
     }
     if (
@@ -218,20 +193,6 @@ export async function zipEntryNames(archive: File): Promise<string[]> {
       invalidArchive(archive.name, 'entry paths must remain inside the ZIP.')
     }
     names.push(name)
-    cursor = next
-  }
-  // ZIP central directories may end with a single digital-signature
-  // record. Go's archive/zip accepts it, but arbitrary trailing bytes are
-  // still invalid here to avoid ambiguous archive metadata.
-  if (cursor !== length) {
-    const remaining = length - cursor
-    if (
-      remaining < 6 ||
-      directory.getUint32(cursor, true) !== 0x05054b50 ||
-      6 + directory.getUint16(cursor + 4, true) !== remaining
-    ) {
-      invalidArchive(archive.name, 'the ZIP index has trailing data.')
-    }
   }
   // An empty archive (or one containing only skipped directory/metadata
   // entries) is valid in Gotenberg when other request inputs are provided.

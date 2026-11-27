@@ -12,6 +12,7 @@ import {
 } from '#/lib/chromium-media'
 import { encodeChromiumCookies } from '#/lib/chromium-network'
 import { type ConnectionChoice, requireConnectionCredentials } from '#/lib/connection-profiles'
+import { conversionRequestBody } from '#/lib/conversion-request-body'
 import {
   expectedConversionContentType,
   fixedRouteResponseTypes,
@@ -25,7 +26,6 @@ import {
 } from '#/lib/file-names'
 import type { GotenbergVersion, SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import { mergeBookmarks, mergeUploadFilename } from '#/lib/merge-order'
-import { multipartBody } from '#/lib/multipart-body'
 import { encodeOfficialField } from '#/lib/official-form-fields'
 import {
   conversionPipelineResponseTypes,
@@ -507,23 +507,12 @@ export async function convertWithGotenberg(
     validatePinnedRequestCompatibility(operation, payload),
   )
   const allowedTypes = browserResponseTypes(operation, payload)
-  const body = new FormData()
-  body.set('payload', JSON.stringify(payload))
-  for (const file of files) body.append('files', file, file.name)
-  for (const file of auxiliary) body.append('auxiliary', file, file.name)
-  for (const file of stageFiles) body.append('stageFile', file, file.name)
-  for (const file of archives) body.append('archives', file, file.name)
-  for (const kind of OVERLAY_KINDS) {
-    for (const file of overlayUploads(postFiles, kind)) body.append(kind, file, file.name)
-  }
-  for (const file of postFiles.embeds ?? []) body.append('embeds', file, file.name)
-  if (postFiles.facturxXml)
-    body.append('facturxXml', postFiles.facturxXml, postFiles.facturxXml.name)
+  const body = conversionRequestBody(payload, files, auxiliary, postFiles, stageFiles, archives)
   let response: Response
   try {
     response = await fetch('/api/gotenberg/convert', {
       method: 'POST',
-      body: multipartBody(body),
+      body,
       signal,
       credentials: 'same-origin',
       redirect: 'error',

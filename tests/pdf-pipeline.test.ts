@@ -328,10 +328,11 @@ describe('PDF pipeline catalogue and stage contract', () => {
   })
 
   it('distinguishes empty conversion-time stages from required standalone pipeline stages', () => {
-    for (const raw of ['[]', 'null', '  ']) {
+    for (const raw of ['[]', 'null', '  ', '\u0085\u00a0']) {
       assert.deepEqual(parsePdfPipeline(raw, { allowEmpty: true }), [])
       assert.throws(() => parsePdfPipeline(raw), /at least one|valid JSON/)
     }
+    assert.throws(() => parsePdfPipeline('\ufeff', { allowEmpty: true }), /valid JSON/)
     assert.throws(() => parsePdfPipeline('{}', { allowEmpty: true }), /at least one/)
     assert.throws(() => parsePdfPipeline('[null]', { allowEmpty: true }), /Stage 1/)
     const editor = {
@@ -341,7 +342,11 @@ describe('PDF pipeline catalogue and stage contract', () => {
       remoteJson: '',
       acknowledgedRedaction: false,
     }
-    for (const raw of ['[]', 'null', '  ']) {
+    assert.match(
+      pdfPipelineEditorError('\ufeff', { ...editor, documentKind: 'single' }) ?? '',
+      /valid JSON/,
+    )
+    for (const raw of ['[]', 'null', '  ', '\u0085\u00a0']) {
       assert.equal(pdfPipelineEditorError(raw, { ...editor, documentKind: 'office' }), null)
       assert.equal(pdfPipelineEditorError(raw, { ...editor, documentKind: 'single' }), null)
       assert.match(

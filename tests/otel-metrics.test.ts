@@ -66,7 +66,7 @@ describe('deployment-defined OpenTelemetry Prometheus exporter', () => {
       assert.equal(options?.cache, 'no-store')
       assert.equal(options?.credentials, 'omit')
       assert.equal(new Headers(options?.headers).has('authorization'), false)
-      return new Response(metricText, {
+      return new Response(`${metricText}# EOF\n`, {
         headers: {
           'Content-Type': 'application/openmetrics-text; version=1.0.0',
           'Set-Cookie': 'bad=value',
@@ -76,7 +76,7 @@ describe('deployment-defined OpenTelemetry Prometheus exporter', () => {
     expect(result.status).toBe(200)
     expect(result.headers.get('x-gotenui-metrics-source')).toBe('otel')
     expect(result.headers.get('set-cookie')).toBeNull()
-    expect(await result.text()).toBe(metricText)
+    expect(await result.text()).toBe(`${metricText}# EOF\n`)
   })
 
   it('uses separately scoped exporter credentials only when explicitly configured', async () => {

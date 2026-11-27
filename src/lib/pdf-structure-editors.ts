@@ -163,6 +163,18 @@ export function visualMetadataValue(
   return typeof value === 'string' ? value : null
 }
 
+/** Bound outline nesting before recursive PDF/JSON transformations. The
+ * visual editor has a smaller limit to keep nested React controls manageable.
+ * Neither limit restricts the number of sibling bookmarks.
+ */
+export const MAX_BOOKMARK_DEPTH = 512
+export const MAX_VISUAL_BOOKMARK_DEPTH = 128
+export const BOOKMARK_DEPTH_ERROR = `Bookmarks may be nested up to ${MAX_BOOKMARK_DEPTH} levels.`
+
+export function bookmarkTitleBlank(title: string, native: boolean): boolean {
+  return native ? /^\p{White_Space}*$/u.test(title) : !title.trim()
+}
+
 export type BookmarkNode = {
   title: string
   page: number | string
@@ -187,27 +199,40 @@ export function validateBookmarkDocument(
   }
   if (hasMalformedUnicode(value)) throw new Error('Bookmarks contain malformed Unicode.')
   const checkList = (list: unknown, label: string): void => {
-    const pending: { list: unknown; label: string }[] = [{ list, label }]
+    const pending: { list: unknown; label: string; depth: number }[] = [{ list, label, depth: 1 }]
     while (pending.length) {
       const current = pending.pop()
       if (!current) break
       if (!Array.isArray(current.list))
         throw new Error(`${current.label} must be a list of bookmarks.`)
+      if (current.list.length && current.depth > MAX_BOOKMARK_DEPTH)
+        throw new Error(BOOKMARK_DEPTH_ERROR)
       for (const [index, item] of current.list.entries()) {
         const where = `${current.label} item ${index + 1}`
         if (!isRecord(item)) throw new Error(`${where} must be an object.`)
         if (
           typeof item.title !== 'string' ||
-          (allowNativePageNumber ? /^\p{White_Space}*$/u.test(item.title) : !item.title.trim())
+          bookmarkTitleBlank(item.title, allowNativePageNumber)
         ) {
           throw new Error(`${where} needs a title.`)
         }
+        if (
+          allowNativePageNumber &&
+          item.page !== undefined &&
+          item.pageNumber !== undefined &&
+          item.page !== item.pageNumber
+        )
+          throw new Error(`${where} has conflicting page and pageNumber values.`)
         const page = allowNativePageNumber ? (item.page ?? item.pageNumber) : item.page
         if (!Number.isSafeInteger(page) || (page as number) < 1) {
           throw new Error(`${where} needs a positive whole-number page (starting at 1).`)
         }
         if (item.children !== undefined && !(allowNativePageNumber && item.children === null))
-          pending.push({ list: item.children, label: `${where} children` })
+          pending.push({
+            list: item.children,
+            label: `${where} children`,
+            depth: current.depth + 1,
+          })
       }
     }
   }
@@ -231,11 +256,14 @@ export function validateBookmarkDocument(
 function convertBookmarkList(value: unknown, allowNativePageNumber = false): BookmarkNode[] | null {
   if (!Array.isArray(value)) return null
   const root: BookmarkNode[] = []
-  const pending: { source: unknown; output: BookmarkNode[] }[] = [{ source: value, output: root }]
+  const pending: { source: unknown; output: BookmarkNode[]; depth: number }[] = [
+    { source: value, output: root, depth: 1 },
+  ]
   while (pending.length) {
     const current = pending.pop()
     if (!current) break
     if (!Array.isArray(current.source)) return null
+    if (current.source.length && current.depth > MAX_VISUAL_BOOKMARK_DEPTH) return null
     for (const item of current.source) {
       if (!isRecord(item) || typeof item.title !== 'string') return null
       if (
@@ -252,7 +280,7 @@ function convertBookmarkList(value: unknown, allowNativePageNumber = false): Boo
       // Use the editor's canonical page alias so a visual edit cannot leave a stale pageNumber.
       if (allowNativePageNumber) delete row.pageNumber
       current.output.push(row)
-      pending.push({ source: item.children ?? [], output: children })
+      pending.push({ source: item.children ?? [], output: children, depth: current.depth + 1 })
     }
   }
   return root
@@ -286,7 +314,8 @@ export function editBookmarks(
 ): string {
   const rows = visualBookmarkList(text, options)
   if (!rows) throw new Error('Switch to JSON to edit this bookmark structure.')
-  const root = structuredClone(rows)
+  // visualBookmarkList parses a fresh document, so no additional clone is needed.
+  const root = rows
   const path = edit.kind === 'add' ? edit.parent : edit.path.slice(0, -1)
   let siblings = root
   for (const index of path) {
@@ -295,6 +324,8 @@ export function editBookmarks(
     siblings = node.children
   }
   if (edit.kind === 'add') {
+    if (edit.parent.length >= MAX_VISUAL_BOOKMARK_DEPTH)
+      throw new Error('Switch to JSON to add deeper bookmarks.')
     siblings.push({ title: 'New bookmark', page: 1, children: [] })
   } else {
     const index = edit.path.at(-1)

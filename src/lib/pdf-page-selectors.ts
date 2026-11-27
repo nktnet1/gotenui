@@ -1,14 +1,33 @@
-/** Gotenberg 9 page selections use litho ranges, odd/even and last.
- * From 9.2 onward a term may exclude pages with !, and ranges may be open-ended.
- * `all` remains valid only by itself. Resolving ranges (including empty selections)
- * against the document's page count belongs upstream.
+import { parseGoFormInteger } from '#/lib/number-field-values'
+import { trimGoWhitespace } from '#/lib/unicode-text'
+
+/** Match litho's page grammar and Go integer/whitespace semantics. Actual
+ * page counts and selections that resolve to no pages belong upstream.
  */
-const term = String.raw`!?((?:[1-9]\d*(?:-(?:[1-9]\d*)?)?|-[1-9]\d*)|odd|even|last)`
-const range = new RegExp(`^${term}(?:\\s*,\\s*${term})*$`, 'i')
+function positivePage(value: string): bigint | undefined {
+  const page = parseGoFormInteger(value)
+  return page !== undefined && page > 0n ? page : undefined
+}
+
+function validTerm(raw: string): boolean {
+  let term = trimGoWhitespace(raw)
+  if (term.startsWith('!')) term = trimGoWhitespace(term.slice(1))
+  if (['odd', 'even', 'last'].includes(term.toLowerCase())) return true
+  const dash = term.indexOf('-')
+  if (dash < 0) return positivePage(term) !== undefined
+  const start = trimGoWhitespace(term.slice(0, dash))
+  const end = trimGoWhitespace(term.slice(dash + 1))
+  const first = start ? positivePage(start) : undefined
+  const last = end ? positivePage(end) : undefined
+  if ((start && first === undefined) || (end && last === undefined)) return false
+  if (first === undefined) return last !== undefined
+  return last === undefined || first <= last
+}
 
 export function isPdfPageSelector(value: unknown): value is string {
   return (
-    typeof value === 'string' && (value.trim().toLowerCase() === 'all' || range.test(value.trim()))
+    typeof value === 'string' &&
+    (trimGoWhitespace(value).toLowerCase() === 'all' || value.split(',').every(validTerm))
   )
 }
 
@@ -16,8 +35,15 @@ export function isPdfPageSelector(value: unknown): value is string {
 export function hasGotenberg92PageSyntax(value: unknown): boolean {
   if (typeof value !== 'string') return false
   return value.split(',').some((part) => {
-    const token = part.trim()
-    return token.startsWith('!') || /^-\d+$/.test(token) || /^\d+-$/.test(token)
+    const token = trimGoWhitespace(part)
+    if (token.startsWith('!')) return true
+    const dash = token.indexOf('-')
+    if (dash < 0) return false
+    const start = trimGoWhitespace(token.slice(0, dash))
+    const end = trimGoWhitespace(token.slice(dash + 1))
+    return (
+      (!start && positivePage(end) !== undefined) || (!end && positivePage(start) !== undefined)
+    )
   })
 }
 

@@ -1,5 +1,11 @@
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
-import { metadataObject, V9_METADATA_KEY_MAP } from '#/lib/pdf-structure-editors'
+import {
+  BOOKMARK_DEPTH_ERROR,
+  bookmarkTitleBlank,
+  MAX_BOOKMARK_DEPTH,
+  metadataObject,
+  V9_METADATA_KEY_MAP,
+} from '#/lib/pdf-structure-editors'
 import { hasMalformedUnicode } from '#/lib/unicode-text'
 import { InputError } from '#/lib/validation'
 
@@ -50,7 +56,8 @@ export function v9BookmarkTree(raw: string): unknown[] {
   return toV9Bookmarks(decoded)
 }
 
-function toV9Bookmarks(nodes: unknown[]): unknown[] {
+function toV9Bookmarks(nodes: unknown[], depth = 1): unknown[] {
+  if (nodes.length && depth > MAX_BOOKMARK_DEPTH) throw new InputError(BOOKMARK_DEPTH_ERROR)
   return nodes.map((node) => {
     if (!node || typeof node !== 'object' || Array.isArray(node))
       throw new InputError('Every bookmark must be an object.')
@@ -72,7 +79,7 @@ function toV9Bookmarks(nodes: unknown[]): unknown[] {
       !Number.isSafeInteger(pageNumber) ||
       (pageNumber as number) < 1 ||
       typeof entry.title !== 'string' ||
-      /^\p{White_Space}*$/u.test(entry.title)
+      bookmarkTitleBlank(entry.title, true)
     ) {
       throw new InputError('Each bookmark needs a title and a positive page number.')
     }
@@ -81,7 +88,7 @@ function toV9Bookmarks(nodes: unknown[]): unknown[] {
     return {
       title: entry.title,
       pageNumber,
-      ...(entry.children ? { children: toV9Bookmarks(entry.children) } : {}),
+      ...(entry.children ? { children: toV9Bookmarks(entry.children, depth + 1) } : {}),
     }
   })
 }

@@ -1,4 +1,4 @@
-import { hasMalformedUnicode } from '#/lib/unicode-text'
+import { hasMalformedUnicode, trimGoWhitespace } from '#/lib/unicode-text'
 /** Gotenberg 9 PDF pipeline catalogue and shared client/server validation.
  * Keep this aligned with pkg/modules/pdf/stages.go and stage_types.go.
  */
@@ -16,6 +16,11 @@ import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { PDF_PAPER_SIZES } from '#/lib/pdf-paper-sizes'
 import { isPdfStampPosition, PDF_STAMP_POSITIONS } from '#/lib/pdf-stamp-position'
+import {
+  BOOKMARK_DEPTH_ERROR,
+  bookmarkTitleBlank,
+  MAX_BOOKMARK_DEPTH,
+} from '#/lib/pdf-structure-editors'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
 
@@ -301,7 +306,7 @@ export function conversionSplitStage(
   if (mode !== 'pages' && mode !== 'intervals') {
     throw new InputError('Choose a split mode of pages or intervals.')
   }
-  if (!span?.trim()) {
+  if (!span || !trimGoWhitespace(span)) {
     throw new InputError('A page range or interval is required when splitting output.')
   }
   if (mode === 'intervals') {
@@ -313,7 +318,7 @@ export function conversionSplitStage(
     return { op: 'split', every }
   }
   if (unify) return { op: 'select', pages: span }
-  const ranges = span.split(',').map((range) => range.trim())
+  const ranges = span.split(',').map(trimGoWhitespace)
   if (ranges.some((range) => !range)) {
     throw new InputError('Split page ranges cannot be empty.')
   }
@@ -367,7 +372,7 @@ const optionalPages = (stage: PdfPipelineStage, key: string): void => {
   // Litho interprets an omitted, empty, or whitespace-only optional page range as all pages.
   if (
     !absent(value) &&
-    !(typeof value === 'string' && !value.trim()) &&
+    !(typeof value === 'string' && !trimGoWhitespace(value)) &&
     !isPdfPageSelector(value)
   ) {
     throw new InputError(
@@ -565,7 +570,7 @@ function validateStage(stage: PdfPipelineStage): void {
     }
     case 'select':
     case 'delete':
-      if (!requiredText(stage, 'pages').trim())
+      if (!trimGoWhitespace(requiredText(stage, 'pages')))
         throw new InputError(`${name}: "pages" must be a non-empty string.`)
       break
     case 'insert':
@@ -599,13 +604,16 @@ function validateStage(stage: PdfPipelineStage): void {
       if (!Array.isArray(stage.bookmarks) || !stage.bookmarks.length)
         throw new InputError('set-bookmarks: add at least one bookmark.')
       const check = (entries: unknown[]): void => {
-        const pending = [...entries]
+        const pending = entries.map((entry) => ({ entry, depth: 1 }))
         while (pending.length) {
-          const entry = pending.pop()
+          const current = pending.pop()
+          if (!current) break
+          const { entry, depth } = current
+          if (depth > MAX_BOOKMARK_DEPTH) throw new InputError(BOOKMARK_DEPTH_ERROR)
           if (
             !object(entry) ||
             typeof entry.title !== 'string' ||
-            /^\p{White_Space}*$/u.test(entry.title) ||
+            bookmarkTitleBlank(entry.title, true) ||
             !integer(entry.pageNumber, 1)
           )
             throw new InputError(
@@ -619,7 +627,7 @@ function validateStage(stage: PdfPipelineStage): void {
           if (!absent(entry.children)) {
             if (!Array.isArray(entry.children))
               throw new InputError('set-bookmarks: invalid children.')
-            for (const child of entry.children) pending.push(child)
+            for (const child of entry.children) pending.push({ entry: child, depth: depth + 1 })
           }
         }
       }
@@ -883,7 +891,7 @@ export function parsePdfPipeline(
   raw: string,
   context: PdfPipelineValidation = {},
 ): PdfPipelineStage[] {
-  if (context.allowEmpty && !raw.trim()) return []
+  if (context.allowEmpty && !trimGoWhitespace(raw)) return []
   let decoded: unknown
   try {
     decoded = JSON.parse(raw)

@@ -11,6 +11,7 @@ import { composeStageFromFields, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
 import { isV9SourceDocument } from '#/lib/source-documents'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
+import { trimGoWhitespace } from '#/lib/unicode-text'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
 
@@ -23,7 +24,7 @@ function jsonValue(raw: string, label: string): unknown {
 }
 
 function namedPages(value: string, label: string): string {
-  const normalized = value.trim()
+  const normalized = trimGoWhitespace(value)
   if (!isPdfPageSelector(normalized)) {
     throw new InputError(
       `${label} must use page numbers, ranges, !exclusions, odd, even, last or all.`,
@@ -79,8 +80,9 @@ export function adaptV9PdfExtra(
   const stages: Record<string, unknown>[] = []
   const value = (name: string): string =>
     typeof fields[name] === 'string' ? fields[name].trim() : ''
-  // Passwords are opaque strings. Never trim or treat whitespace as absent.
-  const password = (name: 'password' | 'certificatePassword'): string | undefined => {
+  // Passwords and signature metadata are opaque strings. Never trim or treat
+  // whitespace as absent.
+  const nonemptyText = (name: string): string | undefined => {
     const text = fields[name]
     return typeof text === 'string' && text !== '' ? text : undefined
   }
@@ -102,7 +104,9 @@ export function adaptV9PdfExtra(
     uploaded.add(filenameKey(file.name))
     form.append('files', file, file.name)
   }
-  const requirePages = (name: string) => namedPages(value(name), name)
+  const pageValue = (name: string): string =>
+    typeof fields[name] === 'string' ? trimGoWhitespace(fields[name]) : ''
+  const requirePages = (name: string) => namedPages(pageValue(name), name)
 
   switch (operationId) {
     case 'compose-pages': {
@@ -145,7 +149,7 @@ export function adaptV9PdfExtra(
       allow('pages', 'format', 'invisible', 'artifacts', 'annotations')
       onlyPdfInputs()
       if (value('format')) form.set('format', value('format'))
-      if (value('pages')) form.set('pages', requirePages('pages'))
+      if (pageValue('pages')) form.set('pages', requirePages('pages'))
       for (const name of ['invisible', 'artifacts', 'annotations'] as const) {
         if (fields[name] === true) form.set(name, 'true')
       }
@@ -158,7 +162,7 @@ export function adaptV9PdfExtra(
     case 'pdf-form':
       allow('password', 'pages')
       onlyPdfInputs()
-      if (value('pages')) form.set('pages', requirePages('pages'))
+      if (pageValue('pages')) form.set('pages', requirePages('pages'))
       break
     case 'pdf-validate': {
       allow('password', 'profile', 'additionalProfile')
@@ -191,7 +195,7 @@ export function adaptV9PdfExtra(
         op: 'insert',
         source: asset.name,
         at,
-        ...(value('sourcePages') ? { sourcePages: requirePages('sourcePages') } : {}),
+        ...(pageValue('sourcePages') ? { sourcePages: requirePages('sourcePages') } : {}),
       })
       break
     }
@@ -313,16 +317,16 @@ export function adaptV9PdfExtra(
       const certificate = auxiliary.find((file) => file !== key)
       if (!certificate) throw new InputError('Choose a signing certificate.')
       for (const file of auxiliary) addAsset(file)
-      const certificatePassword = password('certificatePassword')
+      const certificatePassword = nonemptyText('certificatePassword')
       stages.push({
         op: 'sign',
         certificate: certificate.name,
         ...(key ? { key: key.name } : {}),
         ...(certificatePassword !== undefined ? { certificatePassword } : {}),
-        ...(value('reason') ? { reason: fields.reason } : {}),
-        ...(value('location') ? { location: fields.location } : {}),
-        ...(value('contactInfo') ? { contactInfo: fields.contactInfo } : {}),
-        ...(value('signerName') ? { name: fields.signerName } : {}),
+        ...(nonemptyText('reason') !== undefined ? { reason: fields.reason } : {}),
+        ...(nonemptyText('location') !== undefined ? { location: fields.location } : {}),
+        ...(nonemptyText('contactInfo') !== undefined ? { contactInfo: fields.contactInfo } : {}),
+        ...(nonemptyText('signerName') !== undefined ? { name: fields.signerName } : {}),
         ...(fields.pades === true ? { pades: true } : {}),
         ...(value('timestampUrl')
           ? { timestampUrl: timestampAuthorityUrl(fields.timestampUrl as string) }
@@ -344,7 +348,7 @@ export function adaptV9PdfExtra(
       const format = value('format')
       if (!['png', 'jpeg'].includes(format)) throw new InputError('Choose PNG or JPEG rendering.')
       const stage: Record<string, unknown> = { op: 'render', format }
-      if (value('pages')) stage.pages = requirePages('pages')
+      if (pageValue('pages')) stage.pages = requirePages('pages')
       if (value('dpi')) {
         const dpi = decimal(fields.dpi, 'Render DPI')
         if (!Number.isSafeInteger(dpi) || dpi < 1)
@@ -366,7 +370,7 @@ export function adaptV9PdfExtra(
   }
   const route = V9_PDF_READ_ROUTES.get(operationId)
   if (route) {
-    const openPassword = password('password')
+    const openPassword = nonemptyText('password')
     if (openPassword !== undefined) form.set('password', openPassword)
     return { path: route, form }
   }

@@ -281,6 +281,12 @@ describe('Gotenberg 9.2 page-selection grammar', () => {
       '!3-',
       '!-3',
       'even, !last',
+      ' +0001 - +0003 ',
+      '! 2',
+      '3 - ',
+      '- +03',
+      '\u0085all\u0085',
+      '1,\u0085!\u0085last',
     ]) {
       assert.equal(isPdfPageSelector(selection), true, selection)
     }
@@ -296,6 +302,11 @@ describe('Gotenberg 9.2 page-selection grammar', () => {
       '! all',
       '1-2-3',
       '!',
+      '3-2',
+      '9223372036854775808',
+      '\uFEFFall',
+      '\uFEFF1',
+      '1,\uFEFF2',
     ]) {
       assert.equal(isPdfPageSelector(selection), false, selection)
     }
@@ -303,6 +314,9 @@ describe('Gotenberg 9.2 page-selection grammar', () => {
     assert.equal(hasGotenberg92PageSyntax('3-'), true)
     assert.equal(hasGotenberg92PageSyntax('-3'), true)
     assert.equal(hasGotenberg92PageSyntax('1-3,last'), false)
+    assert.equal(hasGotenberg92PageSyntax('  +003 - '), true)
+    assert.equal(hasGotenberg92PageSyntax(' - +003 '), true)
+    assert.equal(hasGotenberg92PageSyntax('\u0085! 1'), true)
     assert.equal(hasGotenberg92PageSyntax(undefined), false)
     const stages = parsePdfPipeline(
       JSON.stringify([
@@ -350,6 +364,60 @@ describe('Gotenberg 9.2 page-selection grammar', () => {
         backendVersion: '9.2.0',
       }),
       null,
+    )
+  })
+
+  it('preserves valid Go page spellings across generated and explicit stages', async () => {
+    const selection = '+01 - +03, ! 2'
+    for (const [operation, fields, expected] of [
+      ['select-pages', { pages: selection }, { op: 'select', pages: selection }],
+      [
+        'rotate',
+        { rotatePages: selection, rotateAngle: '90' },
+        { op: 'rotate', angle: 90, pages: selection },
+      ],
+      [
+        'split',
+        { splitMode: 'pages', splitSpan: selection, splitUnify: false },
+        { op: 'split', ranges: ['+01 - +03', '! 2'] },
+      ],
+    ] as const) {
+      const current = server('9.10.2', (path, form) => {
+        assert.equal(path, '/forms/pdf/pipe')
+        assert.deepEqual(JSON.parse(String(form.get('stages'))), [expected])
+      })
+      assert.equal(
+        (await proxyConversionRequest(request(operation, fields), current.fetcher)).status,
+        200,
+      )
+      assert.equal(current.count(), 1)
+    }
+    assert.deepEqual(parsePdfPipeline(JSON.stringify([{ op: 'select', pages: selection }])), [
+      { op: 'select', pages: selection },
+    ])
+  })
+
+  it('rejects BOM-containing page selections rather than turning them into valid selections or all pages', async () => {
+    const current = server('9.10.2', () => assert.fail('must not forward invalid pages'))
+    for (const [operation, fields] of [
+      ['select-pages', { pages: '\uFEFF1' }],
+      ['rotate', { rotatePages: '\uFEFF', rotateAngle: '90' }],
+      ['pdf-form', { pages: '\uFEFF' }],
+      ['split', { splitMode: 'pages', splitSpan: '1,\uFEFF2', splitUnify: false }],
+    ] as const) {
+      await assert.rejects(
+        proxyConversionRequest(request(operation, fields), current.fetcher),
+        /[Pp]age/,
+      )
+    }
+    assert.equal(current.count(), 0)
+    assert.throws(
+      () => parsePdfPipeline(JSON.stringify([{ op: 'rotate', angle: 90, pages: '\uFEFF' }])),
+      /select pages/,
+    )
+    assert.deepEqual(
+      parsePdfPipeline(JSON.stringify([{ op: 'rotate', angle: 90, pages: '\u0085' }])),
+      [{ op: 'rotate', angle: 90, pages: '\u0085' }],
     )
   })
 

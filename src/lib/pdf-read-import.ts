@@ -1,6 +1,8 @@
 import { filenameKey } from '#/lib/file-names'
 import {
+  BOOKMARK_DEPTH_ERROR,
   GOTENBERG_9_METADATA_FIELDS,
+  MAX_BOOKMARK_DEPTH,
   METADATA_TEXT_FIELDS,
   v9EditorMetadata,
   validateBookmarkDocument,
@@ -86,7 +88,7 @@ export function importReadableBookmarks(
     const items = result[filename] ?? result[filename.normalize('NFC')]
     if (!Array.isArray(items))
       throw new Error(`Gotenberg did not return bookmarks for ${filename}.`)
-    mapped[filename] = items.map(normalizeReadBookmark)
+    mapped[filename] = items.map((item) => normalizeReadBookmark(item, 1))
   }
   const value =
     filenames.length === 1 ? JSON.stringify(mapped[filenames[0] as string]) : JSON.stringify(mapped)
@@ -95,7 +97,8 @@ export function importReadableBookmarks(
 }
 
 /** Convert the v9 pageNumber JSON back to the existing v8-compatible editor shape. */
-function normalizeReadBookmark(value: unknown): unknown {
+function normalizeReadBookmark(value: unknown, depth: number): unknown {
+  if (depth > MAX_BOOKMARK_DEPTH) throw new Error(BOOKMARK_DEPTH_ERROR)
   if (!isObject(value)) return value
   const { pageNumber, children, ...rest } = value
   if (pageNumber !== undefined && rest.page !== undefined && pageNumber !== rest.page) {
@@ -105,7 +108,11 @@ function normalizeReadBookmark(value: unknown): unknown {
     ...rest,
     ...(pageNumber !== undefined ? { page: pageNumber } : {}),
     ...(children != null
-      ? { children: Array.isArray(children) ? children.map(normalizeReadBookmark) : children }
+      ? {
+          children: Array.isArray(children)
+            ? children.map((child) => normalizeReadBookmark(child, depth + 1))
+            : children,
+        }
       : {}),
   }
 }
