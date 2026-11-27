@@ -11,11 +11,24 @@ function cleanDownloadName(candidate: string, fallback: string): string {
     .replace(/^[. ]+|[. ]+$/g, '')
   const extension = /\.[\p{L}\p{N}]{1,16}$/u.exec(clean)?.[0] ?? ''
   const root = extension ? clean.slice(0, -extension.length) : clean
-  const safe = [...root].slice(0, 140 - [...extension].length).join('') + extension
-  const name = safe || fallback
+  // Filesystems commonly limit basenames to 255 UTF-8 bytes, not characters.
+  // Keep the existing character budget as well and reserve room for the suffix.
+  const encoder = new TextEncoder()
+  const truncate = (prefix: string) => {
+    let remainingBytes = 255 - encoder.encode(extension).length
+    let remainingCharacters = 140 - [...extension].length
+    let result = ''
+    for (const char of prefix) {
+      remainingBytes -= encoder.encode(char).length
+      if (remainingBytes < 0 || remainingCharacters-- <= 0) break
+      result += char
+    }
+    return (result + extension).replace(/[. ]+$/u, '')
+  }
+  const name = truncate(root) || fallback
   const stem = (name.split('.')[0] ?? name).replace(/ +$/u, '')
   return /^(?:con|prn|aux|nul|conin\$|conout\$|(?:com|lpt)[0-9])$/i.test(stem)
-    ? `file-${name}`
+    ? truncate(`file-${root}`) || fallback
     : name
 }
 

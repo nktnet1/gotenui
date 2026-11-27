@@ -70,7 +70,7 @@ const markdownFileSchema = v.object({
   content: v.string(),
 })
 
-const remoteFileSchema = v.object({
+const remoteFileSchema = v.strictObject({
   url: v.string(),
   /** Legacy client-side filename hint; on Gotenberg 9.2+ also names the remote download. */
   name: v.optional(v.string()),
@@ -81,7 +81,7 @@ const remoteFileSchema = v.object({
   extraHttpHeaders: v.optional(jsonRecord(v.string())),
 })
 
-const webhookSchema = v.object({
+const webhookSchema = v.strictObject({
   url: v.string(),
   method: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
   errorUrl: v.optional(v.string()),
@@ -243,6 +243,9 @@ function validateAsyncInputs(payload: Pick<ConversionPayload, 'downloadFrom' | '
     }
     if (remote.name && remote.filename && remote.name !== remote.filename) {
       throw new InputError('Specify one remote filename, not two conflicting names.')
+    }
+    if (remote.embedded === true && remote.field && remote.field !== 'embedded') {
+      throw new InputError('A remote download cannot target both embedded files and an overlay.')
     }
     validateHeaderMap(remote.extraHttpHeaders)
   }

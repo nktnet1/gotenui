@@ -518,3 +518,38 @@ test('preserves valid Unicode in outbound HTTP headers and rejects lone surrogat
     extraHttpHeaders,
   })
 })
+
+test('raw outbound descriptors reject unknown properties instead of dropping them', () => {
+  const url = 'https://example.test/file.pdf'
+  for (const extra of [
+    { extraHttpHeader: { Authorization: 'Bearer secret' } },
+    { unknown: true },
+    JSON.parse('{"__proto__":{"url":"https://other.test"}}'),
+  ]) {
+    const descriptor = { url, ...extra }
+    assert.throws(() => validateAsyncInputValues([descriptor], undefined), /download descriptors/)
+    assert.throws(() => validateAsyncInputValues(undefined, descriptor), /callback object/)
+    assert.throws(() => validated('office-pdf', { downloadFrom: [descriptor] }))
+    assert.throws(() => validated('url-pdf', { fields: { url }, webhook: descriptor }))
+  }
+})
+
+test.each(['watermark', 'stamp'] as const)(
+  'rejects contradictory embedded and %s remote destinations',
+  (field) => {
+    const url = 'https://example.test/file.pdf'
+    assert.throws(
+      () => validateAsyncInputValues([{ url, field, embedded: true }], undefined),
+      /both embedded files and an overlay/,
+    )
+    assert.deepEqual(
+      validateAsyncInputValues([{ url, field, embedded: false }], undefined).downloadFrom,
+      [{ url, field, embedded: false }],
+    )
+    assert.deepEqual(
+      validateAsyncInputValues([{ url, field: 'embedded', embedded: true }], undefined)
+        .downloadFrom,
+      [{ url, field: 'embedded', embedded: true }],
+    )
+  },
+)

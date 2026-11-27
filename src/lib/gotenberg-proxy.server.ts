@@ -18,6 +18,7 @@ import {
   sameGotenbergApiVersion,
 } from '#/lib/gotenberg-version'
 import { multipartBody } from '#/lib/multipart-body'
+import { parseMultipartRequest } from '#/lib/multipart-request.server'
 import {
   invalidateOAuth2Authorization,
   type OAuth2ClientCredentials,
@@ -453,28 +454,28 @@ function conversionResponseLength(
  * rejecting ambiguous parameters before parsing an untrusted upload body.
  * Node's FormData parser already supports these valid MIME header variants.
  */
-function supportedMultipartContentType(contentType: string): boolean {
-  if (contentType.length > 512) return false
+function multipartBoundary(contentType: string): string | undefined {
+  if (contentType.length > 512) return undefined
   const [mediaType, ...parameters] = contentType.split(';')
-  if (mediaType?.trim().toLowerCase() !== 'multipart/form-data') return false
+  if (mediaType?.trim().toLowerCase() !== 'multipart/form-data') return undefined
 
-  let boundary = false
+  let boundary: string | undefined
   let charset = false
   for (const parameter of parameters) {
     const separator = parameter.indexOf('=')
-    if (separator < 1) return false
+    if (separator < 1) return undefined
     const name = parameter.slice(0, separator).trim().toLowerCase()
     const rawValue = parameter.slice(separator + 1).trim()
     const value =
       rawValue.startsWith('"') && rawValue.endsWith('"') ? rawValue.slice(1, -1) : rawValue
     if (name === 'boundary') {
-      if (boundary || !/^[A-Za-z0-9'()+_,./:=?-]{1,200}$/.test(value)) return false
-      boundary = true
+      if (boundary || !/^[A-Za-z0-9'()+_,./:=?-]{1,200}$/.test(value)) return undefined
+      boundary = value
     } else if (name === 'charset') {
-      if (charset || value.toLowerCase() !== 'utf-8') return false
+      if (charset || value.toLowerCase() !== 'utf-8') return undefined
       charset = true
     } else {
-      return false
+      return undefined
     }
   }
   return boundary
@@ -487,7 +488,8 @@ export async function proxyConversionRequest(
 ): Promise<Response> {
   requireSameOrigin(request)
   const contentType = request.headers.get('content-type') ?? ''
-  if (!supportedMultipartContentType(contentType)) {
+  const boundary = multipartBoundary(contentType)
+  if (!boundary) {
     throw new ProxyInputError('Expected a multipart/form-data conversion request.')
   }
   const { maxBytes, maxResponseBytes, ...settings } = runtimeConfig()
@@ -495,12 +497,7 @@ export async function proxyConversionRequest(
     throw new ProxyInputError(`Request exceeds the ${maxBytes} byte upload limit.`, 413)
   }
   const bytes = await readLimitedBody(request.body, maxBytes)
-  let fields: FormData
-  try {
-    fields = await new Response(bytes, { headers: { 'Content-Type': contentType } }).formData()
-  } catch {
-    throw new ProxyInputError('Invalid multipart form data.')
-  }
+  const fields = await parseMultipartRequest(bytes, boundary, contentType)
   let candidate: unknown
   const files: File[] = []
   const auxiliary: File[] = []

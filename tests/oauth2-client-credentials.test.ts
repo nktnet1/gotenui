@@ -467,3 +467,31 @@ test('preserves well-formed Unicode OAuth2 credentials and canonical HTTPS endpo
   assert.deepEqual(connections[0]?.oauth2, auth)
   assert.equal(parseOAuth2TokenUrl('https://[::1]:443/path%3Ftoken'), 'https://[::1]/path%3Ftoken')
 })
+
+test('token cache lifetime includes time spent waiting for the token response', async () => {
+  let now = 1_000_000
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  let requests = 0
+  const fetcher: typeof fetch = async () => {
+    now += 8_000
+    return credentialsResponse(`delayed-${++requests}`, 10)
+  }
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer delayed-1')
+  now += 500
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer delayed-1')
+  now += 500
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer delayed-2')
+  assert.equal(requests, 2)
+})
+
+test('short-lived tokens that spend their cache lifetime in transit are not cached', async () => {
+  let now = 1_000_000
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  let requests = 0
+  const fetcher: typeof fetch = async () => {
+    now += 2_000
+    return credentialsResponse(`short-${++requests}`, 2)
+  }
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer short-1')
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer short-2')
+})

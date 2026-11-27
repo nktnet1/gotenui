@@ -205,3 +205,34 @@ test('preserves the upstream download name when the output header is whitespace 
     'attachment; filename="upstream.pdf"',
   )
 })
+
+test.each(['日', '𐐀', 'é'])('limits Unicode download filenames by UTF-8 bytes: %s', (char) => {
+  const name = `${char.repeat(220)}.xml`
+  const disposition = safeAttachmentDisposition(
+    `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+    'extract-attachments',
+    'application/xml',
+    undefined,
+    true,
+  )
+  const actual = downloadFilename(disposition, 'fallback.xml')
+  assert.ok(Buffer.byteLength(actual) <= 255)
+  assert.ok([...actual].length <= 140)
+  assert.ok(actual.endsWith('.xml'))
+  assert.match(actual.slice(0, -4), new RegExp(`^(?:${char})+$`, 'u'))
+})
+
+test('truncation preserves the filename budget after device name protection', () => {
+  const name = `CON.${'x'.repeat(140)}.pdf`
+  const actual = downloadFilename(`attachment; filename="${name}"`, 'fallback.pdf')
+  assert.ok(actual.startsWith('file-CON.'))
+  assert.ok(actual.length <= 140)
+  assert.ok(actual.endsWith('.pdf'))
+})
+
+test('truncation cannot leave an invalid trailing dot or space in an extensionless name', () => {
+  for (const separator of ['.', ' ']) {
+    const name = `${'a'.repeat(139)}${separator}!`
+    assert.equal(downloadFilename(`attachment; filename="${name}"`, 'fallback'), 'a'.repeat(139))
+  }
+})

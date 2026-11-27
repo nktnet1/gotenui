@@ -77,6 +77,9 @@ async function requestToken(
     headers.set('Authorization', `Basic ${Buffer.from(credentials).toString('base64')}`)
   }
 
+  // expires_in is relative to token issuance, which can precede the response
+  // arriving. Use the request start as a conservative bound on cache expiry.
+  const requestedAt = Date.now()
   let response: Response
   try {
     response = await fetcher(auth.tokenUrl, {
@@ -124,7 +127,7 @@ async function requestToken(
   // Limit local caching to one day even when a provider issues longer-lived tokens.
   const lifetime = Math.min(seconds, 86_400)
   const skewSeconds = Math.max(1, Math.min(60, Math.ceil(lifetime * 0.1)))
-  const validUntil = Date.now() + Math.max(0, lifetime - skewSeconds) * 1000
+  const validUntil = requestedAt + Math.max(0, lifetime - skewSeconds) * 1000
   if (validUntil > Date.now()) {
     if (cached.size >= MAX_CACHED_TOKENS) {
       for (const [id, existing] of cached) {
