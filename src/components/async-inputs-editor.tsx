@@ -182,31 +182,56 @@ export function RemoteInputsEditor({
             <Label htmlFor={`${id}-remote-url-${row.id}`}>File URL</Label>
             <Input
               id={`${id}-remote-url-${row.id}`}
-              type="url"
+              type="text"
+              inputMode="url"
               value={row.url}
               onChange={(event) => update(index, { url: event.target.value })}
               placeholder="https://files.example.com/report.pdf"
               autoComplete="off"
             />
           </div>
-          {isV9 && (
+          {(isV9 || row.filename) && (
             <div className="space-y-1">
               <Label htmlFor={`${id}-remote-name-${row.id}`}>
-                {supportsFilenameOverride
+                {(row.filenameMode ?? (supportsFilenameOverride ? 'override' : 'hint')) ===
+                'override'
                   ? 'Downloaded filename (optional)'
                   : 'Expected filename (optional)'}
               </Label>
               <Input
                 id={`${id}-remote-name-${row.id}`}
                 value={row.filename ?? ''}
-                onChange={(event) => update(index, { filename: event.target.value })}
+                onChange={(event) =>
+                  update(index, {
+                    filename: event.target.value,
+                    filenameMode: event.target.value
+                      ? (row.filenameMode ?? (supportsFilenameOverride ? 'override' : 'hint'))
+                      : undefined,
+                  })
+                }
                 placeholder="stamp.png"
               />
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {supportsFilenameOverride
-                  ? 'Sent as downloadFrom.filename. Overrides Content-Disposition; if blank, Gotenberg uses the response header, then the URL path when it ends in a filename with an extension. PDF stage references must match the actual download name.'
-                  : 'Preflight hint only (not sent upstream). Gotenberg expects a Content-Disposition filename. PDF stage references must match the downloaded name.'}
+                {row.filenameMode === 'override' ||
+                (row.filenameMode === undefined && supportsFilenameOverride)
+                  ? 'Sent as downloadFrom.filename. Overrides Content-Disposition. Requires Gotenberg 9.2 or newer.'
+                  : supportsFilenameOverride
+                    ? 'This legacy filename hint is pinned as the download filename on Gotenberg 9.2 or newer.'
+                    : 'Preflight hint only (not sent upstream). Gotenberg expects a Content-Disposition filename. PDF stage references must match the downloaded name.'}
               </p>
+              {row.filename && row.filenameMode === 'override' && !supportsFilenameOverride && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                  <span>This connection cannot override the remote filename.</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => update(index, { filenameMode: 'hint' })}
+                  >
+                    Use as expected filename instead
+                  </Button>
+                </div>
+              )}
             </div>
           )}
           {!pdfInputOnly && (
@@ -345,7 +370,8 @@ export function WebhookEditor({
               <Label htmlFor={`${id}-success-url`}>Success callback URL (required)</Label>
               <Input
                 id={`${id}-success-url`}
-                type="url"
+                type="text"
+                inputMode="url"
                 value={value.url}
                 onChange={(event) => update({ url: event.target.value })}
                 placeholder="https://hooks.example.com/success"
@@ -376,7 +402,8 @@ export function WebhookEditor({
                 </Label>
                 <Input
                   id={`${id}-error-url`}
-                  type="url"
+                  type="text"
+                  inputMode="url"
                   value={value.errorUrl}
                   onChange={(event) => update({ errorUrl: event.target.value })}
                   placeholder="https://hooks.example.com/error"
@@ -420,7 +447,8 @@ export function WebhookEditor({
             </Label>
             <Input
               id={`${id}-events-url`}
-              type="url"
+              type="text"
+              inputMode="url"
               value={value.eventsUrl}
               onChange={(event) => update({ eventsUrl: event.target.value })}
               placeholder="https://hooks.example.com/events"

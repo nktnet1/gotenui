@@ -110,6 +110,7 @@ export function operationDefaults(operation: Operation): Record<string, string |
 export {
   activeOperationFields,
   fieldSupportsBackend,
+  isFieldRequired,
   isFieldVisible,
 } from '#/tools/shared/field-visibility'
 export type {

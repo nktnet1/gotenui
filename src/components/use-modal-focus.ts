@@ -61,18 +61,31 @@ function holdScrollLock(doc: Document): () => void {
   }
 }
 
+type ModalFocusEntry = {
+  dialog: HTMLElement
+  previouslyFocused: Element | null
+  focusInside: () => void
+}
+
+const modalStacks = new WeakMap<Document, ModalFocusEntry[]>()
+
 /** Install dialog keyboard behaviour without depending on a particular modal component. */
 export function activateModalFocus(
   dialog: HTMLElement,
   onClose: () => void,
   doc: Document = document,
 ): () => void {
-  const previouslyFocused = doc.activeElement
   const releaseScrollLock = holdScrollLock(doc)
-
   const focusInside = () => (tabbableWithin(dialog)[0] ?? dialog).focus()
+  const entry = { dialog, previouslyFocused: doc.activeElement, focusInside }
+  const stack = modalStacks.get(doc) ?? []
+  modalStacks.set(doc, stack)
+  // Suspend the previous focus trap before moving focus to the new dialog.
+  stack.push(entry)
+  const isTop = () => stack.at(-1) === entry
   focusInside()
   const onKeyDown = (event: KeyboardEvent) => {
+    if (!isTop()) return
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
@@ -82,16 +95,36 @@ export function activateModalFocus(
     }
   }
   const onFocusIn = (event: FocusEvent) => {
-    if (!dialog.contains(event.target as Node)) focusInside()
+    if (isTop() && !dialog.contains(event.target as Node)) focusInside()
   }
   doc.addEventListener('keydown', onKeyDown, true)
-  doc.addEventListener('focusin', onFocusIn)
+  doc.addEventListener('focusin', onFocusIn, true)
   return () => {
+    const index = stack.indexOf(entry)
+    if (index === -1) return
+    const wasTop = isTop()
+    const next = stack[index + 1]
+    if (next?.previouslyFocused && dialog.contains(next.previouslyFocused)) {
+      // A lower dialog can disappear while the top dialog is still open.
+      // Preserve its original return target instead of a removed control.
+      next.previouslyFocused = entry.previouslyFocused
+    }
+    stack.splice(index, 1)
     doc.removeEventListener('keydown', onKeyDown, true)
-    doc.removeEventListener('focusin', onFocusIn)
+    doc.removeEventListener('focusin', onFocusIn, true)
     releaseScrollLock()
-    if (previouslyFocused?.isConnected && 'focus' in previouslyFocused) {
-      ;(previouslyFocused as HTMLElement).focus()
+    if (!stack.length) modalStacks.delete(doc)
+    if (!wasTop) return
+    const active = stack.at(-1)
+    const previous = entry.previouslyFocused
+    if (
+      previous?.isConnected &&
+      'focus' in previous &&
+      (!active || active.dialog.contains(previous))
+    ) {
+      ;(previous as HTMLElement).focus()
+    } else {
+      active?.focusInside()
     }
   }
 }

@@ -124,6 +124,7 @@ test('invalid and oversized upstream responses cannot be relayed', async () => {
   for (const fake of [
     new Response('<html>not debug</html>', { headers: { 'Content-Type': 'text/html' } }),
     new Response('not-json', { headers: { 'Content-Type': 'application/json' } }),
+    new Response('{"ok":true}', { headers: { 'Content-Type': 'application/jsonp' } }),
     Response.json(['not a debug object']),
     Response.json({ blob: 'x'.repeat(1_000_010) }),
   ]) {

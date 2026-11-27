@@ -1,8 +1,18 @@
-import { effectiveRemoteFilename } from '#/lib/file-names'
-import { mergeUploadFilenames } from '#/lib/merge-order'
+import { forwardedRemoteFilenames } from '#/lib/file-names'
+import {
+  mergeUploadFilenames,
+  numbersPipelineInputs,
+  remoteMergeFilenames,
+} from '#/lib/merge-order'
 import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
-import { parsePdfPipeline, pdfStageAssetNames } from '#/lib/pdf-pipeline'
+import {
+  parsePdfPipeline,
+  pdfStageAssetNames,
+  validatePdfStageUploads,
+  validatePipelineSourceUploads,
+} from '#/lib/pdf-pipeline'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
+import { isV9SourceDocument } from '#/lib/source-documents'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 
 /** Convert the UI's ordered stages and named asset uploads to a v9 PDF request. */
@@ -30,47 +40,46 @@ export function adaptPdfPipeline(
   }
   const raw = payload.fields.stages
   if (typeof raw !== 'string') throw new InputError('Choose at least one PDF pipeline stage.')
-  const references = pdfStageAssetNames(
-    parsePdfPipeline(raw, {
-      acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
-    }),
-  )
-  const remoteNames = remoteStageAssets(payload.downloadFrom, references, [
-    ...auxiliary.map(({ name }) => name),
-    ...archiveEntryNames,
-    ...legacy
-      .getAll('files')
-      .filter((file): file is File => file instanceof File)
-      .map(({ name }) => name),
-  ])
   const stages = parsePdfPipeline(raw, {
-    assetNames: [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
-    allowUnresolvedAssets: payload.downloadFrom?.some(
-      (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
-    ),
     acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
   })
+  const references = pdfStageAssetNames(stages)
   const form = new FormData()
   const inputs = legacy.getAll('files')
   // Gotenberg 9 sorts PDFs by their received filenames, regardless of the
   // multipart upload order. Number local inputs when merging, as the standalone
   // merge tool does. A compose before merge still needs original PDF names.
-  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
-  const firstCompose = stages.findIndex(({ op }) => op === 'compose')
-  const orderedNames =
-    firstMerge !== -1 && (firstCompose === -1 || firstCompose > firstMerge) && inputs.length > 1
-      ? mergeUploadFilenames(
-          inputs.map((file) => (file instanceof File ? file.name : '')),
-          [
-            ...auxiliary.map(({ name }) => name),
-            ...archiveEntryNames,
-            ...(payload.downloadFrom ?? []).flatMap((remote) => {
-              const filename = effectiveRemoteFilename(remote)
-              return filename ? [filename] : []
-            }),
-          ],
-        )
-      : []
+  const orderedNames = numbersPipelineInputs(stages, inputs.length)
+    ? mergeUploadFilenames(
+        inputs.map((file) => (file instanceof File ? file.name : '')),
+        [
+          ...remoteMergeFilenames(payload.downloadFrom),
+          ...archiveEntryNames,
+          ...auxiliary.map(({ name }) => name),
+        ],
+      )
+    : []
+  const primaryNames = inputs.map((file, index) => {
+    if (!(file instanceof File)) throw new InputError('Expected an uploaded PDF.')
+    return orderedNames[index] ?? file.name
+  })
+  const remoteFilenames = forwardedRemoteFilenames(legacy, payload.downloadFrom)
+  validatePipelineSourceUploads(stages, primaryNames, remoteFilenames, archiveEntryNames)
+  const remoteNames = remoteStageAssets(
+    payload.downloadFrom,
+    references,
+    [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...primaryNames],
+    remoteFilenames,
+  )
+  parsePdfPipeline(raw, {
+    assetNames: [...auxiliary.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
+    allowUnresolvedAssets: remoteFilenames.some((name) => !name),
+    acknowledgedRedaction: payload.fields.acknowledgedRedaction === true,
+  })
+  validatePdfStageUploads(
+    stages,
+    auxiliary.map(({ name }) => name),
+  )
   for (const [index, file] of inputs.entries()) {
     if (!(file instanceof File)) throw new InputError('Expected an uploaded PDF.')
     form.append('files', file, orderedNames[index] ?? file.name)
@@ -81,24 +90,22 @@ export function adaptPdfPipeline(
   const remote = legacy.get('downloadFrom')
   if (typeof remote === 'string') form.set('downloadFrom', remote)
   for (const archive of archives) form.append('archives', archive, archive.name)
-  const isInput = (name: string): boolean =>
-    /\.pdf$/i.test(name) && !references.includes(name.normalize('NFC'))
-  const external = [
-    ...archiveEntryNames.filter(isInput),
-    ...(payload.downloadFrom ?? []).flatMap((remote) => {
-      const remoteName = effectiveRemoteFilename(remote)
-      return remoteName && isInput(remoteName) ? [remoteName] : []
-    }),
-  ]
+  const assets = new Set(references)
+  const isInput = (name: string): boolean => isV9SourceDocument('pdf', name, assets)
+  const external = [...archiveEntryNames.filter(isInput)]
   const mappedStages = reconcilePdfComposeSources(stages, {
     inputs: [
+      ...remoteFilenames
+        .filter((name): name is string => name !== undefined && isInput(name))
+        .map((name) => ({ original: name, forwarded: name })),
       ...inputs.map((source, index) => {
         if (!(source instanceof File)) throw new InputError('Expected an uploaded PDF.')
         return { original: source.name, forwarded: orderedNames[index] ?? source.name }
       }),
       ...external.map((name) => ({ original: name, forwarded: name })),
     ],
-    unknownInputs: (payload.downloadFrom ?? []).some((remote) => !effectiveRemoteFilename(remote)),
+    unknownInputs: remoteFilenames.some((name) => !name),
+    registrationOrderKnown: !archives.length || !inputs.length,
     mapBookmarks: true,
   })
   form.set('stages', JSON.stringify(mappedStages))

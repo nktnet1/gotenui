@@ -72,9 +72,7 @@ describe('Gotenberg 9.10 LibreOffice tracked changes', () => {
     assert.doesNotMatch(control('9.9.0', true), /disabled=""/)
     assert.deepEqual(activeOperationFields(operation, { showTrackedChanges: true }, '8.40.0'), {})
     assert.deepEqual(activeOperationFields(operation, { showTrackedChanges: false }, '9.9.0'), {})
-    assert.deepEqual(activeOperationFields(operation, { showTrackedChanges: true }, '9.9.0'), {
-      showTrackedChanges: true,
-    })
+    assert.deepEqual(activeOperationFields(operation, { showTrackedChanges: true }, '9.9.0'), {})
   })
 
   it('forwards true and false without altering the 9.10 default or adding PDF stages', async () => {

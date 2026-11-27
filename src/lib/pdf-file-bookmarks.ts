@@ -1,5 +1,8 @@
 import { InputError } from '#/lib/validation'
 
+// Go strings.TrimSpace uses Unicode White_Space, not JavaScript's trim set.
+const isBlank = (value: string): boolean => /^\p{White_Space}*$/u.test(value)
+
 /** Gotenberg 9.7 merge option. Missing label sources fall back to the filename. */
 export type FileBookmarks = {
   label?: ('title' | 'filename')[]
@@ -26,12 +29,20 @@ export function validateFileBookmarks(value: unknown): asserts value is FileBook
       typeof fields.labels !== 'object' ||
       Array.isArray(fields.labels) ||
       Object.entries(fields.labels).some(
-        ([name, label]) => !name || typeof label !== 'string' || !label.trim(),
+        ([name, label]) => !name || typeof label !== 'string' || isBlank(label),
       )
     ) {
       throw new InputError(
         'merge: fileBookmarks.labels must map PDF filenames to non-blank labels.',
       )
+    }
+    const normalizedNames = new Set<string>()
+    for (const name of Object.keys(fields.labels)) {
+      const normalized = name.normalize('NFC')
+      if (normalizedNames.has(normalized)) {
+        throw new InputError(`merge: duplicate fileBookmarks label for ${normalized}.`)
+      }
+      normalizedNames.add(normalized)
     }
   }
 }
@@ -40,7 +51,10 @@ export function validateFileBookmarks(value: unknown): asserts value is FileBook
 export function mapFileBookmarkLabels(
   bookmarks: FileBookmarks,
   inputs: readonly { original: string; forwarded: string }[],
-  { preferForwarded = false }: { preferForwarded?: boolean } = {},
+  {
+    preferForwarded = false,
+    exactNames,
+  }: { preferForwarded?: boolean; exactNames?: ReadonlySet<string> } = {},
 ): FileBookmarks {
   const filenameOnly = bookmarks.label?.[0] === 'filename'
   if (!bookmarks.labels && !filenameOnly) return bookmarks
@@ -50,7 +64,7 @@ export function mapFileBookmarkLabels(
     // restore the original filenames without overriding a PDF title mode.
     for (const { original, forwarded } of inputs) {
       const basename = original.replace(/\.[^.]+$/, '')
-      labels[forwarded.normalize('NFC')] = basename.trim() ? basename : original
+      labels[forwarded.normalize('NFC')] = isBlank(basename) ? original : basename
     }
   }
   const assigned = new Set<string>()
@@ -61,11 +75,15 @@ export function mapFileBookmarkLabels(
       : []
     const matched = forwardedMatches.length
       ? forwardedMatches
-      : inputs.filter((item) => item.original.normalize('NFC') === normalized)
+      : exactNames?.has(normalized)
+        ? [] // A current remote or archive filename must not become a local alias.
+        : inputs.filter((item) => item.original.normalize('NFC') === normalized)
     const targets = matched.length
       ? matched.map(({ forwarded }) => forwarded.normalize('NFC'))
       : [original.normalize('NFC')]
-    for (const name of targets) {
+    // Duplicate received names share one known current filename. Gotenberg
+    // numbers the other documents, whose explicit labels remain independent.
+    for (const name of new Set(targets)) {
       if (assigned.has(name)) {
         throw new InputError(`merge: duplicate fileBookmarks label for ${name}.`)
       }

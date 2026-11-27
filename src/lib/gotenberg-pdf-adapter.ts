@@ -1,20 +1,25 @@
 import { parseAttachmentMetadata } from '#/lib/attachment-metadata'
-import { effectiveRemoteFilename, filenameKey } from '#/lib/file-names'
+import { filenameKey, forwardedRemoteFilenames, registeredFilenames } from '#/lib/file-names'
 import { adaptV9PdfExtra } from '#/lib/gotenberg-v9-pdf-extra'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
-import { mergeUploadFilename, reservePrefixedMergeUploadNames } from '#/lib/merge-order'
+import {
+  mergeUploadFilename,
+  remoteMergeFilenames,
+  reservePrefixedMergeUploadNames,
+} from '#/lib/merge-order'
 import {
   type FileBookmarks,
   mapFileBookmarkLabels,
   validateFileBookmarks,
 } from '#/lib/pdf-file-bookmarks'
-import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
-import { normalizePdfStageAssets } from '#/lib/pdf-pipeline'
+import { conversionSplitStage, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { adaptPdfPipeline } from '#/lib/pdf-pipeline-adapter'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
 import { isPdfStampPosition } from '#/lib/pdf-stamp-position'
-import { metadataObject } from '#/lib/pdf-structure-editors'
+import { v9BookmarkTree, v9MetadataFields } from '#/lib/pdf-v9-structure'
+import { isV9SourceDocument } from '#/lib/source-documents'
+import { trimGoWhitespace } from '#/lib/unicode-text'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
 import { V9_PDF_IDS } from '#/tools/v9-pdf-config'
@@ -91,7 +96,14 @@ export function adaptPdfForm(
   if (operation.id === 'pdf-pipeline') {
     return adaptPdfPipeline(payload, legacy, auxiliary, archives, archiveEntryNames)
   }
-  const extra = adaptV9PdfExtra(operation.id, payload, legacy, auxiliary, archives)
+  const extra = adaptV9PdfExtra(
+    operation.id,
+    payload,
+    legacy,
+    auxiliary,
+    archives,
+    archiveEntryNames,
+  )
   if (extra) return extra
   if (!v9PdfOperations.has(operation.id) || operation.input !== 'pdf') {
     throw new InputError(
@@ -101,7 +113,7 @@ export function adaptPdfForm(
   }
   if (payload.postProcess) {
     throw new InputError(
-      'Gotenberg 9 requires an ordered pipeline for additional PDF post-processing. Remove the extra steps or use a Gotenberg 8 connection until the pipeline editor is available.',
+      'Gotenberg 9 requires an ordered pipeline for additional PDF post-processing. Recreate the settings in the PDF pipeline editor or use a Gotenberg 8 connection.',
     )
   }
   if (Object.keys(payload.advanced).length) {
@@ -118,13 +130,7 @@ export function adaptPdfForm(
   const fields = payload.fields
   const output = new FormData()
   const sources = legacy.getAll('files')
-  const reservedNames = [
-    ...archiveEntryNames,
-    ...(payload.downloadFrom ?? []).flatMap((remote) => {
-      const filename = effectiveRemoteFilename(remote)
-      return filename ? [filename] : []
-    }),
-  ]
+  const reservedNames = [...remoteMergeFilenames(payload.downloadFrom), ...archiveEntryNames]
   const numberedNames =
     operation.id === 'merge'
       ? reservePrefixedMergeUploadNames(
@@ -147,6 +153,10 @@ export function adaptPdfForm(
   const optional = (name: string): string | undefined => {
     const value = fields[name]
     return typeof value === 'string' && value.trim() ? value.trim() : undefined
+  }
+  const optionalPages = (name: string): string | undefined => {
+    const value = fields[name]
+    return typeof value === 'string' ? trimGoWhitespace(value) || undefined : undefined
   }
   // Secrets are exact byte strings: even an all-whitespace password is valid.
   const optionalPassword = (name: 'password' | 'userPassword' | 'ownerPassword') => {
@@ -232,6 +242,22 @@ export function adaptPdfForm(
         throw new InputError('Enable per-file merge bookmarks before specifying their labels.')
       }
       let fileBookmarks: FileBookmarks | undefined
+      const remoteNames = forwardedRemoteFilenames(output, payload.downloadFrom)
+      const names = [
+        ...remoteNames.filter((name): name is string => name !== undefined),
+        ...numberedNames,
+        ...archiveEntryNames,
+      ]
+      const namesKnown =
+        remoteNames.every((name) => name !== undefined) &&
+        (!archives.length || new Set(names.map(filenameKey)).size === names.length)
+      // Actual registered names take precedence over the aliases for numbered
+      // local uploads. Only infer numbered duplicates when registration is known.
+      const exactNames = new Set(
+        (namesKnown ? registeredFilenames(names) : names.map(filenameKey)).filter((name) =>
+          isV9SourceDocument('pdf', name),
+        ),
+      )
       if (fields.v9FileBookmarks === true) {
         const label = optional('v9FileBookmarkSource')
         let labels: unknown
@@ -257,7 +283,16 @@ export function adaptPdfForm(
                 : '',
             forwarded: numberedNames[index] ?? (source instanceof File ? source.name : ''),
           })),
+          { preferForwarded: true, exactNames },
         )
+      }
+      if (fileBookmarks?.labels && namesKnown) {
+        for (const name of Object.keys(fileBookmarks.labels)) {
+          if (!exactNames.has(name))
+            throw new InputError(
+              `merge: fileBookmarks.labels must name a current PDF, got "${name}".`,
+            )
+        }
       }
       stages.push({ op: 'merge', ...(fileBookmarks ? { fileBookmarks } : {}) })
       pdfaStage()
@@ -266,25 +301,13 @@ export function adaptPdfForm(
     case 'split': {
       permitted('splitMode', 'splitSpan', 'splitUnify')
       v8Optimization()
-      const span = optional('splitSpan')
-      if (!span) throw new InputError('Select pages or an interval to split.')
-      if (fields.splitMode === 'intervals') {
-        const every = Number(span)
-        if (!Number.isSafeInteger(every) || every < 1)
-          throw new InputError('Split interval must be a positive integer.')
-        stages.push({ op: 'split', every })
-      } else if (fields.splitMode === 'pages') {
-        if (fields.splitUnify === true) {
-          stages.push({ op: 'select', pages: span })
-        } else {
-          const ranges = span.split(',').map((part) => part.trim())
-          if (ranges.some((part) => !part))
-            throw new InputError('Split page ranges must not be empty.')
-          stages.push({ op: 'split', ranges })
-        }
-      } else {
-        throw new InputError('Choose a supported split mode.')
-      }
+      const split = conversionSplitStage(
+        typeof fields.splitMode === 'string' ? fields.splitMode : undefined,
+        typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,
+        fields.splitUnify,
+      )
+      if (!split) throw new InputError('Select pages or an interval to split.')
+      stages.push(split)
       pdfaStage()
       break
     }
@@ -322,10 +345,11 @@ export function adaptPdfForm(
     }
     case 'rotate': {
       permitted('rotateAngle', 'rotatePages')
+      const pages = optionalPages('rotatePages')
       stages.push({
         op: 'rotate',
         angle: Number(fields.rotateAngle),
-        ...(optional('rotatePages') ? { pages: optional('rotatePages') } : {}),
+        ...(pages ? { pages } : {}),
       })
       break
     }
@@ -416,8 +440,9 @@ export function adaptPdfForm(
       ) {
         throw new InputError('The PDF overlay source page must be a non-negative whole number.')
       }
+      const pages = optionalPages(`${kind}Pages`)
       const common: Record<string, unknown> = {
-        ...(optional(`${kind}Pages`) ? { pages: optional(`${kind}Pages`) } : {}),
+        ...(pages ? { pages } : {}),
         ...(position ? { position } : {}),
         ...(!position || optional('v9OverlayX') !== undefined
           ? { x: coordinate(fields.v9OverlayX, 48) }
@@ -483,55 +508,14 @@ export function adaptPdfForm(
       permitted('metadata')
       const raw = optional('metadata')
       if (!raw) throw new InputError('Enter metadata to write.')
-      const source = metadataObject(raw)
-      const translated: Record<string, string> = {}
-      const mapping: Readonly<Record<string, string>> = {
-        Title: 'title',
-        Author: 'author',
-        Subject: 'subject',
-        Keywords: 'keywords',
-        Creator: 'creator',
-        Producer: 'producer',
-        CreationDate: 'creationDate',
-        ModDate: 'modDate',
-      }
-      for (const [name, value] of Object.entries(source)) {
-        const key = mapping[name] ?? (Object.values(mapping).includes(name) ? name : null)
-        if (!key) throw new InputError(`Gotenberg 9 cannot write the v8 metadata key '${name}'.`)
-        const normalized =
-          key === 'keywords' &&
-          Array.isArray(value) &&
-          value.every((item) => typeof item === 'string')
-            ? value.join(', ')
-            : value
-        if (typeof normalized !== 'string')
-          throw new InputError(`Gotenberg 9 metadata '${name}' must be a string.`)
-        if ((key === 'creationDate' || key === 'modDate') && !isPdfMetadataDate(normalized)) {
-          throw new InputError(
-            `Gotenberg 9 metadata '${name}' must be a PDF date such as D:20261001090000Z.`,
-          )
-        }
-        translated[key] = normalized
-      }
-      stages.push({ op: 'set-metadata', ...translated })
+      stages.push({ op: 'set-metadata', ...v9MetadataFields(raw) })
       break
     }
     case 'bookmarks-write': {
       permitted('bookmarks')
       const raw = optional('bookmarks')
       if (!raw) throw new InputError('Enter bookmarks to write.')
-      let decoded: unknown
-      try {
-        decoded = JSON.parse(raw)
-      } catch {
-        throw new InputError('Invalid bookmark JSON.')
-      }
-      if (!Array.isArray(decoded)) {
-        throw new InputError(
-          'Gotenberg 9 requires one shared bookmark tree. Per-filename bookmark maps are supported by Gotenberg 8 only.',
-        )
-      }
-      stages.push({ op: 'set-bookmarks', bookmarks: toV9Bookmarks(decoded) })
+      stages.push({ op: 'set-bookmarks', bookmarks: v9BookmarkTree(raw) })
       break
     }
     case 'embed': {
@@ -603,7 +587,9 @@ export function adaptPdfForm(
     output.set(
       'stages',
       JSON.stringify(
-        normalizePdfStageAssets(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+        parsePdfPipeline(
+          JSON.stringify(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+        ),
       ),
     )
   return { path: readRoutes[operation.id] ?? '/forms/pdf/pipe', form: output }
@@ -653,6 +639,13 @@ function overlayOptions(raw: string | undefined): {
     if (options[key] !== undefined && typeof options[key] !== 'string')
       throw new InputError(`${key} must be text.`)
   }
+  if (
+    options.fontname !== undefined &&
+    options.font !== undefined &&
+    options.fontname !== options.font
+  ) {
+    throw new InputError('Conflicting font and fontname aliases in overlay options.')
+  }
   return {
     ...(opacity !== undefined ? { opacity } : {}),
     ...(options.rotation !== undefined ? { rotation: options.rotation as number } : {}),
@@ -662,40 +655,4 @@ function overlayOptions(raw: string | undefined): {
       : {}),
     ...(options.color ? { color: options.color as string } : {}),
   }
-}
-
-function toV9Bookmarks(nodes: unknown[]): unknown[] {
-  return nodes.map((node) => {
-    if (!node || typeof node !== 'object' || Array.isArray(node))
-      throw new InputError('Every bookmark must be an object.')
-    const entry = node as Record<string, unknown>
-    if (
-      Object.keys(entry).some((key) => !['title', 'page', 'pageNumber', 'children'].includes(key))
-    ) {
-      throw new InputError('Gotenberg 9 does not support extra bookmark properties in this editor.')
-    }
-    if (
-      entry.page !== undefined &&
-      entry.pageNumber !== undefined &&
-      entry.page !== entry.pageNumber
-    ) {
-      throw new InputError('A bookmark cannot specify different page and pageNumber values.')
-    }
-    const pageNumber = entry.pageNumber ?? entry.page
-    if (
-      !Number.isSafeInteger(pageNumber) ||
-      (pageNumber as number) < 1 ||
-      typeof entry.title !== 'string' ||
-      !entry.title.trim()
-    ) {
-      throw new InputError('Each bookmark needs a title and a positive page number.')
-    }
-    if (entry.children !== undefined && !Array.isArray(entry.children))
-      throw new InputError('Bookmark children must be an array.')
-    return {
-      title: entry.title,
-      pageNumber,
-      ...(entry.children ? { children: toV9Bookmarks(entry.children) } : {}),
-    }
-  })
 }

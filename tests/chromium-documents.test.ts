@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'vitest'
-import { defaultMarkdownTemplate, markdownTemplateReferences } from '#/lib/chromium-documents'
+import {
+  defaultMarkdownTemplate,
+  generatedChromiumText,
+  markdownTemplateReferences,
+} from '#/lib/chromium-documents'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { readHtmlSource } from '#/lib/html-source-import'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
@@ -388,3 +392,24 @@ describe('Markdown files and templates', () => {
     ])
   })
 })
+
+test.each([undefined, '<html>{{ toHTML "document.md" }}</html>', ''])(
+  'generated document accounting matches forwarded Markdown files with template %s',
+  (markdownTemplate) => {
+    const { operation, payload } = makePayload('markdown-pdf', {
+      source: '# \u03b1',
+      markdownFiles: [{ name: 'cafe\u0301.md', content: '# \u00e9' }],
+      markdownTemplate,
+      headerHtml: header,
+      footerHtml: footer,
+    })
+    const expectedBytes = createGotenbergForm(operation, payload, [], [])
+      .getAll('files')
+      .reduce((bytes, entry) => bytes + (entry instanceof File ? entry.size : 0), 0)
+    const actualBytes = generatedChromiumText(operation.input, payload).reduce(
+      (bytes, part) => bytes + new TextEncoder().encode(part).byteLength,
+      0,
+    )
+    assert.equal(actualBytes, expectedBytes)
+  },
+)

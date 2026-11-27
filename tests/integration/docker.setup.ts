@@ -76,6 +76,11 @@ async function fixtureServer(): Promise<{ server: Server; url: string }> {
       res.end('Local Gotenberg integration attachment')
       return
     }
+    if (req.url === '/status/404') {
+      res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' })
+      res.end('<!doctype html><html><body><h1>Not found</h1></body></html>')
+      return
+    }
     if (req.url !== '/fixture') {
       res.writeHead(404).end()
       return

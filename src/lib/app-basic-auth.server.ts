@@ -1,4 +1,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
+import {
+  isBasicPassword,
+  isBasicUsername,
+  MAX_BROWSER_AUTHORIZATION_LENGTH,
+} from '#/lib/upstream-credentials'
 
 type Environment = {
   GOTENUI_BASIC_AUTH_USERNAME?: string
@@ -19,16 +24,8 @@ export function parseAppBasicAuth(env: Environment): Credentials | null {
     !username ||
     !password ||
     !username.trim() ||
-    username.length > 255 ||
-    password.length > 2048 ||
-    username.includes(':') ||
-    Array.from(username).some((character) => {
-      const code = character.codePointAt(0) ?? 0
-      return code < 32 || code === 127
-    }) ||
-    password.includes('\0') ||
-    password.includes('\r') ||
-    password.includes('\n')
+    !isBasicUsername(username) ||
+    !isBasicPassword(password)
   ) {
     throw new Error(
       'Configure GOTENUI_BASIC_AUTH_USERNAME and GOTENUI_BASIC_AUTH_PASSWORD together with valid values.',
@@ -42,7 +39,7 @@ export function verifyAppBasicAuth(
   authorization: string | null,
   credentials: Credentials,
 ): boolean {
-  if (!authorization || authorization.length > 8192) return false
+  if (!authorization || authorization.length > MAX_BROWSER_AUTHORIZATION_LENGTH) return false
   const match = /^Basic ([A-Za-z0-9+/]+={0,2})$/i.exec(authorization)
   if (!match) return false
   const encoded = match[1]

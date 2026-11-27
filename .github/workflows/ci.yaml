@@ -39,7 +39,18 @@ jobs:
       # Building generates the TanStack file-route types used by tsc and Vitest.
       - name: Typecheck
         run: pnpm typecheck
-      - name: Unit tests
+      - name: Resolve pinned backend source
+        id: contract
+        run: echo "ref=v$(node --input-type=module -e 'import { GOTENBERG_TEST_VERSIONS } from "./scripts/gotenberg-test-versions.ts"; console.log(GOTENBERG_TEST_VERSIONS.v9)')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: gotenberg/gotenberg
+          ref: ${{ steps.contract.outputs.ref }}
+          path: .upstream/gotenberg
+          persist-credentials: false
+      - name: Unit tests and upstream contract checks
+        env:
+          GOTENBERG_SOURCE_DIR: .upstream/gotenberg
         run: pnpm test:unit
       - name: Smoke-test built Nitro deployment without Docker
         run: pnpm test:smoke
@@ -67,3 +78,37 @@ jobs:
         run: docker info
       - name: Integration tests against Gotenberg ${{ matrix.suite }}
         run: pnpm test:integration:${{ matrix.suite }}
+
+  compatibility-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.versions.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          install: false
+      - id: versions
+        run: echo "versions=$(node scripts/gotenberg-test-versions.ts)" >> "$GITHUB_OUTPUT"
+
+  compatibility:
+    name: Compatibility (Gotenberg ${{ matrix.version }})
+    needs: compatibility-versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.compatibility-versions.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          install: false
+          cache: true
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Compatibility tests
+        run: pnpm test:integration ${{ matrix.version }}

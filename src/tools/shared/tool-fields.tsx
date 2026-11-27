@@ -10,9 +10,8 @@ import {
   parseConsoleMessageTypes,
   updateConsoleMessageTypes,
 } from '#/lib/official-form-fields'
-import { versionAtLeast } from '#/lib/operation-availability'
-import { isGotenberg95PaperSize } from '#/lib/pdf-paper-sizes'
 import type { FieldDefinition } from '#/tools/registry'
+import { fieldCompatibilityReason } from '#/tools/shared/field-visibility'
 
 const v9BookmarkLevels = ['-1', ...Array.from({ length: 10 }, (_, index) => String(index + 1))]
 
@@ -21,23 +20,19 @@ function FieldControl({
   value,
   onChange,
   disabled = false,
+  required = field.required,
   backendVersion,
 }: {
   field: FieldDefinition
   value: string | boolean | undefined
   onChange: (value: string | boolean) => void
   disabled?: boolean
+  required?: boolean
   backendVersion?: string
 }) {
   const id = useId()
   const parsedVersion = parseGotenbergVersion(backendVersion)
-  const v9Only =
-    field.supportedGotenbergMajors?.length === 1 && field.supportedGotenbergMajors[0] === 9
-  const unsupported =
-    field.minGotenbergMinor !== undefined &&
-    (v9Only
-      ? parsedVersion?.major === 9 && parsedVersion.minor < field.minGotenbergMinor
-      : versionAtLeast(backendVersion, field.minGotenbergMinor) === false)
+  const unsupported = Boolean(fieldCompatibilityReason(field, backendVersion))
   const inactive = disabled || unsupported
   const isV9BookmarkLevels =
     field.name === 'openBookmarkLevels' &&
@@ -99,7 +94,7 @@ function FieldControl({
     <div className="space-y-2">
       <Label htmlFor={id}>
         {field.label}
-        {field.required && <span className="ml-1 text-red-500 dark:text-red-400">*</span>}
+        {required && <span className="ml-1 text-red-500 dark:text-red-400">*</span>}
       </Label>
       {field.kind === 'select' || isV9BookmarkLevels ? (
         <div className="relative">
@@ -108,10 +103,10 @@ function FieldControl({
             className="h-11 w-full appearance-none rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 pr-9 text-sm text-slate-900 dark:text-slate-100 outline-none focus-visible:border-sky-500 focus-visible:ring-4 focus-visible:ring-sky-100 dark:focus-visible:ring-sky-900"
             value={String(value ?? '')}
             onChange={(event) => onChange(event.target.value)}
-            required={field.required}
+            required={required}
             disabled={disabled || (unsupported && !value)}
           >
-            {!field.required && <option value="">Default / not set</option>}
+            {!required && <option value="">Default / not set</option>}
             {isV9BookmarkLevels &&
               value !== undefined &&
               String(value) !== '' &&
@@ -124,14 +119,7 @@ function FieldControl({
               <option
                 key={option}
                 value={option}
-                disabled={
-                  unsupported ||
-                  (field.name === 'paperSize' &&
-                    isGotenberg95PaperSize(option) &&
-                    parsedVersion?.major === 9 &&
-                    parsedVersion.minor < 5) ||
-                  (option === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false)
-                }
+                disabled={Boolean(fieldCompatibilityReason(field, backendVersion, option))}
               >
                 {isV9BookmarkLevels && option === '-1'
                   ? 'All levels (-1)'
@@ -150,7 +138,7 @@ function FieldControl({
           placeholder={field.placeholder ?? '{ }'}
           value={String(value ?? '')}
           onChange={(event) => onChange(event.target.value)}
-          required={field.required}
+          required={required}
           disabled={inactive}
         />
       ) : (
@@ -163,10 +151,9 @@ function FieldControl({
                 ? 'password'
                 : field.kind === 'number'
                   ? 'number'
-                  : field.kind === 'url'
-                    ? 'url'
-                    : 'text'
+                  : 'text'
           }
+          inputMode={field.kind === 'url' ? 'url' : undefined}
           min={parsedVersion?.major === 9 ? (field.minGotenberg9 ?? field.min) : field.min}
           max={field.max}
           step={field.kind === 'number' ? (field.integer ? 1 : 'any') : undefined}
@@ -174,9 +161,29 @@ function FieldControl({
           placeholder={field.placeholder}
           value={String(value ?? (field.kind === 'color' ? '#7ffe7f' : ''))}
           onChange={(event) => onChange(event.target.value)}
-          required={field.required}
+          required={required}
           disabled={inactive}
         />
+      )}
+      {field.kind === 'http-codes' && (
+        <div className="flex flex-wrap gap-3 text-xs">
+          <button
+            type="button"
+            className="underline"
+            disabled={inactive}
+            onClick={() => onChange('')}
+          >
+            Use server default
+          </button>
+          <button
+            type="button"
+            className="underline"
+            disabled={inactive}
+            onClick={() => onChange('[]')}
+          >
+            Disable checks
+          </button>
+        </div>
       )}
       {field.description && (
         <p className="text-xs text-slate-500 dark:text-slate-400">{field.description}</p>

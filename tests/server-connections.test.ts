@@ -165,3 +165,95 @@ test('invalid registry configurations fail closed', () => {
     assert.throws(() => parseServerConnections(env, allowed))
   }
 })
+
+test('managed and browser authentication cannot bypass the demo guard with alternate base URLs', () => {
+  for (const url of [
+    `${demo}/prefix`,
+    'http://demo.gotenberg.dev:8080',
+    'https://demo.gotenberg.dev.',
+  ]) {
+    const allowed = parseAllowedBackends(`${privateA},${url}`)
+    const settings = { allowed, connections: [] }
+    assert.equal(resolveConnectionTarget(request(), settings, url, null).headers, undefined)
+    assert.throws(
+      () =>
+        resolveConnectionTarget(
+          request({ 'X-Gotenui-Upstream-Authorization': 'Bearer secret' }),
+          settings,
+          url,
+          null,
+        ),
+      /public Gotenberg demo/,
+    )
+    assert.throws(
+      () =>
+        parseServerConnections(
+          {
+            GOTENUI_SERVER_CONNECTIONS: JSON.stringify([
+              { id: 'demo', name: 'Demo', url, auth: { type: 'bearer', token: 'secret' } },
+            ]),
+          },
+          allowed,
+        ),
+      /public Gotenberg demo/,
+    )
+  }
+})
+
+test('deployment credentials cannot target demo token or metrics endpoints', () => {
+  for (const extra of [
+    {
+      auth: {
+        type: 'oauth2',
+        tokenUrl: `${demo}/token`,
+        clientId: 'client',
+        clientSecret: 'secret',
+      },
+    },
+    { metricsUrl: `${demo}/metrics`, metricsAuth: { type: 'bearer', token: 'secret' } },
+  ]) {
+    assert.throws(
+      () =>
+        parseServerConnections(
+          {
+            GOTENUI_SERVER_CONNECTIONS: JSON.stringify([
+              { id: 'private', name: 'Private', url: privateA, ...extra },
+            ]),
+          },
+          allowed,
+        ),
+      /public Gotenberg demo/,
+    )
+  }
+})
+
+test('rejects unknown deployment profile and authentication fields instead of dropping them', () => {
+  for (const extra of [
+    { authentication: { type: 'bearer', token: 'secret' } },
+    { auth: { type: 'basic', username: 'user', password: 'secret', scope: 'unused' } },
+    { auth: { type: 'bearer', token: 'secret', tokenUrl: 'https://example.test/token' } },
+    {
+      auth: {
+        type: 'oauth2',
+        tokenUrl: 'https://example.test/token',
+        clientId: 'app',
+        clientSecret: 'secret',
+        authmethod: 'client_secret_post',
+      },
+    },
+    { metricsUrl: 'https://example.test/metrics', metricsAuthorization: 'Bearer secret' },
+  ]) {
+    assert.throws(
+      () =>
+        parseServerConnections(
+          {
+            GOTENUI_SERVER_CONNECTIONS: JSON.stringify([
+              { id: 'private', name: 'Private', url: privateA, ...extra },
+            ]),
+          },
+          allowed,
+        ),
+      /invalid profiles/,
+    )
+  }
+})

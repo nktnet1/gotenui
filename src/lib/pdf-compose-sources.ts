@@ -1,11 +1,17 @@
+import { registeredFilenames } from '#/lib/file-names'
 import { type FileBookmarks, mapFileBookmarkLabels } from '#/lib/pdf-file-bookmarks'
 import type { PdfPipelineStage } from '#/lib/pdf-pipeline'
 import { InputError } from '#/lib/validation'
 
 /** A PDF source name as entered in the editor and as sent to Gotenberg. */
-export type PdfComposeInput = { original: string; forwarded: string }
+export type PdfComposeInput = { original: string; forwarded: string; sortName?: string }
 
-type SourceTemplate = PdfComposeInput
+/** LibreOffice sorts its input documents before adding the .pdf extension. */
+export function officePdfComposeInput(original: string, forwarded = original): PdfComposeInput {
+  return { original: `${original}.pdf`, forwarded: `${forwarded}.pdf`, sortName: forwarded }
+}
+
+type SourceTemplate = PdfComposeInput & { partCounts?: readonly (number | undefined)[] }
 
 const partMarker = '\u0001'
 
@@ -83,13 +89,26 @@ function splitName(name: string): string {
   return `${name.replace(/\.[^.]+$/, '')}_${partMarker}.pdf`
 }
 
-function matchTemplate(name: string, template: string): string[] | null {
+function matchTemplate(
+  name: string,
+  template: string,
+  partCounts: readonly (number | undefined)[] = [],
+): string[] | null {
   const escaped = template
     .split(partMarker)
     .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('(\\d+)')
+    .join('(0|[1-9]\\d*)')
   const matched = new RegExp(`^${escaped}$`).exec(name)
-  return matched ? matched.slice(1) : null
+  if (!matched) return null
+  const parts = matched.slice(1)
+  // Fixed ranges always produce exactly one output per range. Interval splits
+  // need the actual page count, but their names also use canonical decimal indices.
+  return parts.every((part, index) => {
+    const count = partCounts[index]
+    return count === undefined || Number(part) < count
+  })
+    ? parts
+    : null
 }
 
 function materialize(template: string, parts: readonly string[]): string {
@@ -97,25 +116,64 @@ function materialize(template: string, parts: readonly string[]): string {
   return template.replaceAll(partMarker, () => parts[index++] ?? '')
 }
 
+/** Each split emits contiguous zero-based indices. Fixed ranges require all
+ * children, while interval splits can have different counts in each branch.
+ * Check only the provided paths rather than expanding potentially huge trees.
+ */
+function completeSplitCoverage(
+  names: ReadonlySet<string>,
+  template: string,
+  partCounts: readonly (number | undefined)[],
+): boolean {
+  type PartTree = Map<string, PartTree>
+  const root: PartTree = new Map()
+  for (const name of names) {
+    const parts = matchTemplate(name, template, partCounts)
+    if (!parts) continue
+    let branch = root
+    for (const part of parts) {
+      let child = branch.get(part)
+      if (!child) {
+        child = new Map()
+        branch.set(part, child)
+      }
+      branch = child
+    }
+  }
+  let level = [root]
+  for (const count of partCounts) {
+    const next: PartTree[] = []
+    for (const branch of level) {
+      if (!branch.size || (count !== undefined && branch.size !== count)) return false
+      for (let index = 0; index < branch.size; index++) {
+        const child = branch.get(String(index))
+        if (!child) return false
+        next.push(child)
+      }
+    }
+    level = next
+  }
+  return true
+}
+
 /** Current Gotenberg filenames take precedence over convenient original-name
  * aliases when a numbered upload has the same spelling as another input.
  */
 function currentFileMatches(name: string, sources: readonly SourceTemplate[]): string[] {
-  const forwarded = sources.flatMap(({ forwarded }) => {
-    const parts = matchTemplate(name, forwarded)
+  const forwarded = sources.flatMap(({ forwarded, partCounts }) => {
+    const parts = matchTemplate(name, forwarded, partCounts)
     return parts ? [materialize(forwarded, parts)] : []
   })
   if (forwarded.length) return forwarded
-  return sources.flatMap(({ original, forwarded }) => {
-    const parts = matchTemplate(name, original)
+  return sources.flatMap(({ original, forwarded, partCounts }) => {
+    const parts = matchTemplate(name, original, partCounts)
     return parts ? [materialize(forwarded, parts)] : []
   })
 }
 
-function firstSource(sources: readonly SourceTemplate[] | null): SourceTemplate[] | null {
-  if (!sources?.length) return null
+function firstSource(sources: readonly SourceTemplate[]): SourceTemplate[] {
   const first = sources[0]
-  if (!first) return null
+  if (!first) return []
   // A split returns parts in document order; the first part of the first
   // document is the one Gotenberg names a subsequent merge/compose after.
   const zeros = first.original
@@ -137,7 +195,15 @@ function firstSource(sources: readonly SourceTemplate[] | null): SourceTemplate[
 function mapCurrentBookmarkLabels(
   bookmarks: FileBookmarks,
   sources: readonly SourceTemplate[],
+  sourcesKnown: boolean,
 ): FileBookmarks {
+  if (sourcesKnown) {
+    for (const name of Object.keys(bookmarks.labels ?? {})) {
+      if (!currentFileMatches(name.normalize('NFC'), sources).length) {
+        throw new InputError(`merge: fileBookmarks.labels must name a current PDF, got "${name}".`)
+      }
+    }
+  }
   const staticSources = sources.filter(
     ({ original, forwarded }) => !original.includes(partMarker) && !forwarded.includes(partMarker),
   )
@@ -156,7 +222,7 @@ function mapCurrentBookmarkLabels(
   for (const [name, label] of Object.entries(bookmarks.labels ?? {})) {
     const normalized = name.normalize('NFC')
     const matches = currentFileMatches(normalized, dynamicSources)
-    for (const target of matches.length ? matches : [normalized]) {
+    for (const target of new Set(matches.length ? matches : [normalized])) {
       if (Object.hasOwn(labels, target)) {
         throw new InputError(`merge: duplicate fileBookmarks label for ${target}.`)
       }
@@ -178,7 +244,7 @@ function mapCurrentBookmarkLabels(
 /** Reconcile compose references against Gotenberg 9.2's document-name rules.
  * Merge/compose always leave one PDF (so source is optional); split appends a
  * zero-based suffix to the *current* filename, not a generic document name.
- * Never fabricate names when an unnamed remote or duplicate input intervenes.
+ * Never fabricate names when an unnamed remote or ambiguous registration order intervenes.
  */
 export function reconcilePdfComposeSources(
   stages: readonly PdfPipelineStage[],
@@ -187,67 +253,132 @@ export function reconcilePdfComposeSources(
     unknownInputs = false,
     singleInput = false,
     mapBookmarks = false,
+    preserveNamedSingleSource = false,
+    registrationOrderKnown = false,
   }: {
     inputs: readonly PdfComposeInput[]
     unknownInputs?: boolean
     singleInput?: boolean
     mapBookmarks?: boolean
+    preserveNamedSingleSource?: boolean
+    /** Inputs are in actual registration order (downloads before uploads or archives). */
+    registrationOrderKnown?: boolean
   },
 ): PdfPipelineStage[] {
-  const names = inputs.map(({ original, forwarded }) => ({
+  const names = inputs.map(({ original, forwarded, sortName }) => ({
     original: original.normalize('NFC'),
     forwarded: forwarded.normalize('NFC'),
+    sortName: (sortName ?? forwarded).normalize('NFC'),
   }))
+  if (registrationOrderKnown && !unknownInputs) {
+    // LibreOffice appends .pdf only after the original Office name is registered.
+    // Retain the received name for sorting, including stable arrival-order ties.
+    const assigned = registeredFilenames(names.map(({ sortName }) => sortName))
+    for (const [index, input] of names.entries()) {
+      const registered = assigned[index] as string
+      const suffix = input.forwarded.slice(input.sortName.length)
+      const forwarded = registered + suffix
+      if (input.original === input.forwarded) input.original = forwarded
+      input.forwarded = forwarded
+    }
+  }
   const duplicateInputs = new Set(names.map(({ forwarded }) => forwarded)).size !== names.length
-  let sources: SourceTemplate[] | null =
-    unknownInputs || duplicateInputs
-      ? null
-      : names.sort((a, b) => compareSourceNames(a.forwarded, b.forwarded))
+  const sourcesKnown = !unknownInputs && !duplicateInputs
+  // Keep the known filenames even when the complete set is unavailable. Split
+  // preserves each input's stem, but merge and compose depend on the first
+  // actual document and can therefore lose that knowledge.
+  let sources: SourceTemplate[] = sourcesKnown
+    ? names.sort((a, b) => compareSourceNames(a.sortName, b.sortName))
+    : names
+  // FormData.paths starts from a Go map. Distinct names with equivalent
+  // numeric prefixes can compare equally, so a stable sort does not guarantee
+  // their relative order. Mixed prefix/suffix comparisons can also form cycles.
+  // Only a first name strictly ordered ahead of all others is predictable.
+  const firstName = names[0]
+  const ambiguousFirstName =
+    sourcesKnown &&
+    firstName !== undefined &&
+    names.slice(1).some(({ sortName }) => {
+      const order = compareSourceNames(firstName.sortName, sortName)
+      return order > 0 || (order === 0 && firstName.sortName !== sortName)
+    })
+  const ambiguousFilenameReason =
+    'The merged PDF filename is ambiguous because the source filenames do not have a deterministic first name. Rename the inputs to give them distinct ordered prefixes before using named downstream references.'
   let single = singleInput || (!unknownInputs && names.length === 1)
+  let minimumDocuments = Math.max(names.length, singleInput ? 1 : 0)
   let afterSplit = false
-  // Unknown remote names prevent predicting a later merge output, but they
-  // do not change the known local filenames before the first reshaping stage.
-  let initialNamesPreserved = true
+  let afterCollapse = false
+  let ambiguousCollapsedName = false
+  const collapseSources = () => {
+    if (!afterCollapse && ambiguousFirstName) ambiguousCollapsedName = true
+    sources = sourcesKnown && !ambiguousCollapsedName ? firstSource(sources) : []
+    single = true
+    minimumDocuments = 1
+    afterCollapse = true
+    afterSplit = false
+  }
 
   return stages.map((stage) => {
     if (stage.op === 'merge') {
-      const candidates = sources ?? (initialNamesPreserved ? names : null)
+      const bookmarks = stage.fileBookmarks as FileBookmarks | undefined
+      if (ambiguousCollapsedName && Object.keys(bookmarks?.labels ?? {}).length) {
+        throw new InputError(`merge: ${ambiguousFilenameReason}`)
+      }
+      const needsNormalization = Object.keys(bookmarks?.labels ?? {}).some(
+        (name) => name !== name.normalize('NFC'),
+      )
       const mapped =
-        mapBookmarks && candidates?.length && stage.fileBookmarks
+        mapBookmarks && bookmarks && (sources.length || needsNormalization)
           ? {
               ...stage,
               fileBookmarks: mapCurrentBookmarkLabels(
-                stage.fileBookmarks as FileBookmarks,
-                candidates,
+                bookmarks,
+                sources,
+                sourcesKnown && sources.length > 0,
               ),
             }
           : stage
-      initialNamesPreserved = false
-      sources = firstSource(sources)
-      single = true
-      afterSplit = false
+      collapseSources()
       return mapped
     }
     if (stage.op === 'split') {
-      initialNamesPreserved = false
-      sources =
-        sources?.map(({ original, forwarded }) => ({
-          original: splitName(original),
-          forwarded: splitName(forwarded),
-        })) ?? null
+      const count =
+        Array.isArray(stage.ranges) && stage.ranges.length ? stage.ranges.length : undefined
+      sources = sources.map(({ original, forwarded, partCounts }) => ({
+        original: splitName(original),
+        forwarded: splitName(forwarded),
+        partCounts: [...(partCounts ?? []), count],
+      }))
+      minimumDocuments = Math.min(Number.MAX_SAFE_INTEGER, minimumDocuments * (count ?? 1))
       single = single && Array.isArray(stage.ranges) && stage.ranges.length === 1
       afterSplit = true
       return stage
     }
     if (stage.op !== 'compose' || !Array.isArray(stage.placements)) return stage
 
+    const placed = new Set<string>()
     const placements = stage.placements.map((placement: unknown, index) => {
       if (!placement || typeof placement !== 'object' || Array.isArray(placement)) {
         return placement // parsePdfPipeline validates placement objects first.
       }
       const entry = placement as Record<string, unknown>
       const name = typeof entry.source === 'string' ? entry.source.normalize('NFC') : ''
-      if (single) {
+      if (single && (!preserveNamedSingleSource || !name)) {
+        // An explicit initial source must actually identify the known document.
+        // Only after a merge/compose may the generated filename be irrelevant.
+        if (
+          name &&
+          !afterCollapse &&
+          sourcesKnown &&
+          sources.length &&
+          currentFileMatches(name, sources).length !== 1
+        ) {
+          throw new InputError(
+            afterSplit
+              ? `compose: source "${name}" does not match a split output. Use its current filename.`
+              : `compose: source "${name}" is not one of the current PDF inputs.`,
+          )
+        }
         // There is exactly one current PDF. Omitting source is the backend's
         // supported way to refer to it regardless of dynamic merged filenames.
         const rest = { ...entry }
@@ -261,7 +392,10 @@ export function reconcilePdfComposeSources(
             : `compose: placement ${index + 1} needs a source when more than one PDF is present.`,
         )
       }
-      if (!sources?.length) {
+      if (ambiguousCollapsedName) {
+        throw new InputError(`compose: ${ambiguousFilenameReason}`)
+      }
+      if (!sourcesKnown || !sources.length) {
         // Gotenberg auto-numbers colliding uploads (including ZIP entries), so
         // the current name may be "report (2)_0.pdf" after a split. The preflight
         // cannot predict which upload gets the suffix when fields collide.
@@ -272,10 +406,12 @@ export function reconcilePdfComposeSources(
             'compose: cannot resolve filenames after split when source filenames are unknown. Set a Chromium output filename, downloadFrom filename overrides for remotes, or use separately named PDF inputs.',
           )
         }
+        placed.add(name)
         return entry
       }
       const matches = currentFileMatches(name, sources)
-      if (matches.length !== 1) {
+      const source = matches[0]
+      if (source === undefined || matches.length !== 1) {
         const example = materialize(sources[0]?.forwarded ?? 'report_0.pdf', ['0'])
         throw new InputError(
           afterSplit
@@ -283,12 +419,38 @@ export function reconcilePdfComposeSources(
             : `compose: source "${name}" is not one of the current PDF inputs.`,
         )
       }
-      return { ...entry, source: matches[0] }
+      placed.add(source)
+      return { ...entry, source }
     })
-    initialNamesPreserved = false
-    sources = firstSource(sources)
-    single = true
-    afterSplit = false
+    // Unknown downloads can add documents, but cannot reduce the known minimum.
+    if (!sourcesKnown && !single && placed.size < minimumDocuments) {
+      throw new InputError('compose: placements must place every PDF, including all split outputs.')
+    }
+    if (sourcesKnown && !single) {
+      // Gotenberg requires every current document to be placed at least once.
+      // Check every known split branch. Interval counts remain unknown, but
+      // the supplied indices must start at zero and cannot contain gaps.
+      for (const { original, forwarded, partCounts = [] } of sources) {
+        if (!partCounts.length) {
+          if (!placed.has(forwarded)) {
+            throw new InputError(
+              `compose: placements must place every PDF. Missing source "${original}".`,
+            )
+          }
+          continue
+        }
+        if (!completeSplitCoverage(placed, forwarded, partCounts)) {
+          const example = materialize(
+            original,
+            partCounts.map(() => '0'),
+          )
+          throw new InputError(
+            `compose: placements must place every PDF. Missing split output from the set starting with "${example}".`,
+          )
+        }
+      }
+    }
+    collapseSources()
     return { ...stage, placements }
   })
 }

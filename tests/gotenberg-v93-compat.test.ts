@@ -23,7 +23,7 @@ function request(
       operation,
       fields,
       advanced: {},
-      source: '<!doctype html><h1>Fixture</h1>',
+      ...(operation === 'html-pdf' ? { source: '<!doctype html><h1>Fixture</h1>' } : {}),
       ...(conversionStages ? { conversionStages } : {}),
     }),
   )

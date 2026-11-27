@@ -3,6 +3,7 @@ import { test } from 'vitest'
 import {
   BACKEND_STORAGE_KEY,
   browserStorage,
+  isPublicDemoBackend,
   loadBackendUrl,
   normalizeBackendUrl,
   saveBackendUrl,
@@ -10,6 +11,7 @@ import {
 
 test('normalizes absolute Gotenberg URLs, including path prefixes', () => {
   assert.equal(normalizeBackendUrl(' http://localhost:3000/ '), 'http://localhost:3000')
+  assert.equal(normalizeBackendUrl('https://[::1]:3000/prefix%3F'), 'https://[::1]:3000/prefix%3F')
   assert.equal(
     normalizeBackendUrl('https://docs.example.test/api/'),
     'https://docs.example.test/api',
@@ -27,6 +29,14 @@ test('rejects credentials, relative paths, opaque schemes, fragments and unsafe 
     'https://example.test/#section',
     'http://example.test/?secret=true',
     'https://example.test\\@evil.test',
+    'https:///example.test',
+    'https://@example.test',
+    'https://exam\nple.test',
+    'https://example.test/path\ud800',
+    'https://example.test/bad%',
+    'https://example.test/bad%XZ',
+    'https://example.test/?',
+    'https://example.test/#',
     'localhost:3000',
   ]) {
     assert.throws(() => normalizeBackendUrl(value), Error, value)
@@ -64,4 +74,20 @@ test('does not crash when browser localStorage is unavailable', () => {
   assert.equal(browserStorage(), null)
   assert.equal(loadBackendUrl(null), '')
   assert.equal(saveBackendUrl(null, 'https://demo.gotenberg.dev'), false)
+})
+
+test('public demo credential protection matches equivalent hosts without matching unrelated domains', () => {
+  for (const value of [
+    'https://demo.gotenberg.dev',
+    'https://DEMO.GOTENBERG.DEV./prefix',
+    'http://demo.gotenberg.dev:8080',
+    'https://%64emo.gotenberg.dev',
+  ])
+    assert.equal(isPublicDemoBackend(value), true, value)
+  for (const value of [
+    'https://demo.gotenberg.dev.example.test',
+    'https://example.test/demo.gotenberg.dev',
+    'invalid',
+  ])
+    assert.equal(isPublicDemoBackend(value), false, value)
 })

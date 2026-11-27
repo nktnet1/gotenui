@@ -1,10 +1,24 @@
 import * as v from 'valibot'
-import { normalizeBackendUrl } from '#/lib/backend-url'
+import { isPublicDemoBackend, normalizeBackendUrl } from '#/lib/backend-url'
+import {
+  isBasicPassword,
+  isBasicUsername,
+  MAX_BASIC_PASSWORD_LENGTH,
+  MAX_BASIC_USERNAME_LENGTH,
+} from '#/lib/upstream-credentials'
 
 const basicAuthEnvSchema = v.object({
   GOTENBERG_BASIC_AUTH_URL: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
-  GOTENBERG_BASIC_AUTH_USERNAME: v.pipe(v.string(), v.minLength(1), v.maxLength(255)),
-  GOTENBERG_BASIC_AUTH_PASSWORD: v.pipe(v.string(), v.minLength(1), v.maxLength(2048)),
+  GOTENBERG_BASIC_AUTH_USERNAME: v.pipe(
+    v.string(),
+    v.minLength(1),
+    v.maxLength(MAX_BASIC_USERNAME_LENGTH),
+  ),
+  GOTENBERG_BASIC_AUTH_PASSWORD: v.pipe(
+    v.string(),
+    v.minLength(1),
+    v.maxLength(MAX_BASIC_PASSWORD_LENGTH),
+  ),
 })
 
 export type UpstreamBasicAuth = Readonly<{
@@ -34,11 +48,17 @@ export function parseUpstreamBasicAuth(
   if (!parsed.success) throw new Error('Invalid GOTENBERG_BASIC_AUTH_* configuration.')
   const { GOTENBERG_BASIC_AUTH_URL, GOTENBERG_BASIC_AUTH_USERNAME, GOTENBERG_BASIC_AUTH_PASSWORD } =
     parsed.output
-  if (GOTENBERG_BASIC_AUTH_USERNAME.includes(':')) {
-    throw new Error('GOTENBERG_BASIC_AUTH_USERNAME must not contain a colon.')
+  if (
+    !isBasicUsername(GOTENBERG_BASIC_AUTH_USERNAME) ||
+    !isBasicPassword(GOTENBERG_BASIC_AUTH_PASSWORD)
+  ) {
+    throw new Error('Invalid GOTENBERG_BASIC_AUTH_* username or password.')
   }
 
   const target = normalizeBackendUrl(GOTENBERG_BASIC_AUTH_URL)
+  if (isPublicDemoBackend(target)) {
+    throw new Error('Do not configure upstream Basic Auth for the public Gotenberg demo.')
+  }
   if (!allowed.has(target)) {
     throw new Error('GOTENBERG_BASIC_AUTH_URL must exactly match an allowed Gotenberg base URL.')
   }
@@ -54,5 +74,7 @@ export function basicAuthHeadersForBackend(
   backend: string,
   auth: UpstreamBasicAuth | undefined,
 ): HeadersInit | undefined {
-  return auth?.target === backend ? { Authorization: auth.authorization } : undefined
+  return !isPublicDemoBackend(backend) && auth?.target === backend
+    ? { Authorization: auth.authorization }
+    : undefined
 }

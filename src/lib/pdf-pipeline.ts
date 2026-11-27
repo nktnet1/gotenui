@@ -1,13 +1,26 @@
+import { hasMalformedUnicode, trimGoWhitespace } from '#/lib/unicode-text'
 /** Gotenberg 9 PDF pipeline catalogue and shared client/server validation.
  * Keep this aligned with pkg/modules/pdf/stages.go and stage_types.go.
  */
 
 import { isAttachmentMimeType } from '#/lib/attachment-metadata'
+import { registeredFilenames } from '#/lib/file-names'
+import { goFormLength } from '#/lib/go-form-values'
+import { safeOutboundHost } from '#/lib/http-url'
+import {
+  isPdfConformanceProfile,
+  parsePdfConformanceProfiles,
+} from '#/lib/pdf-conformance-profiles'
 import { validateFileBookmarks } from '#/lib/pdf-file-bookmarks'
 import { isPdfMetadataDate } from '#/lib/pdf-metadata-date'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { PDF_PAPER_SIZES } from '#/lib/pdf-paper-sizes'
 import { isPdfStampPosition, PDF_STAMP_POSITIONS } from '#/lib/pdf-stamp-position'
+import {
+  BOOKMARK_DEPTH_ERROR,
+  bookmarkTitleBlank,
+  MAX_BOOKMARK_DEPTH,
+} from '#/lib/pdf-structure-editors'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
 import { InputError } from '#/lib/validation'
 
@@ -275,26 +288,47 @@ export const PDF_PIPELINE_STAGES = [
 export type PdfPipelineOp = (typeof PDF_PIPELINE_STAGES)[number]['op']
 export type PdfPipelineStage = { op: PdfPipelineOp; [key: string]: unknown }
 
+/** Map the conversion form's built-in split settings to the stages that run
+ * before the user-defined pipeline. Both preflight and the adapter use this.
+ */
+export function conversionSplitStage(
+  mode: string | null | undefined,
+  span: string | null | undefined,
+  rawUnify: string | boolean | number | null = false,
+): PdfPipelineStage | undefined {
+  // Preserve the boolean spellings accepted by Gotenberg's Go form parser.
+  const flag = String(rawUnify ?? '')
+  const unify = ['1', 't', 'T', 'true', 'TRUE', 'True'].includes(flag)
+  if (!unify && !['', '0', 'f', 'F', 'false', 'FALSE', 'False'].includes(flag)) {
+    throw new InputError('splitUnify must be true or false.')
+  }
+  if (!mode && !span && !unify) return undefined
+  if (mode !== 'pages' && mode !== 'intervals') {
+    throw new InputError('Choose a split mode of pages or intervals.')
+  }
+  if (!span || !trimGoWhitespace(span)) {
+    throw new InputError('A page range or interval is required when splitting output.')
+  }
+  if (mode === 'intervals') {
+    if (unify) throw new InputError('Combine selected page ranges is available only in pages mode.')
+    const every = Number(span)
+    if (!/^\+?\d+$/.test(span) || !Number.isSafeInteger(every) || every < 1) {
+      throw new InputError('Split interval must be a positive whole number.')
+    }
+    return { op: 'split', every }
+  }
+  if (unify) return { op: 'select', pages: span }
+  const ranges = span.split(',').map(trimGoWhitespace)
+  if (ranges.some((range) => !range)) {
+    throw new InputError('Split page ranges cannot be empty.')
+  }
+  return { op: 'split', ranges }
+}
+
 export const DEFAULT_PDF_PIPELINE = '[{"op":"optimize"}]'
 const pipelineByOp = new Map<string, (typeof PDF_PIPELINE_STAGES)[number]>(
   PDF_PIPELINE_STAGES.map((stage) => [stage.op, stage]),
 )
-const profiles = new Set([
-  'PDF/A-1a',
-  'PDF/A-1b',
-  'PDF/A-2a',
-  'PDF/A-2b',
-  'PDF/A-2u',
-  'PDF/A-3a',
-  'PDF/A-3b',
-  'PDF/A-3u',
-  'PDF/A-4',
-  'PDF/A-4e',
-  'PDF/A-4f',
-  'PDF/UA-1',
-  'PDF/UA-2',
-  'Factur-X',
-])
 // Gotenberg 9's PDF stage parser accepts exactly these standard PDF fonts.
 const stampFonts = new Set([
   'Helvetica',
@@ -338,7 +372,7 @@ const optionalPages = (stage: PdfPipelineStage, key: string): void => {
   // Litho interprets an omitted, empty, or whitespace-only optional page range as all pages.
   if (
     !absent(value) &&
-    !(typeof value === 'string' && !value.trim()) &&
+    !(typeof value === 'string' && !trimGoWhitespace(value)) &&
     !isPdfPageSelector(value)
   ) {
     throw new InputError(
@@ -486,10 +520,8 @@ function validateStage(stage: PdfPipelineStage): void {
       for (const side of ['paperWidth', 'paperHeight'] as const) {
         const length = stage[side] as string | undefined
         if (absent(length) || length === '') continue
-        const match = /^\+?((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:pt|px|in|mm|cm|pc)?$/.exec(
-          length,
-        )
-        if (!match || !Number.isFinite(Number(match[1])) || Number(match[1]) <= 0) {
+        const inches = goFormLength(length)
+        if (inches === undefined || !Number.isFinite(inches) || inches <= 0) {
           throw new InputError(`compose: "${side}" must be a positive length such as 6in or 432pt.`)
         }
       }
@@ -538,7 +570,7 @@ function validateStage(stage: PdfPipelineStage): void {
     }
     case 'select':
     case 'delete':
-      if (!requiredText(stage, 'pages').trim())
+      if (!trimGoWhitespace(requiredText(stage, 'pages')))
         throw new InputError(`${name}: "pages" must be a non-empty string.`)
       break
     case 'insert':
@@ -572,22 +604,30 @@ function validateStage(stage: PdfPipelineStage): void {
       if (!Array.isArray(stage.bookmarks) || !stage.bookmarks.length)
         throw new InputError('set-bookmarks: add at least one bookmark.')
       const check = (entries: unknown[]): void => {
-        const pending = [...entries]
+        const pending = entries.map((entry) => ({ entry, depth: 1 }))
         while (pending.length) {
-          const entry = pending.pop()
+          const current = pending.pop()
+          if (!current) break
+          const { entry, depth } = current
+          if (depth > MAX_BOOKMARK_DEPTH) throw new InputError(BOOKMARK_DEPTH_ERROR)
           if (
             !object(entry) ||
             typeof entry.title !== 'string' ||
-            !entry.title.trim() ||
+            bookmarkTitleBlank(entry.title, true) ||
             !integer(entry.pageNumber, 1)
           )
             throw new InputError(
               'set-bookmarks: every bookmark needs a title and positive pageNumber.',
             )
+          for (const key of Object.keys(entry)) {
+            if (!['title', 'pageNumber', 'children'].includes(key)) {
+              throw new InputError(`set-bookmarks: unknown bookmark property "${key}".`)
+            }
+          }
           if (!absent(entry.children)) {
             if (!Array.isArray(entry.children))
               throw new InputError('set-bookmarks: invalid children.')
-            pending.push(...entry.children)
+            for (const child of entry.children) pending.push({ entry: child, depth: depth + 1 })
           }
         }
       }
@@ -675,17 +715,13 @@ function validateStage(stage: PdfPipelineStage): void {
         !Array.isArray(values) ||
         !values.length ||
         values.length > 2 ||
-        values.some((entry) => typeof entry !== 'string' || !profiles.has(entry))
+        !values.every(isPdfConformanceProfile)
       )
         throw new InputError(
           'remediate: choose a supported profile or compatible PDF/A + PDF/UA pair.',
         )
-      if (values.length === 2) {
-        const a = values.find((entry: string) => entry.startsWith('PDF/A-') || entry === 'Factur-X')
-        const ua = values.find((entry: string) => entry.startsWith('PDF/UA-'))
-        if (!a || !ua || ua !== (a.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1'))
-          throw new InputError('remediate: incompatible PDF/A and PDF/UA profiles.')
-      }
+      if (!parsePdfConformanceProfiles(values))
+        throw new InputError('remediate: incompatible PDF/A and PDF/UA profiles.')
       // Gotenberg resolves the named asset and reads its XML contents. Unlike
       // input PDFs, invoice assets do not need a particular filename suffix.
       if (stage.xml) requiredText(stage, 'xml')
@@ -719,7 +755,11 @@ function validateStage(stage: PdfPipelineStage): void {
         throw new InputError('render: JPEG quality must be between 1 and 100.')
       break
   }
-  if ((name === 'sign' || name === 'timestamp') && !absent(stage.timestampUrl)) {
+  if (
+    (name === 'sign' || name === 'timestamp') &&
+    !absent(stage.timestampUrl) &&
+    !(name === 'sign' && stage.timestampUrl === '')
+  ) {
     if (typeof stage.timestampUrl !== 'string')
       throw new InputError(`${name}: invalid timestamp authority URL.`)
     stage.timestampUrl = timestampAuthorityUrl(stage.timestampUrl)
@@ -759,6 +799,64 @@ export function pdfStageAssetNames(stages: readonly PdfPipelineStage[]): string[
   return [...new Set(stages.flatMap(stageFileReferences))]
 }
 
+/** Stage uploads are separate from source documents. Never let an unused PDF
+ * asset become a source document when Gotenberg excludes only referenced files.
+ */
+export function validatePdfStageUploads(
+  stages: readonly PdfPipelineStage[],
+  localAssetNames: readonly string[],
+  conversionMode = false,
+): void {
+  if (conversionMode && stages.some(({ op }) => op === 'decrypt')) {
+    throw new InputError(
+      'Decryption is only available for uploaded PDFs, not newly converted PDFs.',
+    )
+  }
+  const referenced = new Set(pdfStageAssetNames(stages))
+  for (const name of localAssetNames) {
+    if (!referenced.has(name.normalize('NFC'))) {
+      const kind = conversionMode ? 'conversion' : 'PDF pipeline'
+      throw new InputError(`Unused ${kind} stage file: ${name}.`)
+    }
+  }
+}
+
+/** Gotenberg excludes files read by stages from its PDF and Office sources.
+ * A primary upload must therefore never resolve as an auxiliary stage file.
+ */
+export function validatePipelineSourceUploads(
+  stages: readonly PdfPipelineStage[],
+  sourceNames: readonly string[],
+  remoteNames: readonly (string | undefined)[] = [],
+  archiveEntryNames: readonly string[] = [],
+): void {
+  const assets = new Set(pdfStageAssetNames(stages))
+  if (!assets.size) return
+  const knownRemoteNames = remoteNames.filter((name): name is string => name !== undefined)
+  // Downloads register first. The upload and archive fields may register in
+  // either order, and duplicate names are numbered before stages resolve them.
+  const originalNames = new Set(sourceNames.map((name) => name.normalize('NFC')))
+  const possibleNames = new Set(originalNames)
+  for (const preceding of [knownRemoteNames, [...knownRemoteNames, ...archiveEntryNames]]) {
+    for (const name of registeredFilenames([...preceding, ...sourceNames]).slice(
+      preceding.length,
+    )) {
+      possibleNames.add(name)
+    }
+  }
+  for (const name of possibleNames) {
+    if (!assets.has(name)) continue
+    if (!originalNames.has(name)) {
+      throw new InputError(
+        `Stage asset filename collides after Gotenberg numbers duplicate files: ${name}. A source document would become the stage asset instead. Rename the asset or the colliding input.`,
+      )
+    }
+    throw new InputError(
+      `Source document "${name}" cannot also be a stage asset. Upload the asset separately with a distinct filename.`,
+    )
+  }
+}
+
 export type PdfPipelineValidation = {
   assetNames?: readonly string[]
   /** An unnamed remote download may supply a stage asset; Gotenberg checks its actual filename. */
@@ -768,12 +866,32 @@ export type PdfPipelineValidation = {
   allowEmpty?: boolean
 }
 
+/** Map the standalone composition fields without changing native length spellings. */
+export function composeStageFromFields(
+  fields: Readonly<Record<string, string | boolean | undefined>>,
+): PdfPipelineStage {
+  let placements: unknown
+  try {
+    placements = JSON.parse(String(fields.placements ?? ''))
+  } catch {
+    throw new InputError('Page placements must be valid JSON.')
+  }
+  const stage: PdfPipelineStage = { op: 'compose', placements }
+  for (const name of ['paperSize', 'paperWidth', 'paperHeight'] as const) {
+    const value = fields[name]
+    if (value !== undefined && value !== '') stage[name] = value
+  }
+  const [parsed] = parsePdfPipeline(JSON.stringify([stage]))
+  if (!parsed) throw new InputError('Invalid page composition.')
+  return parsed
+}
+
 /** Parse user JSON, validate ordered stage semantics and (on server) file references. */
 export function parsePdfPipeline(
   raw: string,
   context: PdfPipelineValidation = {},
 ): PdfPipelineStage[] {
-  if (context.allowEmpty && !raw.trim()) return []
+  if (context.allowEmpty && !trimGoWhitespace(raw)) return []
   let decoded: unknown
   try {
     decoded = JSON.parse(raw)
@@ -784,6 +902,8 @@ export function parsePdfPipeline(
     return []
   if (!Array.isArray(decoded) || decoded.length < 1)
     throw new InputError('Add at least one ordered PDF processing stage.')
+  const assetNames =
+    context.assetNames && new Set(context.assetNames.map((name) => name.normalize('NFC')))
   const stages: PdfPipelineStage[] = []
   const counts = new Map<string, number>()
   let hasDecryption = false
@@ -796,6 +916,8 @@ export function parsePdfPipeline(
       throw new InputError(`Stage ${index + 1} must select a supported PDF operation.`)
     const stage = normalizePdfStageAssets([value as PdfPipelineStage])[0] as PdfPipelineStage
     validateStage(stage)
+    if (hasMalformedUnicode(stage))
+      throw new InputError(`Stage ${index + 1} contains malformed Unicode.`)
     const op = stage.op
     const previous = counts.get(op) ?? 0
     if (previous && ['remediate', 'encrypt', 'sign', 'timestamp'].includes(op))
@@ -845,8 +967,7 @@ export function parsePdfPipeline(
       hasSigning = true
       if (seenFinal !== 'sign') seenFinal = 'sign'
     }
-    if (context.assetNames) {
-      const assetNames = new Set(context.assetNames.map((name) => name.normalize('NFC')))
+    if (assetNames) {
       for (const key of PDF_STAGE_FILE_FIELDS) {
         if (op === 'compose' && key === 'source') continue
         if (
@@ -885,6 +1006,28 @@ export function parsePdfPipeline(
   )
     throw new InputError('PDF/A and Factur-X documents cannot be encrypted in the same pipeline.')
   return stages
+}
+
+/** Match Gotenberg's incremental edits and single-document merge paths.
+ * Full rewrites generate a new PDF header (pkg/modules/pdf/stage_types.go).
+ */
+export function pipelineMayPreservePdfHeader(stages: readonly PdfPipelineStage[]): boolean {
+  const incremental = new Set<PdfPipelineOp>([
+    'merge',
+    'rotate',
+    'stamp-text',
+    'stamp-image',
+    'stamp-pdf',
+    'set-metadata',
+    'set-bookmarks',
+    'set-form',
+    'autotag',
+    'attach',
+    'detach',
+    'sign',
+    'timestamp',
+  ])
+  return stages.length > 0 && stages.every(({ op }) => incremental.has(op))
 }
 
 /** Only a standalone extraction can return an individual embedded attachment.
@@ -927,12 +1070,25 @@ export function pipelineResponseTypes(stages: readonly PdfPipelineStage[]): read
   return ['application/pdf', 'application/zip']
 }
 
+/** Conversion routes include newly converted PDFs alongside final extraction results. */
+export function conversionPipelineResponseTypes(
+  stages: readonly PdfPipelineStage[],
+): readonly string[] {
+  return ['render', 'extract-text', 'extract-attachments'].includes(stages.at(-1)?.op ?? '')
+    ? ['application/zip']
+    : pipelineResponseTypes(stages)
+}
+
 /** Do not echo secrets in the visual preview (the upstream payload still contains them). */
 export function safePipelinePreview(stages: readonly PdfPipelineStage[]): string {
   return JSON.stringify(
     stages,
-    (key, value: unknown) =>
-      /password|^key$/i.test(key) && typeof value === 'string' ? '••••••' : value,
+    (key, value: unknown) => {
+      if (typeof value !== 'string') return value
+      if (/password|^key$/i.test(key)) return '••••••'
+      if (key === 'timestampUrl' && value) return safeOutboundHost(value)
+      return value
+    },
     2,
   )
 }

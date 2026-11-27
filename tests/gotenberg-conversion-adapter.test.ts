@@ -60,7 +60,7 @@ test('v9 Office conversion stages permit duplicate local and remote source names
   )
 })
 
-test('v8 Chromium retains legacy fields, array media features and PDF post-processing', () => {
+test('v8 Chromium retains legacy fields, object media features and PDF post-processing', () => {
   const form = adapt(
     'html-pdf',
     {
@@ -81,9 +81,9 @@ test('v8 Chromium retains legacy fields, array media features and PDF post-proce
   assert.equal(form.get('nativePageRanges'), '1-3')
   assert.equal(form.get('waitWindowStatus'), 'ready')
   assert.equal(form.get('pdfa'), 'PDF/A-2b')
-  assert.deepEqual(JSON.parse(String(form.get('emulatedMediaFeatures'))), [
-    { name: 'prefers-color-scheme', value: 'dark' },
-  ])
+  assert.deepEqual(JSON.parse(String(form.get('emulatedMediaFeatures'))), {
+    'prefers-color-scheme': 'dark',
+  })
   assert.equal(form.get('stages'), null)
 })
 
@@ -546,7 +546,7 @@ test('v9 conversion places conformance remediation before PDF signing and timest
     { op: 'set-metadata', title: 'Final statement' },
     { op: 'remediate', profile: 'PDF/A-2b' },
     { op: 'sign', certificate: 'signer.p12', pades: true },
-    { op: 'timestamp', timestampUrl: 'https://tsa.example.test/' },
+    { op: 'timestamp', timestampUrl: 'https://tsa.example.test' },
   ])
 })
 
@@ -910,4 +910,19 @@ test('v8 conversion rejects Gotenberg 9 remediation stage options', () => {
     () => adapt('office-pdf', { fields: { pdfa: 'PDF/A-2b', v9Language: 'en-AU' } }, 8),
     /require Gotenberg 9|Unsupported|Advanced/,
   )
+})
+
+test('Office native aliases do not compete with generated conformance profiles in the adapter', () => {
+  const cases: ConversionPayload['fields'][] = [
+    { pdfaProfile: 'PDF/A-3b' },
+    { pdfaProfile: 'PDF/A-3b', merge: true },
+  ]
+  for (const fields of cases) {
+    assert.throws(
+      () => adapt('office-pdf', { fields, advanced: { nativePdfa: 'PDF/A-2b' } }, 9),
+      /Choose either nativePdfa\/nativePdfua/,
+    )
+  }
+  const form = adapt('office-pdf', { advanced: { nativePdfa: 'PDF/A-2b' } }, 9)
+  assert.equal(form.get('nativePdfa'), 'PDF/A-2b')
 })

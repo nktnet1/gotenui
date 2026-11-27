@@ -8,7 +8,7 @@ import {
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { adaptConversionForm } from '#/lib/gotenberg-conversion-adapter'
 import { OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
-import { validatePayload } from '#/lib/validation'
+import { parseAdvanced, validatePayload } from '#/lib/validation'
 
 function request(operation: string, extra: Record<string, string | boolean> = {}) {
   const definition = OPERATION_BY_ID.get(operation)
@@ -372,7 +372,10 @@ test('accepts long Chromium cookie values and case-insensitive SameSite settings
   const { payload, operation } = validatePayload(fields)
   assert.deepEqual(
     JSON.parse(String(createGotenbergForm(operation, payload, [], []).get('cookies'))),
-    cookies,
+    [
+      { ...cookies[0], sameSite: 'Lax' },
+      { ...cookies[1], sameSite: 'None' },
+    ],
   )
   assert.throws(
     () =>
@@ -548,9 +551,14 @@ test('validates Chromium typed printing, waiting and tag/outline controls', () =
     () => validatePayload(request('url-pdf', { userAgent: 'client\r\nHeader: secret' })),
     /userAgent/,
   )
-  for (const advanced of [{ singlePage: true }, { cookies: '[]' }]) {
+  for (const advanced of [{ preferCssPageSize: true }, { cookies: '[]' }]) {
     assert.throws(() => validatePayload({ ...request('office-pdf'), advanced }), /not supported/)
   }
+  // Gotenberg 9 also binds singlePage on the Office route. Its version is
+  // checked by the authenticated proxy, not the version-independent schema.
+  assert.doesNotThrow(() =>
+    validatePayload({ ...request('office-pdf'), advanced: { singlePage: true } }),
+  )
   assert.throws(
     () => validatePayload({ ...request('url-shot'), advanced: { generateTaggedPdf: true } }),
     /not supported/,
@@ -607,4 +615,140 @@ test('LibreOffice native source password stays separate from output PDF encrypti
       postProcess: { ownerPassword: 'output-password' },
     }),
   )
+})
+
+test('cleared optional Chromium wait and User-Agent fields restore upstream defaults', () => {
+  const names = ['waitForSelector', 'waitForExpression', 'waitWindowStatus', 'userAgent']
+  for (const id of [
+    'url-pdf',
+    'html-pdf',
+    'markdown-pdf',
+    'url-shot',
+    'html-shot',
+    'markdown-shot',
+  ]) {
+    const { operation, payload } = validatePayload(
+      request(id, Object.fromEntries(names.map((name) => [name, '']))),
+    )
+    for (const major of [8, 9] as const) {
+      const form = adaptConversionForm(
+        operation,
+        payload,
+        createGotenbergForm(operation, payload, [], [], undefined, {}, [], major),
+        major,
+      )
+      for (const name of [...names, 'waitForWindowStatus']) {
+        assert.equal(form.has(name), false, `${id} v${major}: ${name}`)
+      }
+    }
+    for (const name of names) {
+      assert.throws(() => validatePayload(request(id, { [name]: '  ' })), /Invalid Chromium/)
+    }
+  }
+})
+
+test('rejects non-string SameSite values even when they stringify to a supported enum', () => {
+  assert.throws(
+    () =>
+      validatePayload(
+        request('url-pdf', { cookies: JSON.stringify([{ ...cookie, sameSite: ['Lax'] }]) }),
+      ),
+    /cookie/i,
+  )
+})
+
+test.each(['\u0085scope', '\u017fcope', '\u0085\u017fCoPe\u0085'])(
+  'matches the upstream Unicode scope key %j',
+  (key) => {
+    const value = `secret;${key}=^https://example.test/`
+    assert.throws(() => chromiumNetworkFields([], [{ ...header, value }]), /URL scope/)
+    assert.doesNotThrow(() =>
+      validatePayload(
+        request('url-pdf', {
+          extraHttpHeaders: JSON.stringify({ Authorization: value }),
+        }),
+      ),
+    )
+    assert.throws(
+      () =>
+        validatePayload(
+          request('url-pdf', {
+            extraHttpHeaders: JSON.stringify({ 'X-Custom': `${value};scope=.*` }),
+          }),
+        ),
+      /at most one URL scope/,
+    )
+  },
+)
+
+test('does not treat a BOM as whitespace in scope names or regex patterns', () => {
+  assert.throws(
+    () =>
+      validatePayload(
+        request('url-pdf', {
+          extraHttpHeaders: JSON.stringify({ Authorization: 'secret;\uFEFFscope=.*' }),
+        }),
+      ),
+    /explicit URL scope/,
+  )
+  const scope = '^https://example.test/\uFEFF'
+  const fields = chromiumNetworkFields([], [{ ...header, scope }])
+  assert.deepEqual(JSON.parse(fields.extraHttpHeaders), {
+    Authorization: `${header.value};scope=${scope}`,
+  })
+  assert.doesNotThrow(() => validatePayload(request('url-pdf', fields)))
+})
+
+test.each(['\x00', '\x0b', '\x1f', '\x7f', '\ud800'])(
+  'rejects malformed resource header characters %j in both paths',
+  (char) => {
+    const value = `private${char}`
+    assert.throws(() => chromiumNetworkFields([], [{ ...header, value }]), /header value/)
+    assert.throws(
+      () =>
+        validatePayload(
+          request('url-pdf', {
+            extraHttpHeaders: JSON.stringify({
+              Authorization: `${value};scope=^https://example.test/`,
+            }),
+          }),
+        ),
+      /header value/,
+    )
+  },
+)
+
+test('keeps valid Unicode header values and tabs, and rejects malformed cookie paths and values', () => {
+  const fields = chromiumNetworkFields([], [{ ...header, value: 'opaque\t\ud83d\ude00' }])
+  assert.doesNotThrow(() => validatePayload(request('url-pdf', fields)))
+  for (const entry of [
+    { ...cookie, value: '\u0085' },
+    { ...cookie, value: '\ud800' },
+    { ...cookie, path: '/a\x00b' },
+  ]) {
+    assert.throws(
+      () => validatePayload(request('url-pdf', { cookies: JSON.stringify([entry]) })),
+      /valid name, value, domain/,
+    )
+  }
+})
+
+test.each(['9007199254740993', '-9007199254740993', '1e20'])(
+  'rejects unsafe advanced numeric integers in both browser and proxy',
+  (raw) => {
+    assert.throws(() => parseAdvanced(`{"futureInteger":${raw}}`), /safe JSON range/)
+    assert.throws(
+      () => validatePayload({ ...request('url-pdf'), advanced: { futureInteger: Number(raw) } }),
+      /safe JSON range/,
+    )
+  },
+)
+
+test('preserves exact large advanced integer strings and ordinary scalar values', () => {
+  const advanced = parseAdvanced(
+    '{"futureInteger":"9223372036854775807","futureDecimal":1.25,"futureFlag":false,"futureSafeInteger":9007199254740991}',
+  )
+  const { payload, operation } = validatePayload({ ...request('url-pdf'), advanced })
+  const form = createGotenbergForm(operation, payload, [], [])
+  for (const [name, value] of Object.entries(advanced)) assert.equal(form.get(name), String(value))
 })

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, test, vi } from 'vitest'
 import { type BatchInput, BrowserBatchQueue } from '#/lib/browser-batch-queue'
 
 type SentRequest = { path: string; init: RequestInit; headers: Headers; form: FormData }
@@ -292,4 +292,36 @@ describe('browser batch queue to same-origin API transport', () => {
       queue.dispose()
     }
   })
+})
+
+test('queued transport retains the verified backend version across edits and retries', async () => {
+  const versions: string[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+      const request = captureRequest(path, init)
+      versions.push(JSON.parse(String(request.form.get('payload'))).expectedBackendVersion)
+      return versions.length === 1
+        ? new Response('Gotenberg changed since this request was configured.', { status: 409 })
+        : pdfResponse('retried.pdf', 'trace')
+    }),
+  )
+  const { queue } = makeQueue()
+  try {
+    const input = browserInput()
+    const candidate = {
+      ...(input.candidate as Record<string, unknown>),
+      expectedBackendVersion: '9.10.0',
+    }
+    input.candidate = candidate
+    const id = queue.enqueue(input)
+    candidate.expectedBackendVersion = '9.9.0'
+    queue.start()
+    await settle(queue, ['failed'])
+    queue.retry(id)
+    await settle(queue, ['completed'])
+    expect(versions).toEqual(['9.10.0', '9.10.0'])
+  } finally {
+    queue.dispose()
+  }
 })

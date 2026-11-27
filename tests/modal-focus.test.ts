@@ -174,3 +174,80 @@ describe('dialog keyboard accessibility', () => {
     expect(invokingControl.focus).not.toHaveBeenCalled()
   })
 })
+
+/** Simulate DOM focusin dispatch, retaining every registered listener. */
+function modalFixture() {
+  const listeners = new Map<string, Set<(event: unknown) => void>>()
+  const doc = {
+    activeElement: null as HTMLElement | null,
+    body: { style: { overflow: 'auto' } },
+    addEventListener(name: string, listener: (event: unknown) => void) {
+      const set = listeners.get(name) ?? new Set()
+      set.add(listener)
+      listeners.set(name, set)
+    },
+    removeEventListener(name: string, listener: (event: unknown) => void) {
+      listeners.get(name)?.delete(listener)
+    },
+  }
+  const dispatch = (name: string, event: unknown) => {
+    for (const fn of listeners.get(name) ?? []) fn(event)
+  }
+  let focusEvents = 0
+  const button = () => {
+    const element = control()
+    element.focus.mockImplementation(() => {
+      if (doc.activeElement === element) return
+      if (++focusEvents > 30) throw new Error('Competing focus traps')
+      doc.activeElement = element
+      dispatch('focusin', { target: element })
+    })
+    return element
+  }
+  const invoking = button()
+  invoking.focus()
+  const open = () => {
+    const first = button()
+    const last = button()
+    const onClose = vi.fn()
+    const parent = dialog([first, last])
+    const cleanup = activateModalFocus(parent, onClose, doc as unknown as Document)
+    return { first, last, onClose, cleanup }
+  }
+  return { doc, invoking, open, dispatch, listeners }
+}
+
+it('only the top modal traps focus, Tab and Escape while dialogs overlap', () => {
+  const { doc, invoking, open, dispatch, listeners } = modalFixture()
+  const lower = open()
+  const upper = open()
+  expect(doc.activeElement).toBe(upper.first)
+  invoking.focus()
+  expect(doc.activeElement).toBe(upper.first)
+  dispatch('keydown', { ...tab(true), stopPropagation: vi.fn() })
+  expect(doc.activeElement).toBe(upper.last)
+  dispatch('keydown', { key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() })
+  expect(upper.onClose).toHaveBeenCalledOnce()
+  expect(lower.onClose).not.toHaveBeenCalled()
+  upper.cleanup()
+  expect(doc.activeElement).toBe(lower.first)
+  dispatch('keydown', { key: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn() })
+  expect(lower.onClose).toHaveBeenCalledOnce()
+  lower.cleanup()
+  expect(doc.activeElement).toBe(invoking)
+  expect(doc.body.style.overflow).toBe('auto')
+  expect([...listeners.values()].every((set) => set.size === 0)).toBe(true)
+})
+
+it('removing a lower modal neither steals focus nor loses the original return target', () => {
+  const { doc, invoking, open } = modalFixture()
+  const lower = open()
+  const upper = open()
+  lower.cleanup()
+  lower.cleanup()
+  expect(doc.activeElement).toBe(upper.first)
+  expect(doc.body.style.overflow).toBe('hidden')
+  upper.cleanup()
+  expect(doc.activeElement).toBe(invoking)
+  expect(doc.body.style.overflow).toBe('auto')
+})

@@ -239,7 +239,7 @@ describe('browser-local operation presets', () => {
     )
     expect(applied).toEqual({
       width: '1920',
-      height: '900',
+      height: '600',
       format: 'png',
       // An omitted setting restores the current operation default, not an old snapshot.
       skipNetworkIdleEvent: true,
@@ -386,3 +386,179 @@ describe('browser-local operation presets', () => {
     expect(html).not.toContain(sensitive.url)
   })
 })
+
+it('round-trips valid negative, signed and scientific numeric field values', () => {
+  const fields = { openBookmarkLevels: '-1', nativeWatermarkRotateAngle: '-2.5e1' }
+  const [preset] = upsertPreset([], office, 'Angles', fields, firstId)
+  assert.deepEqual(preset.fields, fields)
+  assert.equal(applyPresetFields(office, {}, preset).openBookmarkLevels, '-1')
+  assert.equal(applyPresetFields(office, {}, preset).nativeWatermarkRotateAngle, '-2.5e1')
+  const watermark = requiredOperation('watermark')
+  assert.deepEqual(capturePresetFields(watermark, { v9OverlayX: '-15.5', v9OverlayY: '+2' }), {
+    v9OverlayX: '-15.5',
+    v9OverlayY: '+2',
+  })
+  assert.throws(() => capturePresetFields(office, { openBookmarkLevels: '1e0' }), /Invalid/)
+})
+
+it('never saves destructive redaction acknowledgements as reusable settings', () => {
+  for (const [id, field] of [
+    ['redact', 'confirmRedaction'],
+    ['pdf-pipeline', 'acknowledgedRedaction'],
+  ] as const) {
+    const op = requiredOperation(id)
+    expect(op.fields.some((definition) => definition.name === field)).toBe(true)
+    expect(reusableFieldNames(op)).toEqual([])
+    expect(capturePresetFields(op, { [field]: true })).toEqual({})
+    expect(() => upsertPreset([], op, 'Unsafe', { [field]: true }, firstId)).toThrow(
+      /no reusable settings/,
+    )
+    expect(
+      persistPresets(storage(), [
+        { id: firstId, operationId: id, name: 'Unsafe', fields: { [field]: true } },
+      ]),
+    ).toBe(false)
+  }
+})
+
+it('migrates obsolete acknowledgement-only presets without losing valid settings', () => {
+  const stored = storage()
+  const valid = upsertPreset([], operation, 'Print', { landscape: true }, firstId)
+  stored.setItem(
+    PRESETS_STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      presets: [
+        ...valid,
+        { id: secondId, operationId: 'redact', name: 'Legacy', fields: { confirmRedaction: true } },
+        {
+          id: 'preset-00000000-0000-4000-8000-000000000003',
+          operationId: 'pdf-pipeline',
+          name: 'Legacy',
+          fields: { acknowledgedRedaction: false },
+        },
+      ],
+    }),
+  )
+  expect(loadPresets(stored)).toEqual(valid)
+})
+
+it('does not migrate malformed or unknown settings as legacy acknowledgements', () => {
+  const stored = storage()
+  for (const fields of [
+    { confirmRedaction: 'true' },
+    { confirmRedaction: true, private: 'secret' },
+  ]) {
+    stored.setItem(
+      PRESETS_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        presets: [{ id: firstId, operationId: 'redact', name: 'Unsafe', fields }],
+      }),
+    )
+    expect(loadPresets(stored)).toEqual([])
+  }
+})
+
+it('round-trips explicitly cleared optional controls rather than restoring UI defaults', () => {
+  const screenshot = requiredOperation('url-shot')
+  const stored = storage()
+  const fields = { width: '', height: '', format: '' }
+  const saved = upsertPreset([], screenshot, 'Backend defaults', fields, firstId)
+  expect(saved[0]?.fields).toEqual(fields)
+  expect(persistPresets(stored, saved)).toBe(true)
+  const [restored] = loadPresets(stored)
+  assert.ok(restored)
+  expect(
+    applyPresetFields(screenshot, { width: '1200', height: '900', format: 'webp' }, restored),
+  ).toMatchObject(fields)
+})
+
+it('round-trips valid upstream length units and numeric spellings', () => {
+  const fields = {
+    paperWidth: '6pc',
+    paperHeight: '+1e1in',
+    marginTop: '.5in',
+    marginLeft: '0x1p-1in',
+    marginRight: '1_000mm',
+  }
+  const stored = storage()
+  const saved = upsertPreset([], operation, 'Sizes', fields, firstId)
+  expect(saved[0]?.fields).toEqual(fields)
+  expect(persistPresets(stored, saved)).toBe(true)
+  const [restored] = loadPresets(stored)
+  assert.ok(restored)
+  expect(applyPresetFields(operation, {}, restored)).toMatchObject(fields)
+  for (const value of ['-1in', '1e999in', '0x10in', '1in/password']) {
+    expect(() => capturePresetFields(operation, { marginTop: value })).toThrow(/Invalid/)
+  }
+})
+
+it.each(['odd', 'even', 'last', 'all', '!1, 2-', '-3', '1-3, !2'])(
+  'preserves valid PDF stage page selectors in presets: %s',
+  (pages) => {
+    expect(capturePresetFields(requiredOperation('rotate'), { rotatePages: pages })).toEqual({
+      rotatePages: pages,
+    })
+    expect(capturePresetFields(requiredOperation('split'), { splitSpan: pages })).toEqual({
+      splitSpan: pages,
+    })
+  },
+)
+
+it('preserves signed positive split intervals and rejects arbitrary selector text', () => {
+  expect(capturePresetFields(requiredOperation('split'), { splitSpan: '+3' })).toEqual({
+    splitSpan: '+3',
+  })
+  expect(() =>
+    capturePresetFields(requiredOperation('split'), { splitSpan: 'odd,password' }),
+  ).toThrow(/Invalid/)
+})
+
+it.each([
+  '1m30s',
+  '1.5h',
+  '500us',
+  '1\u00b5s',
+  '1\u03bcs',
+  '1ns',
+  '0',
+  '+0',
+  '-1s',
+  '.5s',
+  '1.s',
+  '9223372036854775807ns',
+  '-9223372036854775808ns',
+])('preserves Go duration settings: %s', (waitDelay) => {
+  expect(capturePresetFields(operation, { waitDelay })).toEqual({ waitDelay })
+})
+
+it.each([
+  '1m 30s',
+  '1day',
+  '1e3s',
+  '2ssecret',
+  '9223372036854775808ns',
+  '-9223372036854775809ns',
+  '1ns9223372036854775807ns',
+])('rejects malformed or overflowing duration presets: %s', (waitDelay) => {
+  expect(() => capturePresetFields(operation, { waitDelay })).toThrow(/Invalid/)
+})
+
+it.each(['__proto__', 'constructor', 'prototype'])(
+  'rejects unknown stored preset field %s instead of silently removing it',
+  (name) => {
+    const target = storage()
+    const presets = [
+      {
+        id: firstId,
+        operationId: 'url-pdf',
+        name: 'Test',
+        fields: { landscape: true, [name]: 'bad' },
+      },
+    ]
+    target.items.set(PRESETS_STORAGE_KEY, JSON.stringify({ version: 1, presets }))
+    expect(loadPresets(target)).toEqual([])
+    expect(persistPresets(target, presets)).toBe(false)
+  },
+)

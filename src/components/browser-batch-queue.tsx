@@ -204,6 +204,7 @@ export function BrowserBatchQueuePanel({ queue }: { queue: BrowserBatchQueue }) 
                   {job.status === 'completed' &&
                     job.url &&
                     job.name &&
+                    job.binaryPreviewAllowed !== false &&
                     isPreviewableImage(job.type) && (
                       <div className="w-full min-w-0 sm:pl-11">
                         <ImageResultPreview url={job.url} name={job.name} />

@@ -1,3 +1,6 @@
+import { isHttpHeaderValue } from '#/lib/http-url'
+import { trimGoWhitespace } from '#/lib/unicode-text'
+
 /** Ephemeral browser-side inputs. These are form fields for Chromium, not proxy HTTP headers. */
 export type ChromiumCookie = {
   name: string
@@ -13,6 +16,16 @@ export type ChromiumResourceHeader = {
   name: string
   value: string
   scope: string
+}
+
+/** Go's strings.TrimSpace uses Unicode White_Space, not JavaScript trim. */
+export function trimChromiumWhitespace(value: string): string {
+  return trimGoWhitespace(value)
+}
+
+/** Match strings.EqualFold, including Unicode simple folding of long s. */
+export function isChromiumScopeKey(value: string): boolean {
+  return /^scope$/iu.test(trimChromiumWhitespace(value))
 }
 
 /** Gotenberg splits headers on semicolons, then removes whitespace from the
@@ -53,6 +66,20 @@ export function isAllowedChromiumResourceHeader(name: string): boolean {
   )
 }
 
+/** Canonicalise decoded SameSite values before the Go raw-JSON regex runs. */
+export function encodeChromiumCookies(raw: string): string {
+  const cookies = JSON.parse(raw) as { sameSite?: string }[]
+  return JSON.stringify(
+    cookies.map((cookie) => {
+      if (cookie.sameSite === undefined) return cookie
+      return {
+        ...cookie,
+        sameSite: cookie.sameSite.charAt(0).toUpperCase() + cookie.sameSite.slice(1).toLowerCase(),
+      }
+    }),
+  )
+}
+
 export function chromiumNetworkFields(
   cookies: readonly ChromiumCookie[],
   headers: readonly ChromiumResourceHeader[],
@@ -64,7 +91,7 @@ export function chromiumNetworkFields(
         name: name.trim(),
         value,
         domain: domain.trim(),
-        ...(path.trim() ? { path: path.trim() } : {}),
+        ...(path ? { path } : {}),
         ...(secure ? { secure } : {}),
         ...(httpOnly ? { httpOnly } : {}),
         ...(sameSite ? { sameSite } : {}),
@@ -83,18 +110,16 @@ export function chromiumNetworkFields(
       }
       if (used.has(name.toLowerCase())) throw new Error(`Duplicate Chromium header: ${name}`)
       used.add(name.toLowerCase())
-      if (/[\r\n]/.test(header.value)) throw new Error('Invalid Chromium resource header value.')
+      if (!isHttpHeaderValue(header.value))
+        throw new Error('Invalid Chromium resource header value.')
       // Gotenberg treats every case-insensitive `scope` token as special,
       // including a bare token or one at the start of the header value.
       // Keeping it out of the value avoids duplicate or malformed scopes.
-      if (
-        header.value
-          .split(';')
-          .some((token) => token.split('=', 1)[0]?.trim().toLowerCase() === 'scope')
-      ) {
+      if (header.value.split(';').some((token) => isChromiumScopeKey(token.split('=', 1)[0]))) {
         throw new Error('Set the URL scope in its own field, not in the header value.')
       }
-      const scope = header.scope.trim()
+      const scope = trimChromiumWhitespace(header.scope)
+      if (!isHttpHeaderValue(scope)) throw new Error('Invalid Chromium header URL scope.')
       if (hasAmbiguousChromiumScope(scope)) {
         throw new Error(
           'Chromium header URL scopes cannot contain semicolons or whitespace; use regex escapes.',

@@ -17,6 +17,7 @@ export const operation: Operation = {
     {
       name: 'imageQuality',
       supportedGotenbergMajors: [8],
+      minGotenbergMinor: 36,
       label: 'Image quality',
       kind: 'number',
       min: 1,

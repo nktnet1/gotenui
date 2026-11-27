@@ -375,7 +375,10 @@ describe('browser-managed batch queue', () => {
     const { queue } = queueWith(async () => result, completed)
     const request = input()
     request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
-    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    request.files = [
+      new File(['%PDF-1.7\n'], 'customer-a.pdf'),
+      new File(['%PDF-1.7\n'], 'customer-b.pdf'),
+    ]
     queue.enqueue(request)
     queue.start()
     await tick()
@@ -489,9 +492,9 @@ describe('browser-managed batch queue', () => {
   })
 
   it('does not publish a late validation result after the user cancels the batch job', async () => {
-    const validation = deferred<string>()
+    const validation = deferred<ArrayBuffer>()
     const blob = new Blob(['placeholder'], { type: 'application/json' })
-    Object.defineProperty(blob, 'text', { value: () => validation.promise })
+    Object.defineProperty(blob, 'arrayBuffer', { value: () => validation.promise })
     const completed = vi.fn()
     const { queue } = queueWith(
       async () => ({ mode: 'download', name: 'validation.json', type: 'application/json', blob }),
@@ -510,14 +513,72 @@ describe('browser-managed batch queue', () => {
     expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
     queue.cancel(id)
     validation.resolve(
-      JSON.stringify({
-        'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
-      }),
+      new TextEncoder().encode(
+        JSON.stringify({
+          'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
+        }),
+      ).buffer,
     )
     await tick()
     expect(queue.getSnapshot().jobs[0]).toMatchObject({ status: 'cancelled' })
     expect(queue.getSnapshot().jobs[0]?.url).toBeUndefined()
     expect(completed).not.toHaveBeenCalled()
+    queue.dispose()
+  })
+
+  it('retains an on-time download when local validation review outlasts the request deadline', async () => {
+    const timeout = new AbortController()
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+    const validation = deferred<ArrayBuffer>()
+    const blob = new Blob(['placeholder'], { type: 'application/json' })
+    const read = vi.fn(() => validation.promise)
+    Object.defineProperty(blob, 'arrayBuffer', { value: read })
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      name: 'validation.json',
+      type: 'application/json',
+      blob,
+    }))
+    const request = input()
+    request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+    request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+    queue.enqueue(request)
+    queue.start()
+    await tick()
+    expect(read).toHaveBeenCalledOnce()
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('running')
+    timeout.abort(new DOMException('Timed out', 'TimeoutError'))
+    validation.resolve(
+      new TextEncoder().encode(
+        JSON.stringify({
+          'document.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] },
+        }),
+      ).buffer,
+    )
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({
+      status: 'completed',
+      name: 'validation.json',
+    })
+    expect(queue.getSnapshot().jobs[0]?.url).toBeDefined()
+    queue.dispose()
+  })
+
+  it('still rejects a response that arrives after its request deadline', async () => {
+    const timeout = new AbortController()
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+    const held = deferred<ConversionResult>()
+    const { queue } = queueWith(() => held.promise)
+    queue.enqueue(input())
+    queue.start()
+    timeout.abort(new DOMException('Timed out', 'TimeoutError'))
+    held.resolve(pdf())
+    await tick()
+    expect(queue.getSnapshot().jobs[0]).toMatchObject({
+      status: 'failed',
+      error: 'Gotenberg did not respond within three minutes.',
+    })
+    expect(queue.getSnapshot().jobs[0]?.url).toBeUndefined()
     queue.dispose()
   })
 
@@ -917,4 +978,242 @@ describe('conversion stage assets in the batch queue', () => {
     expect(() => queue.enqueue(conversion)).toThrow(/Batch inputs exceed/)
     queue.dispose()
   })
+})
+
+it('honours a synchronous pause during the first running-state notification', () => {
+  const pending = deferred<ConversionResult>()
+  const execute = vi.fn(() => pending.promise)
+  const { queue } = queueWith(execute)
+  for (let i = 0; i < 3; i++) queue.enqueue(input())
+  let paused = false
+  queue.subscribe(() => {
+    if (!paused && queue.getSnapshot().jobs.some(({ status }) => status === 'running')) {
+      paused = true
+      queue.pause()
+    }
+  })
+  try {
+    queue.start()
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(queue.getSnapshot().jobs.map(({ status }) => status)).toEqual([
+      'running',
+      'queued',
+      'queued',
+    ])
+  } finally {
+    queue.dispose()
+  }
+})
+
+it('never exceeds concurrency when a subscriber enqueues during dispatch', async () => {
+  const waiting = Array.from({ length: 4 }, () => deferred<ConversionResult>())
+  let started = 0
+  const execute = vi.fn(() => waiting[started++]?.promise as Promise<ConversionResult>)
+  const { queue } = queueWith(execute)
+  for (let i = 0; i < 3; i++) queue.enqueue(input())
+  let added = false
+  queue.subscribe(() => {
+    if (!added && queue.getSnapshot().jobs.some(({ status }) => status === 'running')) {
+      added = true
+      queue.enqueue(input())
+    }
+  })
+  try {
+    queue.start()
+    expect(execute).toHaveBeenCalledTimes(MAX_BATCH_CONCURRENT)
+    waiting[0]?.resolve(pdf())
+    await tick()
+    expect(execute).toHaveBeenCalledTimes(3)
+    waiting[1]?.resolve(pdf())
+    await tick()
+    expect(execute).toHaveBeenCalledTimes(4)
+    waiting[2]?.resolve(pdf())
+    waiting[3]?.resolve(pdf())
+    await tick()
+    expect(queue.getSnapshot().jobs.every(({ status }) => status === 'completed')).toBe(true)
+  } finally {
+    queue.dispose()
+  }
+})
+
+it('does not strand a running job when a subscriber throws during dispatch', async () => {
+  const execute = vi.fn(async () => pdf())
+  const { queue } = queueWith(execute)
+  queue.enqueue(input())
+  queue.subscribe(() => {
+    if (queue.getSnapshot().jobs.some(({ status }) => status === 'running')) {
+      throw new Error('subscriber failed')
+    }
+  })
+  const observer = vi.fn()
+  queue.subscribe(observer)
+  try {
+    expect(() => queue.start()).not.toThrow()
+    await tick()
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(queue.getSnapshot().jobs[0]?.status).toBe('completed')
+    expect(observer).toHaveBeenCalledTimes(3)
+  } finally {
+    queue.dispose()
+  }
+})
+
+it('cancels all waiting jobs before publishing a snapshot that can restart dispatch', async () => {
+  const execute = vi.fn(async () => pdf())
+  const { queue } = queueWith(execute)
+  for (let i = 0; i < 3; i++) queue.enqueue(input())
+  let restarted = false
+  queue.subscribe(() => {
+    if (!restarted && !queue.getSnapshot().active) {
+      restarted = true
+      queue.start()
+    }
+  })
+  try {
+    queue.cancelAll()
+    await tick()
+    expect(execute).not.toHaveBeenCalled()
+    expect(queue.getSnapshot().jobs.map(({ status }) => status)).toEqual([
+      'cancelled',
+      'cancelled',
+      'cancelled',
+    ])
+  } finally {
+    queue.dispose()
+  }
+})
+
+it.each([
+  {
+    type: 'application/zip',
+    name: 'attachment.zip',
+    content: 'not a ZIP',
+    preview: 'View archive contents',
+    valid: false,
+  },
+  {
+    type: 'application/zip',
+    name: 'attachment.zip',
+    content: 'PK\u0003\u0004',
+    preview: 'View archive contents',
+    valid: true,
+  },
+  {
+    type: 'image/png',
+    name: 'attachment.png',
+    content: 'not a PNG',
+    preview: 'Preview image',
+    valid: false,
+  },
+  {
+    type: 'image/jpeg',
+    name: 'attachment.jpeg',
+    content: new Uint8Array([255, 216, 255]),
+    preview: 'Preview image',
+    valid: true,
+  },
+])(
+  'keeps extracted $name downloadable while gating binary previews on its signature ($valid)',
+  async ({ type, name, content, preview, valid }) => {
+    const blob = new Blob([typeof content === 'string' ? content : new Uint8Array(content)], {
+      type,
+    })
+    const { queue } = queueWith(async () => ({
+      mode: 'download',
+      attachment: true,
+      blob,
+      type,
+      name,
+    }))
+    const id = queue.enqueue(input())
+    queue.start()
+    await tick()
+    const job = queue.getSnapshot().jobs[0]
+    expect(job).toMatchObject({ status: 'completed', name, type, size: blob.size })
+    const markup = renderToStaticMarkup(createElement(BrowserBatchQueuePanel, { queue }))
+    expect(markup).toContain(`Download ${name}`)
+    expect(markup.includes(preview)).toBe(valid)
+    expect(queue.getArchiveBlob(id)).toBe(type === 'application/zip' && valid ? blob : undefined)
+    queue.dispose()
+  },
+)
+
+it('refuses to enqueue a restored authenticated profile before credentials are restored', () => {
+  const execute = vi.fn(async () => pdf())
+  const { queue } = queueWith(execute)
+  const request = input()
+  request.connection = { kind: 'browser', url: 'http://localhost:3000', credentialsRequired: true }
+  assert.throws(() => queue.enqueue(request), /Re-enter the saved connection credentials/)
+  assert.equal(queue.getSnapshot().jobs.length, 0)
+  assert.equal(execute.mock.calls.length, 0)
+})
+
+it('retains validation downloads for a different profile without claiming compliance', async () => {
+  const { queue } = queueWith(async () => ({
+    mode: 'download',
+    name: 'report.json',
+    type: 'application/json',
+    blob: new Blob([
+      JSON.stringify({ 'document.pdf': { compliant: true, profile: 'PDF/A-3b', violations: [] } }),
+    ]),
+  }))
+  const request = input()
+  request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+  request.files = [new File(['%PDF-1.7\n'], 'document.pdf')]
+  queue.enqueue(request)
+  queue.start()
+  await tick()
+  expect(queue.getSnapshot().jobs[0]).toMatchObject({
+    status: 'completed',
+    review: 'PDF validation could not be summarised. Review the downloaded JSON report.',
+  })
+  expect(queue.getSnapshot().jobs[0]?.url).toMatch(/^blob:/)
+  queue.dispose()
+})
+
+it('retains synchronous webhook downloads but does not imply callback delivery', async () => {
+  const { queue } = queueWith(async () => pdf())
+  const request = input()
+  request.candidate = {
+    operation: 'url-pdf',
+    fields: { url: 'https://example.com' },
+    advanced: {},
+    webhook: {
+      url: 'https://receiver.example.test/result',
+      eventsUrl: 'https://receiver.example.test/events',
+    },
+  }
+  queue.enqueue(request)
+  queue.start()
+  await tick()
+  expect(queue.getSnapshot().jobs[0]).toMatchObject({
+    status: 'completed',
+    review: expect.stringContaining('instead of webhook acceptance'),
+  })
+  expect(queue.getSnapshot().jobs[0]?.url).toMatch(/^blob:/)
+  queue.dispose()
+})
+
+it('keeps a partial compliance report downloadable but requires review', async () => {
+  const { queue } = queueWith(async () => ({
+    mode: 'download',
+    name: 'validation.json',
+    type: 'application/json',
+    blob: new Blob([
+      JSON.stringify({ 'first.pdf': { compliant: true, profile: 'PDF/A-2b', violations: [] } }),
+    ]),
+  }))
+  const request = input()
+  request.candidate = { operation: 'pdf-validate', fields: { profile: 'PDF/A-2b' }, advanced: {} }
+  request.files = [new File(['%PDF-1.7\n'], 'first.pdf'), new File(['%PDF-1.7\n'], 'second.pdf')]
+  queue.enqueue(request)
+  queue.start()
+  await tick()
+  expect(queue.getSnapshot().jobs[0]).toMatchObject({
+    status: 'completed',
+    name: 'validation.json',
+    review: 'PDF validation could not be summarised. Review the downloaded JSON report.',
+  })
+  expect(queue.getSnapshot().jobs[0]?.url).toMatch(/^blob:/)
+  queue.dispose()
 })

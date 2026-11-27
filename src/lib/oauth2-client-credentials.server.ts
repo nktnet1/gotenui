@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import * as v from 'valibot'
+import { parseHttpEndpoint } from '#/lib/http-url'
 import { ProxyInputError, readLimitedBody } from '#/lib/proxy-policy'
+import { responseMediaType } from '#/lib/security'
+import { isBearerToken, MAX_BEARER_TOKEN_LENGTH } from '#/lib/upstream-credentials'
 
 /** OAuth 2.0 client credentials for a deployment-managed Gotenberg connection.
  * This is not an interactive OIDC user login or a browser-stored refresh token.
@@ -15,7 +18,7 @@ export type OAuth2ClientCredentials = Readonly<{
 }>
 
 const tokenResponseSchema = v.object({
-  access_token: v.pipe(v.string(), v.minLength(1), v.maxLength(4096)),
+  access_token: v.pipe(v.string(), v.minLength(1), v.maxLength(MAX_BEARER_TOKEN_LENGTH)),
   token_type: v.string(),
   expires_in: v.union([v.number(), v.pipe(v.string(), v.regex(/^\d+$/))]),
 })
@@ -29,21 +32,8 @@ const pending = new Map<string, Promise<string>>()
 
 /** Do not make a token service URL or credentials browser-configurable. */
 export function parseOAuth2TokenUrl(value: string): string {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    throw new Error('OAuth2 tokenUrl must be an absolute HTTPS URL.')
-  }
-  if (
-    url.protocol !== 'https:' ||
-    !url.hostname ||
-    !url.pathname ||
-    url.username ||
-    url.password ||
-    url.hash ||
-    url.search
-  ) {
+  const url = parseHttpEndpoint(value.trim())
+  if (url?.protocol !== 'https:') {
     throw new Error('OAuth2 tokenUrl must be an HTTPS URL without credentials, query or fragment.')
   }
   return url.href
@@ -87,6 +77,9 @@ async function requestToken(
     headers.set('Authorization', `Basic ${Buffer.from(credentials).toString('base64')}`)
   }
 
+  // expires_in is relative to token issuance, which can precede the response
+  // arriving. Use the request start as a conservative bound on cache expiry.
+  const requestedAt = Date.now()
   let response: Response
   try {
     response = await fetcher(auth.tokenUrl, {
@@ -105,7 +98,7 @@ async function requestToken(
     await response.body?.cancel().catch(() => {})
     return rejectTokenResponse()
   }
-  if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+  if (responseMediaType(response.headers.get('content-type')) !== 'application/json') {
     await response.body?.cancel().catch(() => {})
     return rejectTokenResponse()
   }
@@ -122,7 +115,7 @@ async function requestToken(
     return rejectTokenResponse()
   }
   const { access_token } = parsed.output
-  if (!/^[A-Za-z0-9._~+/-]+=*$/.test(access_token)) return rejectTokenResponse()
+  if (!isBearerToken(access_token)) return rejectTokenResponse()
   const seconds = Number(parsed.output.expires_in)
   if (!Number.isSafeInteger(seconds) || seconds < 1) {
     return rejectTokenResponse()
@@ -134,7 +127,7 @@ async function requestToken(
   // Limit local caching to one day even when a provider issues longer-lived tokens.
   const lifetime = Math.min(seconds, 86_400)
   const skewSeconds = Math.max(1, Math.min(60, Math.ceil(lifetime * 0.1)))
-  const validUntil = Date.now() + Math.max(0, lifetime - skewSeconds) * 1000
+  const validUntil = requestedAt + Math.max(0, lifetime - skewSeconds) * 1000
   if (validUntil > Date.now()) {
     if (cached.size >= MAX_CACHED_TOKENS) {
       for (const [id, existing] of cached) {
@@ -170,8 +163,13 @@ export async function authorizationForOAuth2(
 export function invalidateOAuth2Authorization(
   connectionUrl: string,
   auth: OAuth2ClientCredentials | undefined,
+  authorization?: string,
 ): void {
-  if (auth) cached.delete(fingerprint(connectionUrl, auth))
+  if (!auth) return
+  const key = fingerprint(connectionUrl, auth)
+  // An old in-flight request may fail after a replacement token was cached.
+  if (authorization === undefined || cached.get(key)?.authorization === authorization)
+    cached.delete(key)
 }
 
 /** Exported for isolated tests; this module holds no browser-side state. */

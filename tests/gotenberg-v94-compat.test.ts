@@ -160,7 +160,11 @@ describe('Gotenberg 9.4 stamp anchors', () => {
           requiresGotenberg94ForStampPosition(parsed, [{ op, position: 'center' }]),
           expected,
         )
-        assert.equal(requiresGotenberg94ForStampPosition(parsed, [{ op, position: '' }]), false)
+        assert.equal(requiresGotenberg94ForStampPosition(parsed, [{ op, position: '' }]), expected)
+        assert.equal(
+          requiresGotenberg94ForStampPosition(parsed, [{ op, position: null }]),
+          expected,
+        )
         assert.equal(requiresGotenberg94ForStampPosition(parsed, [{ op }]), false)
       }
       assert.equal(
@@ -310,6 +314,31 @@ describe('Gotenberg 9.4 proxy and browser pipeline preflight', () => {
       const modern = await proxyConversionRequest(input(id, fields, extra), current.fetcher)
       assert.equal(modern.status, 200)
       assert.equal(current.count(), 1)
+    }
+  })
+
+  it('rejects explicitly empty position options before 9.4 but accepts them on 9.4', async () => {
+    for (const position of [null, '']) {
+      const stages = JSON.stringify([{ op: 'stamp-text', text: 'DRAFT', position }])
+      assert.match(
+        pdfPipelineEditorError(stages, { ...editor, backendVersion: '9.3.0' }) ?? '',
+        /9\.4/,
+      )
+      const legacy = server('9.3.0', () => assert.fail('9.3 must reject the position option'))
+      await assert.rejects(
+        proxyConversionRequest(input('pdf-pipeline', { stages }), legacy.fetcher),
+        { status: 409 },
+      )
+      assert.equal(legacy.count(), 0)
+      const modern = server('9.4.0', (_path, form) =>
+        assert.deepEqual(JSON.parse(String(form.get('stages'))), JSON.parse(stages)),
+      )
+      const response = await proxyConversionRequest(
+        input('pdf-pipeline', { stages }),
+        modern.fetcher,
+      )
+      assert.equal(response.status, 200)
+      await response.body?.cancel()
     }
   })
 

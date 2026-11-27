@@ -110,12 +110,9 @@ describe('Gotenberg 9.8 Markdown text extraction', () => {
       )
     assert.match(html('9.7.0'), /<select[^>]*disabled=""/)
     assert.doesNotMatch(html('9.8.0'), /<select[^>]*disabled=""/)
-    // Existing selections remain available after changing the backend, so the
-    // server can return a precise unsupported-version error instead of dropping them.
+    // Existing selections remain editable after switching to an older backend.
     assert.doesNotMatch(html('9.7.0', 'markdown'), /<select[^>]*disabled=""/)
-    assert.deepEqual(activeOperationFields(operation, { format: 'markdown' }, '9.7.0'), {
-      format: 'markdown',
-    })
+    assert.deepEqual(activeOperationFields(operation, { format: 'markdown' }, '9.7.0'), {})
     assert.deepEqual(activeOperationFields(operation, { format: '' }, '9.7.0'), {})
   })
 

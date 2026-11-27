@@ -1,4 +1,5 @@
 import { filenameKey, safeFilename } from '#/lib/file-names'
+import { hasMalformedUnicode } from '#/lib/unicode-text'
 
 /** Common writable ExifTool/XMP keys for Gotenberg 8. */
 export const METADATA_TEXT_FIELDS = [
@@ -21,6 +22,30 @@ export const GOTENBERG_9_METADATA_FIELDS = [
   ...METADATA_TEXT_FIELDS.filter(({ name }) => name !== 'Copyright'),
   ...PDF_METADATA_DATE_FIELDS,
 ]
+
+/** The editor uses the v8 spelling for labels and accepts native v9 aliases. */
+export const V9_METADATA_KEY_MAP: Readonly<Record<string, string>> = {
+  Title: 'title',
+  Author: 'author',
+  Subject: 'subject',
+  Keywords: 'keywords',
+  Creator: 'creator',
+  Producer: 'producer',
+  CreationDate: 'creationDate',
+  ModDate: 'modDate',
+}
+
+export function v9EditorMetadata(data: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = Object.create(null)
+  for (const [name, value] of Object.entries(data)) {
+    const key =
+      Object.entries(V9_METADATA_KEY_MAP).find(([, native]) => native === name)?.[0] ?? name
+    if (Object.hasOwn(normalized, key))
+      throw new Error(`Conflicting metadata aliases for '${key}'.`)
+    normalized[key] = value
+  }
+  return normalized
+}
 
 export type MetadataTextKey = (typeof METADATA_TEXT_FIELDS)[number]['name']
 export type MetadataKey =
@@ -95,15 +120,22 @@ export function metadataObject(text: string): Record<string, unknown> {
       throw new Error(`Metadata key "${key}" is not a writable PDF metadata tag.`)
     }
   }
+  if (hasMalformedUnicode(value)) throw new Error('Metadata contains malformed Unicode.')
   return value as Record<string, unknown>
 }
 
 /** Unknown XMP keys stay untouched when a common field is edited visually. */
-export function updateMetadata(text: string, key: MetadataKey, nextValue: string): string {
-  const data = { ...metadataObject(text) }
-  if (!nextValue.trim()) {
+export function updateMetadata(
+  text: string,
+  key: MetadataKey,
+  nextValue: string,
+  { standardOnly = false }: { standardOnly?: boolean } = {},
+): string {
+  const source = metadataObject(text)
+  const data = standardOnly ? v9EditorMetadata(source) : { ...source }
+  if (standardOnly ? nextValue === '' : !nextValue.trim()) {
     delete data[key]
-  } else if (key === 'Keywords') {
+  } else if (key === 'Keywords' && !standardOnly) {
     data.Keywords = nextValue
       .split(',')
       .map((keyword) => keyword.trim())
@@ -131,6 +163,18 @@ export function visualMetadataValue(
   return typeof value === 'string' ? value : null
 }
 
+/** Bound outline nesting before recursive PDF/JSON transformations. The
+ * visual editor has a smaller limit to keep nested React controls manageable.
+ * Neither limit restricts the number of sibling bookmarks.
+ */
+export const MAX_BOOKMARK_DEPTH = 512
+export const MAX_VISUAL_BOOKMARK_DEPTH = 128
+export const BOOKMARK_DEPTH_ERROR = `Bookmarks may be nested up to ${MAX_BOOKMARK_DEPTH} levels.`
+
+export function bookmarkTitleBlank(title: string, native: boolean): boolean {
+  return native ? /^\p{White_Space}*$/u.test(title) : !title.trim()
+}
+
 export type BookmarkNode = {
   title: string
   page: number | string
@@ -143,31 +187,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** The server validates the structure for either documented bookmarks payload shape. */
-export function validateBookmarkDocument(text: string): void {
+export function validateBookmarkDocument(
+  text: string,
+  { allowNativePageNumber = false }: { allowNativePageNumber?: boolean } = {},
+): void {
   let value: unknown
   try {
     value = JSON.parse(text)
   } catch {
     throw new Error('Bookmarks must contain valid JSON.')
   }
+  if (hasMalformedUnicode(value)) throw new Error('Bookmarks contain malformed Unicode.')
   const checkList = (list: unknown, label: string): void => {
-    const pending: { list: unknown; label: string }[] = [{ list, label }]
+    const pending: { list: unknown; label: string; depth: number }[] = [{ list, label, depth: 1 }]
     while (pending.length) {
       const current = pending.pop()
       if (!current) break
       if (!Array.isArray(current.list))
         throw new Error(`${current.label} must be a list of bookmarks.`)
+      if (current.list.length && current.depth > MAX_BOOKMARK_DEPTH)
+        throw new Error(BOOKMARK_DEPTH_ERROR)
       for (const [index, item] of current.list.entries()) {
         const where = `${current.label} item ${index + 1}`
         if (!isRecord(item)) throw new Error(`${where} must be an object.`)
-        if (typeof item.title !== 'string' || !item.title.trim()) {
+        if (
+          typeof item.title !== 'string' ||
+          bookmarkTitleBlank(item.title, allowNativePageNumber)
+        ) {
           throw new Error(`${where} needs a title.`)
         }
-        if (!Number.isSafeInteger(item.page) || (item.page as number) < 1) {
+        if (
+          allowNativePageNumber &&
+          item.page !== undefined &&
+          item.pageNumber !== undefined &&
+          item.page !== item.pageNumber
+        )
+          throw new Error(`${where} has conflicting page and pageNumber values.`)
+        const page = allowNativePageNumber ? (item.page ?? item.pageNumber) : item.page
+        if (!Number.isSafeInteger(page) || (page as number) < 1) {
           throw new Error(`${where} needs a positive whole-number page (starting at 1).`)
         }
-        if (item.children !== undefined)
-          pending.push({ list: item.children, label: `${where} children` })
+        if (item.children !== undefined && !(allowNativePageNumber && item.children === null))
+          pending.push({
+            list: item.children,
+            label: `${where} children`,
+            depth: current.depth + 1,
+          })
       }
     }
   }
@@ -188,39 +253,51 @@ export function validateBookmarkDocument(text: string): void {
   }
 }
 
-function convertBookmarkList(value: unknown): BookmarkNode[] | null {
+function convertBookmarkList(value: unknown, allowNativePageNumber = false): BookmarkNode[] | null {
   if (!Array.isArray(value)) return null
   const root: BookmarkNode[] = []
-  const pending: { source: unknown; output: BookmarkNode[] }[] = [{ source: value, output: root }]
+  const pending: { source: unknown; output: BookmarkNode[]; depth: number }[] = [
+    { source: value, output: root, depth: 1 },
+  ]
   while (pending.length) {
     const current = pending.pop()
     if (!current) break
     if (!Array.isArray(current.source)) return null
+    if (current.source.length && current.depth > MAX_VISUAL_BOOKMARK_DEPTH) return null
     for (const item of current.source) {
+      if (!isRecord(item) || typeof item.title !== 'string') return null
       if (
-        !isRecord(item) ||
-        typeof item.title !== 'string' ||
-        (typeof item.page !== 'number' && typeof item.page !== 'string')
-      ) {
+        allowNativePageNumber &&
+        item.page !== undefined &&
+        item.pageNumber !== undefined &&
+        item.page !== item.pageNumber
+      )
         return null
-      }
+      const page = allowNativePageNumber ? (item.page ?? item.pageNumber) : item.page
+      if (typeof page !== 'number' && typeof page !== 'string') return null
       const children: BookmarkNode[] = []
-      current.output.push({ ...item, title: item.title, page: item.page, children })
-      pending.push({ source: item.children ?? [], output: children })
+      const row: BookmarkNode = { ...item, title: item.title, page, children }
+      // Use the editor's canonical page alias so a visual edit cannot leave a stale pageNumber.
+      if (allowNativePageNumber) delete row.pageNumber
+      current.output.push(row)
+      pending.push({ source: item.children ?? [], output: children, depth: current.depth + 1 })
     }
   }
   return root
 }
 
 /** A filename-keyed map stays in raw JSON mode rather than being silently flattened. */
-export function visualBookmarkList(text: string): BookmarkNode[] | null {
+export function visualBookmarkList(
+  text: string,
+  { allowNativePageNumber = false }: { allowNativePageNumber?: boolean } = {},
+): BookmarkNode[] | null {
   let value: unknown
   try {
     value = JSON.parse(text)
   } catch {
     return null
   }
-  return convertBookmarkList(value)
+  return convertBookmarkList(value, allowNativePageNumber)
 }
 
 export type BookmarkEdit =
@@ -230,10 +307,15 @@ export type BookmarkEdit =
   | { kind: 'move'; path: number[]; direction: -1 | 1 }
 
 /** Immutable JSON transformation, with paths indexing siblings at each tree level. */
-export function editBookmarks(text: string, edit: BookmarkEdit): string {
-  const rows = visualBookmarkList(text)
+export function editBookmarks(
+  text: string,
+  edit: BookmarkEdit,
+  options: { allowNativePageNumber?: boolean } = {},
+): string {
+  const rows = visualBookmarkList(text, options)
   if (!rows) throw new Error('Switch to JSON to edit this bookmark structure.')
-  const root = structuredClone(rows)
+  // visualBookmarkList parses a fresh document, so no additional clone is needed.
+  const root = rows
   const path = edit.kind === 'add' ? edit.parent : edit.path.slice(0, -1)
   let siblings = root
   for (const index of path) {
@@ -242,6 +324,8 @@ export function editBookmarks(text: string, edit: BookmarkEdit): string {
     siblings = node.children
   }
   if (edit.kind === 'add') {
+    if (edit.parent.length >= MAX_VISUAL_BOOKMARK_DEPTH)
+      throw new Error('Switch to JSON to add deeper bookmarks.')
     siblings.push({ title: 'New bookmark', page: 1, children: [] })
   } else {
     const index = edit.path.at(-1)

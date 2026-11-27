@@ -100,7 +100,7 @@ test('proxies only the operation path, revalidating fields before forwarding', a
         'Content-Type': 'application/pdf',
         'Content-Disposition': 'attachment; filename="converted.pdf"',
         'Gotenberg-Trace': 'trace-42',
-        'Gotenberg-Version': '8.39.0',
+        'Gotenberg-Version': '8.40.1',
         'Set-Cookie': 'secret=1',
       },
     })
@@ -110,7 +110,7 @@ test('proxies only the operation path, revalidating fields before forwarding', a
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('content-type'), 'application/pdf')
   assert.equal(response.headers.get('gotenberg-trace'), 'trace-42')
-  assert.equal(response.headers.get('gotenberg-version'), '8.39.0')
+  assert.equal(response.headers.get('gotenberg-version'), '8.40.1')
   assert.equal(response.headers.get('set-cookie'), null)
   assert.equal(response.headers.get('cache-control'), 'no-store')
   assert.equal(await response.text(), '%PDF-1.7')
@@ -934,7 +934,7 @@ test('an asynchronous acceptance never forwards upstream download headers', asyn
           'Content-Disposition': 'inline; filename="malicious.html"',
           'Content-Type': 'text/html',
           'Gotenberg-Trace': 'async-job',
-          'Gotenberg-Version': '8.39.0',
+          'Gotenberg-Version': '8.40.1',
         },
       }),
   )
@@ -942,7 +942,7 @@ test('an asynchronous acceptance never forwards upstream download headers', asyn
   assert.equal(response.headers.get('content-disposition'), null)
   assert.equal(response.headers.get('content-type'), null)
   assert.equal(response.headers.get('gotenberg-trace'), 'async-job')
-  assert.equal(response.headers.get('gotenberg-version'), '8.39.0')
+  assert.equal(response.headers.get('gotenberg-version'), '8.40.1')
 })
 
 test('Office merge accepts one PDF rather than a ZIP, unless splitting is also requested', async () => {

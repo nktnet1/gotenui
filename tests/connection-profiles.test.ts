@@ -2,13 +2,17 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { BACKEND_STORAGE_KEY } from '#/lib/backend-url'
 import {
+  browserConnectionChoice,
   CONNECTIONS_STORAGE_KEY,
   DEFAULT_CONNECTION_ID,
   defaultBrowserConnections,
   loadConnections,
   makeBrowserAuthorization,
   newBrowserConnection,
+  removeBrowserConnection,
+  requireConnectionCredentials,
   saveConnections,
+  selectedConnectionProfile,
 } from '#/lib/connection-profiles'
 
 const demo = 'https://demo.gotenberg.dev'
@@ -79,4 +83,110 @@ test('browser Basic and bearer credentials are constructed only in memory', () =
   assert.equal(makeBrowserAuthorization('none', '', ''), undefined)
   assert.throws(() => makeBrowserAuthorization('basic', 'bad:name', 'password'))
   assert.throws(() => makeBrowserAuthorization('bearer', '', 'token with spaces'))
+})
+
+test('removing an unrelated profile retains the selected profile and its identity', () => {
+  const saved = defaultBrowserConnections(demo)
+  const active = newBrowserConnection(
+    'Private',
+    'https://private.example.test',
+    'bearer',
+    'browser-private',
+  )
+  saved.browsers.push(
+    active,
+    newBrowserConnection('Unused', 'https://unused.example.test', 'none', 'browser-unused'),
+  )
+  saved.selected = active.id
+  const next = removeBrowserConnection(saved, 'browser-unused')
+  assert.equal(next.selected, active.id)
+  assert.equal(next.browsers[1], active)
+  assert.deepEqual(selectedConnectionProfile(next, []), selectedConnectionProfile(saved, []))
+  assert.equal(removeBrowserConnection(next, 'browser-unknown'), next)
+  assert.equal(removeBrowserConnection(next, DEFAULT_CONNECTION_ID), next)
+  assert.equal(removeBrowserConnection(next, active.id).selected, DEFAULT_CONNECTION_ID)
+})
+
+test('a missing default profile cannot leave an empty list or invalid selection', () => {
+  const first = newBrowserConnection('First', demo, 'none', 'browser-first')
+  const second = newBrowserConnection('Second', demo, 'none', 'browser-second')
+  const saved = { selected: first.id, browsers: [first, second] }
+  const next = removeBrowserConnection(saved, first.id)
+  assert.deepEqual(next, { selected: second.id, browsers: [second] })
+  assert.equal(removeBrowserConnection(next, second.id), next)
+  const storage = memoryStorage()
+  storage.setItem(
+    CONNECTIONS_STORAGE_KEY,
+    JSON.stringify({ ...saved, selected: 'browser-missing' }),
+  )
+  assert.equal(loadConnections(storage, demo).selected, first.id)
+})
+
+test('an unavailable saved managed connection cannot fall back to the public demo', () => {
+  const saved = { ...defaultBrowserConnections(demo), selected: 'server:private' }
+  const storage = memoryStorage()
+  assert.equal(saveConnections(storage, saved), true)
+  const restored = loadConnections(storage, demo)
+  assert.deepEqual(selectedConnectionProfile(restored, []), {
+    kind: 'server',
+    key: 'server:private',
+    name: 'Unavailable server connection',
+    id: 'private',
+  })
+  assert.deepEqual(selectedConnectionProfile(restored, [{ id: 'private', name: 'Private PDF' }]), {
+    kind: 'server',
+    key: 'server:private',
+    name: 'Private PDF',
+    id: 'private',
+  })
+})
+
+test('restored authenticated profiles require secrets before constructing an anonymous request', () => {
+  const url = 'https://pdf.example.test'
+  const basic = newBrowserConnection('Private', url, 'basic', 'browser-private')
+  const bearer = { ...basic, auth: 'bearer' as const }
+  for (const [profile, username, secret] of [
+    [basic, '', ''],
+    [basic, 'user', ''],
+    [basic, '', 'password'],
+    [bearer, '', ''],
+  ] as const) {
+    assert.deepEqual(browserConnectionChoice(profile, username, secret), {
+      kind: 'browser',
+      url,
+      credentialsRequired: true,
+    })
+  }
+  assert.deepEqual(browserConnectionChoice(basic, 'user', 'password'), {
+    kind: 'browser',
+    url,
+    authorization: makeBrowserAuthorization('basic', 'user', 'password'),
+  })
+  assert.deepEqual(browserConnectionChoice(bearer, '', 'token'), {
+    kind: 'browser',
+    url,
+    authorization: 'Bearer token',
+  })
+  assert.deepEqual(browserConnectionChoice({ ...basic, auth: 'none' }, '', ''), {
+    kind: 'browser',
+    url,
+    authorization: undefined,
+  })
+})
+
+test('browser preflight rejects credentials for every public demo base path', () => {
+  for (const url of [demo, `${demo}/prefix`, 'https://demo.gotenberg.dev.:8443']) {
+    assert.throws(
+      () => requireConnectionCredentials({ kind: 'browser', url, authorization: 'Bearer secret' }),
+      /public Gotenberg demo/,
+    )
+    assert.doesNotThrow(() => requireConnectionCredentials({ kind: 'browser', url }))
+  }
+  assert.doesNotThrow(() =>
+    requireConnectionCredentials({
+      kind: 'browser',
+      url: 'https://demo.gotenberg.dev.example.test',
+      authorization: 'Bearer secret',
+    }),
+  )
 })

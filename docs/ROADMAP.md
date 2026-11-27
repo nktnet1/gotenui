@@ -84,7 +84,7 @@
 
 - [x] **Patch 35 (v1.0.34):** Reaudit the supplied Gotenberg **9.3.0** source and release notes. The PDF stage catalogue remains 29 stages with six inspection endpoints; 9.3 adds only server-side `--pdf-max-render-pixels` and `--pdf-disable-stages` controls. Explain confirmed stage-disabled and rendering-budget errors without inventing an unsupported capabilities API or silently stripping user stages, and explain potentially disabled PDF routes. Add source-aligned DPI help, preserve v8 and older-v9 request semantics, pin CI/local integration to **8.40.0 + 9.3.0**, and add mocked regressions plus a pinned-v9.3 default render-budget case. Unit/build checks are local; Docker verification of the pinned 9.3 image is still required.
 
-**Remaining patch estimate after v1.0.29:** **~2 verification/hardening patches**, contingent on hosted browser and pinned Docker results. The new ZIP-attachment fixture and previously added live-image, conformance and timestamp cases still need real-container runs; Gotenberg 8 compatibility must be reconfirmed. A stateful webhook callback inbox remains out of scope.
+**Remaining verification:** Hosted browser and pinned Docker results are still required. The number of further fixes cannot be estimated reliably before those checks. The new ZIP-attachment fixture and previously added live-image, conformance and timestamp cases still need real-container runs; Gotenberg 8 compatibility must be reconfirmed. A stateful webhook callback inbox remains out of scope.
 
 ## Remaining priorities
 

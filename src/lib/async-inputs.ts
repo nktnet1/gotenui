@@ -6,6 +6,8 @@ export type RemoteInputRow = {
   id: number
   url: string
   filename?: string
+  /** Keep the original filename intent when changing connections. */
+  filenameMode?: 'override' | 'hint'
   field: '' | 'embedded' | 'watermark' | 'stamp'
   headers: ExtraHeaderRow[]
 }
@@ -64,8 +66,12 @@ export function remoteInputsPayload(rows: readonly RemoteInputRow[], json: strin
   return rows.map((row): RemoteFile => {
     const headers = headerMap(row.headers)
     return {
-      url: row.url.trim(),
-      ...(row.filename?.trim() ? { name: row.filename.trim() } : {}),
+      url: row.url,
+      ...(row.filename
+        ? row.filenameMode === 'override'
+          ? { filename: row.filename }
+          : { name: row.filename }
+        : {}),
       ...(row.field ? { field: row.field } : {}),
       ...(headers ? { extraHttpHeaders: headers } : {}),
     }
@@ -79,27 +85,18 @@ export function webhookPayload(editor: WebhookEditorState, json: string): unknow
   }
   if (!editor.enabled) return undefined
   const headers = headerMap(editor.headers)
-  const errorUrl = editor.errorUrl.trim()
-  if (!errorUrl && !editor.eventsUrl.trim()) {
+  const errorUrl = editor.errorUrl
+  if (!errorUrl && !editor.eventsUrl) {
     throw new InputError('Add an events or error callback URL to receive failure details.')
   }
   return {
-    url: editor.url.trim(),
+    url: editor.url,
     ...(editor.method !== 'POST' ? { method: editor.method } : {}),
     ...(errorUrl ? { errorUrl } : {}),
     ...(errorUrl && editor.errorMethod !== 'POST' ? { errorMethod: editor.errorMethod } : {}),
-    ...(editor.eventsUrl.trim() ? { eventsUrl: editor.eventsUrl.trim() } : {}),
+    ...(editor.eventsUrl ? { eventsUrl: editor.eventsUrl } : {}),
     ...(headers ? { extraHttpHeaders: headers } : {}),
   } satisfies WebhookConfig
 }
 
-/** A preview must never reproduce callback secrets, pre-signed URL paths/queries, or header values. */
-export function safeOutboundHost(url: string): string {
-  try {
-    const parsed = new URL(url)
-    if (!['https:', 'http:'].includes(parsed.protocol)) return '(invalid URL)'
-    return parsed.origin
-  } catch {
-    return '(invalid URL)'
-  }
-}
+export { safeOutboundHost } from '#/lib/http-url'

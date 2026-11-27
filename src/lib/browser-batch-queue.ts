@@ -1,13 +1,18 @@
-import type { ConnectionChoice } from '#/lib/connection-profiles'
+import { type ConnectionChoice, requireConnectionCredentials } from '#/lib/connection-profiles'
 import {
+  browserResponseTypes,
   type ConversionResult,
+  conversionBinaryPreviewAllowed,
   convertWithGotenberg,
   MAX_UPLOAD_BYTES,
   REQUEST_TIMEOUT_MS,
   remediationReviewNotice,
+  WEBHOOK_NOT_ACCEPTED_NOTICE,
 } from '#/lib/gotenberg-client'
-import type { PostProcessFiles } from '#/lib/pdf-post-processing'
+import { requestedPdfValidationProfiles } from '#/lib/pdf-conformance-profiles'
+import { OVERLAY_KINDS, overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
+import { validatePinnedRequestCompatibility } from '#/lib/request-compatibility'
 import { type ConversionPayload, validateFiles, validatePayload } from '#/lib/validation'
 
 export const MAX_BATCH_JOBS = 12
@@ -26,6 +31,7 @@ export type BatchJob = {
   url?: string
   size?: number
   type?: string
+  binaryPreviewAllowed?: boolean
   trace?: string
   webhookStatus?: 202 | 204
   error?: string
@@ -73,16 +79,7 @@ function inputBytes(input: PreparedInput): number {
     ...input.auxiliary,
     ...(input.stageFiles ?? []),
     ...(input.archives ?? []),
-    ...(Array.isArray(input.postFiles.watermark)
-      ? input.postFiles.watermark
-      : input.postFiles.watermark
-        ? [input.postFiles.watermark]
-        : []),
-    ...(Array.isArray(input.postFiles.stamp)
-      ? input.postFiles.stamp
-      : input.postFiles.stamp
-        ? [input.postFiles.stamp]
-        : []),
+    ...OVERLAY_KINDS.flatMap((kind) => overlayUploads(input.postFiles, kind)),
     ...(input.postFiles.embeds ?? []),
     ...(input.postFiles.facturxXml ? [input.postFiles.facturxXml] : []),
   ]
@@ -93,6 +90,7 @@ function inputBytes(input: PreparedInput): number {
 }
 
 function prepareInput(input: BatchInput): PreparedInput {
+  requireConnectionCredentials(input.connection)
   const { operation, payload } = validatePayload(input.candidate)
   validateFiles(
     operation,
@@ -103,7 +101,10 @@ function prepareInput(input: BatchInput): PreparedInput {
     input.postFiles,
     input.stageFiles ?? [],
     input.archives ?? [],
+    validatePinnedRequestCompatibility(operation, payload),
   )
+  // Reject malformed stages now, rather than accepting a job that cannot run.
+  browserResponseTypes(operation, payload)
   return {
     // Copy the values and collections now, not when the job starts. File bytes remain in memory.
     candidate: structuredClone(payload),
@@ -146,7 +147,16 @@ async function batchReviewNotice(
     if (result.type !== 'application/json') {
       return unreadableValidationMessage
     }
-    const reports = await summarisePdfValidationBlob(result.blob)
+    const reports = await summarisePdfValidationBlob(
+      result.blob,
+      requestedPdfValidationProfiles(input.candidate.fields),
+      {
+        files: input.files,
+        archives: input.archives,
+        downloadFrom: input.candidate.downloadFrom,
+        expectedBackendVersion: input.candidate.expectedBackendVersion,
+      },
+    )
     if (!reports) return unreadableValidationMessage
     const noncompliant = reports.filter((report) => !report.compliant).length
     if (noncompliant > 0) {
@@ -157,7 +167,11 @@ async function batchReviewNotice(
       return `PDF validation found non-fatal findings in ${withFindings} compliant document(s). Review the downloaded JSON report.`
     }
   }
-  return remediationReviewNotice(result.remediation)
+  const notices = [
+    input.candidate.webhook ? WEBHOOK_NOT_ACCEPTED_NOTICE : undefined,
+    remediationReviewNotice(result.remediation),
+  ].filter(Boolean)
+  return notices.length ? notices.join(' ') : undefined
 }
 
 /** All inputs, including selected credentials, live only in this tab and are never serialized. */
@@ -167,6 +181,7 @@ export class BrowserBatchQueue {
   private snapshot: BatchSnapshot = { active: false, jobs: [] }
   private nextId = 1
   private disposed = false
+  private pumping = false
 
   constructor(
     private readonly execute: BatchExecutor = executeConversion,
@@ -198,7 +213,13 @@ export class BrowserBatchQueue {
       active: this.snapshot.active,
       jobs: this.records.map(({ view }) => ({ ...view })),
     }
-    for (const listener of this.listeners) listener()
+    for (const listener of this.listeners) {
+      try {
+        listener()
+      } catch {
+        // A failing observer must not interrupt dispatch or other observers.
+      }
+    }
   }
 
   enqueue(input: BatchInput): number {
@@ -242,13 +263,22 @@ export class BrowserBatchQueue {
   }
 
   private pump() {
-    if (!this.snapshot.active || this.disposed) return
-    let running = this.records.filter((record) => record.controller).length
-    for (const record of this.records) {
-      if (running >= MAX_BATCH_CONCURRENT) break
-      if (record.view.status !== 'queued') continue
-      running++
-      this.launch(record)
+    if (this.pumping || !this.snapshot.active || this.disposed) return
+    this.pumping = true
+    try {
+      // Launch emits synchronously. Subscribers may pause, enqueue, remove or
+      // cancel jobs before it returns, so refresh both the capacity and queue.
+      while (this.snapshot.active && !this.disposed) {
+        const running = this.records.filter((record) => record.controller).length
+        if (running >= MAX_BATCH_CONCURRENT) break
+        const next = this.records.find(
+          (record) => record.view.status === 'queued' && record.input && !record.controller,
+        )
+        if (!next) break
+        this.launch(next)
+      }
+    } finally {
+      this.pumping = false
     }
   }
 
@@ -263,6 +293,7 @@ export class BrowserBatchQueue {
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     const signal = AbortSignal.any([controller.signal, timeout])
     void (async () => {
+      let responseReceived = false
       try {
         // A synchronous subscriber may cancel a job during the running-state notification.
         if (this.disposed || signal.aborted) return
@@ -271,6 +302,7 @@ export class BrowserBatchQueue {
         if (signal.aborted) {
           throw new Error('Gotenberg did not respond within three minutes.')
         }
+        responseReceived = true
         const elapsed = performance.now() - started
         if (result.mode === 'webhook') {
           record.view = {
@@ -283,8 +315,10 @@ export class BrowserBatchQueue {
           }
         } else {
           const review = await batchReviewNotice(input, result)
+          const binaryPreviewAllowed = await conversionBinaryPreviewAllowed(result)
           if (this.disposed || controller.signal.aborted) return
-          if (signal.aborted) throw new Error('Gotenberg did not respond within three minutes.')
+          // The response was received before the deadline. Local report review
+          // must not convert a successful request into a network timeout.
           // Reserve the result budget immediately before setting the completed state.
           // Validation can be asynchronous: checking before the await lets two
           // concurrent jobs both claim the same remaining memory allowance.
@@ -299,7 +333,8 @@ export class BrowserBatchQueue {
             )
           }
           const url = this.createUrl(result.blob)
-          record.archive = result.type === 'application/zip' ? result.blob : undefined
+          record.archive =
+            result.type === 'application/zip' && binaryPreviewAllowed ? result.blob : undefined
           record.view = {
             id: record.view.id,
             operation: record.view.operation,
@@ -308,6 +343,7 @@ export class BrowserBatchQueue {
             name: result.name,
             size: result.blob.size,
             type: result.type,
+            ...(binaryPreviewAllowed ? {} : { binaryPreviewAllowed: false }),
             trace: result.trace,
             review,
             url,
@@ -322,7 +358,8 @@ export class BrowserBatchQueue {
       } catch (error) {
         if (this.disposed || controller.signal.aborted) return
         const message =
-          timeout.aborted || (error instanceof Error && error.name === 'TimeoutError')
+          !responseReceived &&
+          (timeout.aborted || (error instanceof Error && error.name === 'TimeoutError'))
             ? 'Gotenberg did not respond within three minutes.'
             : error instanceof Error
               ? error.message.slice(0, 500)
@@ -345,22 +382,31 @@ export class BrowserBatchQueue {
     })()
   }
 
-  cancel(id: number) {
-    const record = this.records.find(({ view }) => view.id === id)
-    if (!record || (record.view.status !== 'queued' && record.view.status !== 'running')) return
+  private markCancelled(record: RecordEntry): boolean {
+    if (record.view.status !== 'queued' && record.view.status !== 'running') return false
     record.view = {
       id: record.view.id,
       operation: record.view.operation,
       status: 'cancelled',
       aborting: Boolean(record.controller),
     }
+    return true
+  }
+
+  cancel(id: number) {
+    const record = this.records.find(({ view }) => view.id === id)
+    if (!record || !this.markCancelled(record)) return
     record.controller?.abort()
     this.emit()
   }
 
   cancelAll() {
-    this.pause()
-    for (const record of this.records) this.cancel(record.view.id)
+    this.snapshot = { ...this.snapshot, active: false }
+    // Mark every job before notifying subscribers or firing abort handlers.
+    // Neither may restart dispatch while old jobs are still queued.
+    const cancelled = this.records.filter((record) => this.markCancelled(record))
+    for (const record of cancelled) record.controller?.abort()
+    this.emit()
   }
 
   retry(id: number) {

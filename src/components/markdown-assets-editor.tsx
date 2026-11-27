@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowUp, FilePlus2, RotateCcw, Trash2 } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
@@ -6,9 +7,9 @@ import { Label } from '#/components/ui/label'
 import { Textarea } from '#/components/ui/textarea'
 import { defaultMarkdownTemplate } from '#/lib/chromium-documents'
 import { filenameKey } from '#/lib/file-names'
-import { MAX_UPLOAD_BYTES } from '#/lib/gotenberg-client'
 import { readHtmlSource } from '#/lib/html-source-import'
-import { safeFilename } from '#/lib/validation'
+import { LatestFileImport } from '#/lib/latest-file-import'
+import { readMarkdownSources } from '#/lib/markdown-source-import'
 
 export type MarkdownSource = { id: number; name: string; content: string }
 
@@ -31,50 +32,60 @@ export function MarkdownAssetsEditor({
   customTemplate,
   onCustomTemplateChange,
 }: Props) {
+  const sourceImport = useRef(new LatestFileImport())
+  const templateImport = useRef(new LatestFileImport())
+  useEffect(
+    () => () => {
+      sourceImport.current.cancel()
+      templateImport.current.cancel()
+    },
+    [],
+  )
+  const updateSources = (next: MarkdownSource[]) => {
+    sourceImport.current.cancel()
+    onSourcesChange(next)
+  }
+  const updateTemplate = (html: string | null) => {
+    templateImport.current.cancel()
+    onCustomTemplateChange(html)
+  }
   const names = [primaryName, ...sources.map((file) => file.name)]
   const autoTemplate = defaultMarkdownTemplate(names)
   const update = (id: number, change: Partial<MarkdownSource>) =>
-    onSourcesChange(sources.map((file) => (file.id === id ? { ...file, ...change } : file)))
+    updateSources(sources.map((file) => (file.id === id ? { ...file, ...change } : file)))
   const move = (index: number, delta: number) => {
     const target = index + delta
     if (target < 0 || target >= sources.length) return
     const next = [...sources]
     ;[next[index], next[target]] = [next[target] as MarkdownSource, next[index] as MarkdownSource]
-    onSourcesChange(next)
+    updateSources(next)
   }
   const add = () => {
     let number = 2
     while (names.some((name) => filenameKey(name) === `chapter-${number}.md`)) number++
-    onSourcesChange([...sources, { id: nextId(), name: `chapter-${number}.md`, content: '' }])
+    updateSources([...sources, { id: nextId(), name: `chapter-${number}.md`, content: '' }])
   }
-  const importFiles = async (selected: File[]) => {
+  const importFiles = (selected: File[]) => {
     if (!selected.length) return
-    const seen = new Set(names.map(filenameKey))
-    const added: MarkdownSource[] = []
-    try {
-      for (const file of selected) {
-        safeFilename(file.name)
-        if (!/\.md$/i.test(file.name) || file.size > MAX_UPLOAD_BYTES) {
-          throw new Error(`Choose a .md file within the configured upload limit: ${file.name}`)
-        }
-        if (seen.has(filenameKey(file.name))) {
-          throw new Error(`Duplicate Markdown filename: ${file.name}`)
-        }
-        seen.add(filenameKey(file.name))
-        added.push({ id: nextId(), name: file.name, content: await file.text() })
-      }
-      onSourcesChange([...sources, ...added])
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not import the Markdown files.')
-    }
+    void sourceImport.current.run(
+      () => readMarkdownSources(selected, names),
+      (added) => onSourcesChange([...sources, ...added.map((file) => ({ ...file, id: nextId() }))]),
+      (error) =>
+        toast.error(
+          error instanceof Error ? error.message : 'Could not import the Markdown files.',
+        ),
+    )
   }
-  const importTemplate = async (file: File | undefined) => {
+  const importTemplate = (file: File | undefined) => {
     if (!file) return
-    try {
-      onCustomTemplateChange(await readHtmlSource(file))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not read the Markdown template.')
-    }
+    void templateImport.current.run(
+      () => readHtmlSource(file),
+      onCustomTemplateChange,
+      (error) =>
+        toast.error(
+          error instanceof Error ? error.message : 'Could not read the Markdown template.',
+        ),
+    )
   }
   return (
     <section className="space-y-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/40 p-4">
@@ -92,7 +103,10 @@ export function MarkdownAssetsEditor({
         <Input
           id="markdown-primary-name"
           value={primaryName}
-          onChange={(event) => onPrimaryNameChange(event.target.value)}
+          onChange={(event) => {
+            sourceImport.current.cancel()
+            onPrimaryNameChange(event.target.value)
+          }}
           placeholder="document.md"
           className="font-mono text-xs"
         />
@@ -113,7 +127,7 @@ export function MarkdownAssetsEditor({
               // FileList is live, so snapshot before clearing the input.
               const files = selected ? Array.from(selected) : []
               event.currentTarget.value = ''
-              void importFiles(files)
+              importFiles(files)
             }}
           />
         </label>
@@ -153,7 +167,7 @@ export function MarkdownAssetsEditor({
                 size="icon"
                 variant="ghost"
                 aria-label={`Remove ${file.name}`}
-                onClick={() => onSourcesChange(sources.filter((entry) => entry.id !== file.id))}
+                onClick={() => updateSources(sources.filter((entry) => entry.id !== file.id))}
               >
                 <Trash2 className="size-4" />
               </Button>
@@ -186,7 +200,7 @@ export function MarkdownAssetsEditor({
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => onCustomTemplateChange(autoTemplate)}
+                onClick={() => updateTemplate(autoTemplate)}
               >
                 Customize template
               </Button>
@@ -195,7 +209,7 @@ export function MarkdownAssetsEditor({
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => onCustomTemplateChange(null)}
+                onClick={() => updateTemplate(null)}
               >
                 <RotateCcw className="size-3.5" /> Use generated template
               </Button>
@@ -208,7 +222,7 @@ export function MarkdownAssetsEditor({
           spellCheck={false}
           value={customTemplate ?? autoTemplate}
           readOnly={customTemplate === null}
-          onChange={(event) => onCustomTemplateChange(event.target.value)}
+          onChange={(event) => updateTemplate(event.target.value)}
           className="font-mono text-xs"
         />
         <Label
@@ -225,7 +239,7 @@ export function MarkdownAssetsEditor({
           onChange={(event) => {
             const file = event.currentTarget.files?.[0]
             event.currentTarget.value = ''
-            void importTemplate(file)
+            importTemplate(file)
           }}
         />
         <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">

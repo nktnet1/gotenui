@@ -328,10 +328,11 @@ describe('PDF pipeline catalogue and stage contract', () => {
   })
 
   it('distinguishes empty conversion-time stages from required standalone pipeline stages', () => {
-    for (const raw of ['[]', 'null', '  ']) {
+    for (const raw of ['[]', 'null', '  ', '\u0085\u00a0']) {
       assert.deepEqual(parsePdfPipeline(raw, { allowEmpty: true }), [])
       assert.throws(() => parsePdfPipeline(raw), /at least one|valid JSON/)
     }
+    assert.throws(() => parsePdfPipeline('\ufeff', { allowEmpty: true }), /valid JSON/)
     assert.throws(() => parsePdfPipeline('{}', { allowEmpty: true }), /at least one/)
     assert.throws(() => parsePdfPipeline('[null]', { allowEmpty: true }), /Stage 1/)
     const editor = {
@@ -341,7 +342,11 @@ describe('PDF pipeline catalogue and stage contract', () => {
       remoteJson: '',
       acknowledgedRedaction: false,
     }
-    for (const raw of ['[]', 'null', '  ']) {
+    assert.match(
+      pdfPipelineEditorError('\ufeff', { ...editor, documentKind: 'single' }) ?? '',
+      /valid JSON/,
+    )
+    for (const raw of ['[]', 'null', '  ', '\u0085\u00a0']) {
       assert.equal(pdfPipelineEditorError(raw, { ...editor, documentKind: 'office' }), null)
       assert.equal(pdfPipelineEditorError(raw, { ...editor, documentKind: 'single' }), null)
       assert.match(
@@ -547,7 +552,7 @@ describe('PDF pipeline catalogue and stage contract', () => {
   it('supports upstream empty defaults without inventing missing PDF stage assets', () => {
     const stages = [
       { op: 'remediate', profile: 'Factur-X', xml: '' },
-      { op: 'sign', certificate: 'signing.p12', key: '' },
+      { op: 'sign', certificate: 'signing.p12', key: '', timestampUrl: '' },
     ]
     assert.deepEqual(parsePdfPipeline(JSON.stringify(stages)), stages)
     const signingFile = new File(['certificate'], 'signing.p12')
@@ -1000,4 +1005,15 @@ describe('visual pipeline builder', () => {
     assert.match(redactionMarkup, /redaction permanently removes content/)
     assert.match(redactionMarkup, /type="checkbox"/)
   })
+})
+
+it('masks signed timestamp authority paths and queries without changing the pipeline', () => {
+  const url = 'https://tsa.example.test/private-path?signature=secret'
+  const stages = parsePdfPipeline(
+    JSON.stringify([{ op: 'sign', certificate: 'certificate.p12', timestampUrl: url }]),
+  )
+  const preview = safePipelinePreview(stages)
+  assert.match(preview, /https:\/\/tsa\.example\.test/)
+  assert.doesNotMatch(preview, /private-path|signature=secret/)
+  assert.deepEqual(stages, [{ op: 'sign', certificate: 'certificate.p12', timestampUrl: url }])
 })

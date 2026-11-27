@@ -240,10 +240,14 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
   })
 
   it.each([
-    ['pdfa', { pdfaProfile: 'PDF/A-3u' }, /require Gotenberg 9/],
+    ['pdfa', { pdfaProfile: 'PDF/A-3u' }, /PDF\/A conformance profile requires Gotenberg 9/],
     ['pdfa', { pdfa: 'PDF/A-1b', pdfua: true }, /cannot combine/],
-    ['optimize', { v9Dedup: 'disabled' }, /Gotenberg 9 PDF controls/],
-    ['encrypt', { userPassword: 'pass', v9Algorithm: 'aes128' }, /Gotenberg 9 PDF controls/],
+    ['optimize', { v9Dedup: 'disabled' }, /Deduplicate resources requires Gotenberg 9/],
+    [
+      'encrypt',
+      { userPassword: 'pass', v9Algorithm: 'aes128' },
+      /Encryption algorithm requires Gotenberg 9/,
+    ],
   ] as const)(
     'does not forward v9-only or incompatible settings to v8 %s',
     async (id, fields, error) => {
@@ -578,7 +582,7 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
   })
 
   it.each([
-    ['optimize', { imageQuality: '70' }, /lossless/],
+    ['optimize', { imageQuality: '70' }, /Image quality requires Gotenberg 8/],
     ['merge', { autoIndexBookmarks: true }, /bookmark/],
     ['metadata-write', { metadata: '{"Copyright":"text"}' }, /cannot write/],
     [
@@ -586,7 +590,11 @@ describe('Gotenberg 9 standalone PDF routes and stages', () => {
       { bookmarks: '{"report.pdf":[{"title":"A","page":1}]}' },
       /shared bookmark tree/,
     ],
-    ['factur-x', { facturxConformanceLevel: 'MINIMUM', facturxVersion: '1.0' }, /does not support/],
+    [
+      'factur-x',
+      { facturxConformanceLevel: 'MINIMUM', facturxVersion: '1.0' },
+      /Factur-X version requires Gotenberg 8/,
+    ],
     ['factur-x', { facturxConformanceLevel: 'MINIMUM', pdfa: 'PDF/A-3a' }, /PDF\/A-3b/],
     ['factur-x', { facturxConformanceLevel: 'MINIMUM', pdfa: 'PDF/A-3u' }, /PDF\/A-3b/],
     ['stamp', { stampSource: 'text', stampExpression: 'hi' }, /Confirm this difference/],
@@ -934,7 +942,7 @@ describe('Gotenberg 9 remediation parity across PDF tools', () => {
           }),
           remote.fetcher,
         ),
-        /require Gotenberg 9/,
+        /PDF\/A conformance profile requires Gotenberg 9/,
       )
       assert.equal(remote.count(), 0)
     },
@@ -1027,4 +1035,59 @@ describe('Gotenberg 9 source PDF overlay page', () => {
     }
     assert.equal(remote.count(), 0)
   })
+})
+
+it('accepts native pageNumber bookmark JSON on v9 but rejects it before forwarding to v8', async () => {
+  const bookmarks =
+    '[{"title":"Intro","pageNumber":1,"children":[{"title":"Next","pageNumber":2}]}]'
+  const modern = fixture('9.1.0', (form) => {
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+      { op: 'set-bookmarks', bookmarks: JSON.parse(bookmarks) },
+    ])
+  })
+  const result = await proxyConversionRequest(
+    requestFor('bookmarks-write', { bookmarks }),
+    modern.fetcher,
+  )
+  assert.equal(result.status, 200)
+  await result.body?.cancel()
+  assert.equal(modern.count(), 1)
+  const legacy = fixture('8.40.0', () =>
+    assert.fail('Native bookmark pages must not be forwarded to v8'),
+  )
+  await assert.rejects(
+    proxyConversionRequest(requestFor('bookmarks-write', { bookmarks }), legacy.fetcher),
+    /positive whole-number page/,
+  )
+  assert.equal(legacy.count(), 0)
+})
+
+it('rejects an empty v9 bookmark write rather than forwarding an invalid set-bookmarks stage', async () => {
+  const remote = fixture('9.1.0', () => assert.fail('An empty bookmark tree must not be forwarded'))
+  await assert.rejects(
+    proxyConversionRequest(requestFor('bookmarks-write', { bookmarks: '[]' }), remote.fetcher),
+    /at least one bookmark/,
+  )
+  assert.equal(remote.count(), 0)
+})
+
+it('round-trips native metadata strings without normalising their spacing', async () => {
+  const keywords = 'one,two,, three '
+  const metadata = importReadableMetadata(
+    { 'report.pdf': { keywords, title: ' ' } },
+    'report.pdf',
+    { standardOnly: true },
+  )
+  const remote = fixture('9.1.0', (form) => {
+    assert.deepEqual(JSON.parse(String(form.get('stages'))), [
+      { op: 'set-metadata', title: ' ', keywords },
+    ])
+  })
+  const response = await proxyConversionRequest(
+    requestFor('metadata-write', { metadata }),
+    remote.fetcher,
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+  assert.equal(remote.count(), 1)
 })

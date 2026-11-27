@@ -1,3 +1,5 @@
+import { parseHttpEndpoint } from '#/lib/http-url'
+
 /** Normalize a Gotenberg base URL without accepting credentials or opaque schemes. */
 export function normalizeBackendUrl(input: string): string {
   const value = input.trim()
@@ -7,19 +9,24 @@ export function normalizeBackendUrl(input: string): string {
   if (!/^https?:\/\//i.test(value) || value.includes('\\')) {
     throw new Error('Use an absolute HTTP or HTTPS Gotenberg URL.')
   }
-  let parsed: URL
-  try {
-    parsed = new URL(value)
-  } catch {
-    throw new Error('Enter a valid absolute Gotenberg URL.')
-  }
-  if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
-    throw new Error('The Gotenberg URL must use HTTP or HTTPS.')
-  }
-  if (parsed.username || parsed.password || value.includes('?') || value.includes('#')) {
-    throw new Error('Do not include credentials, query strings or fragments in the URL.')
+  const parsed = parseHttpEndpoint(value)
+  if (!parsed) {
+    throw new Error('Enter a valid absolute Gotenberg URL without credentials, query or fragment.')
   }
   return parsed.toString().replace(/\/+$/, '')
+}
+
+/** The public demo is a host, not just a single base path. Never attach
+ * credentials to alternate ports, paths or DNS-equivalent trailing dots.
+ */
+export const DEMO_GOTENBERG_URL = 'https://demo.gotenberg.dev'
+
+export function isPublicDemoBackend(value: string): boolean {
+  try {
+    return new URL(value).hostname.replace(/\.+$/, '') === new URL(DEMO_GOTENBERG_URL).hostname
+  } catch {
+    return false
+  }
 }
 
 export const BACKEND_STORAGE_KEY = 'gotenui.backend-url.v1'

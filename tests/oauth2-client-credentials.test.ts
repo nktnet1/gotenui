@@ -87,6 +87,14 @@ test('managed OAuth2 config is server-only, scoped and strictly validated', () =
     'https://idp.test/token#fragment',
     '/oauth2/token',
     'file:///etc/passwd',
+    'https:idp.test/token',
+    'https:///idp.test/token',
+    'https://@idp.test/token',
+    'https://idp.test/token?',
+    'https://idp.test/token#',
+    'https://id\np.test/token',
+    'https://idp.test/token\ud800',
+    'https://idp.test\\token',
   ]) {
     assert.throws(() => parseOAuth2TokenUrl(value), /HTTPS/)
   }
@@ -95,6 +103,10 @@ test('managed OAuth2 config is server-only, scoped and strictly validated', () =
     { ...basicAuth, scope: 'scope\u0000bad' },
     { ...basicAuth, tokenUrl: 'http://metadata.internal/oauth2/token' },
     { ...basicAuth, clientSecret: 'bad\rsecret' },
+    { ...basicAuth, clientId: 'bad\ud800id' },
+    { ...basicAuth, clientSecret: 'bad\udfffsecret' },
+    { ...basicAuth, scope: 'bad\ud800scope' },
+    { ...basicAuth, audience: 'bad\udfffaudience' },
   ]) {
     assert.throws(() =>
       parseServerConnections({ GOTENUI_SERVER_CONNECTIONS: settings(badAuth) }, allowed),
@@ -203,6 +215,9 @@ test('rejects upstream token errors and unsafe bodies without leaking responses 
   for (const result of [
     new Response('secret=leak', { status: 401 }),
     new Response('<html>gateway</html>', { headers: { 'Content-Type': 'text/html' } }),
+    new Response(JSON.stringify({ access_token: 'token', token_type: 'Bearer', expires_in: 500 }), {
+      headers: { 'Content-Type': 'application/jsonp' },
+    }),
     Response.json({ access_token: 'token', token_type: 'MAC', expires_in: 500 }),
     Response.json({ access_token: 'bad token', token_type: 'Bearer', expires_in: 500 }),
     Response.json({ access_token: 'token', token_type: 'Bearer', expires_in: -1 }),
@@ -402,4 +417,81 @@ test('OAuth2 Basic credentials follow form encoding, including spaces and punctu
     return credentialsResponse()
   }
   assert.equal(await authorizationForOAuth2(backend, auth, fetcher), 'Bearer jwt.first.signature')
+})
+
+test('a late 401 from an expired token does not invalidate its replacement', async () => {
+  let now = 1_000_000
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  let tokens = 0
+  let enter!: () => void
+  let rejectOld!: (response: Response) => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  const rejected = new Promise<Response>((resolve) => {
+    rejectOld = resolve
+  })
+  const fetcher: typeof fetch = async (input, init) => {
+    if (String(input) === idp) return credentialsResponse(`token-${++tokens}`, 120)
+    if (new Headers(init?.headers).get('authorization') === 'Bearer token-1') {
+      enter()
+      return rejected
+    }
+    return new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+  }
+  const old = proxyConversionRequest(conversionRequest(), fetcher)
+  await entered
+  now += 110_000
+  try {
+    assert.equal((await proxyConversionRequest(conversionRequest(), fetcher)).status, 200)
+  } finally {
+    rejectOld(new Response('denied', { status: 401 }))
+  }
+  assert.equal((await old).status, 401)
+  assert.equal((await proxyConversionRequest(conversionRequest(), fetcher)).status, 200)
+  assert.equal(tokens, 2)
+})
+
+test('preserves well-formed Unicode OAuth2 credentials and canonical HTTPS endpoints', () => {
+  const auth = {
+    ...basicAuth,
+    clientId: '\u7528\u6237',
+    clientSecret: '\ud83d\udd10',
+    scope: '\u03b1',
+    audience: '\u03b2',
+  }
+  const { connections } = parseServerConnections(
+    { GOTENUI_SERVER_CONNECTIONS: settings(auth) },
+    parseAllowedBackends(backend),
+  )
+  assert.deepEqual(connections[0]?.oauth2, auth)
+  assert.equal(parseOAuth2TokenUrl('https://[::1]:443/path%3Ftoken'), 'https://[::1]/path%3Ftoken')
+})
+
+test('token cache lifetime includes time spent waiting for the token response', async () => {
+  let now = 1_000_000
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  let requests = 0
+  const fetcher: typeof fetch = async () => {
+    now += 8_000
+    return credentialsResponse(`delayed-${++requests}`, 10)
+  }
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer delayed-1')
+  now += 500
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer delayed-1')
+  now += 500
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer delayed-2')
+  assert.equal(requests, 2)
+})
+
+test('short-lived tokens that spend their cache lifetime in transit are not cached', async () => {
+  let now = 1_000_000
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  let requests = 0
+  const fetcher: typeof fetch = async () => {
+    now += 2_000
+    return credentialsResponse(`short-${++requests}`, 2)
+  }
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer short-1')
+  assert.equal(await authorizationForOAuth2(backend, basicAuth, fetcher), 'Bearer short-2')
 })

@@ -906,6 +906,8 @@ async function run(): Promise<void> {
       window.__originalSmokeUrl = document.querySelector('#connection-url').value
       window.__holdV8Status = true
       window.__pendingV8Status = []
+      window.__holdV9Status = false
+      window.__pendingV9Status = []
       window.fetch = (input, options) => {
         if (String(input).startsWith('/api/gotenberg/status?')) {
           const url = new URL(String(input), location.origin).searchParams.get('url')
@@ -916,6 +918,9 @@ async function run(): Promise<void> {
             return Promise.resolve(Response.json({ online: true, version: '8.40.0', modules: [] }))
           }
           if (url === 'https://v9.example.test') {
+            if (window.__holdV9Status) {
+              return new Promise(resolve => window.__pendingV9Status.push(resolve))
+            }
             return Promise.resolve(Response.json({ online: true, version: '9.0.0', modules: [] }))
           }
         }
@@ -1088,6 +1093,24 @@ async function run(): Promise<void> {
     )
     checks++
 
+    // Keep a configured v8-only option in the unqueued draft while switching.
+    await page.evaluate(`(() => {
+      const editor = document.querySelector('#source-editor')
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+      setter.call(editor, '<h1>Preserved connection-switch draft</h1>')
+      editor.dispatchEvent(new Event('input', { bubbles: true }))
+      const label = [...document.querySelectorAll('label')].find(el => el.textContent.trim() === 'Optimize PDF images')
+      const toggle = label && document.getElementById(label.htmlFor)
+      if (!toggle || toggle.disabled) throw new Error('Missing v8 image optimization control')
+      toggle.closest('details').open = true
+      toggle.click()
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
+       [...document.querySelectorAll('label')].some(el => el.textContent.trim() === 'Optimize PDF images' && document.getElementById(el.htmlFor)?.getAttribute('aria-checked') === 'true')`,
+      'configured v8 draft before connection switch',
+    )
+
     await page.evaluate(`(() => {
       const settings = [...document.querySelectorAll('#gotenui-navigation button')]
         .find(el => el.textContent.trim() === 'Connection settings')
@@ -1110,11 +1133,54 @@ async function run(): Promise<void> {
         document.querySelector('#connection-url')?.value === 'https://v9.example.test'`,
       'saved v9 connection draft and URL have updated',
     )
-    await page.evaluate("document.querySelector('[role=dialog] button[type=submit]').click()")
+    await page.evaluate(`(() => {
+      window.__holdV9Status = true
+      document.querySelector('[role=dialog] button[type=submit]').click()
+    })()`)
+    await page.waitUntil(
+      `window.__pendingV9Status.length >= 1 &&
+       document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
+       [...document.querySelectorAll('label')].some(el => el.textContent.trim() === 'Optimize PDF images' && document.getElementById(el.htmlFor)?.getAttribute('aria-checked') === 'true') &&
+       ![...document.querySelectorAll('button')].some(el => el.textContent.trim() === 'Discard incompatible settings' && !el.disabled) &&
+       [...document.querySelectorAll('button')].some(el => el.textContent.trim() === 'Confirm draft for this connection' && el.disabled) &&
+       [...document.querySelectorAll('button')].filter(el => ['Run operation', 'Add to batch'].includes(el.textContent.trim())).every(el => el.disabled)`,
+      'pending v9 status retains v8 controls without allowing submission or discard',
+    )
+    checks++
+    await page.evaluate(`(() => {
+      window.__holdV9Status = false
+      window.__pendingV9Status.splice(0).forEach(resolve =>
+        resolve(Response.json({ online: true, version: '9.0.0', modules: [] })))
+    })()`)
     await page.waitUntil(
       `document.querySelector('#gotenui-navigation')?.textContent.includes('Online · 9.0.0') &&
         document.querySelector('#gotenui-batch-queue')?.textContent.includes('1 waiting')`,
       'queued v8 work survives selecting v9',
+    )
+    checks++
+
+    await page.waitUntil(
+      `document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
+       [...document.querySelectorAll('[role=alert]')].some(el => el.textContent.includes('Optimize PDF images requires Gotenberg 8')) &&
+       [...document.querySelectorAll('button')].filter(el => ['Run operation', 'Add to batch'].includes(el.textContent.trim())).every(el => el.disabled)`,
+      'incompatible v8 draft retained and blocked on v9',
+    )
+    await page.evaluate(
+      `[...document.querySelectorAll('button')].find(el => el.textContent.trim() === 'Discard incompatible settings').click()`,
+    )
+    await page.waitUntil(
+      `document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
+       ![...document.querySelectorAll('[role=alert]')].some(el => el.textContent.includes('cannot run all configured settings')) &&
+       [...document.querySelectorAll('button')].filter(el => ['Run operation', 'Add to batch'].includes(el.textContent.trim())).every(el => el.disabled)`,
+      'only incompatible settings discarded, with transfer still blocked',
+    )
+    await page.evaluate(
+      `[...document.querySelectorAll('button')].find(el => el.textContent.trim() === 'Confirm draft for this connection').click()`,
+    )
+    await page.waitUntil(
+      `document.querySelector('#source-editor').value.includes('Preserved connection-switch draft') &&
+       [...document.querySelectorAll('button')].filter(el => ['Run operation', 'Add to batch'].includes(el.textContent.trim())).every(el => !el.disabled)`,
+      'confirmed retained draft can run on v9',
     )
     checks++
 
@@ -1168,10 +1234,12 @@ async function run(): Promise<void> {
       const png = Uint8Array.from(atob('${samplePng.toString('base64')}'), char => char.charCodeAt(0))
       const zip = Uint8Array.from(atob('${Buffer.from(browserImageZip()).toString('base64')}'), char => char.charCodeAt(0))
       window.__smokeResultKind = 'image'
+      window.__smokeOutputNames = []
       window.__restoreSmokeConversionFetch = () => { window.fetch = delegate }
       window.fetch = (input, options) => {
         if (String(input) === '/api/gotenberg/convert') {
           const archive = window.__smokeResultKind === 'zip'
+          window.__smokeOutputNames.push(JSON.parse(options.body.get('payload')).outputName)
           return Promise.resolve(new Response(archive ? zip : png, {
             headers: {
               'content-type': archive ? 'application/zip' : 'image/png',
@@ -1192,13 +1260,24 @@ async function run(): Promise<void> {
       'v9 screenshot form',
     )
     await page.evaluate(`(() => {
+      const output = document.querySelector('#output-filename')
+      if (!output) throw new Error('Missing screenshot output filename')
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(output, '\u00a0render\u00a0')
+      output.dispatchEvent(new Event('input', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('#output-filename')?.value === '\u00a0render\u00a0'`,
+      'screenshot output name contains non-ASCII whitespace',
+    )
+    await page.evaluate(`(() => {
       const submit = document.querySelector('form button[type=submit]')
       if (!submit || submit.disabled) throw new Error('Screenshot submit button is unavailable')
       submit.click()
     })()`)
     await page.waitUntil(
       `document.querySelector('[alt="Latest screenshot"]')?.naturalWidth === 2 &&
-        document.querySelector('a[download="render.png"]')?.textContent.includes('Download again')`,
+        document.querySelector('a[download="_render_.png"]')?.textContent.includes('Download again')`,
       'direct PNG result preview and download name',
     )
     checks++
@@ -1220,7 +1299,7 @@ async function run(): Promise<void> {
       start.click()
     })()`)
     await page.waitUntil(
-      `document.querySelector('#gotenui-batch-queue a[download="render.png"]') &&
+      `document.querySelector('#gotenui-batch-queue a[download="_render_.png"]') &&
         document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]')?.textContent.includes('Preview image')`,
       'completed PNG batch offers an opt-in preview',
     )
@@ -1233,7 +1312,7 @@ async function run(): Promise<void> {
       `document.querySelector('#gotenui-batch-queue button[aria-expanded="false"]').click()`,
     )
     await page.waitUntil(
-      `document.querySelector('#gotenui-batch-queue img[alt="Preview of render.png"]')?.naturalWidth === 2`,
+      `document.querySelector('#gotenui-batch-queue img[alt="Preview of _render_.png"]')?.naturalWidth === 2`,
       'batch PNG preview loads its existing Blob URL',
     )
     await page.evaluate(
@@ -1242,6 +1321,11 @@ async function run(): Promise<void> {
     await page.waitUntil(
       "document.querySelector('#gotenui-batch-queue img') === null",
       'batch PNG preview closes',
+    )
+    assert.deepEqual(
+      await page.evaluate('window.__smokeOutputNames'),
+      ['\u00a0render\u00a0', '\u00a0render\u00a0'],
+      'Both immediate and queued requests must preserve non-ASCII filename whitespace.',
     )
     checks++
 
@@ -1334,6 +1418,80 @@ async function run(): Promise<void> {
     await page.waitUntil(
       "!document.querySelector('#gotenui-batch-queue')",
       'clear browser output fixtures',
+    )
+    checks++
+
+    // A read can complete after a user has edited the imported structure.
+    // Deliberately ignore the abort signal in this fixture to test stale results.
+    await page.evaluate(`(() => {
+      const delegate = window.fetch.bind(window)
+      window.__restoreStructureReadFetch = () => { window.fetch = delegate }
+      window.fetch = (input, options) => {
+        if (String(input) === '/api/gotenberg/convert') {
+          const payload = JSON.parse(options.body.get('payload'))
+          if (payload.operation === 'metadata-read') {
+            window.__structureReadSignal = options.signal
+            return new Promise(resolve => {
+              window.__finishStructureRead = () => resolve(Response.json({
+                'source.pdf': { Title: 'Old server title' },
+              }))
+            })
+          }
+        }
+        return delegate(input, options)
+      }
+      document.querySelector('#gotenui-navigation nav button[data-operation-id="metadata-write"]').click()
+    })()`)
+    await page.waitUntil(
+      "document.querySelector('h1')?.textContent === 'Write metadata'",
+      'metadata import editor',
+    )
+    await page.evaluate(`(() => {
+      const input = document.querySelector('fieldset[aria-label="Upload PDF documents drop area"] input[type=file]')
+      if (!input) throw new Error('Missing PDF upload for metadata import')
+      const files = new DataTransfer()
+      files.items.add(new File(['%PDF-1.7\\nsynthetic browser fixture'], 'source.pdf', { type: 'application/pdf' }))
+      input.files = files.files
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `document.querySelector('[aria-label="Upload PDF documents selected files"]')?.textContent.includes('source.pdf')`,
+      'metadata import receives a local file',
+    )
+    await page.evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find(el => el.textContent.trim() === 'Read existing PDF values')
+      if (!button || button.disabled) throw new Error('Metadata read is unavailable')
+      button.click()
+    })()`)
+    await page.waitUntil(
+      `typeof window.__finishStructureRead === 'function' &&
+        document.querySelector('form button[type=submit]')?.disabled &&
+        [...document.querySelectorAll('form button')].find(el => el.textContent.trim() === 'Add to batch')?.disabled`,
+      'an in-progress PDF structure read blocks submission and queuing',
+    )
+    await page.evaluate(`(() => {
+      const input = document.querySelector('input[id$="-Title"]')
+      if (!input) throw new Error('Missing metadata title input')
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'My edited title')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })()`)
+    await page.waitUntil(
+      `window.__structureReadSignal.aborted &&
+        !document.querySelector('form button[type=submit]')?.disabled &&
+        [...document.querySelectorAll('button')].some(el => el.textContent.trim() === 'Read existing PDF values')`,
+      'manual metadata editing cancels the outstanding read',
+    )
+    await page.evaluate(`(async () => {
+      window.__finishStructureRead()
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      window.__restoreStructureReadFetch()
+    })()`)
+    assert.equal(
+      await page.evaluate(`document.querySelector('input[id$="-Title"]')?.value`),
+      'My edited title',
+      'An obsolete metadata read must not overwrite the user draft.',
     )
     checks++
 

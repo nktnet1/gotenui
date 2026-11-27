@@ -1,32 +1,42 @@
-import { effectiveRemoteFilename } from '#/lib/file-names'
+import { chromiumOutputPdfName, forwardedRemoteFilenames } from '#/lib/file-names'
+import { goFiniteFloat, goFormLength, isGoFormBoolean } from '#/lib/go-form-values'
 import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
 import {
   mergeUploadFilename,
   mergeUploadFilenames,
+  numbersPipelineInputs,
+  remoteMergeFilenames,
   reservePrefixedMergeUploadNames,
 } from '#/lib/merge-order'
-import { OFFICE_V9_EXTENSION_SET } from '#/lib/office-formats'
-import { type PdfComposeInput, reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
 import {
+  officePdfComposeInput,
+  type PdfComposeInput,
+  reconcilePdfComposeSources,
+} from '#/lib/pdf-compose-sources'
+import {
+  conversionSplitStage,
   normalizePdfStageAssets,
   type PdfPipelineStage,
   parsePdfPipeline,
   pdfStageAssetNames,
+  validatePdfStageUploads,
+  validatePipelineSourceUploads,
 } from '#/lib/pdf-pipeline'
 import { V9_REMEDIATION_FIELD_NAMES, v9RemediationOptions } from '#/lib/pdf-remediation-options'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
+import { isV9SourceDocument } from '#/lib/source-documents'
 import { type ConversionPayload, InputError, supportsArchiveInputs } from '#/lib/validation'
 import type { Operation } from '#/tools/registry'
 
 /** Gotenberg 8 and 9 have different multipart contracts even on unchanged route paths. */
-const chromiumNames = {
+export const chromiumNames = {
   waitWindowStatus: 'waitForWindowStatus',
   nativePageRanges: 'nativePages',
   generateDocumentOutline: 'nativeBookmarks',
   generateTaggedPdf: 'nativeTaggedPdf',
 } as const
 
-const officeNames = {
+export const officeNames = {
   nativePageRanges: 'nativePages',
   exportBookmarks: 'nativeBookmarks',
   generateTaggedPdf: 'nativeTaggedPdf',
@@ -66,29 +76,62 @@ function renameFields(form: FormData, names: Readonly<Record<string, string>>): 
   }
 }
 
-/** v8 encodes media features as rows, whereas v9 requires a JSON object. */
-function v9MediaFeatures(form: FormData): void {
-  const raw = form.get('emulatedMediaFeatures')
-  if (typeof raw !== 'string' || !raw) return
-  const rows: unknown = JSON.parse(raw)
-  if (!Array.isArray(rows)) {
-    throw new InputError('Chromium media features must contain name/value pairs.')
-  }
-  const features: Record<string, string> = Object.create(null)
-  for (const item of rows) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      throw new InputError('Invalid Chromium media feature.')
-    }
-    const { name, value } = item as { name?: unknown; value?: unknown }
-    if (typeof name !== 'string' || typeof value !== 'string' || name in features) {
-      throw new InputError('Duplicate or invalid Chromium media feature.')
-    }
-    features[name] = value
-  }
-  form.set('emulatedMediaFeatures', JSON.stringify(features))
-}
+const nativePdfaProfiles = new Set(['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b', 'PDF/A-4'])
 
-type Stage = { op: string; [name: string]: unknown }
+/** Apply LibreOffice's native alias constraints to Advanced JSON, including
+ * conflicts with generated conformance settings.
+ */
+export function officeNativeAliasReason(
+  fields: ConversionPayload['fields'],
+  advanced: ConversionPayload['advanced'],
+): string | null {
+  const raw = [advanced.nativePdfa, advanced.nativePdfua].some(
+    (value) => value !== undefined && value !== '',
+  )
+  if (
+    raw &&
+    (fields.pdfa ||
+      fields.pdfua === true ||
+      fields.pdfaProfile ||
+      fields.pdfuaProfile ||
+      (fields.pdfaMethod && fields.pdfaMethod !== 'auto') ||
+      Object.keys(v9RemediationOptions(fields)).length)
+  ) {
+    return 'Choose either nativePdfa/nativePdfua in Advanced JSON or the Office PDF conformance settings, not both.'
+  }
+  const { nativePdfa, nativePdfua } = advanced
+  if (
+    nativePdfa !== undefined &&
+    nativePdfa !== '' &&
+    !nativePdfaProfiles.has(String(nativePdfa))
+  ) {
+    return 'nativePdfa must be PDF/A-1b, PDF/A-2b, PDF/A-3b or PDF/A-4.'
+  }
+  if (nativePdfua !== undefined && nativePdfua !== '' && nativePdfua !== 'PDF/UA-1') {
+    return 'nativePdfua must be PDF/UA-1. Use a remediation stage for PDF/UA-2.'
+  }
+  if (nativePdfa === 'PDF/A-4' && nativePdfua === 'PDF/UA-1') {
+    return 'nativePdfa PDF/A-4 cannot be combined with nativePdfua. Use PDF/A-4 and PDF/UA-2 remediation instead.'
+  }
+  const integer = (name: string, valid: (number: number) => boolean): boolean => {
+    const value = advanced[name]
+    if (value === undefined || value === '') return true
+    const number = Number(value)
+    return /^[-+]?\d+$/.test(String(value)) && Number.isSafeInteger(number) && valid(number)
+  }
+  if (!integer('nativeQuality', (number) => number >= 1 && number <= 100)) {
+    return 'nativeQuality must be an integer from 1 to 100.'
+  }
+  if (
+    !integer('nativeMaxImageResolution', (number) => [75, 150, 300, 600, 1200].includes(number))
+  ) {
+    return 'nativeMaxImageResolution must be 75, 150, 300, 600 or 1200.'
+  }
+  if (!integer('nativeWatermarkFontSize', (number) => number >= 0)) {
+    return 'nativeWatermarkFontSize must be a non-negative integer.'
+  }
+  return null
+}
 
 function take(form: FormData, name: string): string | null {
   const value = form.get(name)
@@ -98,35 +141,24 @@ function take(form: FormData, name: string): string | null {
 
 function v9PdfStages(
   form: FormData,
-  operation: Operation,
+  office: boolean,
   postProcessing: boolean,
   fields: ConversionPayload['fields'],
-): Stage[] {
-  const stages: Stage[] = []
+): PdfPipelineStage[] {
+  const stages: PdfPipelineStage[] = []
   const remediationOptions = v9RemediationOptions(fields)
   for (const name of V9_REMEDIATION_FIELD_NAMES) form.delete(name)
   if (form.has('stages')) {
     throw new InputError('Advanced stages require the Gotenberg 9 PDF pipeline editor.')
   }
-  if (operation.id === 'office-pdf') {
+  if (office) {
     if (take(form, 'merge') === 'true') stages.push({ op: 'merge' })
   }
   const splitMode = take(form, 'splitMode')
   const splitSpan = take(form, 'splitSpan')
-  const unify = take(form, 'splitUnify') === 'true'
-  if (splitMode && splitSpan) {
-    if (splitMode === 'intervals') {
-      stages.push({ op: 'split', every: Number(splitSpan) })
-    } else if (unify) {
-      stages.push({ op: 'select', pages: splitSpan })
-    } else {
-      const ranges = splitSpan.split(',').map((range) => range.trim())
-      if (ranges.some((range) => !range)) {
-        throw new InputError('Split page ranges cannot be empty.')
-      }
-      stages.push({ op: 'split', ranges })
-    }
-  }
+  const unify = take(form, 'splitUnify')
+  const split = conversionSplitStage(splitMode, splitSpan, unify)
+  if (split) stages.push(split)
   const legacyPdfa = take(form, 'pdfa')
   const legacyPdfua = take(form, 'pdfua') === 'true'
   const selectedPdfa = take(form, 'pdfaProfile')
@@ -147,13 +179,12 @@ function v9PdfStages(
   if (pdfa && pdfua && pdfua !== (pdfa.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1')) {
     throw new InputError('This PDF/A profile cannot be combined with the selected PDF/UA profile.')
   }
-  const nativePdfaProfiles = new Set(['PDF/A-1b', 'PDF/A-2b', 'PDF/A-3b', 'PDF/A-4'])
   // Gotenberg 9 exports each source PDF natively *before* applying stages.
   // A subsequent merge, split or select can invalidate its conformance. Finish
   // with remediation rather than claiming the native profile on edited PDFs.
   const hasBuiltInStages = stages.length > 0
   const canExportNatively =
-    operation.id === 'office-pdf' &&
+    office &&
     !postProcessing &&
     !hasBuiltInStages &&
     !Object.keys(remediationOptions).length &&
@@ -186,53 +217,149 @@ function v9PdfStages(
   return stages
 }
 
-/** Keep custom LibreOffice page dimensions consistent with Gotenberg 9's Inches parser. */
-function validateV9OfficePaper(form: FormData): void {
-  const hasDimension = (name: 'paperWidth' | 'paperHeight'): boolean => {
-    const raw = form.get(name)
-    if (raw === null) return false
-    // Gotenberg parses a finite numeric value with an optional CSS length unit.
-    const match =
-      typeof raw === 'string' &&
-      /^\+?((?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?:pt|px|in|mm|cm|pc)?$/.exec(raw)
-    if (!match || Number(match[1]) <= 0 || !Number.isFinite(Number(match[1]))) {
-      throw new InputError(
-        `Gotenberg 9 ${name} must be a positive number with an optional pt, px, in, mm, cm or pc unit.`,
-      )
-    }
-    return true
+/** Build and validate the exact pipeline used by conversion routes. The editor
+ * uses a scratch form so generated stages cannot bypass its preflight checks.
+ */
+export function planV9ConversionStages(
+  form: FormData,
+  office: boolean,
+  userStages: readonly PdfPipelineStage[],
+  fields: ConversionPayload['fields'],
+): PdfPipelineStage[] {
+  const generated = v9PdfStages(form, office, userStages.length > 0, fields)
+  const remediation = generated.filter((stage) => stage.op === 'remediate')
+  const setup = generated.filter((stage) => stage.op !== 'remediate')
+  // Remediation follows page and content edits, but precedes encryption,
+  // signing, timestamps and final readers to preserve conformance.
+  const firstFinalizingStage = userStages.findIndex((stage) =>
+    ['encrypt', 'sign', 'timestamp', 'render', 'extract-attachments', 'extract-text'].includes(
+      stage.op,
+    ),
+  )
+  const remediationAt = firstFinalizingStage === -1 ? userStages.length : firstFinalizingStage
+  return parsePdfPipeline(
+    JSON.stringify([
+      ...setup,
+      ...userStages.slice(0, remediationAt),
+      ...remediation,
+      ...userStages.slice(remediationAt),
+    ]),
+    { allowEmpty: true, acknowledgedRedaction: true },
+  )
+}
+
+/** Plan generated stages without attaching source documents or mutating a request. */
+export function previewV9ConversionStages(
+  fields: ConversionPayload['fields'],
+  advanced: ConversionPayload['advanced'],
+  office: boolean,
+  userStages: readonly PdfPipelineStage[],
+): PdfPipelineStage[] {
+  const form = new FormData()
+  for (const [name, value] of Object.entries({ ...fields, ...advanced })) {
+    if (value !== '') form.set(name, String(value))
   }
-  const width = hasDimension('paperWidth')
-  const height = hasDimension('paperHeight')
-  if (!form.has('paperSize') && width !== height) {
-    throw new InputError(
-      'Gotenberg 9 Office conversion requires both paperWidth and paperHeight, or a named paperSize for the other dimension.',
+  return planV9ConversionStages(form, office, userStages, fields)
+}
+
+/** Validate native route settings before encoding or queuing the request.
+ * Both the adapter and browser preflight use the same input contract.
+ */
+export function v9NativeConversionReason(
+  operation: Operation,
+  { fields, advanced }: Pick<ConversionPayload, 'fields' | 'advanced'>,
+): string | null {
+  const office = operation.id === 'office-pdf'
+  const chromium = operation.path.startsWith('/forms/chromium/')
+  if (!office && !chromium) return null
+  const values = { ...fields, ...advanced }
+  const value = (name: string): string => String(values[name] ?? '')
+  const present = (name: string): boolean => value(name) !== ''
+  const nativeBooleans =
+    office || operation.output === 'pdf' ? ['nativeBookmarks', 'nativeTaggedPdf'] : []
+  if (office)
+    nativeBooleans.push(
+      'singlePage',
+      'nativeLosslessImageCompression',
+      'nativeReduceImageResolution',
     )
+  for (const name of nativeBooleans) {
+    if (present(name) && !isGoFormBoolean(value(name))) return `${name} must be true or false.`
   }
+  if (chromium && operation.output === 'pdf') {
+    for (const name of [
+      'paperWidth',
+      'paperHeight',
+      'marginTop',
+      'marginBottom',
+      'marginLeft',
+      'marginRight',
+    ]) {
+      if (!present(name)) continue
+      const length = goFormLength(value(name))
+      if (length === undefined || length < 0) {
+        return `Gotenberg 9 ${name} must be a non-negative number with an optional pt, px, in, mm, cm or pc unit.`
+      }
+    }
+    if (fields.omitBackground === true && fields.printBackground !== true) {
+      return 'Gotenberg 9 Chromium PDF transparency requires Print background graphics.'
+    }
+  }
+  if (chromium && operation.output === 'image' && present('quality')) {
+    const quality = Number(value('quality'))
+    if (!/^[-+]?\d+$/.test(value('quality')) || quality < 1 || quality > 100) {
+      return 'Gotenberg 9 screenshot quality must be between 1 and 100.'
+    }
+    if (value('format') !== 'jpeg')
+      return 'Gotenberg 9 screenshot JPEG quality requires JPEG output.'
+  }
+  if (!office) return null
+  const aliasReason = officeNativeAliasReason(fields, advanced)
+  if (aliasReason) return aliasReason
+  for (const name of ['paperWidth', 'paperHeight']) {
+    if (!present(name)) continue
+    const length = goFormLength(value(name))
+    if (length === undefined || length <= 0) {
+      return `Gotenberg 9 ${name} must be a positive number with an optional pt, px, in, mm, cm or pc unit.`
+    }
+  }
+  if (!present('paperSize') && present('paperWidth') !== present('paperHeight')) {
+    return 'Gotenberg 9 Office conversion requires both paperWidth and paperHeight, or a named paperSize for the other dimension.'
+  }
+  if (
+    present('locale') &&
+    !/^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?$/.test(value('locale'))
+  ) {
+    return 'LibreOffice locale must be a BCP 47 tag such as en-AU or de-DE.'
+  }
+  if (present('openBookmarkLevels')) {
+    const count = Number(value('openBookmarkLevels'))
+    if (
+      !/^[-+]?\d+$/.test(value('openBookmarkLevels')) ||
+      (count !== -1 && (count < 1 || count > 10))
+    ) {
+      return 'Gotenberg 9 bookmark expansion must be -1 (all) or 1 to 10 levels.'
+    }
+  }
+  if (present('nativeWatermarkText') && present('nativeTiledWatermarkText')) {
+    return 'Gotenberg 9 cannot combine native watermark text with a tiled watermark. Choose one.'
+  }
+  if (
+    present('nativeWatermarkRotation') &&
+    goFiniteFloat(value('nativeWatermarkRotation')) === undefined
+  ) {
+    return 'nativeWatermarkRotation must be a finite angle in degrees.'
+  }
+  if (
+    present('nativeWatermarkRotateAngle') &&
+    goFiniteFloat(value('nativeWatermarkRotateAngle')) === undefined
+  ) {
+    return 'nativeWatermarkRotateAngle must be a finite angle in degrees.'
+  }
+  return null
 }
 
 function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
-  validateV9OfficePaper(form)
-  const locale = form.get('locale')
-  if (
-    locale !== null &&
-    (typeof locale !== 'string' ||
-      !/^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?$/.test(locale))
-  ) {
-    throw new InputError('LibreOffice locale must be a BCP 47 tag such as en-AU or de-DE.')
-  }
-  const bookmarks = form.get('openBookmarkLevels')
-  if (typeof bookmarks === 'string' && bookmarks !== '') {
-    const count = Number(bookmarks)
-    if (!Number.isInteger(count) || (count !== -1 && (count < 1 || count > 10))) {
-      throw new InputError('Gotenberg 9 bookmark expansion must be -1 (all) or 1 to 10 levels.')
-    }
-  }
-  if (form.has('nativeWatermarkText') && form.has('nativeTiledWatermarkText')) {
-    throw new InputError(
-      'Gotenberg 9 cannot combine native watermark text with a tiled watermark. Choose one.',
-    )
-  }
   if (form.has('firstPageOnLeft')) {
     throw new InputError('Gotenberg 9 removed First page on left. Disable it for this connection.')
   }
@@ -263,35 +390,23 @@ function v9OfficeOptions(form: FormData, payload: ConversionPayload): void {
 function orderOfficeMergeInputs(
   form: FormData,
   payload: ConversionPayload,
-  stages: readonly Stage[],
+  stages: readonly PdfPipelineStage[],
   stageFiles: readonly File[],
   archiveEntryNames: readonly string[],
 ): PdfComposeInput[] | null {
-  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
-  if (firstMerge === -1) return null
-
-  const firstCompose = stages.findIndex(({ op }) => op === 'compose')
-  const builtInMerge = payload.fields.merge === true
-  // Composing before merging still needs the original document filenames.
-  // After merge, compose can omit source rather than guessing a filename.
-  if (!builtInMerge && firstCompose !== -1 && firstCompose < firstMerge) {
-    return null
-  }
-
   const sources = form.getAll('files')
+  const builtInMerge = payload.fields.merge === true
+  // Composing before merging needs the original document filenames.
+  if (!numbersPipelineInputs(stages, sources.length, builtInMerge)) return null
   if (sources.some((source) => !(source instanceof File))) {
     throw new InputError('Expected an Office document upload.')
   }
-  if (!builtInMerge && sources.length < 2) return null
 
   const filenames = sources.map((source) => (source instanceof File ? source.name : ''))
   const reserved = [
-    ...stageFiles.map(({ name }) => name),
+    ...remoteMergeFilenames(payload.downloadFrom),
     ...archiveEntryNames,
-    ...(payload.downloadFrom ?? []).flatMap((remote) => {
-      const filename = effectiveRemoteFilename(remote)
-      return filename ? [filename] : []
-    }),
+    ...stageFiles.map(({ name }) => name),
   ]
   // The v8 form builder already prefixes documents for its Merge switch.
   const ordered = builtInMerge
@@ -307,7 +422,7 @@ function orderOfficeMergeInputs(
   return filenames.map((name, index) => {
     const prefix = mergeUploadFilename('', index, sources.length)
     const original = builtInMerge && name.startsWith(prefix) ? name.slice(prefix.length) : name
-    return { original: `${original}.pdf`, forwarded: `${ordered[index]}.pdf` }
+    return officePdfComposeInput(original, ordered[index])
   })
 }
 
@@ -364,33 +479,12 @@ export function adaptConversionForm(
   }
   if (payload.postProcess) {
     throw new InputError(
-      'Complex PDF post-processing is not yet available on Gotenberg 9. Remove the post-processing options or use a Gotenberg 8 connection.',
+      'Legacy PDF post-processing requires Gotenberg 8. Recreate the settings as PDF stages on Gotenberg 9.',
     )
   }
-  if (operation.path.startsWith('/forms/chromium/')) {
-    if (
-      operation.output === 'pdf' &&
-      form.get('omitBackground') === 'true' &&
-      form.get('printBackground') !== 'true'
-    ) {
-      throw new InputError(
-        'Gotenberg 9 Chromium PDF transparency requires Print background graphics.',
-      )
-    }
-    if (operation.output === 'image') {
-      const quality = form.get('quality')
-      if (typeof quality === 'string' && quality !== '') {
-        if (Number(quality) < 1) {
-          throw new InputError('Gotenberg 9 screenshot quality must be between 1 and 100.')
-        }
-        if (form.get('format') !== 'jpeg') {
-          throw new InputError('Gotenberg 9 screenshot JPEG quality requires JPEG output.')
-        }
-      }
-    }
-    renameFields(form, chromiumNames)
-    v9MediaFeatures(form)
-  }
+  const nativeReason = v9NativeConversionReason(operation, payload)
+  if (nativeReason) throw new InputError(nativeReason)
+  if (operation.path.startsWith('/forms/chromium/')) renameFields(form, chromiumNames)
   if (operation.output === 'pdf') {
     const firstUserStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {
@@ -398,109 +492,86 @@ export function adaptConversionForm(
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
-    const generated = v9PdfStages(form, operation, firstUserStages.length > 0, payload.fields)
+    const stages = planV9ConversionStages(
+      form,
+      operation.id === 'office-pdf',
+      firstUserStages,
+      payload.fields,
+    )
     const officeSourceNames =
       operation.id === 'office-pdf'
-        ? orderOfficeMergeInputs(
-            form,
-            payload,
-            [...generated.filter(({ op }) => op !== 'remediate'), ...firstUserStages],
-            stageFiles,
-            archiveEntryNames,
-          )
+        ? orderOfficeMergeInputs(form, payload, stages, stageFiles, archiveEntryNames)
         : null
+    const primaryNames = form
+      .getAll('files')
+      .filter((file): file is File => file instanceof File)
+      .map(({ name }) => name)
+    const remoteFilenames = forwardedRemoteFilenames(form, payload.downloadFrom)
+    if (operation.id === 'office-pdf') {
+      validatePipelineSourceUploads(
+        firstUserStages,
+        primaryNames,
+        remoteFilenames,
+        archiveEntryNames,
+      )
+    }
     const remoteNames = payload.conversionStages
-      ? remoteStageAssets(payload.downloadFrom, pdfStageAssetNames(firstUserStages), [
-          ...stageFiles.map(({ name }) => name),
-          ...archiveEntryNames,
-          ...form
-            .getAll('files')
-            .filter((file): file is File => file instanceof File)
-            .map(({ name }) => name),
-        ])
+      ? remoteStageAssets(
+          payload.downloadFrom,
+          pdfStageAssetNames(firstUserStages),
+          [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...primaryNames],
+          remoteFilenames,
+        )
       : []
     const userStages = payload.conversionStages
       ? parsePdfPipeline(payload.conversionStages, {
           allowEmpty: true,
           assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
-          allowUnresolvedAssets: payload.downloadFrom?.some(
-            (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
-          ),
+          allowUnresolvedAssets: remoteFilenames.some((name) => !name),
           acknowledgedRedaction: payload.acknowledgedConversionRedaction,
         })
       : []
-    if (userStages.some((stage) => stage.op === 'decrypt')) {
-      throw new InputError(
-        'Decryption is only available for uploaded PDFs, not newly converted PDFs.',
-      )
-    }
-    const referenced = new Set(pdfStageAssetNames(userStages))
-    for (const file of stageFiles) {
-      if (!referenced.has(file.name.normalize('NFC'))) {
-        throw new InputError(`Unused conversion stage file: ${file.name}.`)
-      }
-    }
-    // Remediation must follow page/content edits but precede encryption,
-    // signing, document timestamps and final readers. Placing it after a
-    // signature would rewrite signed bytes; placing it after encryption would
-    // violate Gotenberg's stage ordering even for PDF/UA-only remediation.
-    const remediation = generated.filter((stage) => stage.op === 'remediate')
-    const setup = generated.filter((stage) => stage.op !== 'remediate')
-    const firstFinalizingStage = userStages.findIndex((stage) =>
-      ['encrypt', 'sign', 'timestamp', 'render', 'extract-attachments', 'extract-text'].includes(
-        stage.op,
-      ),
+    validatePdfStageUploads(
+      userStages,
+      stageFiles.map(({ name }) => name),
+      true,
     )
-    const remediationAt = firstFinalizingStage === -1 ? userStages.length : firstFinalizingStage
-    const stages = [
-      ...setup,
-      ...userStages.slice(0, remediationAt),
-      ...remediation,
-      ...userStages.slice(remediationAt),
-    ]
     if (stages.length) {
       const referenced = new Set(pdfStageAssetNames(userStages))
       const isOfficeSource = (name: string): boolean =>
-        OFFICE_V9_EXTENSION_SET.has(name.slice(name.lastIndexOf('.')).toLowerCase()) &&
-        !referenced.has(name.normalize('NFC'))
-      const remoteSources = (payload.downloadFrom ?? []).flatMap((remote) => {
-        const remoteName = effectiveRemoteFilename(remote)
-        return remoteName && isOfficeSource(remoteName) ? [remoteName] : []
-      })
+        isV9SourceDocument('office', name, referenced)
+      const remoteSources = remoteFilenames.filter(
+        (name): name is string => name !== undefined && isOfficeSource(name),
+      )
       const localSources =
         officeSourceNames ??
         form
           .getAll('files')
           .filter((file): file is File => file instanceof File)
-          .map(({ name }) => ({ original: `${name}.pdf`, forwarded: `${name}.pdf` }))
-      const mergedStages = reconcilePdfComposeSources(stages as PdfPipelineStage[], {
+          .map(({ name }) => officePdfComposeInput(name))
+      const chromiumName = chromiumOutputPdfName(payload.outputName)
+      const mergedStages = reconcilePdfComposeSources(stages, {
         inputs:
           operation.id === 'office-pdf'
             ? [
+                ...remoteSources.map((name) => officePdfComposeInput(name)),
                 ...localSources,
-                ...archiveEntryNames.filter(isOfficeSource).map((name) => ({
-                  original: `${name}.pdf`,
-                  forwarded: `${name}.pdf`,
-                })),
-                ...remoteSources.map((name) => ({
-                  original: `${name}.pdf`,
-                  forwarded: `${name}.pdf`,
-                })),
+                ...archiveEntryNames
+                  .filter(isOfficeSource)
+                  .map((name) => officePdfComposeInput(name)),
               ]
-            : payload.outputName
-              ? [{ original: `${payload.outputName}.pdf`, forwarded: `${payload.outputName}.pdf` }]
+            : chromiumName
+              ? [{ original: chromiumName, forwarded: chromiumName }]
               : [],
         singleInput: operation.id !== 'office-pdf',
-        unknownInputs:
-          operation.id === 'office-pdf' &&
-          (payload.downloadFrom ?? []).some((remote) => !effectiveRemoteFilename(remote)),
+        unknownInputs: operation.id === 'office-pdf' && remoteFilenames.some((name) => !name),
+        registrationOrderKnown:
+          operation.id === 'office-pdf' && (!archives.length || !localSources.length),
         mapBookmarks: true,
       })
       parsePdfPipeline(JSON.stringify(mergedStages), {
         assetNames: [...stageFiles.map(({ name }) => name), ...archiveEntryNames, ...remoteNames],
-        allowUnresolvedAssets: payload.downloadFrom?.some(
-          (remote) => !remote.filename && !remote.name && !remote.field && !remote.embedded,
-        ),
+        allowUnresolvedAssets: remoteFilenames.some((name) => !name),
         acknowledgedRedaction: payload.acknowledgedConversionRedaction,
       })
       form.set('stages', JSON.stringify(normalizePdfStageAssets(mergedStages)))

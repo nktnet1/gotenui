@@ -5,15 +5,20 @@ import { describe, expect, it, vi } from 'vitest'
 import { PdfBookmarksEditor, PdfMetadataEditor } from '#/components/pdf-structure-editors'
 import { TooltipProvider } from '#/components/ui/tooltip'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
+import { parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { importReadableBookmarks } from '#/lib/pdf-read-import'
 import {
   addBookmarkMapping,
   editBookmarks,
+  MAX_BOOKMARK_DEPTH,
+  MAX_VISUAL_BOOKMARK_DEPTH,
   metadataObject,
   updateMetadata,
   validateBookmarkDocument,
   visualBookmarkList,
   visualMetadataValue,
 } from '#/lib/pdf-structure-editors'
+import { v9BookmarkTree } from '#/lib/pdf-v9-structure'
 import { validatePayload } from '#/lib/validation'
 
 function request(id: string, fields: Record<string, string>) {
@@ -313,4 +318,160 @@ describe('bookmark tree editing and route contract', () => {
     expect(mapped).toContain('Switch to JSON mode')
     expect(mapped).not.toContain('Add top-level bookmark')
   })
+})
+
+it('edits v9 metadata strings without changing spacing or splitting keywords', () => {
+  const options = { standardOnly: true }
+  const raw = updateMetadata('{}', 'Keywords', 'a,,b, c ', options)
+  const edited = updateMetadata(raw, 'Title', ' ', options)
+  assert.deepEqual(metadataObject(edited), { Keywords: 'a,,b, c ', Title: ' ' })
+  assert.deepEqual(metadataObject(updateMetadata(edited, 'Keywords', '', options)), { Title: ' ' })
+})
+
+it('edits native v9 bookmark pages without leaving contradictory page aliases', () => {
+  const raw =
+    '[{"title":"Intro","pageNumber":1,"children":[{"title":"Child","page":2,"pageNumber":2}]}]'
+  const options = { allowNativePageNumber: true }
+  assert.equal(visualBookmarkList(raw, options)?.[0]?.children[0]?.page, 2)
+  assert.equal(visualBookmarkList(raw), null)
+  const edited = editBookmarks(
+    raw,
+    { kind: 'update', path: [0, 0], field: 'page', value: '3' },
+    options,
+  )
+  assert.deepEqual(JSON.parse(edited), [
+    { title: 'Intro', page: 1, children: [{ title: 'Child', page: 3, children: [] }] },
+  ])
+  assert.equal(visualBookmarkList('[{"title":"Conflict","page":1,"pageNumber":2}]', options), null)
+  const html = renderToStaticMarkup(
+    createElement(
+      TooltipProvider,
+      null,
+      createElement(PdfBookmarksEditor, { value: raw, onChange: vi.fn() }),
+    ),
+  )
+  assert.match(html, /Gotenberg 9 applies the shared tree to each output PDF/)
+  assert.match(html, /Bookmark 1.1 title/)
+  assert.doesNotMatch(html, /Filename-specific pages/)
+})
+
+it('edits native v9 metadata aliases visually without adding conflicting keys', () => {
+  const value = '{"title":"Old","keywords":"a,  b","creationDate":"D:20261001090000Z"}'
+  const html = renderToStaticMarkup(
+    createElement(PdfMetadataEditor, { value, standardOnly: true, onChange: vi.fn() }),
+  )
+  expect(html).toContain('>Title</label>')
+  expect(html).toContain('value="Old"')
+  expect(JSON.parse(updateMetadata(value, 'Title', 'New', { standardOnly: true }))).toEqual({
+    Title: 'New',
+    Keywords: 'a,  b',
+    CreationDate: 'D:20261001090000Z',
+  })
+  expect(() =>
+    updateMetadata('{"Title":"a","title":"b"}', 'Title', 'new', { standardOnly: true }),
+  ).toThrow(/conflicting metadata aliases/i)
+})
+
+function nestedBookmarks(depth: number, pageKey = 'pageNumber'): string {
+  const opening = `[{"title":"Section","${pageKey}":1,"children":`
+  return `${opening.repeat(depth)}[]${'}]'.repeat(depth)}`
+}
+
+it('bounds bookmark tree depth consistently in the shared editor, read importer, native adapter and pipeline', () => {
+  const allowed = nestedBookmarks(MAX_BOOKMARK_DEPTH)
+  const tooDeep = nestedBookmarks(MAX_BOOKMARK_DEPTH + 1)
+  const stages = (raw: string) => `[{"op":"set-bookmarks","bookmarks":${raw}}]`
+  const options = { allowNativePageNumber: true }
+  expect(() => validateBookmarkDocument(allowed, options)).not.toThrow()
+  expect(() => validateBookmarkDocument(nestedBookmarks(MAX_BOOKMARK_DEPTH, 'page'))).not.toThrow()
+  expect(() => v9BookmarkTree(allowed)).not.toThrow()
+  expect(() => JSON.stringify(parsePdfPipeline(stages(allowed)))).not.toThrow()
+  expect(() =>
+    importReadableBookmarks({ 'a.pdf': JSON.parse(allowed) }, ['a.pdf'], { native: true }),
+  ).not.toThrow()
+  expect(() => validateBookmarkDocument(tooDeep, options)).toThrow(/512 levels/)
+  expect(() =>
+    validateBookmarkDocument(`{"a.pdf":${nestedBookmarks(MAX_BOOKMARK_DEPTH + 1, 'page')}}`),
+  ).toThrow(/512 levels/)
+  expect(() => v9BookmarkTree(tooDeep)).toThrow(/512 levels/)
+  expect(() => parsePdfPipeline(stages(tooDeep))).toThrow(/512 levels/)
+  expect(() =>
+    importReadableBookmarks({ 'a.pdf': JSON.parse(tooDeep) }, ['a.pdf'], { native: true }),
+  ).toThrow(/512 levels/)
+})
+
+it('retains valid deep bookmark JSON without rendering or cloning an unbounded visual tree', () => {
+  const options = { allowNativePageNumber: true }
+  const allowed = nestedBookmarks(MAX_VISUAL_BOOKMARK_DEPTH)
+  const deeper = nestedBookmarks(MAX_VISUAL_BOOKMARK_DEPTH + 1)
+  expect(visualBookmarkList(allowed, options)).not.toBeNull()
+  expect(visualBookmarkList(deeper, options)).toBeNull()
+  expect(() => validateBookmarkDocument(deeper, options)).not.toThrow()
+  expect(() =>
+    editBookmarks(
+      allowed,
+      { kind: 'add', parent: Array(MAX_VISUAL_BOOKMARK_DEPTH).fill(0) },
+      options,
+    ),
+  ).toThrow(/Switch to JSON/)
+  const changed = editBookmarks(
+    allowed,
+    { kind: 'update', path: [0], field: 'title', value: 'Updated' },
+    options,
+  )
+  expect(JSON.parse(changed)[0].title).toBe('Updated')
+  const visualHtml = renderToStaticMarkup(
+    createElement(
+      TooltipProvider,
+      null,
+      createElement(PdfBookmarksEditor, { value: allowed, onChange: vi.fn() }),
+    ),
+  )
+  expect(visualHtml).toContain('Add child')
+  expect(visualHtml).not.toContain('cannot be represented visually')
+  const html = renderToStaticMarkup(
+    createElement(
+      TooltipProvider,
+      null,
+      createElement(PdfBookmarksEditor, { value: deeper, onChange: vi.fn() }),
+    ),
+  )
+  expect(html).toContain('cannot be represented visually')
+  expect(html).not.toContain('Add child')
+})
+
+it('rejects conflicting bookmark aliases before adaptation', () => {
+  const raw = '[{"title":"Section","page":1,"pageNumber":2}]'
+  expect(() => validateBookmarkDocument(raw, { allowNativePageNumber: true })).toThrow(
+    /conflicting page/,
+  )
+  expect(() => validatePayload(request('bookmarks-write', { bookmarks: raw }))).toThrow(
+    /conflicting page/,
+  )
+  const valid = '[{"title":"Section","page":2,"pageNumber":2}]'
+  expect(() => validateBookmarkDocument(valid, { allowNativePageNumber: true })).not.toThrow()
+})
+
+it.each([
+  ['\ufeff', false, false],
+  ['\ufeff', true, true],
+  ['\u0085', false, true],
+  ['\u0085', true, false],
+])(
+  'uses the version-specific bookmark title rules in the visual editor (%j, legacy=%j)',
+  (title, allowFilenameMap, invalid) => {
+    const raw = JSON.stringify([{ title, page: 1 }])
+    const html = renderToStaticMarkup(
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(PdfBookmarksEditor, { value: raw, allowFilenameMap, onChange: vi.fn() }),
+      ),
+    )
+    expect(html.includes('Enter a bookmark title.')).toBe(invalid)
+  },
+)
+
+it('preserves significant whitespace in per-file bookmark keys', () => {
+  expect(JSON.parse(addBookmarkMapping('[]', ' report.pdf'))).toEqual({ ' report.pdf': [] })
 })

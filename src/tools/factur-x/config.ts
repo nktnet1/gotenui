@@ -27,6 +27,7 @@ export const operation: Operation = {
       options: ['MINIMUM', 'BASIC WL', 'BASIC', 'EN 16931', 'EXTENDED', 'XRECHNUNG'],
       defaultValue: 'EN 16931',
       required: true,
+      requiredUnless: { name: 'v9FacturxRepairExisting', equals: true },
     },
     {
       name: 'facturxDocumentType',

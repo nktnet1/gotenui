@@ -172,6 +172,8 @@ test('oversized, malformed and unrelated metrics responses are rejected as gatew
     new Response(huge, { headers: { 'Content-Type': 'text/plain' } }),
     new Response('<html>SPA fallback</html>', { headers: { 'Content-Type': 'text/html' } }),
     new Response('not metrics', { headers: { 'Content-Type': 'text/plain' } }),
+    new Response(text, { headers: { 'Content-Type': 'text/plain-extra' } }),
+    new Response(text, { headers: { 'Content-Type': 'application/openmetrics-text-extra' } }),
     new Response(new Uint8Array([0xff, 0xfe]), {
       headers: { 'Content-Type': 'text/plain' },
     }),
@@ -272,4 +274,112 @@ test('unauthenticated legacy metrics stop at the version probe with HTTP 401', a
   assert.equal(result.status, 401)
   assert.match(await result.text(), /Could not verify the Gotenberg version \(HTTP 401\)/)
   assert.deepEqual(calls, [`${backend}/version`])
+})
+
+test('untyped Prometheus metrics and OpenMetrics exemplars are recognized and counted', () => {
+  const samples = [
+    'untyped 1',
+    'untyped_count 2',
+    '  with_labels {status="ok", detail="a}b\\n\\""} 3.5e-2 123',
+    'measurement -Inf',
+    'measurement NaN',
+    'counter_total{method="GET"} 3 # {trace_id="abc"} 1 123.4',
+  ].join('\n')
+  assert.equal(isPrometheusMetrics(samples), true)
+  assert.deepEqual(summarizePrometheusMetrics(samples), { families: 5, samples: 6 })
+  assert.equal(isPrometheusMetrics('# EOF\n'), true)
+  assert.deepEqual(summarizePrometheusMetrics('# EOF\n'), { families: 0, samples: 0 })
+})
+
+test('declared histogram and counter sample names are grouped into their metric families', () => {
+  const report = [
+    '# HELP latency Latency',
+    '# TYPE latency histogram',
+    'latency_bucket{le="+Inf"} 3',
+    'latency_count 3',
+    'latency_sum 5',
+    '# TYPE events counter',
+    'events_total 3',
+    'events_created 123',
+    'separate_count 1',
+    'separate 2',
+    '# EOF',
+  ].join('\n')
+  assert.deepEqual(summarizePrometheusMetrics(report), { families: 4, samples: 7 })
+})
+
+test.each([
+  'just text',
+  'metric{broken} 1',
+  'metric{label="unterminated} 1',
+  `metric{label="ok"${' '.repeat(100_000)}invalid} 1`,
+  'metric 1 invalid',
+  'metric 1 # {label="x"} invalid',
+])('does not recognize malformed sample lines', (line) => {
+  assert.equal(isPrometheusMetrics(line), false)
+  assert.deepEqual(summarizePrometheusMetrics(line), { families: 0, samples: 0 })
+})
+
+test('metrics proxy accepts valid sample-only exposition', async () => {
+  const sample = 'untyped_metric{source="test"} 7\n'
+  const result = await proxyMetricsRequest(
+    metricsRequest(),
+    versioned(async () => new Response(sample)),
+  )
+  assert.equal(result.status, 200)
+  assert.equal(await result.text(), sample)
+})
+
+test('an isolated metric-like line does not make an unrelated text response a scrape', () => {
+  assert.equal(isPrometheusMetrics('<html>\nmetric 1\n</html>'), false)
+  assert.equal(isPrometheusMetrics('# arbitrary comment\nmetric 1\n'), true)
+})
+
+test('recognized metric metadata does not excuse an unrelated response body', () => {
+  for (const body of [
+    `${text}<html>error</html>`,
+    '# HELP foo A metric\nnot metrics',
+    '# TYPE foo gauge\nfoo{broken} 1',
+  ])
+    assert.equal(isPrometheusMetrics(body), false)
+  assert.equal(isPrometheusMetrics(`${text}# EOF\n`, true), true)
+  assert.equal(isPrometheusMetrics('# EOF\nfoo 1'), true)
+  assert.equal(isPrometheusMetrics('# EOF\nfoo 1', true), false)
+  assert.equal(isPrometheusMetrics(text, true), false)
+  assert.equal(
+    isPrometheusMetrics('# comment\n# HELP foo A metric\n# TYPE foo gauge\nfoo 1\n'),
+    true,
+  )
+})
+
+test('metrics proxy rejects a truncated OpenMetrics response without its terminator', async () => {
+  const result = await proxyMetricsRequest(
+    metricsRequest(),
+    versioned(
+      async () =>
+        new Response(text, {
+          headers: { 'Content-Type': 'application/openmetrics-text; version=1.0.0' },
+        }),
+    ),
+  ).catch(proxyErrorResponse)
+  assert.equal(result.status, 502)
+})
+
+test('rejects malformed TYPE metadata and recognizes valid tab-separated metadata', () => {
+  for (const body of [
+    '# TYPE foo',
+    '# TYPE foo nonsense',
+    '# TYPE foo gauge extra',
+    '# TYPE foo gauge\u2028invalid',
+    '# TYPE foo invalid\nfoo 1',
+  ]) {
+    assert.equal(isPrometheusMetrics(body), false)
+  }
+  const body = '#\tTYPE\tlatency histogram\nlatency_count 3\nlatency_sum 4\n'
+  assert.equal(isPrometheusMetrics(body), true)
+  assert.deepEqual(summarizePrometheusMetrics(body), { families: 1, samples: 2 })
+  assert.deepEqual(summarizePrometheusMetrics('# TYPE invalid nonsense'), {
+    families: 0,
+    samples: 0,
+  })
 })

@@ -86,3 +86,30 @@ describe('optional Gotenui site-wide Basic Auth', () => {
     }
   })
 })
+
+it('accepts the full configured Unicode credential length', () => {
+  const username = '\u4e2d'.repeat(255)
+  const password = '\u6587'.repeat(2048)
+  const env = { GOTENUI_BASIC_AUTH_USERNAME: username, GOTENUI_BASIC_AUTH_PASSWORD: password }
+  const expected = parseAppBasicAuth(env)
+  assert.ok(expected)
+  const authorization = basic(`${username}:${password}`)
+  assert.ok(authorization.length > 8192)
+  assert.equal(verifyAppBasicAuth(authorization, expected), true)
+  assert.equal(appBasicAuthChallenge(authorization, env), undefined)
+  assert.equal(verifyAppBasicAuth(basic(`${username}:${password}a`), expected), false)
+})
+
+it.each(['\t', '\u0001', '\u007f', '\ud800', '\udfff'])(
+  'rejects impossible or ambiguous site credentials (%j)',
+  (invalid) => {
+    assert.throws(
+      () => parseAppBasicAuth({ ...credentials, GOTENUI_BASIC_AUTH_PASSWORD: `pass${invalid}` }),
+      /Configure GOTENUI_BASIC_AUTH_/,
+    )
+    assert.throws(
+      () => parseAppBasicAuth({ ...credentials, GOTENUI_BASIC_AUTH_USERNAME: `user${invalid}` }),
+      /Configure GOTENUI_BASIC_AUTH_/,
+    )
+  },
+)

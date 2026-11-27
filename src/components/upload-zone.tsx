@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp, FileText, UploadCloud, X } from 'lucide-react'
 import { useId, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { combineUploadSelection } from '#/lib/file-names'
 import { formatBytes } from '#/lib/security'
@@ -46,7 +47,11 @@ export function UploadZone({
   }
   const [dragging, setDragging] = useState(false)
   const addFiles = (newFiles: File[]) => {
-    onChange(combineUploadSelection(files, newFiles, { multiple, allowDuplicateNames, maxFiles }))
+    if (!multiple && newFiles.length > 1) {
+      toast.error(`Choose only one file for ${label}.`)
+    } else if (newFiles.length) {
+      onChange(combineUploadSelection(files, newFiles, { multiple, allowDuplicateNames, maxFiles }))
+    }
     if (ref.current) ref.current.value = ''
   }
   const move = (index: number, offset: number) => {

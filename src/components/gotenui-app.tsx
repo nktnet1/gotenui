@@ -30,23 +30,25 @@ import { BrowserBatchQueue } from '#/lib/browser-batch-queue'
 import { DEFAULT_BACKEND_URL } from '#/lib/config'
 import {
   type BrowserConnection,
+  browserConnectionChoice,
   type ConnectionChoice,
-  DEFAULT_CONNECTION_ID,
   fetchConnectionSettings,
   loadConnections,
   type ManagedConnection,
   makeBrowserAuthorization,
+  removeBrowserConnection,
   type SavedConnections,
   saveConnections,
+  selectedConnectionProfile,
   type UiFeatures,
 } from '#/lib/connection-profiles'
 import { type ObservedConnectionStatus, statusForConnection } from '#/lib/connection-status'
 import { getGotenbergStatus, type ServerStatus } from '#/lib/gotenberg-client'
-import { parseGotenbergVersion } from '#/lib/gotenberg-version'
+import { LatestProbe } from '#/lib/latest-probe'
 import {
   backendCompatibilityNotice,
+  confirmedBackendVersion,
   unavailableOperationReason,
-  versionAtLeast,
 } from '#/lib/operation-availability'
 import { isSearchShortcut } from '#/lib/operation-search'
 import { cn } from '#/lib/utils'
@@ -427,13 +429,12 @@ function Workspace({
     document.title = `${selectedId === 'home' ? 'All tools' : operation.title} · Gotenui`
   }, [selectedId, operation.title])
   const Icon = operationIcon(operation.id)
-  const unavailableReason = status
-    ? unavailableOperationReason(status, operation)
-    : 'Checking the selected Gotenberg version…'
-  const supportsOptimization =
-    !status?.online ||
-    (parseGotenbergVersion(status.version)?.major !== 9 &&
-      versionAtLeast(status.version, 36) !== false)
+  const verifiedVersion = confirmedBackendVersion(status, statusLoading)
+  const unavailableReason = statusLoading
+    ? 'Checking the selected Gotenberg version…'
+    : !status?.online
+      ? 'The selected Gotenberg connection is unavailable. Verify the connection before running tools.'
+      : unavailableOperationReason(status, operation)
   const compatibilityNotice = backendCompatibilityNotice(status)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -463,43 +464,46 @@ function Workspace({
     document.addEventListener('keydown', handleSearchShortcut)
     return () => document.removeEventListener('keydown', handleSearchShortcut)
   }, [settingsOpen, diagnosticsOpen, openSearch, searchOpen])
-  const statusAbort = useRef<AbortController | null>(null)
+  const statusProbe = useRef(new LatestProbe())
   const refreshStatus = useCallback(
     async (notify = false) => {
-      statusAbort.current?.abort()
-      const controller = new AbortController()
-      statusAbort.current = controller
       setStatusPending(true)
-      const timeout = window.setTimeout(() => controller.abort(), 7_000)
-      try {
-        const result = await getGotenbergStatus(connection, controller.signal)
-        if (!controller.signal.aborted && statusAbort.current === controller) {
-          setObservedStatus({ key: statusKey, value: result })
-          if (notify) {
-            if (result.online) toast.success('Gotenberg status refreshed - service online.')
-            else toast.error('Gotenberg status refreshed - service unavailable.')
-          }
-        }
-      } catch {
-        if (statusAbort.current === controller) {
-          setObservedStatus({
-            key: statusKey,
-            value: {
-              online: false,
-              version: 'Unavailable',
-              modules: [],
-              error: 'Connection test timed out.',
-            },
-          })
-          if (notify) toast.error('Gotenberg status refresh timed out.')
-        }
-      } finally {
-        window.clearTimeout(timeout)
-        if (statusAbort.current === controller) {
-          statusAbort.current = null
-          setStatusPending(false)
-        }
-      }
+      await statusProbe.current.run(
+        (signal) => getGotenbergStatus(connection, signal),
+        {
+          success: (result) => {
+            setObservedStatus({ key: statusKey, value: result })
+            if (notify) {
+              if (result.online) toast.success('Gotenberg status refreshed - service online.')
+              else toast.error('Gotenberg status refreshed - service unavailable.')
+            }
+          },
+          error: (error) => {
+            const timedOut = error instanceof Error && error.name === 'TimeoutError'
+            setObservedStatus({
+              key: statusKey,
+              value: {
+                online: false,
+                version: 'Unavailable',
+                modules: [],
+                error: timedOut
+                  ? 'Connection test timed out.'
+                  : error instanceof Error
+                    ? error.message
+                    : 'Connection test failed.',
+              },
+            })
+            if (notify)
+              toast.error(
+                timedOut
+                  ? 'Gotenberg status refresh timed out.'
+                  : 'Gotenberg status refresh failed.',
+              )
+          },
+          settled: () => setStatusPending(false),
+        },
+        7_000,
+      )
     },
     [connection, statusKey],
   )
@@ -508,12 +512,11 @@ function Workspace({
     void refreshStatus()
     const timer = window.setInterval(() => {
       // An automatic poll must not cancel a manually requested refresh and its toast.
-      if (!statusAbort.current) void refreshStatus()
+      if (!statusProbe.current.pending) void refreshStatus()
     }, 30_000)
     return () => {
       window.clearInterval(timer)
-      statusAbort.current?.abort()
-      statusAbort.current = null
+      statusProbe.current.cancel()
     }
   }, [refreshStatus])
   const applyConnection = (id: string, username: string, secret: string) => {
@@ -746,11 +749,12 @@ function Workspace({
                 })}
               </div>
               <Workbench
-                key={`${operation.id}:${selectedConnection}:${connectionEpoch}`}
+                key={operation.id}
+                connectionKey={statusKey}
                 operation={operation}
                 unavailableReason={unavailableReason}
-                supportsOptimization={supportsOptimization}
-                backendVersion={status?.online ? status.version : undefined}
+                backendVersion={verifiedVersion}
+                connectionName={connectionName}
                 recent={recent}
                 onCompleted={(job) => setRecent((items) => [job, ...items].slice(0, 6))}
                 connection={connection}
@@ -826,10 +830,9 @@ function GotenuiApp({
           loaded.selected.startsWith('server:') &&
           !profiles.some((profile) => `server:${profile.id}` === loaded.selected)
         ) {
-          const updated = { ...loaded, selected: DEFAULT_CONNECTION_ID }
-          setSaved(updated)
-          saveConnections(browserStorage(), updated)
-          toast.warning('The previously selected server connection is no longer available.')
+          toast.warning(
+            'The previously selected server connection is no longer available. Select another connection in settings.',
+          )
         }
       })
       .catch((error) => {
@@ -874,32 +877,25 @@ function GotenuiApp({
     toast.success('Browser connection saved.')
   }
   const remove = (id: string) => {
-    if (id === DEFAULT_CONNECTION_ID) return
-    const browsers = saved.browsers.filter((item) => item.id !== id)
-    if (browsers.length === saved.browsers.length) return
-    setCredentials({ username: '', secret: '' })
-    setConnectionEpoch((value) => value + 1)
-    persist({ browsers, selected: saved.selected === id ? DEFAULT_CONNECTION_ID : saved.selected })
+    const next = removeBrowserConnection(saved, id)
+    if (next === saved) return
+    if (next.selected !== saved.selected) {
+      setCredentials({ username: '', secret: '' })
+      setConnectionEpoch((value) => value + 1)
+    }
+    persist(next)
     toast.success('Connection removed.')
   }
 
-  const server = saved.selected.startsWith('server:')
-    ? managed.find((item) => `server:${item.id}` === saved.selected)
-    : undefined
-  const browser = saved.browsers.find((item) => item.id === saved.selected)
-  const activeBrowser = browser ?? saved.browsers[0]
-  const selectionKey = server ? saved.selected : (activeBrowser?.id ?? DEFAULT_CONNECTION_ID)
+  const selectedProfile = selectedConnectionProfile(saved, managed)
+  const serverId = selectedProfile.kind === 'server' ? selectedProfile.id : undefined
+  const activeBrowser = selectedProfile.kind === 'browser' ? selectedProfile.profile : undefined
   const connection = useMemo<ConnectionChoice>(() => {
-    if (server) return { kind: 'server', id: server.id }
-    return {
-      kind: 'browser',
-      url: activeBrowser?.url ?? DEFAULT_BACKEND_URL,
-      authorization:
-        activeBrowser?.auth && activeBrowser.auth !== 'none' && credentials.secret
-          ? makeBrowserAuthorization(activeBrowser.auth, credentials.username, credentials.secret)
-          : undefined,
-    }
-  }, [server, activeBrowser, credentials])
+    if (serverId) return { kind: 'server', id: serverId }
+    return activeBrowser
+      ? browserConnectionChoice(activeBrowser, credentials.username, credentials.secret)
+      : { kind: 'browser', url: DEFAULT_BACKEND_URL }
+  }, [serverId, activeBrowser, credentials])
 
   if (loading)
     return (
@@ -913,8 +909,8 @@ function GotenuiApp({
   return (
     <Workspace
       connection={connection}
-      connectionName={server?.name ?? activeBrowser?.name ?? 'Gotenberg demo'}
-      selectedConnection={selectionKey}
+      connectionName={selectedProfile.name}
+      selectedConnection={selectedProfile.key}
       connectionEpoch={connectionEpoch}
       browserProfiles={saved.browsers}
       managedProfiles={managed}

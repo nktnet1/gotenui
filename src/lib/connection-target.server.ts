@@ -1,6 +1,13 @@
+import { isPublicDemoBackend } from '#/lib/backend-url'
 import { authorizationForOAuth2 } from '#/lib/oauth2-client-credentials.server'
 import { DEMO_GOTENBERG_URL, ProxyInputError, requireAllowedBackend } from '#/lib/proxy-policy'
 import { requireServerConnection, type ServerConnection } from '#/lib/server-connections.server'
+import {
+  isBasicPassword,
+  isBasicUsername,
+  isBearerToken,
+  MAX_BROWSER_AUTHORIZATION_LENGTH,
+} from '#/lib/upstream-credentials'
 
 export type TargetSettings = {
   allowed: ReadonlySet<string>
@@ -10,7 +17,11 @@ export type TargetSettings = {
 /** A browser-supplied Authorization header is never forwarded without validation. */
 export function parseBrowserAuthorization(value: string | null): string | undefined {
   if (value === null) return undefined
-  if (value.length > 5500 || value.length === 0 || /[\r\n]/.test(value)) {
+  if (
+    value.length > MAX_BROWSER_AUTHORIZATION_LENGTH ||
+    value.length === 0 ||
+    /[\r\n]/.test(value)
+  ) {
     throw new ProxyInputError('Invalid upstream authentication header.')
   }
   if (value.startsWith('Basic ')) {
@@ -18,19 +29,25 @@ export function parseBrowserAuthorization(value: string | null): string | undefi
     if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
       throw new ProxyInputError('Invalid Basic Auth encoding.')
     }
-    const decoded = Buffer.from(encoded, 'base64').toString('utf8')
+    const bytes = Buffer.from(encoded, 'base64')
+    let decoded: string
+    try {
+      if (bytes.toString('base64') !== encoded) throw new Error('Non-canonical Base64')
+      decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+    } catch {
+      throw new ProxyInputError('Invalid Basic Auth encoding.')
+    }
     const delimiter = decoded.indexOf(':')
     if (
       delimiter < 1 ||
-      delimiter > 255 ||
-      decoded.length > 2304 ||
-      delimiter === decoded.length - 1
+      !isBasicUsername(decoded.slice(0, delimiter)) ||
+      !isBasicPassword(decoded.slice(delimiter + 1))
     ) {
       throw new ProxyInputError('Invalid Basic Auth username or password.')
     }
     return value
   }
-  if (value.startsWith('Bearer ') && /^[A-Za-z0-9._~+/-]+=*$/.test(value.slice(7))) {
+  if (value.startsWith('Bearer ') && isBearerToken(value.slice(7))) {
     return value
   }
   throw new ProxyInputError('Only Basic and Bearer upstream authentication is supported.')
@@ -58,7 +75,7 @@ export function resolveConnectionTarget(
   }
   const url = requireAllowedBackend(urlCandidate ?? DEMO_GOTENBERG_URL, settings.allowed)
   const authorization = parseBrowserAuthorization(suppliedAuth)
-  if (authorization && url === DEMO_GOTENBERG_URL) {
+  if (authorization && isPublicDemoBackend(url)) {
     throw new ProxyInputError('Do not send credentials to the public Gotenberg demo.')
   }
   return { url, headers: authorization ? { Authorization: authorization } : undefined }

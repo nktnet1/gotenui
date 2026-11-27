@@ -7,21 +7,24 @@ const parse = (value: string) =>
   parsePdfPipeline(JSON.stringify([{ op: 'timestamp', timestampUrl: value }]))
 
 describe('timestamp authority URLs', () => {
-  it('canonicalises standalone and pipeline URLs without dropping the query', () => {
+  it('preserves the original standalone and pipeline authority URLs', () => {
     assert.equal(
       timestampAuthorityUrl('HTTPS://TSA.EXAMPLE.test:443/stamp?token=a%2Fb'),
-      'https://tsa.example.test/stamp?token=a%2Fb',
+      'HTTPS://TSA.EXAMPLE.test:443/stamp?token=a%2Fb',
     )
     assert.deepEqual(parse('HTTPS://TSA.EXAMPLE.test:443/stamp?token=a%2Fb'), [
-      { op: 'timestamp', timestampUrl: 'https://tsa.example.test/stamp?token=a%2Fb' },
+      { op: 'timestamp', timestampUrl: 'HTTPS://TSA.EXAMPLE.test:443/stamp?token=a%2Fb' },
     ])
     assert.deepEqual(
       parsePdfPipeline(
         '[{"op":"sign","certificate":"test.p12","timestampUrl":"https://tsa.example.test"}]',
       ),
-      [{ op: 'sign', certificate: 'test.p12', timestampUrl: 'https://tsa.example.test/' }],
+      [{ op: 'sign', certificate: 'test.p12', timestampUrl: 'https://tsa.example.test' }],
     )
     assert.equal(timestampAuthorityUrl('http://127.0.0.1:9000/tsa'), 'http://127.0.0.1:9000/tsa')
+    const signed = 'https://tsa.example.test/a/%2e%2e/issue?key=%2F%2B'
+    assert.equal(timestampAuthorityUrl(signed), signed)
+    assert.deepEqual(parse(signed), [{ op: 'timestamp', timestampUrl: signed }])
   })
 
   it.each([
@@ -32,6 +35,14 @@ describe('timestamp authority URLs', () => {
     'https://tsa.example.test\\@evil.test',
     'https://user:secret@tsa.example.test',
     'https://tsa.example.test/path#fragment',
+    'https:tsa.example.test',
+    'https:/tsa.example.test',
+    'https:///tsa.example.test',
+    'https://@tsa.example.test',
+    'https://tsa.example.test/#',
+    'https://tsa.example.test/signed%2',
+    'https://tsa.example.test/with space',
+    'https://tsa.example.test/with\u0085space',
     'ftp://tsa.example.test',
     'file:///etc/passwd',
     'javascript:alert(1)',
@@ -47,3 +58,12 @@ describe('timestamp authority URLs', () => {
     )
   })
 })
+
+it.each(['\ud800', '\udfff'])(
+  'rejects malformed Unicode in timestamp authority URLs: %j',
+  (char) => {
+    const url = `https://tsa.example.test/timestamp?sig=${char}`
+    assert.throws(() => timestampAuthorityUrl(url), /timestamp authority URL/i)
+    assert.throws(() => parse(url), /timestamp authority URL/i)
+  },
+)

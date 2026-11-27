@@ -1,5 +1,10 @@
 import * as v from 'valibot'
+import { goFormLength } from '#/lib/go-form-values'
+import { jsonRecord } from '#/lib/json-record'
+import { localUuid } from '#/lib/local-id'
+import { isNumberFieldValue } from '#/lib/number-field-values'
 import { parseConsoleMessageTypes } from '#/lib/official-form-fields'
+import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
 import { OPERATION_BY_ID, type Operation, operationDefaults } from '#/tools/registry'
 
 /** Only public, non-sensitive, repeatable operation settings may enter localStorage. */
@@ -17,31 +22,75 @@ const presetSchema = v.strictObject({
   id: v.pipe(v.string(), v.regex(/^preset-[a-f\d-]{36}$/i)),
   operationId: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   name: v.pipe(v.string(), v.minLength(1), v.maxLength(60)),
-  fields: v.record(v.string(), v.union([v.string(), v.boolean()])),
+  fields: jsonRecord(v.union([v.string(), v.boolean()])),
 })
 const savedSchema = v.strictObject({
   version: v.literal(1),
   presets: v.pipe(v.array(presetSchema), v.maxLength(MAX_PRESETS)),
 })
 
-const SAFE_TEXT_FIELDS: Readonly<Record<string, RegExp>> = {
-  paperWidth: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  paperHeight: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  marginTop: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  marginBottom: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  marginLeft: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  marginRight: /^\d+(?:\.\d+)?(?:in|cm|mm|px|pt)?$/,
-  nativePageRanges: /^\d[\d,\- ]{0,99}$/,
-  rotatePages: /^\d[\d,\- ]{0,99}$/,
-  splitSpan: /^\d[\d,\- ]{0,99}$/,
-  waitDelay: /^\d+(?:\.\d+)?(?:ms|s|m)$/,
+const legacyPageRange = /^\d[\d,\- ]{0,99}$/
+const safePageRange = (value: string) => legacyPageRange.test(value) || isPdfPageSelector(value)
+const safeLength = (value: string) => {
+  const length = goFormLength(value)
+  return length !== undefined && length >= 0
 }
 
-/** Exclude secrets and free-form JSON; the bounded Chromium message enum is safe to persist. */
+// time.ParseDuration supports compound durations, fractional components and
+// units smaller than milliseconds. Preset values are bounded to 100 characters.
+function safeDuration(value: string): boolean {
+  const unsigned = value.replace(/^[+-]/, '')
+  if (unsigned === '0') return true
+  if (!unsigned) return false
+  const units: Record<string, bigint> = {
+    ns: 1n,
+    us: 1000n,
+    '\u00b5s': 1000n,
+    '\u03bcs': 1000n,
+    ms: 1_000_000n,
+    s: 1_000_000_000n,
+    m: 60_000_000_000n,
+    h: 3_600_000_000_000n,
+  }
+  const component = /(?:(\d+)(?:\.(\d*))?|\.(\d+))(ns|us|\u00b5s|\u03bcs|ms|s|m|h)/y
+  let end = 0
+  let nanoseconds = 0n
+  const limit = value.startsWith('-') ? 2n ** 63n : 2n ** 63n - 1n
+  while (end < unsigned.length) {
+    const match = component.exec(unsigned)
+    if (!match) return false
+    const fraction = match[2] ?? match[3] ?? ''
+    const unit = units[match[4]]
+    nanoseconds += BigInt(match[1] ?? '0') * unit
+    if (fraction) nanoseconds += (BigInt(fraction) * unit) / 10n ** BigInt(fraction.length)
+    if (nanoseconds > limit) return false
+    end = component.lastIndex
+  }
+  return true
+}
+
+const SAFE_TEXT_FIELDS: Readonly<Record<string, (value: string) => boolean>> = {
+  paperWidth: safeLength,
+  paperHeight: safeLength,
+  marginTop: safeLength,
+  marginBottom: safeLength,
+  marginLeft: safeLength,
+  marginRight: safeLength,
+  nativePageRanges: (value) => legacyPageRange.test(value),
+  rotatePages: safePageRange,
+  splitSpan: (value) => safePageRange(value) || /^\+\d+$/.test(value),
+  waitDelay: safeDuration,
+}
+
+// Destructive-operation acknowledgements are never reusable preferences.
+const REDACTION_ACKNOWLEDGEMENTS = new Set(['confirmRedaction', 'acknowledgedRedaction'])
+
+/** Exclude secrets, acknowledgements and free-form JSON. */
 export function reusableFieldNames(operation: Operation): string[] {
   return operation.fields
     .filter(
       (field) =>
+        !REDACTION_ACKNOWLEDGEMENTS.has(field.name) &&
         !field.name.startsWith('v9OverlayAcknowledged') &&
         field.name !== 'v9FlattenFormsOnly' &&
         field.name !== 'v9DropSignatures' &&
@@ -64,7 +113,19 @@ export function capturePresetFields(
   for (const definition of operation.fields) {
     if (!permitted.has(definition.name)) continue
     const value = current[definition.name]
-    if (value === undefined || value === '') continue
+    if (value === undefined) continue
+    if (value === '') {
+      // An explicit blank differs from an omitted control with a UI default.
+      // Keep it only when the field can be cleared.
+      if (
+        !definition.required &&
+        typeof definition.defaultValue === 'string' &&
+        definition.defaultValue !== ''
+      ) {
+        fields[definition.name] = ''
+      }
+      continue
+    }
     if (definition.kind === 'toggle') {
       if (typeof value !== 'boolean') throw new Error(`Invalid ${definition.label} preset value.`)
       fields[definition.name] = value
@@ -82,16 +143,10 @@ export function capturePresetFields(
       if (!definition.options?.includes(value))
         throw new Error(`Invalid ${definition.label} preset value.`)
     } else if (definition.kind === 'number') {
-      if (
-        !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ||
-        !Number.isFinite(Number(value)) ||
-        (definition.min !== undefined && Number(value) < definition.min) ||
-        (definition.max !== undefined && Number(value) > definition.max) ||
-        (definition.integer === true && !Number.isInteger(Number(value)))
-      ) {
+      if (!isNumberFieldValue(definition, value, operation.input !== 'pdf')) {
         throw new Error(`Invalid ${definition.label} preset value.`)
       }
-    } else if (definition.kind === 'text' && !SAFE_TEXT_FIELDS[definition.name]?.test(value)) {
+    } else if (definition.kind === 'text' && !SAFE_TEXT_FIELDS[definition.name]?.(value)) {
       throw new Error(`Invalid ${definition.label} preset value.`)
     }
     fields[definition.name] = value
@@ -99,20 +154,31 @@ export function capturePresetFields(
   return fields
 }
 
-function validatedPresets(value: unknown): ConversionPreset[] | null {
+function validatedPresets(value: unknown, migrate = false): ConversionPreset[] | null {
   const result = v.safeParse(savedSchema, value)
   if (!result.success) return null
   const ids = new Set<string>()
   const names = new Set<string>()
+  const presets: ConversionPreset[] = []
   for (const preset of result.output.presets) {
     const operation = OPERATION_BY_ID.get(preset.operationId)
-    if (!operation || preset.name !== preset.name.trim() || !reusableFieldNames(operation).length)
-      return null
+    if (!operation || preset.name !== preset.name.trim()) return null
     if (ids.has(preset.id)) return null
     ids.add(preset.id)
     const key = `${preset.operationId}:${preset.name.toLocaleLowerCase()}`
     if (names.has(key)) return null
     names.add(key)
+    // Previous versions allowed these two acknowledgements in local storage.
+    // Migrate only that known legacy data, never arbitrary unknown settings.
+    if (migrate) {
+      for (const field of operation.fields) {
+        if (
+          REDACTION_ACKNOWLEDGEMENTS.has(field.name) &&
+          typeof preset.fields[field.name] === 'boolean'
+        )
+          delete preset.fields[field.name]
+      }
+    }
     // Stored data is untrusted, so reject unknown, sensitive or invalid fields instead of stripping.
     try {
       const filtered = capturePresetFields(operation, preset.fields)
@@ -125,15 +191,25 @@ function validatedPresets(value: unknown): ConversionPreset[] | null {
     } catch {
       return null
     }
+    if (!reusableFieldNames(operation).length) {
+      if (
+        migrate &&
+        operation.fields.some((field) => REDACTION_ACKNOWLEDGEMENTS.has(field.name)) &&
+        !Object.keys(preset.fields).length
+      )
+        continue
+      return null
+    }
+    presets.push(preset)
   }
-  return result.output.presets
+  return presets
 }
 
 export function loadPresets(storage: Pick<Storage, 'getItem'> | null): ConversionPreset[] {
   try {
     const raw = storage?.getItem(PRESETS_STORAGE_KEY)
     if (!raw || raw.length > 64_000) return []
-    return validatedPresets(JSON.parse(raw)) ?? []
+    return validatedPresets(JSON.parse(raw), true) ?? []
   } catch {
     return []
   }
@@ -162,7 +238,7 @@ export function upsertPreset(
   operation: Operation,
   name: string,
   current: Record<string, string | boolean>,
-  newId = `preset-${crypto.randomUUID()}`,
+  newId = `preset-${localUuid()}`,
 ): ConversionPreset[] {
   const trimmed = name.trim()
   if (

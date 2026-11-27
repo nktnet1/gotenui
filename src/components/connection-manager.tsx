@@ -10,6 +10,7 @@ import {
   type ManagedConnection,
   makeBrowserAuthorization,
   newBrowserConnection,
+  removeBrowserConnection,
 } from '#/lib/connection-profiles'
 import { getGotenbergStatus } from '#/lib/gotenberg-client'
 import { LatestProbe } from '#/lib/latest-probe'
@@ -70,7 +71,7 @@ export function ConnectionManager({
   const server = managedProfiles.find((profile) => profile.id === serverId)
   const existing = browserProfiles.find((profile) => profile.id === draftId)
   const isBrowser = newProfile || Boolean(existing)
-  const canDelete = existing && existing.id !== DEFAULT_CONNECTION_ID
+  const canDelete = existing && existing.id !== DEFAULT_CONNECTION_ID && browserProfiles.length > 1
 
   const choose = (key: string) => {
     invalidateProbe()
@@ -154,6 +155,7 @@ export function ConnectionManager({
                 {profile.name} (server)
               </option>
             ))}
+            {serverId && !server && <option value={draftId}>Unavailable server connection</option>}
             {newProfile && <option value="new">New browser connection</option>}
           </select>
           <Button
@@ -279,13 +281,21 @@ export function ConnectionManager({
             onClick={() => {
               invalidateProbe()
               onRemove(existing.id)
-              choose(DEFAULT_CONNECTION_ID)
+              choose(
+                removeBrowserConnection({ selected, browsers: browserProfiles }, existing.id)
+                  .selected,
+              )
             }}
           >
             Remove
           </Button>
         )}
-        <Button type="button" variant="accent" disabled={testing} onClick={test}>
+        <Button
+          type="button"
+          variant="accent"
+          disabled={testing || (!isBrowser && !server)}
+          onClick={test}
+        >
           {testing ? 'Testing…' : 'Test connection'}
         </Button>
         <Button type="submit" disabled={!isBrowser && !server}>

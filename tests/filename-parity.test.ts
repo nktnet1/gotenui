@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { addRemoteAttachmentMetadata } from '#/lib/attachment-metadata'
-import { combineUploadSelection, filenameKey } from '#/lib/file-names'
+import { combineUploadSelection, filenameKey, possibleRemoteFilename } from '#/lib/file-names'
 import { adaptPdfForm } from '#/lib/gotenberg-pdf-adapter'
 import { addBookmarkMapping } from '#/lib/pdf-structure-editors'
 import { remoteStageAssets } from '#/lib/remote-stage-assets'
@@ -210,4 +210,52 @@ test('browser upload selection preserves case-distinct names and ordered duplica
     [first, second],
   )
   assert.deepEqual(combineUploadSelection([first], [caps]), [caps])
+})
+
+test('rejects malformed Unicode filenames before multipart serialization', () => {
+  assert.throws(() => safeFilename('report\ud800.pdf'), /Unicode/)
+  assert.throws(
+    () =>
+      validatePayload({ operation: 'merge', fields: {}, advanced: {}, outputName: 'report\udc00' }),
+    /Unicode/,
+  )
+})
+
+test('remote filename inference preserves Go URL path segments before taking the basename', () => {
+  for (const path of ['/report.pdf/.', '/report.pdf/%2e', '/a/report.pdf/%2E%2E']) {
+    assert.equal(possibleRemoteFilename({ url: `https://example.test${path}` }), undefined, path)
+  }
+  assert.equal(
+    possibleRemoteFilename({ url: 'https://example.test/a/../report.pdf?token=x' }),
+    'report.pdf',
+  )
+  assert.equal(
+    possibleRemoteFilename({ url: 'https://example.test/a%2Freport.pdf/' }),
+    'report.pdf',
+  )
+})
+
+test('infers remote names using Go replacement semantics for invalid UTF-8 bytes', () => {
+  for (const [path, name] of [
+    ['/report%FF.pdf', 'report\ufffd.pdf'],
+    ['/report%E2%82.pdf', 'report\ufffd\ufffd.pdf'],
+    ['/caf%C3%A9%ED%A0%80.pdf', 'caf\u00e9\ufffd\ufffd\ufffd.pdf'],
+    ['/report%EF%BB%BF%F0%9F%98%80%F0%9F.pdf', 'report\ufeff\u{1f600}\ufffd\ufffd.pdf'],
+  ]) {
+    assert.equal(possibleRemoteFilename({ url: `https://example.test${path}` }), name, path)
+  }
+  assert.equal(possibleRemoteFilename({ url: 'https://example.test/report%ZZ.pdf' }), undefined)
+})
+
+test('single-file selection preserves the previous file on multi-file or empty drops', () => {
+  const previous = new File(['old'], 'old.pdf')
+  const first = new File(['one'], 'one.pdf')
+  const second = new File(['two'], 'two.pdf')
+  assert.deepEqual(combineUploadSelection([previous], [first, second]), [previous])
+  assert.deepEqual(
+    combineUploadSelection([previous], [first, second], { multiple: false, maxFiles: 4 }),
+    [previous],
+  )
+  assert.deepEqual(combineUploadSelection([previous], [], { multiple: false }), [previous])
+  assert.deepEqual(combineUploadSelection([previous], [], { multiple: true }), [previous])
 })

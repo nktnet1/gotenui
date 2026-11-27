@@ -24,6 +24,8 @@ export type FieldDefinition = {
   description?: string
   placeholder?: string
   required?: boolean
+  /** An optional control that makes an otherwise required value unnecessary. */
+  requiredUnless?: { name: string; equals: string | boolean }
   advanced?: boolean
   defaultValue?: string | boolean
   options?: readonly string[]

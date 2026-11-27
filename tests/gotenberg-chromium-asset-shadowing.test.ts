@@ -378,3 +378,116 @@ test('proxy rejects unpredictable Chromium remote filenames before conversion', 
   )
   assert.equal(conversionCalls, 0)
 })
+
+test.each([false, true])(
+  'rejects duplicate ZIP resources shadowing explicitly numbered Chromium assets (local: %s)',
+  async (local) => {
+    const entries = {
+      'one/logo.png': 'first image',
+      'two/logo.png': 'second image',
+      ...(!local ? { 'logo (2).png': 'intended image' } : {}),
+    }
+    await assert.rejects(
+      proxyConversionRequest(
+        proxyRequest(
+          {
+            operation: 'html-pdf',
+            source: '<img src="logo (2).png">',
+            fields: {},
+            advanced: {},
+          },
+          {
+            archives: [zipFixture(entries)],
+            auxiliary: local ? [new File(['intended image'], 'logo (2).png')] : [],
+          },
+        ),
+        async (url) => {
+          if (String(url).endsWith('/version')) return new Response('9.10.0')
+          assert.fail('Shadowed Chromium resources must not reach Gotenberg.')
+        },
+      ),
+      /Chromium asset filename collides after Gotenberg numbers duplicate files: logo \(2\)\.png/,
+    )
+  },
+)
+
+test('allows duplicate ZIP resources when their numbered names do not shadow other assets', async () => {
+  const response = await proxyConversionRequest(
+    proxyRequest(
+      { operation: 'html-pdf', source: '<img src="logo (2).png">', fields: {}, advanced: {} },
+      {
+        archives: [zipFixture({ 'one/logo.png': 'first image', 'two/logo.png': 'second image' })],
+        auxiliary: [new File(['third image'], 'logo (3).png')],
+      },
+    ),
+    async (url, init) => {
+      if (String(url).endsWith('/version')) return new Response('9.10.0')
+      assert.ok(init?.body instanceof FormData)
+      assert.equal(init.body.getAll('archives').length, 1)
+      return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+    },
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+})
+
+test('pins earlier URL-derived downloads when a remote-only Chromium request names a later resource', () => {
+  const url = 'https://assets.example.test/theme.css'
+  const named = { url: 'https://assets.example.test/download', filename: 'logo.png' }
+  const dynamic = { url: 'https://assets.example.test/another' }
+  const { operation, payload } = sourcePayload('url-pdf', {
+    downloadFrom: [{ url }, named, dynamic],
+  })
+  const form = createGotenbergForm(operation, payload, [], [], 4_000_000, {}, [], 9, {
+    major: 9,
+    minor: 10,
+    patch: 0,
+  })
+  assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), [
+    { url, filename: 'theme.css' },
+    named,
+    dynamic,
+  ])
+})
+
+test.each(['url-pdf', 'url-shot'])(
+  'rejects unknown predecessor filenames for explicitly named remote-only %s resources',
+  async (operation) => {
+    await assert.rejects(
+      proxyConversionRequest(
+        proxyRequest({
+          operation,
+          fields: { url: 'https://example.test/' },
+          advanced: {},
+          downloadFrom: [
+            { url: 'https://assets.example.test/download' },
+            { url: 'https://assets.example.test/logo', filename: 'logo.png' },
+          ],
+        }),
+        async (url) => {
+          if (String(url).endsWith('/version')) return new Response('9.10.0')
+          assert.fail('Unpredictable filename must be rejected before conversion.')
+        },
+      ),
+      /Specify a remote filename/,
+    )
+  },
+)
+
+test.each(['[]', 'null', '   '])(
+  'v9.1 allows an unnamed remote resource with an empty conversion pipeline %j',
+  (conversionStages) => {
+    const { operation, payload } = sourcePayload('url-pdf', {
+      conversionStages,
+      downloadFrom: [{ url: 'https://assets.example.test/download' }],
+    })
+    const form = createGotenbergForm(operation, payload, [], [], 4_000_000, {}, [], 9, {
+      major: 9,
+      minor: 1,
+      patch: 0,
+    })
+    assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), [
+      { url: 'https://assets.example.test/download' },
+    ])
+  },
+)

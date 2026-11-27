@@ -172,7 +172,7 @@ test('rejects a Gotenberg 9-only option against v8 before forwarding conversion'
   const fixture = upstreamFixture('8.40.0', () => {})
   await assert.rejects(
     proxyConversionRequest(requestFor('html-pdf', { paperSize: 'A4' }), fixture.fetcher),
-    /Named paper sizes require Gotenberg 9/,
+    /Named paper size requires Gotenberg 9/,
   )
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
 })
@@ -557,7 +557,7 @@ test('v9 PDF pipeline can use only remote PDF inputs, rejecting legacy destinati
       ),
       v9.fetcher,
     ),
-    /not legacy remote destinations/,
+    /Remote attachment and overlay destinations require named PDF pipeline files/,
   )
   assert.deepEqual(v9.counts(), { probes: 2, conversions: 1 })
 })
@@ -1263,8 +1263,14 @@ test('v9 webhook serializes Unicode callback URLs and UTF-8 extra header values'
   const eventsUrl = 'https://m\u00fcnich.example/\u5b8c\u4e86'
   const extraHttpHeaders = { 'X-Locale': '\u65e5\u672c\u8a9e' }
   const fixture = upstreamFixture('9.9.0', (_form, headers) => {
-    assert.equal(headers.get('Gotenberg-Webhook-Url'), new URL(url).href)
-    assert.equal(headers.get('Gotenberg-Webhook-Events-Url'), new URL(eventsUrl).href)
+    assert.equal(
+      Buffer.from(headers.get('Gotenberg-Webhook-Url') ?? '', 'latin1').toString('utf8'),
+      url,
+    )
+    assert.equal(
+      Buffer.from(headers.get('Gotenberg-Webhook-Events-Url') ?? '', 'latin1').toString('utf8'),
+      eventsUrl,
+    )
     const raw = headers.get('Gotenberg-Webhook-Extra-Http-Headers')
     assert.ok(raw)
     assert.deepEqual(JSON.parse(Buffer.from(raw, 'latin1').toString('utf8')), extraHttpHeaders)
@@ -1277,12 +1283,45 @@ test('v9 webhook serializes Unicode callback URLs and UTF-8 extra header values'
   assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
 })
 
+test('preserves all valid own remote and webhook header names on the upstream wire', async () => {
+  const extraHttpHeaders = JSON.parse(
+    '{"__proto__":"safe","constructor":"other","prototype":"value"}',
+  )
+  const downloadFrom = [
+    { url: 'https://example.test/asset.css', filename: 'asset.css', extraHttpHeaders },
+  ]
+  const webhook = {
+    url: 'https://example.test/success',
+    eventsUrl: 'https://example.test/events',
+    extraHttpHeaders,
+  }
+  const fixture = upstreamFixture('9.10.2', (form, headers) => {
+    assert.deepEqual(JSON.parse(String(form.get('downloadFrom'))), downloadFrom)
+    assert.deepEqual(
+      JSON.parse(headers.get('Gotenberg-Webhook-Extra-Http-Headers') ?? ''),
+      extraHttpHeaders,
+    )
+  })
+  const response = await proxyConversionRequest(
+    requestFor('html-pdf', {}, { downloadFrom, webhook }),
+    fixture.fetcher,
+  )
+  assert.equal(response.status, 200)
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
 test('v8 webhook serializes Unicode success and error URLs', async () => {
   const url = 'https://m\u00fcnich.example/\u901a\u77e5'
   const errorUrl = 'https://example.test/\u5931\u6557'
   const fixture = upstreamFixture('8.40.0', (_form, headers) => {
-    assert.equal(headers.get('Gotenberg-Webhook-Url'), new URL(url).href)
-    assert.equal(headers.get('Gotenberg-Webhook-Error-Url'), new URL(errorUrl).href)
+    assert.equal(
+      Buffer.from(headers.get('Gotenberg-Webhook-Url') ?? '', 'latin1').toString('utf8'),
+      url,
+    )
+    assert.equal(
+      Buffer.from(headers.get('Gotenberg-Webhook-Error-Url') ?? '', 'latin1').toString('utf8'),
+      errorUrl,
+    )
   })
   const reply = await proxyConversionRequest(
     requestFor('html-pdf', {}, { webhook: { url, errorUrl } }),
@@ -1334,9 +1373,480 @@ test('a rewritten PDF still requires an immediate version header', async () => {
       : new Response(source, { headers: { 'Content-Type': 'application/pdf' } })
   await assert.rejects(
     proxyConversionRequest(
-      requestFor('rotate', { rotateAngle: '90' }, {}, [new File([source], 'input.pdf')]),
+      requestFor('split', { splitMode: 'pages', splitSpan: '1' }, {}, [
+        new File([source], 'input.pdf'),
+      ]),
       fetcher,
     ),
     /does not match its declared file type/,
   )
 })
+
+test('proxy rejects previously unguarded major-specific native Office fields', async () => {
+  const fields = { pageLayout: '3', firstPageOnLeft: true }
+  const file = new File(['source'], 'report.docx')
+  const v9 = upstreamFixture('9.10.0', () => assert.fail('Incompatible request reached upstream'))
+  await assert.rejects(
+    proxyConversionRequest(requestFor('office-pdf', fields, {}, [file]), v9.fetcher),
+    {
+      status: 409,
+      message: /First page on left requires Gotenberg 8/,
+    },
+  )
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 0 })
+  const v8 = upstreamFixture('8.40.0', (form) => {
+    assert.equal(form.get('firstPageOnLeft'), 'true')
+  })
+  assert.equal(
+    (await proxyConversionRequest(requestFor('office-pdf', fields, {}, [file]), v8.fetcher)).status,
+    200,
+  )
+})
+
+test('proxy rejects migrated numeric values before forwarding', async () => {
+  const v9 = upstreamFixture('9.10.0', () => assert.fail('Incompatible request reached upstream'))
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('office-pdf', { openBookmarkLevels: '20' }, {}, [
+        new File(['source'], 'report.docx'),
+      ]),
+      v9.fetcher,
+    ),
+    { status: 409, message: /bookmark expansion/ },
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('html-shot', { format: 'jpeg', quality: '0' }, { source: '<p>Hello</p>' }),
+      v9.fetcher,
+    ),
+    { status: 409, message: /at least 1/ },
+  )
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 0 })
+})
+
+test.each([
+  ['8.40.0', '9.10.0'],
+  ['9.10.0', '9.9.0'],
+  ['9.1.0', '9.2.0'],
+] as const)(
+  'rejects a request configured for %s when the target reports %s',
+  async (expectedBackendVersion, actual) => {
+    const fixture = upstreamFixture(actual, () =>
+      assert.fail('An unreviewed request must not reach the conversion route.'),
+    )
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('html-pdf', {}, { expectedBackendVersion }),
+        fixture.fetcher,
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error && 'status' in error)
+        assert.equal(error.status, 409)
+        assert.match(error.message, /since this request was configured/)
+        return true
+      },
+    )
+    assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
+  },
+)
+
+test('accepts patch updates within the configured API minor version', async () => {
+  const fixture = upstreamFixture('9.10.3', (form) => {
+    assert.equal(form.has('expectedBackendVersion'), false)
+    assert.equal(form.has('nativeBookmarks'), true)
+  })
+  const response = await proxyConversionRequest(
+    requestFor(
+      'html-pdf',
+      { generateDocumentOutline: true },
+      { expectedBackendVersion: 'v9.10.0' },
+    ),
+    fixture.fetcher,
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+})
+
+test.each(['Unknown', '10.0.0', '9', ''])(
+  'rejects invalid expected version %j before probing',
+  async (expectedBackendVersion) => {
+    const fixture = upstreamFixture('9.10.0', () =>
+      assert.fail('Invalid version must not be forwarded.'),
+    )
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('html-pdf', {}, { expectedBackendVersion }),
+        fixture.fetcher,
+      ),
+      /Expected backend version must be a supported Gotenberg/,
+    )
+    assert.deepEqual(fixture.counts(), { probes: 0, conversions: 0 })
+  },
+)
+
+test.each([undefined, '9.10.0'])(
+  'detects minor version drift with expectedBackendVersion=%s',
+  async (expectedBackendVersion) => {
+    let cancelled = false
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('%PDF-1.7\n'))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const fetcher: typeof fetch = async (input) =>
+      String(input).endsWith('/version')
+        ? new Response('9.10.0')
+        : new Response(source, {
+            headers: { 'Content-Type': 'application/pdf', 'Gotenberg-Version': '9.9.0' },
+          })
+    await assert.rejects(
+      proxyConversionRequest(requestFor('html-pdf', {}, { expectedBackendVersion }), fetcher),
+      (error: unknown) => {
+        assert.ok(error instanceof Error && 'status' in error)
+        assert.equal(error.status, 409)
+        assert.match(error.message, /changed from 9\.10 to 9\.9 during conversion/)
+        return true
+      },
+    )
+    assert.equal(cancelled, true)
+  },
+)
+
+test.each([undefined, '9.10.0'])(
+  'accepts a response from a different patch with expectedBackendVersion=%s',
+  async (expectedBackendVersion) => {
+    const fetcher: typeof fetch = async (input) =>
+      String(input).endsWith('/version')
+        ? new Response('9.10.0')
+        : new Response('%PDF-1.7\n', {
+            headers: { 'Content-Type': 'application/pdf', 'Gotenberg-Version': 'v9.10.2' },
+          })
+    const response = await proxyConversionRequest(
+      requestFor('html-pdf', {}, { expectedBackendVersion }),
+      fetcher,
+    )
+    assert.equal(response.status, 200)
+    await response.body?.cancel()
+  },
+)
+
+test.each([undefined, '9.10.0'])(
+  'warns about possible webhook acceptance with expectedBackendVersion=%s',
+  async (expectedBackendVersion) => {
+    const fetcher: typeof fetch = async (input) =>
+      String(input).endsWith('/version')
+        ? new Response('9.10.0')
+        : new Response(null, { status: 202, headers: { 'Gotenberg-Version': '9.9.0' } })
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor(
+          'html-pdf',
+          {},
+          {
+            expectedBackendVersion,
+            webhook: {
+              url: 'https://hooks.example.test/complete',
+              eventsUrl: 'https://hooks.example.test/events',
+            },
+          },
+        ),
+        fetcher,
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error && 'status' in error)
+        assert.equal(error.status, 502)
+        assert.match(error.message, /may already have been accepted/)
+        return true
+      },
+    )
+  },
+)
+
+test('raw Office conformance aliases cannot be overwritten by generated profiles', async () => {
+  const file = new File(['Document'], 'document.txt')
+  const fixture = upstreamFixture('9.10.0', (form) => {
+    assert.equal(form.get('nativePdfa'), 'PDF/A-2b')
+    assert.equal(form.has('stages'), false)
+  })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'office-pdf',
+        { pdfaProfile: 'PDF/A-3b' },
+        {
+          advanced: { nativePdfa: 'PDF/A-2b' },
+        },
+        [file],
+      ),
+      fixture.fetcher,
+    ),
+    /Choose either nativePdfa\/nativePdfua/,
+  )
+  assert.deepEqual(fixture.counts(), { probes: 1, conversions: 0 })
+  const response = await proxyConversionRequest(
+    requestFor(
+      'office-pdf',
+      {},
+      {
+        advanced: { nativePdfa: 'PDF/A-2b' },
+      },
+      [file],
+    ),
+    fixture.fetcher,
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+  assert.deepEqual(fixture.counts(), { probes: 2, conversions: 1 })
+})
+
+test('standalone optimization is blocked before Gotenberg 8.36 even with default settings', async () => {
+  const file = new File(['%PDF-1.7\n'], 'document.pdf', { type: 'application/pdf' })
+  const unsupported = upstreamFixture('8.35.9', () => {
+    assert.fail('Gotenberg 8.35 does not have the standalone optimize route.')
+  })
+  await assert.rejects(
+    proxyConversionRequest(requestFor('optimize', {}, {}, [file]), unsupported.fetcher),
+    { status: 409, message: /Optimize PDFs requires Gotenberg 8\.36/ },
+  )
+  assert.deepEqual(unsupported.counts(), { probes: 1, conversions: 0 })
+  const supported = upstreamFixture('8.36.0', (form) => {
+    assert.equal((form.get('files') as File).name, file.name)
+  })
+  assert.equal(
+    (await proxyConversionRequest(requestFor('optimize', {}, {}, [file]), supported.fetcher))
+      .status,
+    200,
+  )
+  assert.deepEqual(supported.counts(), { probes: 1, conversions: 1 })
+})
+
+test('the native LibreOffice singlePage alias is forwarded only on Gotenberg 9', async () => {
+  const file = new File(['Spreadsheet'], 'report.xlsx')
+  const v9 = upstreamFixture('9.10.0', (form) => {
+    assert.equal(form.get('singlePage'), 'true')
+    assert.equal(form.has('singlePageSheets'), false)
+  })
+  const candidate = () => requestFor('office-pdf', {}, { advanced: { singlePage: true } }, [file])
+  assert.equal((await proxyConversionRequest(candidate(), v9.fetcher)).status, 200)
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('office-pdf', { singlePageSheets: false }, { advanced: { singlePage: true } }, [
+        file,
+      ]),
+      v9.fetcher,
+    ),
+    /Use either singlePageSheets or singlePage, not both/,
+  )
+  assert.deepEqual(v9.counts(), { probes: 2, conversions: 1 })
+  const v8 = upstreamFixture('8.40.0', () => {
+    assert.fail('The native alias must not be sent to Gotenberg 8.')
+  })
+  await assert.rejects(
+    proxyConversionRequest(candidate(), v8.fetcher),
+    /singlePage requires Gotenberg 9/,
+  )
+  assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
+})
+
+test('Office watermark rotation precision is checked against the verified backend', async () => {
+  const file = new File(['Document'], 'document.txt')
+  const candidate = (angle: string) =>
+    requestFor(
+      'office-pdf',
+      { nativeWatermarkText: 'DRAFT', nativeWatermarkRotateAngle: angle },
+      {},
+      [file],
+    )
+  const v8 = upstreamFixture('8.40.0', (form) => {
+    assert.equal(form.get('nativeWatermarkRotateAngle'), '123')
+    assert.equal(form.has('nativeWatermarkRotation'), false)
+  })
+  await assert.rejects(proxyConversionRequest(candidate('12.34'), v8.fetcher), {
+    status: 409,
+    message: /one decimal/i,
+  })
+  assert.deepEqual(v8.counts(), { probes: 1, conversions: 0 })
+  assert.equal((await proxyConversionRequest(candidate('12.3'), v8.fetcher)).status, 200)
+  assert.deepEqual(v8.counts(), { probes: 2, conversions: 1 })
+
+  const v9 = upstreamFixture('9.10.0', (form) => {
+    assert.equal(form.get('nativeWatermarkRotation'), '12.34')
+    assert.equal(form.has('nativeWatermarkRotateAngle'), false)
+  })
+  assert.equal((await proxyConversionRequest(candidate('12.34'), v9.fetcher)).status, 200)
+  assert.deepEqual(v9.counts(), { probes: 1, conversions: 1 })
+})
+
+test('rejects an unused pipeline upload instead of forwarding it as another input PDF', async () => {
+  const fixture = upstreamFixture('9.10.0', () => {})
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor(
+        'pdf-pipeline',
+        { stages: '[{"op":"merge"}]' },
+        {},
+        [new File(['%PDF-1.7\n'], 'report.pdf')],
+        [new File(['%PDF-1.7\n'], 'removed-insert.pdf')],
+      ),
+      fixture.fetcher,
+    ),
+    /Unused PDF pipeline stage file: removed-insert\.pdf/,
+  )
+  assert.equal(fixture.counts().conversions, 0)
+})
+
+test.each(['8.40.0', '9.10.0'])(
+  'allows duplicate Office form field names with the default exportFormFields on %s',
+  async (version) => {
+    const fixture = upstreamFixture(version, (form) => {
+      assert.equal(form.get('allowDuplicateFieldNames'), 'true')
+      assert.equal(form.has('exportFormFields'), false)
+    })
+    const file = new File(['Document'], 'document.txt')
+    const response = await proxyConversionRequest(
+      requestFor('office-pdf', { allowDuplicateFieldNames: true }, {}, [file]),
+      fixture.fetcher,
+    )
+    assert.equal(response.status, 200)
+    assert.equal(fixture.counts().conversions, 1)
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('office-pdf', { allowDuplicateFieldNames: true, exportFormFields: false }, {}, [
+          file,
+        ]),
+        fixture.fetcher,
+      ),
+      /requires its related option to be enabled/,
+    )
+    assert.equal(fixture.counts().conversions, 1)
+  },
+)
+
+test.each(attachmentExtractionCases)(
+  '$operation accepts filename-bearing attachments with valid MIME token punctuation',
+  async ({ operation, fields }) => {
+    const type = 'application/vnd.example~archive'
+    const fetcher: typeof fetch = async (input) =>
+      String(input) === `${upstream}/version`
+        ? new Response('9.10.0')
+        : new Response('contents', {
+            headers: {
+              'Content-Type': type,
+              'Content-Disposition': 'attachment; filename="example.custom"',
+            },
+          })
+    const response = await proxyConversionRequest(
+      requestFor(operation, fields, {}, [new File(['%PDF-1.7\n'], 'source.pdf')]),
+      fetcher,
+    )
+    assert.equal(response.headers.get('content-type'), type)
+    assert.equal(await response.text(), 'contents')
+  },
+)
+
+test.each([undefined, '[]', '[{"op":"optimize"}]'])(
+  'Office built-in merge remains PDF-only with conversion stages %s',
+  async (conversionStages) => {
+    const source = zipFixture({ 'first.docx': 'first', 'second.docx': 'second' })
+    const fetcher: typeof fetch = async (input, options) => {
+      if (String(input) === `${upstream}/version`) return new Response('9.10.0')
+      assert.ok(options?.body instanceof FormData)
+      assert.equal(JSON.parse(String(options.body.get('stages')))[0].op, 'merge')
+      return new Response(await source.arrayBuffer(), {
+        headers: { 'Content-Type': 'application/zip' },
+      })
+    }
+    await assert.rejects(
+      proxyConversionRequest(
+        requestFor('office-pdf', { merge: true }, { conversionStages }, [], [], [], [source]),
+        fetcher,
+      ),
+      /unexpected conversion response/,
+    )
+  },
+)
+
+test('a generated Office merge followed by a custom split still permits a ZIP', async () => {
+  const source = zipFixture({ 'first.docx': 'first', 'second.docx': 'second' })
+  const output = zipFixture({ 'first_1.pdf': '%PDF-1.7\n', 'first_2.pdf': '%PDF-1.7\n' })
+  const fetcher: typeof fetch = async (input, options) => {
+    if (String(input) === `${upstream}/version`) return new Response('9.10.0')
+    assert.ok(options?.body instanceof FormData)
+    assert.deepEqual(JSON.parse(String(options.body.get('stages'))), [
+      { op: 'merge' },
+      { op: 'split', every: 1 },
+    ])
+    return new Response(await output.arrayBuffer(), {
+      headers: { 'Content-Type': 'application/zip' },
+    })
+  }
+  const response = await proxyConversionRequest(
+    requestFor(
+      'office-pdf',
+      { merge: true },
+      { conversionStages: '[{"op":"split","every":1}]' },
+      [],
+      [],
+      [],
+      [source],
+    ),
+    fetcher,
+  )
+  assert.equal(response.headers.get('content-type'), 'application/zip')
+  assert.deepEqual(
+    Buffer.from(await response.arrayBuffer()),
+    Buffer.from(await output.arrayBuffer()),
+  )
+})
+
+test.each([
+  ['application/*', 'attachment; filename="example.custom"'],
+  ['application/vnd.example~archive', 'inline; filename="example.custom"'],
+  ['application/vnd.example~archive', 'attachment'],
+])('attachment extraction rejects %s with disposition %s', async (type, disposition) => {
+  const fetcher: typeof fetch = async (input) =>
+    String(input) === `${upstream}/version`
+      ? new Response('9.10.0')
+      : new Response('contents', {
+          headers: { 'Content-Type': type, 'Content-Disposition': disposition },
+        })
+  await assert.rejects(
+    proxyConversionRequest(
+      requestFor('extract-attachments', {}, {}, [new File(['%PDF-1.7\n'], 'source.pdf')]),
+      fetcher,
+    ),
+    /unexpected conversion response/,
+  )
+})
+
+test.each(['8.40.0', '9.10.0'])(
+  'preserves signed callback targets on Gotenberg %s',
+  async (version) => {
+    const url = 'HTTPS://Hooks.Example.test:443/raw/../%2e%2e/output?key=a%2fb%2Bc&sig=x+y'
+    const secondaryUrl = 'https://hooks.example.test/one/%2E/two/../event?sig=%2F%2b&empty='
+    const legacy = version.startsWith('8.')
+    const fixture = upstreamFixture(version, (_form, headers) => {
+      assert.equal(headers.get('Gotenberg-Webhook-Url'), url)
+      assert.equal(
+        headers.get(legacy ? 'Gotenberg-Webhook-Error-Url' : 'Gotenberg-Webhook-Events-Url'),
+        secondaryUrl,
+      )
+    })
+    const reply = await proxyConversionRequest(
+      requestFor(
+        'html-pdf',
+        {},
+        {
+          webhook: { url, ...(legacy ? { errorUrl: secondaryUrl } : { eventsUrl: secondaryUrl }) },
+        },
+      ),
+      fixture.fetcher,
+    )
+    assert.equal(reply.status, 200)
+    assert.deepEqual(fixture.counts(), { probes: 1, conversions: 1 })
+  },
+)

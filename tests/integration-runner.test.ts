@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test, vi } from 'vitest'
-import { GOTENBERG_TEST_VERSIONS } from '#scripts/gotenberg-test-versions'
+import {
+  GOTENBERG_COMPATIBILITY_VERSIONS,
+  GOTENBERG_TEST_VERSIONS,
+} from '#scripts/gotenberg-test-versions'
 import {
   type GotenbergIntegrationVersion,
   integrationVersions,
@@ -39,7 +42,7 @@ test('CI and package commands select named suites without duplicating version pi
 })
 
 test('integration runner rejects unknown or conflicting versions', () => {
-  for (const selection of ['latest', '8.37.0', '9.999.999']) {
+  for (const selection of ['latest', '8.34.0', '9.999.999']) {
     assert.throws(() => integrationVersions(selection), /Integration tests require Gotenberg/)
   }
   assert.throws(() => integrationVersions('v9', v8), /Conflicting/)
@@ -112,4 +115,15 @@ test('an integration runner exception is reported without cancelling the other s
     1,
   )
   assert.deepEqual(executed, pinnedVersions)
+})
+
+test('historical pins cover every v9 minor and the v8 feature boundaries', () => {
+  for (const version of GOTENBERG_COMPATIBILITY_VERSIONS)
+    assert.deepEqual(integrationVersions(version), [version])
+  assert.deepEqual(
+    [...GOTENBERG_COMPATIBILITY_VERSIONS, v9]
+      .filter((version) => version.startsWith('9.'))
+      .map((version) => Number(version.split('.')[1])),
+    Array.from({ length: Number(v9.split('.')[1]) + 1 }, (_, minor) => minor),
+  )
 })

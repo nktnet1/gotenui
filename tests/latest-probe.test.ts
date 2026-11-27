@@ -75,3 +75,55 @@ test('a current connection test reports errors and allows another test', async (
   assert.equal((received.errors[0] as Error)?.message, 'HTTP 401')
   assert.equal(received.settled, 2)
 })
+
+test('a connection check that resolves after its deadline cannot publish success', async () => {
+  const probe = new LatestProbe()
+  const received = receiver<string>()
+  await probe.run(
+    async (signal) => {
+      await new Promise<void>((resolve) =>
+        signal.addEventListener('abort', () => resolve(), { once: true }),
+      )
+      return 'late version'
+    },
+    received.callbacks,
+    5,
+  )
+  assert.deepEqual(received.values, [])
+  assert.equal((received.errors[0] as Error)?.name, 'TimeoutError')
+  assert.equal(received.settled, 1)
+})
+
+test('a non-cooperative connection check settles at its deadline without waiting for the transport', async () => {
+  const probe = new LatestProbe()
+  const result = deferred<string>()
+  const received = receiver<string>()
+  await probe.run(() => result.promise, received.callbacks, 5)
+  assert.equal((received.errors[0] as Error)?.name, 'TimeoutError')
+  assert.equal(received.settled, 1)
+  result.resolve('late version')
+  await result.promise
+  assert.deepEqual(received.values, [])
+  assert.equal(received.settled, 1)
+})
+
+test('tracks the active workspace refresh through cancellation and a non-cooperative timeout', async () => {
+  const probe = new LatestProbe()
+  const result = deferred<string>()
+  const received = receiver<string>()
+  assert.equal(probe.pending, false)
+  const first = probe.run(() => result.promise, received.callbacks)
+  assert.equal(probe.pending, true)
+  probe.cancel()
+  await first
+  assert.equal(probe.pending, false)
+  const second = probe.run(() => result.promise, received.callbacks, 5)
+  assert.equal(probe.pending, true)
+  await second
+  assert.equal(probe.pending, false)
+  assert.equal((received.errors[0] as Error)?.name, 'TimeoutError')
+  result.resolve('late version')
+  await result.promise
+  assert.deepEqual(received.values, [])
+  assert.equal(received.settled, 1)
+})

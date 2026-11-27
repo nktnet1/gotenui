@@ -1,3 +1,6 @@
+import { goFiniteFloat } from '#/lib/go-form-values'
+import { isHttpUrl } from '#/lib/http-url'
+
 /** Human-friendly Chromium reliability controls. Gotenberg expects JSON arrays. */
 export const CONSOLE_MESSAGE_TYPES = ['log', 'debug', 'info', 'warning', 'error', 'assert'] as const
 export type ConsoleMessageType = (typeof CONSOLE_MESSAGE_TYPES)[number]
@@ -35,9 +38,12 @@ export function updateConsoleMessageTypes(
 }
 
 export function parseStatusCodes(input: string): number[] {
+  if (/^\[\s*\]$/.test(input.trim())) return []
   const parts = input.split(',').map((value) => value.trim())
   if (parts.some((value) => !/^[1-5]\d\d$/.test(value))) {
-    throw new Error('Enter HTTP status codes (100–599) separated by commas.')
+    throw new Error(
+      'Enter HTTP status codes (100–599) separated by commas, or [] to disable checks.',
+    )
   }
   return [...new Set(parts.map(Number))]
 }
@@ -57,21 +63,33 @@ export function parseIgnoredDomains(input: string): string[] {
       throw new Error('Enter comma-separated asset exclusion domains or URLs.')
     }
     const candidate = value.replace(/^\*\./u, '').replace(/^\./u, '')
+    const fullUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)
     const url = candidate.startsWith('//')
       ? `https:${candidate}`
-      : /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)
-        ? candidate
+      : fullUrl
+        ? // Go accepts any scheme here, since only the hostname is used.
+          candidate.replace(/^[a-z][a-z0-9+.-]*:/i, 'https:')
         : `https://${candidate}`
-    try {
-      const parsed = new URL(url)
-      if (!parsed.hostname || parsed.username || parsed.password) {
-        throw new Error('Invalid asset exclusion hostname.')
-      }
-    } catch {
+    if (
+      (candidate !== value && (candidate.includes('://') || candidate.startsWith('//'))) ||
+      (candidate.includes('://') && !fullUrl && !candidate.startsWith('//')) ||
+      !isHttpUrl(url)
+    ) {
       throw new Error('Enter comma-separated asset exclusion domains or URLs.')
     }
   }
   return [...new Set(parts.map((value) => value.toLowerCase()))]
+}
+
+/** Gotenberg 8 sends native LibreOffice watermark angles in tenths of a degree. */
+export const V8_WATERMARK_ROTATION_ERROR =
+  'Gotenberg 8 native watermark rotation supports one decimal place within the safe integer range.'
+
+export function v8WatermarkRotationTenths(value: string | boolean): number | null {
+  const angle = typeof value === 'string' ? goFiniteFloat(value) : undefined
+  if (angle === undefined) return null
+  const rounded = Math.round(angle * 10)
+  return Number.isSafeInteger(rounded) && rounded / 10 === angle ? rounded : null
 }
 
 export function encodeOfficialField(
@@ -85,11 +103,9 @@ export function encodeOfficialField(
     return String(Number.parseInt(String(value).slice(1), 16))
   }
   if (field?.name === 'nativeWatermarkRotateAngle') {
-    const degrees = Number(value)
-    if (!Number.isFinite(degrees) || Math.abs(degrees * 10 - Math.round(degrees * 10)) > 1e-7) {
-      throw new Error('Native watermark rotation supports one decimal place.')
-    }
-    return String(Math.round(degrees * 10))
+    const tenths = v8WatermarkRotationTenths(value)
+    if (tenths === null) throw new Error(V8_WATERMARK_ROTATION_ERROR)
+    return String(tenths)
   }
   return String(value)
 }

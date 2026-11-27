@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { GOTENBERG_TEST_VERSIONS } from '#scripts/gotenberg-test-versions'
+import {
+  GOTENBERG_COMPATIBILITY_VERSIONS,
+  GOTENBERG_TEST_VERSIONS,
+} from '#scripts/gotenberg-test-versions'
 import { integrationTestCache, UNIT_TEST_CACHE } from '#scripts/test-cache'
 import unitConfig from '../vitest.config'
 import integrationConfig from '../vitest.integration.config'
@@ -10,8 +13,9 @@ describe('parallel Vitest module caches', () => {
       UNIT_TEST_CACHE,
       integrationTestCache(GOTENBERG_TEST_VERSIONS.v8),
       integrationTestCache(GOTENBERG_TEST_VERSIONS.v9),
+      ...GOTENBERG_COMPATIBILITY_VERSIONS.map(integrationTestCache),
     ]
-    expect(new Set(paths).size).toBe(3)
+    expect(new Set(paths).size).toBe(paths.length)
     expect(paths.every((path) => path.startsWith('node_modules/.vitest-cache-'))).toBe(true)
     expect(paths).not.toContain('node_modules/.vitest-cache')
   })

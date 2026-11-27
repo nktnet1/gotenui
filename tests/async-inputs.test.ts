@@ -12,7 +12,7 @@ import {
 } from '#/lib/async-inputs'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { OPERATION_BY_ID } from '#/lib/operations'
-import { validatePayload } from '#/lib/validation'
+import { validateAsyncInputValues, validatePayload } from '#/lib/validation'
 import { JobPanel } from '#/tools/shared/job-panel'
 
 function remoteRow(overrides: Partial<RemoteInputRow> = {}): RemoteInputRow {
@@ -299,7 +299,7 @@ test('accepted async results label output and events separately without claiming
       files: [],
       auxFiles: [],
       postFiles: {},
-      source: '',
+      documentText: [],
       pending: false,
       lastDownload: null,
       recent: [],
@@ -319,3 +319,237 @@ test('accepted async results label output and events separately without claiming
   assert.match(html, /cannot confirm delivery/)
   assert.doesNotMatch(html, /private-output|private-events|access=secret/)
 })
+
+test('structured remote filenames preserve surrounding whitespace and a leading BOM', () => {
+  for (const filename of [' report.pdf ', '\uFEFFreport.pdf']) {
+    for (const mode of ['override', 'hint'] as const) {
+      const descriptors = remoteInputsPayload([remoteRow({ filename, filenameMode: mode })], '')
+      const { payload } = validated('office-pdf', { downloadFrom: descriptors })
+      assert.equal(payload.downloadFrom?.[0]?.[mode === 'override' ? 'filename' : 'name'], filename)
+    }
+  }
+})
+
+test('all-whitespace remote filenames are rejected instead of silently omitted', () => {
+  assert.throws(
+    () =>
+      validated('office-pdf', {
+        downloadFrom: remoteInputsPayload(
+          [remoteRow({ filename: '   ', filenameMode: 'override' })],
+          '',
+        ),
+      }),
+    /Remote filename must not be blank/,
+  )
+})
+
+test.each([
+  'https:files.example.test/document.pdf',
+  'https:/files.example.test/document.pdf',
+  'https:///files.example.test/document.pdf',
+  'https://\\files.example.test/document.pdf',
+  ' https://files.example.test/document.pdf',
+  'https://files.example.test ',
+  'https://%66iles.example.test/document.pdf',
+  'https://@files.example.test/document.pdf',
+  'https://files.example.test/doc\nument.pdf',
+  'https://files.example.test/doc\tument.pdf',
+  'https://files.example.test/document%2.pdf',
+  'https://files.example.test/document.pdf#%',
+])('rejects malformed raw HTTP-client URLs: %j', (url) => {
+  assert.throws(
+    () => validateAsyncInputValues([{ url }], undefined),
+    /downloadFrom URL must be an absolute http or https URL/,
+  )
+  for (const field of ['url', 'errorUrl', 'eventsUrl']) {
+    assert.throws(
+      () =>
+        validateAsyncInputValues(undefined, {
+          url: 'https://hooks.example.test/complete',
+          [field]: url,
+        }),
+      /Webhook .*must be an absolute http or https URL/,
+    )
+  }
+})
+
+test.each([
+  'HTTPS://files.example.test/document%20name.pdf?signature=a%2Fb%2Bc#section%20one',
+  'https://files.example.test/document.pdf?raw=%',
+  'http://[::1]:8080/report.pdf',
+  'https://files.example.test/%FF.pdf',
+  'https://%C3%A9.example.test/document.pdf',
+  'https://files.example.test/document.pdf#\u2028',
+])('keeps valid HTTP-client URLs unchanged: %j', (url) => {
+  assert.deepEqual(validateAsyncInputValues([{ url }], { url }), {
+    downloadFrom: [{ url }],
+    webhook: { url },
+  })
+})
+
+test.each(['url', 'errorUrl', 'eventsUrl'])(
+  'rejects raw trailing spaces in the %s callback header',
+  (field) => {
+    const url = 'https://hooks.example.test/complete'
+    assert.throws(
+      () => validateAsyncInputValues(undefined, { url, [field]: `${url} ` }),
+      /must percent-encode trailing spaces/,
+    )
+    assert.deepEqual(validateAsyncInputValues(undefined, { url, [field]: `${url}%20` }).webhook, {
+      url,
+      [field]: `${url}%20`,
+    })
+    assert.deepEqual(validateAsyncInputValues([{ url: `${url} ` }], undefined).downloadFrom, [
+      { url: `${url} ` },
+    ])
+  },
+)
+
+test.each([false, true])(
+  'accepted legacy async results include the configured error receiver (events: %s)',
+  (events) => {
+    const operation = OPERATION_BY_ID.get('url-pdf')
+    assert.ok(operation)
+    const html = renderToStaticMarkup(
+      createElement(JobPanel, {
+        operation,
+        backendVersion: '8.37.0',
+        files: [],
+        auxFiles: [],
+        postFiles: {},
+        documentText: [],
+        pending: false,
+        lastDownload: null,
+        recent: [],
+        onClearResult: () => {},
+        acceptedWebhook: {
+          status: 204,
+          receiverHost: 'output.example.test',
+          errorReceiverHost: safeOutboundHost('https://errors.example.test/private?token=secret'),
+          ...(events ? { eventsReceiverHost: 'events.example.test' } : {}),
+        },
+      }),
+    )
+    assert.match(html, /Check the error receiver/)
+    assert.match(html, /errors.example.test/)
+    assert.doesNotMatch(html, /No failure callback|private\?token=secret/)
+    if (events) assert.match(html, /Check the events receiver/)
+  },
+)
+
+test.each([
+  'https://files.example.test/document.pdf ',
+  'https://files.example.test/document.pdf?token=\uFEFF',
+  'https://files.example.test/a/%2e%2e/document.pdf?sig=%2F%2B',
+])('structured remote inputs keep the exact raw URL: %j', (url) => {
+  const { downloadFrom } = validateAsyncInputValues(
+    remoteInputsPayload([remoteRow({ url })], ''),
+    undefined,
+  )
+  assert.deepEqual(downloadFrom, [{ url }])
+})
+
+test.each(['url', 'errorUrl', 'eventsUrl'] as const)(
+  'structured webhook validation does not repair invalid %s values',
+  (field) => {
+    const url = 'https://hooks.example.test/a/%2e%2e/complete?sig=%2F%2B'
+    const editor = { ...emptyWebhook, enabled: true, url, errorUrl: url, eventsUrl: url }
+    for (const invalid of [` ${url}`, `${url} `, '   ']) {
+      const payload = webhookPayload({ ...editor, [field]: invalid }, '')
+      assert.equal((payload as Record<string, unknown>)[field], invalid)
+      assert.throws(() => validateAsyncInputValues(undefined, payload), /URL/)
+    }
+    const unicode = `${url}\uFEFF`
+    const payload = webhookPayload({ ...editor, [field]: unicode }, '')
+    assert.equal(validateAsyncInputValues(undefined, payload).webhook?.[field], unicode)
+  },
+)
+
+test.each(['url-pdf', 'url-shot'])(
+  '%s rejects malformed raw Chromium URL fields, without rewriting valid paths',
+  (id) => {
+    for (const url of [
+      'https:example.test',
+      'https:///example.test',
+      'https://@example.test',
+      'https://example.test/file%2',
+      'https://example.test/#%',
+      ' https://example.test',
+    ]) {
+      assert.throws(() => validated(id, { fields: { url } }), /absolute http or https URL/)
+    }
+    const url = 'https://example.test/a/%2e%2e/file?raw=%'
+    assert.equal(validated(id, { fields: { url } }).payload.fields.url, url)
+  },
+)
+
+test.each(['\ud800', '\udfff'])(
+  'rejects invalid Unicode rather than rewriting outbound URL bytes: %j',
+  (char) => {
+    const url = `https://files.example.test/file?signature=${char}`
+    assert.throws(() => validateAsyncInputValues([{ url }], undefined), /URL/)
+    assert.throws(() => validateAsyncInputValues(undefined, { url }), /URL/)
+    assert.throws(
+      () => validatePayload({ operation: 'url-pdf', fields: { url }, advanced: {} }),
+      /URL/,
+    )
+  },
+)
+
+test('preserves valid Unicode in outbound HTTP headers and rejects lone surrogates', () => {
+  const url = 'https://files.example.test/document.pdf'
+  for (const value of ['opaque\ud800', 'opaque\udfff']) {
+    const extraHttpHeaders = { 'X-Token': value }
+    assert.throws(
+      () => validateAsyncInputValues([{ url, extraHttpHeaders }], undefined),
+      /header name or value/,
+    )
+    assert.throws(
+      () => validateAsyncInputValues(undefined, { url, extraHttpHeaders }),
+      /header name or value/,
+    )
+  }
+  const extraHttpHeaders = { 'X-Token': 'opaque\ud83d\ude00' }
+  assert.deepEqual(validateAsyncInputValues([{ url, extraHttpHeaders }], undefined).downloadFrom, [
+    { url, extraHttpHeaders },
+  ])
+  assert.deepEqual(validateAsyncInputValues(undefined, { url, extraHttpHeaders }).webhook, {
+    url,
+    extraHttpHeaders,
+  })
+})
+
+test('raw outbound descriptors reject unknown properties instead of dropping them', () => {
+  const url = 'https://example.test/file.pdf'
+  for (const extra of [
+    { extraHttpHeader: { Authorization: 'Bearer secret' } },
+    { unknown: true },
+    JSON.parse('{"__proto__":{"url":"https://other.test"}}'),
+  ]) {
+    const descriptor = { url, ...extra }
+    assert.throws(() => validateAsyncInputValues([descriptor], undefined), /download descriptors/)
+    assert.throws(() => validateAsyncInputValues(undefined, descriptor), /callback object/)
+    assert.throws(() => validated('office-pdf', { downloadFrom: [descriptor] }))
+    assert.throws(() => validated('url-pdf', { fields: { url }, webhook: descriptor }))
+  }
+})
+
+test.each(['watermark', 'stamp'] as const)(
+  'rejects contradictory embedded and %s remote destinations',
+  (field) => {
+    const url = 'https://example.test/file.pdf'
+    assert.throws(
+      () => validateAsyncInputValues([{ url, field, embedded: true }], undefined),
+      /both embedded files and an overlay/,
+    )
+    assert.deepEqual(
+      validateAsyncInputValues([{ url, field, embedded: false }], undefined).downloadFrom,
+      [{ url, field, embedded: false }],
+    )
+    assert.deepEqual(
+      validateAsyncInputValues([{ url, field: 'embedded', embedded: true }], undefined)
+        .downloadFrom,
+      [{ url, field: 'embedded', embedded: true }],
+    )
+  },
+)

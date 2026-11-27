@@ -159,3 +159,80 @@ test('ignores parameter lookalikes inside quoted disposition values', () => {
     "safe; filename_=UTF-8''fake.pdf",
   )
 })
+
+test('does not throw while constructing an attachment header from malformed Unicode', () => {
+  const disposition = safeAttachmentDisposition(null, 'merge', 'application/pdf', 'report\ud800')
+  assert.equal(downloadFilename(disposition, 'fallback'), 'report\ufffd.pdf')
+})
+
+test.each(['COM0.pdf', 'LPT0.pdf', 'CONIN$.pdf', 'CONOUT$.pdf', 'NUL .pdf'])(
+  'does not return a Windows device filename: %s',
+  (name) => {
+    const header = `attachment; filename*=UTF-8''${encodeURIComponent(name)}`
+    assert.equal(downloadFilename(header, 'fallback.pdf'), `file-${name}`)
+  },
+)
+
+test('does not reintroduce Windows best-fit separators in requested filenames', () => {
+  const disposition = safeAttachmentDisposition(
+    null,
+    'merge',
+    'application/pdf',
+    'report\uff0farchive\u00a5document',
+  )
+  assert.equal(downloadFilename(disposition, 'fallback.pdf'), 'report_archive_document.pdf')
+})
+
+test('neutralises superscript Windows device suffixes', () => {
+  assert.equal(
+    downloadFilename("attachment; filename*=UTF-8''COM%C2%B9.pdf", 'fallback.pdf'),
+    'COM_.pdf',
+  )
+  assert.equal(
+    downloadFilename("attachment; filename*=UTF-8''LPT%C2%B2.pdf", 'fallback.pdf'),
+    'LPT_.pdf',
+  )
+})
+
+test('preserves the upstream download name when the output header is whitespace only', () => {
+  assert.equal(
+    safeAttachmentDisposition(
+      'attachment; filename="upstream.pdf"',
+      'merge',
+      'application/pdf',
+      '   ',
+    ),
+    'attachment; filename="upstream.pdf"',
+  )
+})
+
+test.each(['日', '𐐀', 'é'])('limits Unicode download filenames by UTF-8 bytes: %s', (char) => {
+  const name = `${char.repeat(220)}.xml`
+  const disposition = safeAttachmentDisposition(
+    `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+    'extract-attachments',
+    'application/xml',
+    undefined,
+    true,
+  )
+  const actual = downloadFilename(disposition, 'fallback.xml')
+  assert.ok(Buffer.byteLength(actual) <= 255)
+  assert.ok([...actual].length <= 140)
+  assert.ok(actual.endsWith('.xml'))
+  assert.match(actual.slice(0, -4), new RegExp(`^(?:${char})+$`, 'u'))
+})
+
+test('truncation preserves the filename budget after device name protection', () => {
+  const name = `CON.${'x'.repeat(140)}.pdf`
+  const actual = downloadFilename(`attachment; filename="${name}"`, 'fallback.pdf')
+  assert.ok(actual.startsWith('file-CON.'))
+  assert.ok(actual.length <= 140)
+  assert.ok(actual.endsWith('.pdf'))
+})
+
+test('truncation cannot leave an invalid trailing dot or space in an extensionless name', () => {
+  for (const separator of ['.', ' ']) {
+    const name = `${'a'.repeat(139)}${separator}!`
+    assert.equal(downloadFilename(`attachment; filename="${name}"`, 'fallback'), 'a'.repeat(139))
+  }
+})

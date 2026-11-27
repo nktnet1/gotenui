@@ -6,22 +6,35 @@ import {
 } from '#/lib/attachment-metadata'
 import {
   DEFAULT_MARKDOWN_NAME,
-  defaultMarkdownTemplate,
   generatedChromiumFilenames,
+  generatedChromiumText,
 } from '#/lib/chromium-documents'
-import { encodeChromiumMediaFeatures, validateAdvancedMediaFeatures } from '#/lib/chromium-media'
+import {
+  CHROMIUM_MEDIA_OPTIONS,
+  encodeChromiumMediaFeatures,
+  normalizeAdvancedMediaFeatures,
+} from '#/lib/chromium-media'
 import {
   hasAmbiguousChromiumScope,
   isAllowedChromiumResourceHeader,
   isChromiumCredentialHeader,
+  isChromiumScopeKey,
+  trimChromiumWhitespace,
 } from '#/lib/chromium-network'
 import {
   safeFilename as checkFilename,
   effectiveRemoteFilename,
   filenameKey,
-  possibleRemoteFilename,
+  remoteLocalFilenameCollision,
 } from '#/lib/file-names'
-import type { SupportedGotenbergMajor } from '#/lib/gotenberg-version'
+import {
+  MAX_GOTENBERG_VERSION_LENGTH,
+  parseGotenbergVersion,
+  type SupportedGotenbergMajor,
+} from '#/lib/gotenberg-version'
+import { isHttpHeaderValue, isHttpUrl } from '#/lib/http-url'
+import { jsonRecord } from '#/lib/json-record'
+import { isNumberFieldValue, parseGoFormInteger } from '#/lib/number-field-values'
 import { officeExtensionSetForMajor } from '#/lib/office-formats'
 import {
   parseConsoleMessageTypes,
@@ -39,16 +52,25 @@ import {
   pdfPostProcessSchema,
 } from '#/lib/pdf-post-processing'
 import { metadataObject, validateBookmarkDocument } from '#/lib/pdf-structure-editors'
-import { isFieldVisible, OPERATION_BY_ID, type Operation } from '#/tools/registry'
+import { hasMalformedUnicode } from '#/lib/unicode-text'
+import {
+  isFieldRequired,
+  isFieldVisible,
+  OPERATION_BY_ID,
+  type Operation,
+  operationDefaults,
+} from '#/tools/registry'
+
+export { isHttpUrl } from '#/lib/http-url'
 
 const fieldValue = v.union([v.string(), v.boolean()])
 const advancedValue = v.union([v.string(), v.boolean(), v.number()])
-const markdownFileSchema = v.object({
+const markdownFileSchema = v.strictObject({
   name: v.pipe(v.string(), v.minLength(1)),
   content: v.string(),
 })
 
-const remoteFileSchema = v.object({
+const remoteFileSchema = v.strictObject({
   url: v.string(),
   /** Legacy client-side filename hint; on Gotenberg 9.2+ also names the remote download. */
   name: v.optional(v.string()),
@@ -56,25 +78,27 @@ const remoteFileSchema = v.object({
   filename: v.optional(v.string()),
   field: v.optional(v.picklist(['embedded', 'watermark', 'stamp'])),
   embedded: v.optional(v.boolean()),
-  extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
+  extraHttpHeaders: v.optional(jsonRecord(v.string())),
 })
 
-const webhookSchema = v.object({
+const webhookSchema = v.strictObject({
   url: v.string(),
   method: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
   errorUrl: v.optional(v.string()),
   errorMethod: v.optional(v.picklist(['POST', 'PUT', 'PATCH'])),
   eventsUrl: v.optional(v.string()),
-  extraHttpHeaders: v.optional(v.record(v.string(), v.string())),
+  extraHttpHeaders: v.optional(jsonRecord(v.string())),
 })
 
 export type RemoteFile = v.InferOutput<typeof remoteFileSchema>
 export type WebhookConfig = v.InferOutput<typeof webhookSchema>
 
-export const payloadSchema = v.object({
+export const payloadSchema = v.strictObject({
   operation: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
-  fields: v.record(v.string(), fieldValue),
-  advanced: v.record(v.string(), advancedValue),
+  // Browser submissions and queued jobs retain the API version they were configured for.
+  expectedBackendVersion: v.optional(v.pipe(v.string(), v.maxLength(MAX_GOTENBERG_VERSION_LENGTH))),
+  fields: jsonRecord(fieldValue),
+  advanced: jsonRecord(advancedValue),
   source: v.optional(v.string()),
   markdownName: v.optional(v.string()),
   markdownFiles: v.optional(v.array(markdownFileSchema)),
@@ -114,14 +138,11 @@ export class InputError extends Error {
 
 const extension = /\.[a-z0-9]+$/i
 const fieldNamePattern = /^[a-z][a-zA-Z0-9]{0,63}$/
-const decimalIntegerPattern = /^[+-]?\d+$/
-const decimalNumberPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
-const minGoInt = -(1n << 63n)
-const maxGoInt = (1n << 63n) - 1n
 // Go strings.TrimSpace uses Unicode White_Space, unlike JavaScript \s (which
 // also matches U+FEFF and omits U+0085).
 const goWhitespaceOnly = /^\p{White_Space}+$/u
 const forbiddenAdvanced = new Set([
+  ...CHROMIUM_MEDIA_OPTIONS.map(({ name }) => name),
   'files',
   'payload',
   'url',
@@ -142,7 +163,9 @@ export function safeFilename(name: string): string {
   try {
     return checkFilename(name)
   } catch {
-    throw new InputError('File names must not be empty, paths or contain control characters.')
+    throw new InputError(
+      'File names must not be empty, paths or contain control characters or malformed Unicode.',
+    )
   }
 }
 
@@ -157,6 +180,9 @@ function markdownName(name: string): string {
 
 function validateChromiumDocuments(operation: Operation, payload: ConversionPayload): void {
   const isMarkdown = operation.input === 'markdown'
+  if (!isMarkdown && operation.input !== 'html' && payload.source !== undefined) {
+    throw new InputError('Source text requires an HTML or Markdown operation.')
+  }
   if (
     !isMarkdown &&
     (payload.markdownName !== undefined ||
@@ -187,28 +213,25 @@ function validateChromiumDocuments(operation: Operation, payload: ConversionPayl
   // templates. HTML fragments are valid; Chrome provides their document context.
 }
 
-/** Validate outbound URL and per-request header metadata without fetching remote content here. */
+/** Validate outbound URL metadata without fetching remote content here. */
 function requireHttpUrl(url: string, label: string): void {
   if (!isHttpUrl(url)) throw new InputError(`${label} must be an absolute http or https URL.`)
 }
 
 function validateHeaderMap(headers: Record<string, string> | undefined): void {
   if (!headers) return
-  const entries = Object.entries(headers)
-  for (const [name, value] of entries) {
-    if (
-      !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
-      [...value].some((character) => {
-        const code = character.charCodeAt(0)
-        return (code < 32 && code !== 9) || code === 127
-      })
-    ) {
+  const seen = new Set<string>()
+  for (const [name, value] of Object.entries(headers)) {
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || !isHttpHeaderValue(value)) {
       throw new InputError('Invalid extra HTTP header name or value.')
     }
+    const key = name.toLowerCase()
+    if (seen.has(key)) throw new InputError(`Duplicate HTTP header name: ${name}`)
+    seen.add(key)
   }
 }
 
-function validateAsyncInputs(payload: ConversionPayload): void {
+function validateAsyncInputs(payload: Pick<ConversionPayload, 'downloadFrom' | 'webhook'>): void {
   for (const remote of payload.downloadFrom ?? []) {
     requireHttpUrl(remote.url, 'downloadFrom URL')
     if (remote.name) {
@@ -224,15 +247,41 @@ function validateAsyncInputs(payload: ConversionPayload): void {
     if (remote.name && remote.filename && remote.name !== remote.filename) {
       throw new InputError('Specify one remote filename, not two conflicting names.')
     }
+    if (remote.embedded === true && remote.field && remote.field !== 'embedded') {
+      throw new InputError('A remote download cannot target both embedded files and an overlay.')
+    }
     validateHeaderMap(remote.extraHttpHeaders)
   }
   const webhook = payload.webhook
   if (webhook) {
-    requireHttpUrl(webhook.url, 'Webhook URL')
-    if (webhook.errorUrl) requireHttpUrl(webhook.errorUrl, 'Webhook error URL')
-    if (webhook.eventsUrl) requireHttpUrl(webhook.eventsUrl, 'Webhook events URL')
+    for (const [label, url] of [
+      ['Webhook URL', webhook.url],
+      ['Webhook error URL', webhook.errorUrl],
+      ['Webhook events URL', webhook.eventsUrl],
+    ] as const) {
+      if (!url && label !== 'Webhook URL') continue
+      requireHttpUrl(url ?? '', label)
+      // Fetch and Go strip trailing HTTP header whitespace. Do not silently
+      // change the callback target or invalidate a signature.
+      if (url?.endsWith(' ')) throw new InputError(`${label} must percent-encode trailing spaces.`)
+    }
     validateHeaderMap(webhook.extraHttpHeaders)
   }
+}
+
+/** Validate editor and legacy JSON values without requiring unrelated document fields. */
+export function validateAsyncInputValues(
+  downloadFrom: unknown,
+  webhook: unknown,
+): Pick<ConversionPayload, 'downloadFrom' | 'webhook'> {
+  const remotes = v.safeParse(v.optional(v.array(remoteFileSchema)), downloadFrom)
+  if (!remotes.success)
+    throw new InputError('Remote files must be an array of valid download descriptors.')
+  const callback = v.safeParse(v.optional(webhookSchema), webhook)
+  if (!callback.success) throw new InputError('Webhook settings must be a valid callback object.')
+  const result = { downloadFrom: remotes.output, webhook: callback.output }
+  validateAsyncInputs(result)
+  return result
 }
 
 /** Enforce the same metadata contract for /embed and conversion-time embeds. */
@@ -348,6 +397,7 @@ function requireJsonObject(value: string, label: string): Record<string, unknown
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new InputError(`${label} must be a JSON object.`)
   }
+  if (hasMalformedUnicode(parsed)) throw new InputError(`${label} contains malformed Unicode.`)
   return parsed as Record<string, unknown>
 }
 
@@ -456,7 +506,7 @@ function validatePostProcessFiles(
       if (overlay.source === 'text') continue
       // One legacy v1.0.21 upload may omit the filename expression.
       const expression =
-        overlay.expression?.trim() ||
+        overlay.expression ||
         (rows.length === 1 && uploads.length === 1 && !remoteCount ? uploads[0]?.name : '')
       if (!expression) {
         throw new InputError(
@@ -583,6 +633,14 @@ export function validateFiles(
   if (archives.length && !supportsArchiveInputs(operation)) {
     throw new InputError('ZIP archive inputs are not supported for this operation.')
   }
+  if (archives.length && major === 8) {
+    throw new InputError('ZIP archive inputs require Gotenberg 9.')
+  }
+  if (major === 9 && postFiles.embeds?.length) {
+    throw new InputError(
+      'Gotenberg 9 does not accept the legacy embeds field. Use an attach stage with a named pipeline stage file, or use a Gotenberg 8 connection.',
+    )
+  }
   if (operation.id === 'embed' && payload?.fields.embedsMetadata) {
     const names = validatedAttachmentMetadata(String(payload.fields.embedsMetadata))
     if (!auxiliary.length && !remote.embedded) {
@@ -631,23 +689,9 @@ export function validateFiles(
   }
   const generatedNames = generatedChromiumFilenames(operation.input, payload)
   const names = new Set(generatedNames.map(filenameKey))
-  const generatedTemplate =
-    operation.input === 'markdown'
-      ? (payload?.markdownTemplate ??
-        defaultMarkdownTemplate([
-          payload?.markdownName ?? DEFAULT_MARKDOWN_NAME,
-          ...(payload?.markdownFiles ?? []).map((file) => file.name),
-        ]))
-      : ''
-  // The JSON payload and local files are independently limited by the HTTP request cap;
-  // include the generated files when enforcing the upstream upload budget as well.
-  const generatedText = [
-    payload?.source ?? '',
-    ...(payload?.markdownFiles ?? []).map((file) => file.content),
-    generatedTemplate,
-    payload?.headerHtml ?? '',
-    payload?.footerHtml ?? '',
-  ]
+  // The JSON payload and local files are independently limited by the HTTP request cap.
+  // Include generated files when enforcing the upstream upload budget as well.
+  const generatedText = generatedChromiumText(operation.input, payload)
   let total = generatedText.reduce(
     (bytes, part) => bytes + new TextEncoder().encode(part).length,
     0,
@@ -691,10 +735,15 @@ export function validateFiles(
     // stage references must identify a single asset by its exact name.
     const isSourceDocument =
       index < files.length && (operation.input === 'pdf' || operation.input === 'office')
-    if (names.has(filenameKey(name)) && !isSourceDocument) {
-      throw new InputError(`Duplicate filename: ${name}`)
+    // The archive container itself is never registered in the workspace.
+    // Its extracted entries are checked separately by validateZipInputs.
+    const isArchive = index >= files.length + auxiliary.length + stageFiles.length
+    if (!isArchive) {
+      if (names.has(filenameKey(name)) && !isSourceDocument) {
+        throw new InputError(`Duplicate filename: ${name}`)
+      }
+      names.add(filenameKey(name))
     }
-    names.add(filenameKey(name))
     total += file.size
     if (
       file.size === 0 &&
@@ -737,16 +786,13 @@ export function validateFiles(
     // Remote downloads are registered before local stage assets on every v9
     // route. Keep ordinary duplicate PDF/Office sources allowed, since Gotenberg
     // numbers them, but protect resources referenced by their exact filenames.
-    const localNames = new Set([
-      ...generatedNames.map(filenameKey),
-      ...auxiliary.map(({ name }) => filenameKey(name)),
-      ...stageFiles.map(({ name }) => filenameKey(name)),
+    const collision = remoteLocalFilenameCollision(payload.downloadFrom, [
+      ...generatedNames,
+      ...auxiliary.map(({ name }) => name),
+      ...stageFiles.map(({ name }) => name),
     ])
-    for (const remote of payload?.downloadFrom ?? []) {
-      const name = possibleRemoteFilename(remote)
-      if (name && localNames.has(filenameKey(name))) {
-        throw new InputError(`Remote filename collides with a local document or asset: ${name}`)
-      }
+    if (collision) {
+      throw new InputError(`Remote filename collides with a local document or asset: ${collision}`)
     }
   }
   if (
@@ -816,7 +862,8 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
         typeof entry.name !== 'string' ||
         !/^[a-z0-9!#$%&'*+.^_`|~-]+$/i.test(entry.name) ||
         typeof entry.value !== 'string' ||
-        !entry.value.trim() ||
+        !trimChromiumWhitespace(entry.value) ||
+        /\p{Cs}/u.test(entry.value) ||
         [...entry.value].some(
           (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === ';',
         ) ||
@@ -828,11 +875,13 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
         (entry.path !== undefined &&
           (typeof entry.path !== 'string' ||
             !entry.path.startsWith('/') ||
-            /[\r\n]/.test(entry.path))) ||
+            !isHttpHeaderValue(entry.path) ||
+            entry.path.includes('\t'))) ||
         (entry.secure !== undefined && typeof entry.secure !== 'boolean') ||
         (entry.httpOnly !== undefined && typeof entry.httpOnly !== 'boolean') ||
         (entry.sameSite !== undefined &&
-          !['strict', 'lax', 'none'].includes(String(entry.sameSite).toLowerCase()))
+          (typeof entry.sameSite !== 'string' ||
+            !['strict', 'lax', 'none'].includes(entry.sameSite.toLowerCase())))
       ) {
         throw new InputError(
           'Chromium cookie requires a valid name, value, domain and optional attributes.',
@@ -858,7 +907,7 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
       throw new InputError('Invalid or unsafe Chromium resource header name.')
     }
     names.add(lower)
-    if (typeof headerValue !== 'string' || /[\r\n]/.test(headerValue)) {
+    if (typeof headerValue !== 'string' || !isHttpHeaderValue(headerValue)) {
       throw new InputError('Invalid Chromium resource header value.')
     }
     // Gotenberg splits header values at semicolons and accepts case-insensitive
@@ -867,12 +916,12 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     const tokens = headerValue.split(';')
     const scopes = tokens.flatMap((token, index) => {
       const separator = token.indexOf('=')
-      const key = (separator < 0 ? token : token.slice(0, separator)).trim().toLowerCase()
-      if (key !== 'scope') return []
+      const key = separator < 0 ? token : token.slice(0, separator)
+      if (!isChromiumScopeKey(key)) return []
       if (separator < 0) {
         throw new InputError('Chromium resource header URL scope needs a regex after scope=.')
       }
-      const scope = token.slice(separator + 1).trim()
+      const scope = trimChromiumWhitespace(token.slice(separator + 1))
       if (hasAmbiguousChromiumScope(scope)) {
         throw new InputError(
           'Chromium resource header URL scopes cannot contain semicolons or whitespace; use regex escapes.',
@@ -895,7 +944,10 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
     }
     // Anything after scope= becomes another header value token upstream, not
     // part of the URL regex. Never silently broaden a credential's scope.
-    if (authHeader && tokens.slice(scoped.index + 1).some((token) => token.trim() !== '')) {
+    if (
+      authHeader &&
+      tokens.slice(scoped.index + 1).some((token) => trimChromiumWhitespace(token) !== '')
+    ) {
       throw new InputError('Chromium authentication headers must place the URL scope last.')
     }
     // A scope-only header is valid upstream: it sends an empty header value
@@ -910,6 +962,69 @@ function validateChromiumNetworkField(name: 'cookies' | 'extraHttpHeaders', valu
 }
 
 function validateConversionOptions(operation: Operation, payload: ConversionPayload): void {
+  const chromium = operation.path.startsWith('/forms/chromium/')
+  const office = operation.id === 'office-pdf'
+  if (chromium) {
+    for (const name of ['cookies', 'extraHttpHeaders'] as const) {
+      const value = payload.fields[name]
+      if (value !== undefined && value !== '') validateChromiumNetworkField(name, value)
+    }
+    for (const name of [
+      'waitForSelector',
+      'waitForExpression',
+      'waitWindowStatus',
+      'userAgent',
+    ] as const) {
+      const value = payload.fields[name]
+      if (
+        typeof value === 'string' &&
+        value !== '' &&
+        (value.trim().length === 0 ||
+          (['userAgent', 'waitWindowStatus'].includes(name) && /[\r\n]/.test(value)))
+      ) {
+        throw new InputError(`Invalid Chromium ${name} value.`)
+      }
+    }
+  }
+  if (office) {
+    if (payload.fields.exportOnlyNotesPages === true && payload.fields.exportNotesPages !== true) {
+      throw new InputError('Export only notes pages requires Export slide notes pages.')
+    }
+    if (
+      payload.fields.allowDuplicateFieldNames === true &&
+      payload.fields.exportFormFields === false
+    ) {
+      throw new InputError('Duplicate form field names require interactive form fields.')
+    }
+    if (payload.fields.firstPageOnLeft === true && payload.fields.pageLayout !== '3') {
+      throw new InputError('First page on left requires the two-column PDF page layout.')
+    }
+    if (
+      payload.fields.zoom !== undefined &&
+      payload.fields.zoom !== '' &&
+      payload.fields.magnification !== '4'
+    ) {
+      throw new InputError('Custom PDF zoom requires Custom zoom magnification.')
+    }
+    for (const name of ['nativeWatermarkText', 'nativeTiledWatermarkText']) {
+      const value = payload.fields[name]
+      if (typeof value === 'string' && /[\r\n]/.test(value)) {
+        throw new InputError(`Invalid ${name}: use a single line of text.`)
+      }
+    }
+    const watermarkFont = payload.fields.nativeWatermarkFontName
+    if (typeof watermarkFont === 'string' && /[\r\n]/.test(watermarkFont)) {
+      throw new InputError('Invalid nativeWatermarkFontName: use a single line of text.')
+    }
+  }
+}
+
+/** Validate the escape-hatch fields independently of unfinished document inputs. */
+export function validateAdvancedParameters(
+  operation: Operation,
+  fields: ConversionPayload['fields'],
+  advanced: ConversionPayload['advanced'],
+): void {
   const chromium = operation.path.startsWith('/forms/chromium/')
   const office = operation.id === 'office-pdf'
   const chromiumPdf = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
@@ -975,7 +1090,10 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
     'reduceImageResolution',
     'maxImageResolution',
   ]
-  for (const name of Object.keys(payload.advanced)) {
+  for (const name of Object.keys(advanced)) {
+    // The v9 Office alias for singlePageSheets shares its name with the
+    // Chromium PDF field. The authenticated version gate checks the alias.
+    if (office && name === 'singlePage') continue
     if (
       (!chromium && chromiumOnly.includes(name)) ||
       (!chromiumPdf && chromiumPdfOnly.includes(name)) ||
@@ -987,7 +1105,7 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
   }
   const pdfOptimizeRoute =
     chromiumPdf || office || operation.id === 'merge' || operation.id === 'split'
-  for (const name of Object.keys(payload.advanced)) {
+  for (const name of Object.keys(advanced)) {
     if (
       (name === 'optimizeImages' || name === 'imageQuality') &&
       !pdfOptimizeRoute &&
@@ -1007,57 +1125,33 @@ function validateConversionOptions(operation: Operation, payload: ConversionPayl
       throw new InputError(`Advanced field ${name} is not supported for ${operation.title}.`)
     }
   }
-  if (chromium) {
-    for (const name of ['cookies', 'extraHttpHeaders'] as const) {
-      const value = payload.fields[name]
-      if (value !== undefined && value !== '') validateChromiumNetworkField(name, value)
+  if (advanced.emulatedMediaFeatures !== undefined) {
+    if (!operation.path.startsWith('/forms/chromium/')) {
+      throw new InputError('emulatedMediaFeatures is supported only by Chromium.')
     }
-    for (const name of [
-      'waitForSelector',
-      'waitForExpression',
-      'waitWindowStatus',
-      'userAgent',
-    ] as const) {
-      const value = payload.fields[name]
-      if (
-        typeof value === 'string' &&
-        (value.trim().length === 0 ||
-          (['userAgent', 'waitWindowStatus'].includes(name) && /[\r\n]/.test(value)))
-      ) {
-        throw new InputError(`Invalid Chromium ${name} value.`)
-      }
+    if (encodeChromiumMediaFeatures(fields)) {
+      throw new InputError('Choose media settings in the UI or Advanced JSON, not both.')
+    }
+    if (typeof advanced.emulatedMediaFeatures !== 'string') {
+      throw new InputError('emulatedMediaFeatures must contain JSON text.')
+    }
+    try {
+      normalizeAdvancedMediaFeatures(advanced.emulatedMediaFeatures)
+    } catch (error) {
+      throw new InputError(error instanceof Error ? error.message : 'Invalid media features.')
     }
   }
-  if (office) {
-    if (payload.fields.exportOnlyNotesPages === true && payload.fields.exportNotesPages !== true) {
-      throw new InputError('Export only notes pages requires Export slide notes pages.')
-    }
+  for (const [name, value] of Object.entries(advanced)) {
     if (
-      payload.fields.allowDuplicateFieldNames === true &&
-      payload.fields.exportFormFields === false
+      !fieldNamePattern.test(name) ||
+      forbiddenAdvanced.has(name) ||
+      operation.fields.some((field) => field.name === name)
     ) {
-      throw new InputError('Duplicate form field names require interactive form fields.')
+      throw new InputError(`Unsupported advanced field: ${name}`)
     }
-    if (payload.fields.firstPageOnLeft === true && payload.fields.pageLayout !== '3') {
-      throw new InputError('First page on left requires the two-column PDF page layout.')
-    }
-    if (
-      payload.fields.zoom !== undefined &&
-      payload.fields.zoom !== '' &&
-      payload.fields.magnification !== '4'
-    ) {
-      throw new InputError('Custom PDF zoom requires Custom zoom magnification.')
-    }
-    for (const name of ['nativeWatermarkText', 'nativeTiledWatermarkText']) {
-      const value = payload.fields[name]
-      if (typeof value === 'string' && /[\r\n]/.test(value)) {
-        throw new InputError(`Invalid ${name}: use a single line of text.`)
-      }
-    }
-    const watermarkFont = payload.fields.nativeWatermarkFontName
-    if (typeof watermarkFont === 'string' && /[\r\n]/.test(watermarkFont)) {
-      throw new InputError('Invalid nativeWatermarkFontName: use a single line of text.')
-    }
+    validateAdvancedNumber(value)
+    if (hasMalformedUnicode(value))
+      throw new InputError('Advanced values contain malformed Unicode.')
   }
 }
 
@@ -1069,6 +1163,12 @@ export function validatePayload(input: unknown): {
   if (!parsed.success)
     throw new InputError(parsed.issues[0]?.message ?? 'Invalid conversion request.')
   const payload = parsed.output
+  if (payload.expectedBackendVersion !== undefined) {
+    const expected = parseGotenbergVersion(payload.expectedBackendVersion)
+    if (!expected || (expected.major !== 8 && expected.major !== 9)) {
+      throw new InputError('Expected backend version must be a supported Gotenberg 8 or 9 version.')
+    }
+  }
   const operation = OPERATION_BY_ID.get(payload.operation)
   if (!operation) throw new InputError('Unknown Gotenberg operation.')
   if (
@@ -1096,22 +1196,12 @@ export function validatePayload(input: unknown): {
       if (field.kind === 'url' && value && !isHttpUrl(value)) {
         throw new InputError('Enter an absolute http or https URL.')
       }
-      if (field.kind === 'number' && value) {
-        // Gotenberg binds these form fields with strconv.Atoi or strconv.ParseFloat.
-        // Number() additionally accepts hex, whitespace and exponent notation for ints.
-        const integer = field.integer === true
-        const validSpelling = (integer ? decimalIntegerPattern : decimalNumberPattern).test(value)
-        const n = Number(value)
-        const goInt = integer && validSpelling ? BigInt(value) : undefined
-        if (
-          !validSpelling ||
-          !Number.isFinite(n) ||
-          (field.min !== undefined && n < field.min) ||
-          (field.max !== undefined && n > field.max) ||
-          (goInt !== undefined && (goInt < minGoInt || goInt > maxGoInt))
-        ) {
-          throw new InputError(`${field.label} is outside its permitted range.`)
-        }
+      if (
+        field.kind === 'number' &&
+        value &&
+        !isNumberFieldValue(field, value, operation.input !== 'pdf')
+      ) {
+        throw new InputError(`${field.label} is outside its permitted range.`)
       }
       if (field.kind === 'color' && value && !/^#[0-9a-f]{6}$/i.test(value)) {
         throw new InputError(`${field.label} must be a six-digit hex colour.`)
@@ -1150,13 +1240,16 @@ export function validatePayload(input: unknown): {
       }
     }
   }
+  // Missing controlling fields retain their defaults. Do not inject those
+  // defaults into the outgoing multipart request or override explicit values.
+  const effectiveFields = { ...operationDefaults(operation), ...payload.fields }
   for (const field of operation.fields) {
     const value = payload.fields[field.name]
     if (
       value !== undefined &&
       value !== '' &&
       value !== false &&
-      !isFieldVisible(field, payload.fields) &&
+      !isFieldVisible(field, effectiveFields) &&
       !(operation.id === 'split' && field.name === 'splitUnify')
     ) {
       throw new InputError(`${field.label} requires its related option to be enabled.`)
@@ -1177,12 +1270,12 @@ export function validatePayload(input: unknown): {
   if (operation.id === 'office-pdf' && !splitMode && splitSpan) {
     throw new InputError('Choose a split mode before entering a page range or interval.')
   }
-  if (
-    operation.id === 'office-pdf' &&
-    splitMode === 'intervals' &&
-    !/^[1-9]\d*$/.test(String(splitSpan))
-  ) {
-    throw new InputError('Split interval must be a positive whole number.')
+  if (['office-pdf', 'split'].includes(operation.id) && splitMode === 'intervals') {
+    const interval = String(splitSpan ?? '')
+    const parsedInterval = parseGoFormInteger(interval)
+    if (parsedInterval === undefined || parsedInterval < 1n) {
+      throw new InputError('Split interval must be a positive whole number.')
+    }
   }
   const metadata = payload.fields.metadata ?? payload.advanced.metadata
   if (metadata) {
@@ -1194,7 +1287,9 @@ export function validatePayload(input: unknown): {
   }
   if (definitions.has('bookmarks') && payload.fields.bookmarks) {
     try {
-      validateBookmarkDocument(String(payload.fields.bookmarks ?? ''))
+      validateBookmarkDocument(String(payload.fields.bookmarks ?? ''), {
+        allowNativePageNumber: true,
+      })
     } catch (error) {
       throw new InputError(error instanceof Error ? error.message : 'Invalid PDF bookmarks.')
     }
@@ -1208,35 +1303,13 @@ export function validatePayload(input: unknown): {
   for (const field of operation.fields) {
     if (
       !orderedStandalone &&
-      field.required &&
+      isFieldRequired(field, effectiveFields) &&
       (payload.fields[field.name] === '' || payload.fields[field.name] === undefined)
     ) {
       throw new InputError(`${field.label} is required.`)
     }
   }
-  if (payload.advanced.emulatedMediaFeatures !== undefined) {
-    if (!operation.path.startsWith('/forms/chromium/')) {
-      throw new InputError('emulatedMediaFeatures is supported only by Chromium.')
-    }
-    if (encodeChromiumMediaFeatures(payload.fields)) {
-      throw new InputError('Choose media settings in the UI or Advanced JSON, not both.')
-    }
-    if (typeof payload.advanced.emulatedMediaFeatures !== 'string') {
-      throw new InputError('emulatedMediaFeatures must contain JSON text.')
-    }
-    try {
-      validateAdvancedMediaFeatures(payload.advanced.emulatedMediaFeatures)
-    } catch (error) {
-      throw new InputError(error instanceof Error ? error.message : 'Invalid media features.')
-    }
-  }
-  for (const [name, value] of Object.entries(payload.advanced)) {
-    if (!fieldNamePattern.test(name) || forbiddenAdvanced.has(name) || definitions.has(name)) {
-      throw new InputError(`Unsupported advanced field: ${name}`)
-    }
-    if (typeof value === 'number' && !Number.isFinite(value))
-      throw new InputError('Advanced values must be finite.')
-  }
+  validateAdvancedParameters(operation, payload.fields, payload.advanced)
   // Chromium accepts an empty index.html and renders a blank document.
   // Require an explicit source value, but do not treat blank HTML as missing.
   if (operation.input === 'html' && payload.source === undefined) {
@@ -1284,6 +1357,20 @@ export function validatePayload(input: unknown): {
   }
   validateRequestMetadata(payload)
   validateAsyncInputs(payload)
+  if (hasMalformedUnicode(payload)) throw new InputError('Request text contains malformed Unicode.')
+  // Known JSON form fields are sent to Go as JSON text rather than decoded
+  // browser values. Check escaped surrogates after the field-specific checks.
+  for (const field of operation.fields) {
+    const value = payload.fields[field.name]
+    if (
+      field.kind === 'json' &&
+      typeof value === 'string' &&
+      value &&
+      hasMalformedUnicode(JSON.parse(value))
+    ) {
+      throw new InputError(`${field.label} contains malformed Unicode.`)
+    }
+  }
   return { payload, operation }
 }
 
@@ -1305,6 +1392,9 @@ function validateRequestMetadata(payload: ConversionPayload): void {
   }
   if (payload.tracestate !== undefined) {
     if (!payload.traceparent) throw new InputError('tracestate requires traceparent.')
+    if (/[^\x20-\x7e\t]/.test(payload.tracestate)) {
+      throw new InputError('Invalid W3C tracestate entry.')
+    }
     const members = payload.tracestate.split(',')
     if (members.length > 32 || members.length === 0) {
       throw new InputError('tracestate supports at most 32 entries.')
@@ -1333,17 +1423,13 @@ function validateRequestMetadata(payload: ConversionPayload): void {
   }
 }
 
-export function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value)
-    return (
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      !!url.hostname &&
-      !url.username &&
-      !url.password
+function validateAdvancedNumber(value: string | boolean | number): void {
+  if (typeof value !== 'number') return
+  if (!Number.isFinite(value)) throw new InputError('Advanced values must be finite.')
+  if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+    throw new InputError(
+      'Advanced integers outside the safe JSON range must be supplied as strings.',
     )
-  } catch {
-    return false
   }
 }
 
@@ -1358,7 +1444,10 @@ export function parseAdvanced(text: string): Record<string, string | boolean | n
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new InputError('Advanced parameters must be a JSON object.')
   }
-  const parsed = v.safeParse(v.record(v.string(), advancedValue), value)
+  const parsed = v.safeParse(jsonRecord(advancedValue), value)
   if (!parsed.success) throw new InputError('Advanced values must be strings, booleans or numbers.')
+  for (const value of Object.values(parsed.output)) validateAdvancedNumber(value)
+  if (hasMalformedUnicode(parsed.output))
+    throw new InputError('Advanced parameters contain malformed Unicode.')
   return parsed.output
 }

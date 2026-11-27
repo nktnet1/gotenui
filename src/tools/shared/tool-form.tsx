@@ -10,7 +10,7 @@ import {
   Settings2,
   ShieldCheck,
 } from 'lucide-react'
-import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { RemoteInputsEditor, WebhookEditor } from '#/components/async-inputs-editor'
 import { AttachmentMetadataEditor } from '#/components/attachment-metadata-editor'
@@ -45,17 +45,26 @@ import {
   webhookPayload,
 } from '#/lib/async-inputs'
 import type { BrowserBatchQueue } from '#/lib/browser-batch-queue'
-import { DEFAULT_MARKDOWN_NAME } from '#/lib/chromium-documents'
+import {
+  DEFAULT_MARKDOWN_NAME,
+  generatedChromiumFilenames,
+  generatedChromiumText,
+} from '#/lib/chromium-documents'
 import { chromiumNetworkFields } from '#/lib/chromium-network'
 import type { ConnectionChoice } from '#/lib/connection-profiles'
 import {
+  conversionBinaryPreviewAllowed,
+  conversionTextPreview,
   convertWithGotenberg,
   REQUEST_TIMEOUT_MS,
   remediationReviewNotice,
+  WEBHOOK_NOT_ACCEPTED_NOTICE,
 } from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
+import { LatestFileImport } from '#/lib/latest-file-import'
 import { officeAcceptForVersion } from '#/lib/office-formats'
-import { canWebhookForOperation, versionAtLeast } from '#/lib/operation-availability'
+import { canWebhookForOperation } from '#/lib/operation-availability'
+import { requestedPdfValidationProfiles } from '#/lib/pdf-conformance-profiles'
 import { DEFAULT_PDF_PIPELINE } from '#/lib/pdf-pipeline'
 import { pdfPipelineEditorError } from '#/lib/pdf-pipeline-editor-validation'
 import {
@@ -65,23 +74,31 @@ import {
   type PdfPostProcess,
   type PostProcessFiles,
 } from '#/lib/pdf-post-processing'
-import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
+import {
+  canImportPdfStructure,
+  importReadableBookmarks,
+  importReadableMetadata,
+  readPdfStructureResponse,
+} from '#/lib/pdf-read-import'
 import { summarisePdfValidationBlob } from '#/lib/pdf-validation-report'
 import { cn } from '#/lib/utils'
 import {
   InputError,
   parseAdvanced,
   supportsArchiveInputs,
+  validateAsyncInputValues,
   type WebhookConfig,
 } from '#/lib/validation'
 import {
   activeOperationFields,
   type FieldDefinition,
   fieldSupportsBackend,
+  isFieldRequired,
   isFieldVisible,
   type Operation,
   operationDefaults,
 } from '#/tools/registry'
+import { draftCompatibility, draftOutboundIssues } from '#/tools/shared/draft-compatibility'
 import { JobPanel } from '#/tools/shared/job-panel'
 import { FieldControl } from '#/tools/shared/tool-fields'
 import type { AcceptedWebhook, Download, Job } from '#/tools/shared/tool-jobs'
@@ -116,8 +133,9 @@ Turn plain text into beautiful, portable documents.
 export function Workbench({
   operation,
   unavailableReason,
-  supportsOptimization,
-  backendVersion,
+  backendVersion: verifiedVersion,
+  connectionKey,
+  connectionName,
   recent,
   onCompleted,
   connection,
@@ -125,17 +143,33 @@ export function Workbench({
 }: {
   operation: Operation
   unavailableReason: string | null
-  supportsOptimization: boolean
   backendVersion?: string
+  connectionKey: string
+  connectionName: string
   recent: Job[]
   onCompleted: (job: Job) => void
   connection: ConnectionChoice
   batchQueue: BrowserBatchQueue
 }) {
+  // Keep the last confirmed layout while the current connection is being verified.
+  const [lastVerifiedVersion, setLastVerifiedVersion] = useState(verifiedVersion)
+  useLayoutEffect(() => {
+    if (verifiedVersion) setLastVerifiedVersion(verifiedVersion)
+  }, [verifiedVersion])
+  const backendVersion = verifiedVersion ?? lastVerifiedVersion
+  const [approvedConnectionKey, setApprovedConnectionKey] = useState(connectionKey)
+  const transferPending = approvedConnectionKey !== connectionKey
+  const actionUnavailable =
+    unavailableReason ??
+    (!verifiedVersion ? 'Verify the selected Gotenberg version before running tools.' : null)
+  const submissionBlocked =
+    actionUnavailable ??
+    (transferPending ? 'Confirm that this draft may be sent to the selected connection.' : null)
   const [fields, setFields] = useState<Record<string, string | boolean>>(() =>
     operationDefaults(operation),
   )
   const [source, setSource] = useState(EXAMPLE_HTML)
+  const htmlImport = useRef(new LatestFileImport())
   const [markdownName, setMarkdownName] = useState(DEFAULT_MARKDOWN_NAME)
   const [markdownFiles, setMarkdownFiles] = useState<MarkdownSource[]>([])
   const nextMarkdownId = useRef(0)
@@ -186,8 +220,23 @@ export function Workbench({
     },
     [],
   )
+  // Keep the draft across connections, but never publish a previous connection's
+  // in-flight result in the new workspace. Queued jobs retain their own targets.
+  const previousConnectionKey = useRef(connectionKey)
+  useLayoutEffect(() => {
+    if (previousConnectionKey.current === connectionKey) return
+    previousConnectionKey.current = connectionKey
+    requestAbort.current?.abort()
+    requestAbort.current = null
+    readAbort.current?.abort()
+    readAbort.current = null
+    setPending(false)
+    setReadingStructure(false)
+    clearResult()
+  }, [connectionKey, clearResult])
   useEffect(() => {
     setFields(operationDefaults(operation))
+    htmlImport.current.cancel()
     setSource(operation.input === 'markdown' ? EXAMPLE_MARKDOWN : EXAMPLE_HTML)
     setMarkdownName(DEFAULT_MARKDOWN_NAME)
     setMarkdownFiles([])
@@ -233,10 +282,12 @@ export function Workbench({
     (field) => field.name === 'bookmarks' && fieldSupportsBackend(field, backendVersion),
   )
   const hasPdfStructureEditor = hasMetadataEditor || hasBookmarksEditor || operation.id === 'embed'
-  const isV9 = parseGotenbergVersion(backendVersion)?.major === 9
-  const canWebhook = canWebhookForOperation(isV9 ? 9 : 8, operation)
+  const layoutMajor = parseGotenbergVersion(backendVersion)?.major
+  const isV9 = layoutMajor === 9
+  const isV8 = layoutMajor === 8
+  const canWebhook = (isV8 || isV9) && canWebhookForOperation(layoutMajor, operation)
   const canUploadArchives = isV9 && supportsArchiveInputs(operation)
-  const v8StandaloneOverlay = Boolean(standaloneKind) && !isV9
+  const v8StandaloneOverlay = Boolean(standaloneKind) && isV8
   const basicFields = v8StandaloneOverlay
     ? []
     : operation.fields.filter(
@@ -295,9 +346,83 @@ export function Workbench({
   const sourceExtension = operation.input === 'html' ? 'HTML' : 'Markdown'
   const operationHasFileAssets = isSourceEditor
   const hasPdfHeaderFooter = ['url-pdf', 'html-pdf', 'markdown-pdf'].includes(operation.id)
-  const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && !isV9
+  const hasPostProcessing = PDF_POST_PROCESS_IDS.has(operation.id) && isV8
   const supportsConversionPipeline = isV9 && operation.output === 'pdf' && operation.input !== 'pdf'
   const hasChromiumNetwork = operation.path.startsWith('/forms/chromium/')
+  const compatibility = draftCompatibility(operation, fields, verifiedVersion, {
+    legacyStandaloneOverlay: v8StandaloneOverlay,
+    acceptsPostProcess: v8StandaloneOverlay || hasPostProcessing,
+    postProcess,
+    postFiles,
+    acceptsArchives: canUploadArchives,
+    archives,
+    acceptsWebhook: canWebhook,
+    webhookConfigured: webhookSettings.enabled || Boolean(webhookInput.trim()),
+    acceptsConversionStages: supportsConversionPipeline,
+    conversionStages,
+    conversionStageFiles,
+    auxiliary: auxFiles,
+  })
+  const chromiumResourceNames = hasChromiumNetwork
+    ? [
+        ...generatedChromiumFilenames(operation.input, {
+          markdownName,
+          markdownFiles,
+          headerHtml: hasPdfHeaderFooter ? headerHtml || undefined : undefined,
+          footerHtml: hasPdfHeaderFooter ? footerHtml || undefined : undefined,
+        }),
+        ...auxFiles.map(({ name }) => name),
+      ]
+    : []
+  const outboundIssues = draftOutboundIssues(operation, fields, verifiedVersion, {
+    remoteRows,
+    remoteInput,
+    webhookSettings,
+    webhookInput,
+    advanced,
+  })
+  // Screenshots have no PDF stages, but share Chromium resource registration.
+  if (isV9 && hasChromiumNetwork && !supportsConversionPipeline) {
+    const assetError = pdfPipelineEditorError('', {
+      remoteRows,
+      remoteJson: remoteInput,
+      localAssetNames: [],
+      archivesPresent: archives.length > 0,
+      acknowledgedRedaction: false,
+      backendVersion,
+      documentKind: 'single',
+      chromiumResourceNames,
+    })
+    if (assetError) outboundIssues.push(assetError)
+  }
+  const discardIncompatibleSettings = () => {
+    if (actionUnavailable || pending) return
+    setFields((current) => {
+      const next = { ...current }
+      const defaults = operationDefaults(operation)
+      for (const { name } of compatibility.fieldConflicts) {
+        const defaultValue = defaults[name]
+        if (defaultValue === undefined) delete next[name]
+        else next[name] = defaultValue
+      }
+      return next
+    })
+    if (compatibility.discardPostProcess) {
+      setPostProcess({})
+      setPostFiles({})
+    }
+    if (compatibility.discardArchives) setArchives([])
+    if (compatibility.discardWebhook) {
+      setWebhookSettings(emptyWebhook)
+      setWebhookInput('')
+    }
+    if (compatibility.discardStages) {
+      setConversionStages('')
+      setConversionStageFiles([])
+      setAcknowledgedConversionRedaction(false)
+    }
+    if (compatibility.discardAuxiliary) setAuxFiles([])
+  }
   const remotePipelineInputs = { remoteRows, remoteJson: remoteInput }
   const pipelineError =
     operation.id === 'pdf-pipeline'
@@ -311,7 +436,7 @@ export function Workbench({
           documentKind: 'pdf',
         })
       : null
-  const conversionPipelineError = conversionStages
+  const conversionPipelineError = supportsConversionPipeline
     ? pdfPipelineEditorError(conversionStages, {
         ...remotePipelineInputs,
         localAssetNames: conversionStageFiles.map(({ name }) => name),
@@ -320,17 +445,33 @@ export function Workbench({
         backendVersion,
         documentNames: files.map(({ name }) => name),
         documentKind: operation.id === 'office-pdf' ? 'office' : 'single',
+        chromiumResourceNames,
         builtInMerge: operation.id === 'office-pdf' && fields.merge === true,
-        outputName: outputName.trim() || undefined,
+        splitMode: typeof fields.splitMode === 'string' ? fields.splitMode : undefined,
+        splitSpan: typeof fields.splitSpan === 'string' ? fields.splitSpan : undefined,
+        splitUnify: fields.splitUnify === true,
+        outputName: outputName || undefined,
+        conversionFields: activeOperationFields(operation, fields, backendVersion),
+        advancedJson: advanced,
       })
     : null
+  if (conversionPipelineError && !conversionStages && !conversionStageFiles.length) {
+    outboundIssues.push(conversionPipelineError)
+  }
   const docsUrl =
     isV9 && operation.input === 'pdf'
       ? `https://gotenberg.dev/docs/pdf/${operation.id === 'extract-attachments' ? 'attachments' : operation.id === 'extract-text' ? 'pages' : operation.id === 'metadata-read' ? 'metadata' : operation.id === 'bookmarks-read' ? 'bookmarks' : 'pipe'}`
       : `https://gotenberg.dev/docs/${operation.docs}`
 
-  const updateField = (name: string, value: string | boolean) =>
+  const cancelStructureRead = () => {
+    readAbort.current?.abort()
+    readAbort.current = null
+    setReadingStructure(false)
+  }
+  const updateField = (name: string, value: string | boolean) => {
+    if (name === 'metadata' || name === 'bookmarks') cancelStructureRead()
     setFields((current) => ({ ...current, [name]: value }))
+  }
   const updateAux = (selected: File[]) => {
     setAuxFiles(selected)
     if ((operation.id === 'watermark' || operation.id === 'stamp') && selected[0]) {
@@ -342,17 +483,19 @@ export function Workbench({
   }
   const readExistingPdfStructure = async () => {
     const metadata = operation.id === 'metadata-write'
-    if (!metadata && operation.id !== 'bookmarks-write') return
     if (
-      !files.length ||
-      (metadata && files.length !== 1) ||
+      !canImportPdfStructure(
+        operation.id,
+        isV9,
+        files.map((file) => file.name),
+      ) ||
       pending ||
       readingStructure ||
       readAbort.current
     )
       return
-    if (unavailableReason) {
-      toast.error(unavailableReason)
+    if (submissionBlocked) {
+      toast.error(submissionBlocked)
       return
     }
     const controller = new AbortController()
@@ -362,24 +505,29 @@ export function Workbench({
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
       const result = await convertWithGotenberg(
         connection,
-        { operation: metadata ? 'metadata-read' : 'bookmarks-read', fields: {}, advanced: {} },
+        {
+          operation: metadata ? 'metadata-read' : 'bookmarks-read',
+          expectedBackendVersion: verifiedVersion,
+          fields: {},
+          advanced: {},
+        },
         files,
         [],
         signal,
       )
-      if (signal.aborted) return
+      signal.throwIfAborted()
       if (result.mode !== 'download')
         throw new Error('Reading requires an immediate JSON response.')
-      if (result.blob.size > 2_000_000)
-        throw new Error('The PDF structure response is too large to edit.')
-      const content: unknown = JSON.parse(await result.blob.text())
+      const content = await readPdfStructureResponse(result.blob)
+      signal.throwIfAborted()
       const editable = metadata
         ? importReadableMetadata(content, files[0]?.name ?? '', { standardOnly: isV9 })
         : importReadableBookmarks(
             content,
             files.map((file) => file.name),
+            { native: isV9 },
           )
-      updateField(metadata ? 'metadata' : 'bookmarks', editable)
+      setFields((current) => ({ ...current, [metadata ? 'metadata' : 'bookmarks']: editable }))
       toast.success(`Existing ${metadata ? 'metadata' : 'bookmarks'} loaded for editing.`)
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -394,43 +542,23 @@ export function Workbench({
   }
 
   const buildCandidate = () => {
-    const downloadFrom = remoteInputsPayload(remoteRows, remoteInput)
-    // JSON inspection routes answer synchronously in v9. Preserve the v8
-    // webhook draft for a connection switch, but never send it on this route.
+    if (submissionBlocked) throw new InputError(submissionBlocked)
+    if (readAbort.current) throw new InputError('Wait for the PDF structure read to finish.')
+    const issues = [...compatibility.reasons, ...outboundIssues]
+    if (issues.length) throw new InputError(issues.join(' '))
+    const { downloadFrom } = validateAsyncInputValues(
+      remoteInputsPayload(remoteRows, remoteInput),
+      undefined,
+    )
     const webhook = !canWebhook
       ? undefined
       : (webhookPayload(webhookSettings, webhookInput) as WebhookConfig | undefined)
-    if (isV9 && webhook && !webhook.eventsUrl) {
-      throw new InputError('Gotenberg 9 webhooks require an events callback URL.')
-    }
-    if (isV9 && webhook && (webhook.errorUrl || webhook.errorMethod)) {
-      throw new InputError('Gotenberg 9 removed separate webhook error callbacks.')
-    }
     if (pipelineError) throw new InputError(pipelineError)
     if (conversionPipelineError) throw new InputError(conversionPipelineError)
-    if (conversionStages && !supportsConversionPipeline) {
-      throw new InputError('The configured conversion PDF stages require Gotenberg 9.')
-    }
     const selectedFields = activeOperationFields(operation, fields, backendVersion)
-    if (selectedFields.pdfa === 'PDF/A-4' && versionAtLeast(backendVersion, 39) === false) {
-      throw new Error('PDF/A-4 requires Gotenberg 8.39 or newer.')
-    }
-    if (selectedFields.failOnConsoleMessageTypes && versionAtLeast(backendVersion, 39) === false) {
-      throw new Error('Console message checks require Gotenberg 8.39 or newer.')
-    }
-    if (
-      operation.id === 'office-pdf' &&
-      selectedFields.generateTaggedPdf === true &&
-      versionAtLeast(backendVersion, 38) === false
-    ) {
-      throw new Error('LibreOffice PDF tagging requires Gotenberg 8.38 or newer.')
-    }
-    if (!supportsOptimization) {
-      delete selectedFields.optimizeImages
-      delete selectedFields.imageQuality
-    }
     const candidate = {
       operation: operation.id,
+      expectedBackendVersion: verifiedVersion,
       fields: v8StandaloneOverlay
         ? {}
         : hasChromiumNetwork
@@ -459,7 +587,7 @@ export function Workbench({
       advanced: parseAdvanced(advanced),
       downloadFrom,
       webhook,
-      outputName: outputName.trim() || undefined,
+      outputName: outputName || undefined,
       requestTrace: requestTrace.trim() || undefined,
       traceparent: traceparent.trim() || undefined,
       tracestate: tracestate.trim() || undefined,
@@ -468,8 +596,8 @@ export function Workbench({
   }
 
   const queueCurrent = () => {
-    if (unavailableReason) {
-      toast.error(unavailableReason)
+    if (submissionBlocked) {
+      toast.error(submissionBlocked)
       return
     }
     try {
@@ -490,19 +618,18 @@ export function Workbench({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (pending) return
-    if (unavailableReason) {
-      toast.error(unavailableReason)
+    if (pending || requestAbort.current || readAbort.current) return
+    if (submissionBlocked) {
+      toast.error(submissionBlocked)
       return
     }
+    const controller = new AbortController()
+    requestAbort.current = controller
     setPending(true)
-    setAcceptedWebhook(null)
     try {
       const candidate = buildCandidate()
       const webhook = candidate.webhook
       const start = performance.now()
-      const controller = new AbortController()
-      requestAbort.current = controller
       const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
       const signal = AbortSignal.any([controller.signal, deadline])
       const result = await convertWithGotenberg(
@@ -524,6 +651,7 @@ export function Workbench({
           status: result.status,
           trace: result.trace,
           receiverHost: safeOutboundHost(webhook?.url ?? ''),
+          ...(webhook?.errorUrl ? { errorReceiverHost: safeOutboundHost(webhook.errorUrl) } : {}),
           ...(webhook?.eventsUrl
             ? { eventsReceiverHost: safeOutboundHost(webhook.eventsUrl) }
             : {}),
@@ -535,22 +663,36 @@ export function Workbench({
         return
       }
       const { blob, type, name, trace, remediation } = result
+      const preview = await conversionTextPreview(blob, type)
+      const binaryPreviewAllowed = await conversionBinaryPreviewAllowed(result)
+      const validation =
+        operation.id === 'pdf-validate'
+          ? ((await summarisePdfValidationBlob(
+              blob,
+              requestedPdfValidationProfiles(candidate.fields),
+              {
+                files,
+                archives: canUploadArchives ? archives : [],
+                downloadFrom: candidate.downloadFrom,
+                expectedBackendVersion: candidate.expectedBackendVersion,
+              },
+            )) ?? undefined)
+          : undefined
+      // The network response is complete. Preparing a local preview must not
+      // discard an otherwise successful download when its request timer expires.
+      if (controller.signal.aborted) return
       const url = URL.createObjectURL(blob)
       if (fileUrl.current) URL.revokeObjectURL(fileUrl.current)
       fileUrl.current = url
-      const preview = ['application/json', 'text/plain'].includes(type)
-        ? await blob.slice(0, 16_000).text()
-        : undefined
-      const validation =
-        operation.id === 'pdf-validate'
-          ? ((await summarisePdfValidationBlob(blob)) ?? undefined)
-          : undefined
+      setAcceptedWebhook(null)
       setLastDownload({
         name,
         size: blob.size,
         type,
         url,
-        blob: type === 'application/zip' ? blob : undefined,
+        blob: type === 'application/zip' && binaryPreviewAllowed ? blob : undefined,
+        binaryPreviewAllowed,
+        webhookNotAccepted: Boolean(webhook),
         preview,
         trace,
         remediation,
@@ -570,7 +712,9 @@ export function Workbench({
         elapsed: performance.now() - start,
         trace,
       })
-      if (validation?.some((result) => !result.compliant)) {
+      if (webhook) {
+        toast.warning(WEBHOOK_NOT_ACCEPTED_NOTICE)
+      } else if (validation?.some((result) => !result.compliant)) {
         toast.warning(
           'PDF validation found non-compliant documents. Review the reported violations before relying on them.',
         )
@@ -586,6 +730,7 @@ export function Workbench({
         toast.warning(`Gotenberg generated ${name}, but ${remediationReviewNotice(remediation)}`)
       } else toast.success(`${name} is ready to download`)
     } catch (error) {
+      if (requestAbort.current !== controller) return
       if (error instanceof Error && error.name === 'AbortError') {
         toast.message('Conversion cancelled.')
         return
@@ -600,8 +745,10 @@ export function Workbench({
           : 'Something went wrong.'
       toast.error(message)
     } finally {
-      requestAbort.current = null
-      setPending(false)
+      if (requestAbort.current === controller) {
+        requestAbort.current = null
+        setPending(false)
+      }
     }
   }
   return (
@@ -634,13 +781,83 @@ export function Workbench({
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
-            {unavailableReason && (
+            {actionUnavailable && (
               <p
                 role="alert"
                 className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
               >
-                {unavailableReason} Choose another tool or connection.
+                {actionUnavailable} Choose another tool or connection.
               </p>
+            )}
+            {transferPending && (
+              <div
+                role="alert"
+                className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+              >
+                <p className="font-medium">Review retained draft before using {connectionName}.</p>
+                <p>
+                  {connection.kind === 'browser' && (
+                    <>Destination: {safeOutboundHost(connection.url)}. </>
+                  )}
+                  The draft may contain documents, source content, passwords, cookies,
+                  authentication headers, remote downloads or webhook settings. Review them before
+                  sending the draft to this connection. Existing queued jobs keep their original
+                  connection.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!verifiedVersion}
+                  onClick={() => setApprovedConnectionKey(connectionKey)}
+                >
+                  Confirm draft for this connection
+                </Button>
+              </div>
+            )}
+            {outboundIssues.length > 0 && (
+              <div
+                role="alert"
+                className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+              >
+                <p className="font-medium">
+                  Review remote files, webhook settings or Advanced JSON.
+                </p>
+                <ul className="list-disc space-y-1 pl-5">
+                  {[...new Set(outboundIssues)].map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+                <p>Correct the settings below or select a compatible connection.</p>
+              </div>
+            )}
+            {compatibility.reasons.length > 0 && (
+              <div
+                role="alert"
+                className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+              >
+                <p className="font-medium">
+                  The selected connection cannot run all configured settings.
+                </p>
+                <ul className="list-disc space-y-1 pl-5">
+                  {compatibility.reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+                <p>
+                  Switch back to a compatible connection or discard only the incompatible settings
+                  before running or queuing this operation.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pending || Boolean(actionUnavailable)}
+                  onClick={discardIncompatibleSettings}
+                >
+                  Discard incompatible settings
+                </Button>
+              </div>
             )}
             {hasUpload && (
               <UploadZone
@@ -658,7 +875,7 @@ export function Workbench({
                 }
                 files={files}
                 onChange={(nextFiles) => {
-                  readAbort.current?.abort()
+                  cancelStructureRead()
                   setFiles(nextFiles)
                 }}
                 accept={
@@ -697,6 +914,7 @@ export function Workbench({
                 files={archives}
                 onChange={setArchives}
                 multiple
+                allowDuplicateNames
               />
             )}
             {operation.input === 'url' && (
@@ -720,10 +938,15 @@ export function Workbench({
                   spellCheck={false}
                   rows={14}
                   value={source}
-                  onChange={(event) => setSource(event.target.value)}
+                  onChange={(event) => {
+                    htmlImport.current.cancel()
+                    setSource(event.target.value)
+                  }}
                   className="min-h-72 resize-y p-5 font-mono text-xs leading-6 focus-visible:border-sky-500"
                 />
-                {operation.input === 'html' && <HtmlSourceImport onImport={setSource} />}
+                {operation.input === 'html' && (
+                  <HtmlSourceImport onImport={setSource} importer={htmlImport.current} />
+                )}
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {operation.input === 'html'
                     ? 'HTML renders with Chromium, including inline CSS and scripts.'
@@ -791,6 +1014,7 @@ export function Workbench({
                     <FieldControl
                       key={field.name}
                       field={field}
+                      required={isFieldRequired(field, fields)}
                       value={fields[field.name]}
                       onChange={(value) => updateField(field.name, value)}
                       backendVersion={backendVersion}
@@ -822,9 +1046,12 @@ export function Workbench({
                   disabled={
                     pending ||
                     readingStructure ||
-                    Boolean(unavailableReason) ||
-                    !files.length ||
-                    (operation.id === 'metadata-write' && files.length !== 1)
+                    Boolean(submissionBlocked) ||
+                    !canImportPdfStructure(
+                      operation.id,
+                      isV9,
+                      files.map((file) => file.name),
+                    )
                   }
                   onClick={readExistingPdfStructure}
                 >
@@ -832,10 +1059,16 @@ export function Workbench({
                   {readingStructure ? 'Reading uploaded PDF…' : 'Read existing PDF values'}
                 </Button>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Reads the uploaded PDF{operation.id === 'bookmarks-write' ? '(s)' : ''} into the
-                  editor without downloading or copying JSON. Metadata import excludes read-only
-                  tags.
-                  {operation.id === 'metadata-write' && ' Select exactly one PDF.'}
+                  Reads the uploaded PDF{operation.id === 'bookmarks-write' && !isV9 ? '(s)' : ''}{' '}
+                  into the editor without downloading or copying JSON. Metadata import excludes
+                  read-only tags.
+                  {(operation.id === 'metadata-write' || isV9) && ' Select exactly one PDF.'}
+                  {operation.id === 'bookmarks-write' &&
+                    isV9 &&
+                    ' Gotenberg 9 writes one shared bookmark tree to every selected document.'}
+                  {operation.id === 'bookmarks-write' &&
+                    !isV9 &&
+                    ' Select PDFs with distinct filenames.'}
                 </p>
               </div>
             )}
@@ -935,23 +1168,6 @@ export function Workbench({
                 )}
               </section>
             )}
-            {!isV9 && conversionStages && (
-              <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
-                The configured PDF pipeline requires Gotenberg 9. Return to a v9 connection or{' '}
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={() => {
-                    setConversionStages('')
-                    setConversionStageFiles([])
-                    setAcknowledgedConversionRedaction(false)
-                  }}
-                >
-                  discard the stages
-                </button>
-                .
-              </p>
-            )}
             {hasPostProcessing && (
               <PdfConversionPostProcessing
                 mode={
@@ -989,13 +1205,6 @@ export function Workbench({
                     <ChevronDown className="size-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180" />
                   </summary>
                   <div className="space-y-4 border-t border-slate-200 px-4 py-4 dark:border-slate-700">
-                    {key === 'compression' && !supportsOptimization && (
-                      <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
-                        {isV9
-                          ? 'Gotenberg 9 only supports lossless PDF optimisation. Native LibreOffice image compression remains available.'
-                          : 'PDF image optimization needs Gotenberg 8.36+. Native LibreOffice compression is still available.'}
-                      </p>
-                    )}
                     <div className="grid gap-4 sm:grid-cols-2">
                       {items
                         .filter((field) => isFieldVisible(field, fields))
@@ -1003,13 +1212,10 @@ export function Workbench({
                           <FieldControl
                             key={field.name}
                             field={field}
+                            required={isFieldRequired(field, fields)}
                             value={fields[field.name]}
                             onChange={(value) => updateField(field.name, value)}
                             backendVersion={backendVersion}
-                            disabled={
-                              !supportsOptimization &&
-                              ['optimizeImages', 'imageQuality'].includes(field.name)
-                            }
                           />
                         ))}
                     </div>
@@ -1056,6 +1262,7 @@ export function Workbench({
                             ? { ...field, options: ['PDF/A-3b'] }
                             : field
                         }
+                        required={isFieldRequired(field, fields)}
                         value={fields[field.name]}
                         onChange={(value) => updateField(field.name, value)}
                         backendVersion={backendVersion}
@@ -1128,7 +1335,7 @@ export function Workbench({
                       rows={4}
                       spellCheck={false}
                       className="font-mono text-xs"
-                      placeholder={'{ "waitForExpression": "window.ready === true" }'}
+                      placeholder="{}"
                       value={advanced}
                       onChange={(event) => setAdvanced(event.target.value)}
                     />
@@ -1150,8 +1357,9 @@ export function Workbench({
                 />
                 {!canWebhook ? (
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    PDF inspection returns JSON directly on Gotenberg 9; webhook delivery is not
-                    available for this tool.
+                    {layoutMajor === undefined
+                      ? 'Webhook options will be available after the backend version is verified.'
+                      : 'PDF inspection returns JSON directly on Gotenberg 9, so webhook delivery is not available for this tool.'}
                   </p>
                 ) : (
                   <WebhookEditor
@@ -1189,7 +1397,10 @@ export function Workbench({
               size="lg"
               disabled={
                 pending ||
-                Boolean(unavailableReason) ||
+                readingStructure ||
+                Boolean(submissionBlocked) ||
+                compatibility.reasons.length > 0 ||
+                outboundIssues.length > 0 ||
                 Boolean(pipelineError || conversionPipelineError)
               }
               onClick={queueCurrent}
@@ -1201,7 +1412,10 @@ export function Workbench({
               size="lg"
               disabled={
                 pending ||
-                Boolean(unavailableReason) ||
+                readingStructure ||
+                Boolean(submissionBlocked) ||
+                compatibility.reasons.length > 0 ||
+                outboundIssues.length > 0 ||
                 Boolean(pipelineError || conversionPipelineError)
               }
               className="min-w-44"
@@ -1222,7 +1436,18 @@ export function Workbench({
         files={files}
         auxFiles={auxFiles}
         postFiles={v8StandaloneOverlay || !standaloneKind ? postFiles : {}}
-        source={isSourceEditor ? source : ''}
+        archives={canUploadArchives ? archives : []}
+        stageFiles={supportsConversionPipeline ? conversionStageFiles : []}
+        documentText={generatedChromiumText(operation.input, {
+          source: isSourceEditor ? source : undefined,
+          markdownName,
+          markdownFiles: operation.input === 'markdown' ? markdownFiles : undefined,
+          markdownTemplate: markdownTemplate ?? undefined,
+          headerHtml: hasPdfHeaderFooter ? headerHtml : undefined,
+          footerHtml: hasPdfHeaderFooter ? footerHtml : undefined,
+        })}
+        fields={fields}
+        conversionStages={supportsConversionPipeline ? conversionStages : undefined}
         pending={pending}
         lastDownload={lastDownload}
         acceptedWebhook={acceptedWebhook}

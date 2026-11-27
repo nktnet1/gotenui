@@ -1,7 +1,38 @@
+import { filenameKey, possibleRemoteFilename, registeredFilenames } from '#/lib/file-names'
+import { InputError } from '#/lib/validation'
+
 /** Prefix local merge inputs so Gotenberg's filename sort follows the visible order. */
 export function mergeUploadFilename(filename: string, index: number, count: number): string {
   const prefix = String(index + 1).padStart(Math.max(2, String(count).length), '0')
   return `${prefix}_${filename}`
+}
+
+/** Preserve remote filenames that the encoder may pin from the URL on v9.2+.
+ * Older servers can still return these names in Content-Disposition.
+ */
+export function remoteMergeFilenames(
+  remotes: readonly { url: string; name?: string; filename?: string }[] = [],
+): string[] {
+  return remotes.flatMap((remote) => {
+    const name = possibleRemoteFilename(remote)
+    return name ? [name] : []
+  })
+}
+
+/** A merge before any compose renames local inputs to preserve upload order.
+ * The Office Merge switch always numbers its inputs, even a single document.
+ */
+export function numbersPipelineInputs(
+  stages: readonly { op: string }[],
+  inputCount: number,
+  builtInMerge = false,
+): boolean {
+  const firstMerge = stages.findIndex(({ op }) => op === 'merge')
+  const firstCompose = stages.findIndex(({ op }) => op === 'compose')
+  return (
+    firstMerge !== -1 &&
+    (builtInMerge || (inputCount > 1 && (firstCompose === -1 || firstCompose > firstMerge)))
+  )
 }
 
 /** Reserve stage asset names when numbering pipeline merge inputs. The rank
@@ -11,15 +42,15 @@ export function mergeUploadFilenames(
   filenames: readonly string[],
   reservedNames: readonly string[] = [],
 ): string[] {
-  const occupied = new Set(reservedNames.map((name) => name.normalize('NFC')))
+  const occupied = new Set(registeredFilenames(reservedNames))
   return filenames.map((filename, index) => {
     let disambiguator = ''
     let renamed = mergeUploadFilename(filename, index, filenames.length)
-    while (occupied.has(renamed.normalize('NFC'))) {
+    while (occupied.has(filenameKey(renamed))) {
       disambiguator += '_'
       renamed = mergeUploadFilename(`${disambiguator}${filename}`, index, filenames.length)
     }
-    occupied.add(renamed.normalize('NFC'))
+    occupied.add(filenameKey(renamed))
     return renamed
   })
 }
@@ -50,7 +81,11 @@ export function mergeBookmarks(value: string, filenames: string[]): string {
   }
   for (const [index, filename] of filenames.entries()) {
     if (Object.hasOwn(input, filename)) {
-      mapped[mergeUploadFilename(filename, index, filenames.length)] = input[filename]
+      const target = mergeUploadFilename(filename, index, filenames.length)
+      if (Object.hasOwn(mapped, target)) {
+        throw new InputError(`Duplicate merge bookmark key for ${target}.`)
+      }
+      mapped[target] = input[filename]
     }
   }
   return JSON.stringify(mapped)

@@ -326,3 +326,244 @@ test('v9.9 requires stable names when a remote could shadow a ZIP stage asset', 
     /Specify a remote filename/,
   )
 })
+
+test.each(['pdf-pipeline', 'office-pdf'] as const)(
+  'rejects auto-numbered remote downloads that shadow %s local assets',
+  async (id) => {
+    const local = new File(['local attachment'], 'attachment (2).txt')
+    const url = 'https://cdn.example.test/attachment.txt'
+    const { operation, payload } = validated(id, {
+      downloadFrom: [{ url }, { url }],
+      ...(id === 'pdf-pipeline'
+        ? { fields: { stages: JSON.stringify([{ op: 'attach', file: local.name }]) } }
+        : { conversionStages: JSON.stringify([{ op: 'attach', file: local.name }]) }),
+    })
+    const files = [id === 'pdf-pipeline' ? inputPdf : inputOffice]
+    assert.throws(
+      () =>
+        validateFiles(
+          operation,
+          files,
+          id === 'pdf-pipeline' ? [local] : [],
+          4_000_000,
+          payload,
+          {},
+          id === 'office-pdf' ? [local] : [],
+          [],
+          9,
+        ),
+      /Remote filename collides with a local document or asset: attachment \(2\)\.txt/,
+    )
+    await assert.rejects(
+      validateZipInputs(
+        operation,
+        payload,
+        files,
+        [],
+        [],
+        [zipFixture({ [local.name]: 'local attachment' })],
+      ),
+      /filename collides with a remote asset: attachment \(2\)\.txt/,
+    )
+  },
+)
+
+function pipelineRequest(
+  files: File[],
+  asset: string,
+  options: {
+    auxiliary?: File[]
+    archives?: File[]
+    remotes?: { url: string; filename?: string }[]
+    merge?: boolean
+  } = {},
+): Request {
+  const body = new FormData()
+  body.set(
+    'payload',
+    JSON.stringify({
+      operation: 'pdf-pipeline',
+      fields: {
+        stages: JSON.stringify([
+          ...(options.merge ? [{ op: 'merge' }] : []),
+          { op: 'attach', file: asset },
+        ]),
+      },
+      advanced: {},
+      downloadFrom: options.remotes,
+    }),
+  )
+  for (const file of files) body.append('files', file)
+  for (const file of options.auxiliary ?? []) body.append('auxiliary', file)
+  for (const file of options.archives ?? []) body.append('archives', file)
+  return new Request(`${origin}/api/gotenberg/convert`, {
+    method: 'POST',
+    headers: { Origin: origin, 'X-Gotenberg-Url': upstream },
+    body,
+  })
+}
+
+const duplicatePdf = new File(['%PDF-1.7 second\n'], 'document.pdf')
+const numberedAsset = new File(['%PDF-1.7 asset\n'], 'document (2).pdf')
+
+function versionOnlyFetcher(): typeof fetch {
+  return async (url) => {
+    if (String(url).endsWith('/version')) return new Response('9.10.0')
+    assert.fail('Ambiguous stage assets must not reach Gotenberg.')
+  }
+}
+
+test('rejects a local PDF stage asset shadowed by duplicate source uploads', async () => {
+  await assert.rejects(
+    proxyConversionRequest(
+      pipelineRequest([inputPdf, duplicatePdf], numberedAsset.name, { auxiliary: [numberedAsset] }),
+      versionOnlyFetcher(),
+    ),
+    /Stage asset filename collides after Gotenberg numbers duplicate files: document \(2\)\.pdf/,
+  )
+})
+
+test('rejects a ZIP stage asset shadowed by duplicate uploads when files register before archives', async () => {
+  await assert.rejects(
+    proxyConversionRequest(
+      pipelineRequest([inputPdf, duplicatePdf], numberedAsset.name, {
+        archives: [zipFixture({ [numberedAsset.name]: '%PDF-1.7 asset\n' })],
+      }),
+      versionOnlyFetcher(),
+    ),
+    /Stage asset filename collides after Gotenberg numbers duplicate files: document \(2\)\.pdf/,
+  )
+})
+
+test('rejects a local stage asset shadowed by duplicate ZIP entries when archives register first', async () => {
+  await assert.rejects(
+    proxyConversionRequest(
+      pipelineRequest([inputPdf], numberedAsset.name, {
+        auxiliary: [numberedAsset],
+        archives: [
+          zipFixture({
+            'one/document.pdf': '%PDF-1.7 one\n',
+            'two/document.pdf': '%PDF-1.7 two\n',
+          }),
+        ],
+      }),
+      versionOnlyFetcher(),
+    ),
+    /Stage asset filename collides after Gotenberg numbers duplicate files: document \(2\)\.pdf/,
+  )
+})
+
+test('rejects a pinned remote stage asset shadowed by earlier duplicate downloads', async () => {
+  const url = 'https://cdn.example.test/document.pdf'
+  await assert.rejects(
+    proxyConversionRequest(
+      pipelineRequest([inputPdf], numberedAsset.name, {
+        remotes: [
+          { url, filename: inputPdf.name },
+          { url, filename: inputPdf.name },
+          { url, filename: numberedAsset.name },
+        ],
+      }),
+      versionOnlyFetcher(),
+    ),
+    /Stage asset filename collides after Gotenberg numbers duplicate files: document \(2\)\.pdf/,
+  )
+})
+
+test('allows the same local duplicates when a merge numbers them before registration', async () => {
+  const response = await proxyConversionRequest(
+    pipelineRequest([inputPdf, duplicatePdf], numberedAsset.name, {
+      auxiliary: [numberedAsset],
+      merge: true,
+    }),
+    async (url, init) => {
+      if (String(url).endsWith('/version')) return new Response('9.10.0')
+      assert.ok(init?.body instanceof FormData)
+      assert.deepEqual(
+        init.body.getAll('files').map((entry) => entry instanceof File && entry.name),
+        ['01_document.pdf', '02_document.pdf', numberedAsset.name],
+      )
+      return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+    },
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+})
+
+test('rejects an explicitly named remote asset shadowed by inferred duplicate downloads in a remote-only pipeline', async () => {
+  const url = 'https://cdn.example.test/document.pdf'
+  await assert.rejects(
+    proxyConversionRequest(
+      pipelineRequest([], numberedAsset.name, {
+        remotes: [{ url }, { url }, { url, filename: numberedAsset.name }],
+      }),
+      versionOnlyFetcher(),
+    ),
+    /Stage asset filename collides after Gotenberg numbers duplicate files: document \(2\)\.pdf/,
+  )
+})
+
+test('requires predictable names for downloads preceding a named remote stage asset', async () => {
+  await assert.rejects(
+    proxyConversionRequest(
+      pipelineRequest([], numberedAsset.name, {
+        remotes: [
+          { url: 'https://cdn.example.test/download?id=1' },
+          { url: 'https://cdn.example.test/asset', filename: numberedAsset.name },
+        ],
+      }),
+      versionOnlyFetcher(),
+    ),
+    /Specify a remote filename/,
+  )
+})
+
+test('pins inferred names before a remote stage asset but preserves later dynamic source downloads', async () => {
+  const remotes = [
+    { url: 'https://cdn.example.test/source.pdf' },
+    { url: 'https://cdn.example.test/asset', filename: numberedAsset.name },
+    { url: 'https://cdn.example.test/download?id=1' },
+  ]
+  const response = await proxyConversionRequest(
+    pipelineRequest([], numberedAsset.name, { remotes }),
+    async (url, init) => {
+      if (String(url).endsWith('/version')) return new Response('9.10.0')
+      assert.ok(init?.body instanceof FormData)
+      assert.deepEqual(JSON.parse(String(init.body.get('downloadFrom'))), [
+        { ...remotes[0], filename: 'source.pdf' },
+        remotes[1],
+        remotes[2],
+      ])
+      return new Response('%PDF-1.7\n', { headers: { 'Content-Type': 'application/pdf' } })
+    },
+  )
+  assert.equal(response.status, 200)
+  await response.body?.cancel()
+})
+
+test('rejects a remote-only Office conversion whose named attachment is shadowed by earlier downloads', async () => {
+  const name = 'document (2).docx'
+  const url = 'https://cdn.example.test/document.docx'
+  const body = new FormData()
+  body.set(
+    'payload',
+    JSON.stringify({
+      operation: 'office-pdf',
+      fields: {},
+      advanced: {},
+      conversionStages: JSON.stringify([{ op: 'attach', file: name }]),
+      downloadFrom: [{ url }, { url }, { url, filename: name }],
+    }),
+  )
+  await assert.rejects(
+    proxyConversionRequest(
+      new Request(`${origin}/api/gotenberg/convert`, {
+        method: 'POST',
+        headers: { Origin: origin, 'X-Gotenberg-Url': upstream },
+        body,
+      }),
+      versionOnlyFetcher(),
+    ),
+    /Stage asset filename collides after Gotenberg numbers duplicate files: document \(2\)\.docx/,
+  )
+})

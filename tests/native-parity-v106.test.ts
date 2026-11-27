@@ -7,7 +7,12 @@ import { PdfBookmarksEditor } from '#/components/pdf-structure-editors'
 import { TooltipProvider } from '#/components/ui/tooltip'
 import { createGotenbergForm } from '#/lib/gotenberg-client'
 import { isFieldVisible, OPERATION_BY_ID, operationDefaults } from '#/lib/operations'
-import { importReadableBookmarks, importReadableMetadata } from '#/lib/pdf-read-import'
+import {
+  canImportPdfStructure,
+  importReadableBookmarks,
+  importReadableMetadata,
+  readPdfStructureResponse,
+} from '#/lib/pdf-read-import'
 import {
   addBookmarkMapping,
   editFileBookmarks,
@@ -385,4 +390,142 @@ it('native LibreOffice watermarks accept long upstream-supported text', () => {
     const form = createGotenbergForm(operation, payload, [office], [])
     assert.equal(form.get(name), longWatermark)
   }
+})
+
+it('preserves exact writable v9 metadata strings, including comma spacing and whitespace', () => {
+  const metadata = { title: ' ', keywords: 'one,two,, three ' }
+  assert.deepEqual(
+    JSON.parse(
+      importReadableMetadata({ 'report.pdf': metadata }, 'report.pdf', { standardOnly: true }),
+    ),
+    { Title: ' ', Keywords: metadata.keywords },
+  )
+})
+
+it('limits v9 bookmark import to one source without changing v8 multi-file import', () => {
+  for (const version of [false, true]) {
+    assert.equal(canImportPdfStructure('metadata-write', version, []), false)
+    assert.equal(canImportPdfStructure('metadata-write', version, ['a.pdf']), true)
+    assert.equal(canImportPdfStructure('metadata-write', version, ['a.pdf', 'b.pdf']), false)
+    assert.equal(canImportPdfStructure('bookmarks-write', version, []), false)
+    assert.equal(canImportPdfStructure('bookmarks-write', version, ['a.pdf']), true)
+    assert.equal(canImportPdfStructure('bookmarks-write', version, ['a.pdf', 'b.pdf']), !version)
+    assert.equal(canImportPdfStructure('rotate', version, ['a.pdf']), false)
+  }
+})
+
+it('imports native null bookmark children as leaves without losing nested bookmark properties', () => {
+  const result = {
+    'a.pdf': [
+      {
+        title: 'Chapter',
+        pageNumber: 1,
+        children: [{ title: 'Section', pageNumber: 2, children: null, color: '#000000' }],
+      },
+    ],
+  }
+  assert.deepEqual(JSON.parse(importReadableBookmarks(result, ['a.pdf'])), [
+    { title: 'Chapter', page: 1, children: [{ title: 'Section', page: 2, color: '#000000' }] },
+  ])
+  assert.doesNotThrow(() => validateBookmarkDocument(importReadableBookmarks(result, ['a.pdf'])))
+})
+
+it('rejects conflicting native and editor bookmark page aliases', () => {
+  assert.throws(
+    () =>
+      importReadableBookmarks({ 'a.pdf': [{ title: 'Chapter', page: 1, pageNumber: 2 }] }, [
+        'a.pdf',
+      ]),
+    /conflicting page numbers/,
+  )
+  assert.deepEqual(
+    JSON.parse(
+      importReadableBookmarks({ 'a.pdf': [{ title: 'Chapter', page: 2, pageNumber: 2 }] }, [
+        'a.pdf',
+      ]),
+    ),
+    [{ title: 'Chapter', page: 2 }],
+  )
+})
+
+it.each([
+  ['a.pdf', 'a.pdf'],
+  ['caf\u00e9.pdf', 'cafe\u0301.pdf'],
+])('rejects ambiguous filename-keyed bookmark imports (%j, %j)', (first, second) => {
+  assert.throws(
+    () => importReadableBookmarks({ [first]: [], [second]: [] }, [first, second]),
+    /duplicate PDF filenames/,
+  )
+})
+
+it('reads only bounded, valid UTF-8 JSON for editable PDF structures', async () => {
+  const expected = { 'a.pdf': { Title: 'caf\u00e9' } }
+  assert.deepEqual(await readPdfStructureResponse(new Blob([JSON.stringify(expected)])), expected)
+  await assert.rejects(
+    readPdfStructureResponse(new Blob(['{"a.pdf":{"Title":"', Uint8Array.of(0xff), '"}}'])),
+  )
+  await assert.rejects(readPdfStructureResponse(new Blob(['not-json'])))
+  const oversized = new Blob([])
+  Object.defineProperties(oversized, {
+    size: { value: 2_000_001 },
+    arrayBuffer: {
+      value: () => {
+        assert.fail('must not read oversized structure')
+      },
+    },
+  })
+  await assert.rejects(readPdfStructureResponse(oversized), /too large/)
+})
+
+it('disables ambiguous bookmark imports before making a read request', () => {
+  for (const names of [
+    ['a.pdf', 'a.pdf'],
+    ['caf\u00e9.pdf', 'cafe\u0301.pdf'],
+  ]) {
+    assert.equal(canImportPdfStructure('bookmarks-write', false, names), false)
+  }
+})
+
+it('uses the native whitespace contract when importing v9 bookmarks', () => {
+  assert.deepEqual(
+    JSON.parse(
+      importReadableBookmarks({ 'a.pdf': [{ title: '\ufeff', pageNumber: 1 }] }, ['a.pdf'], {
+        native: true,
+      }),
+    ),
+    [{ title: '\ufeff', page: 1 }],
+  )
+  assert.throws(
+    () =>
+      importReadableBookmarks({ 'a.pdf': [{ title: '\u0085', pageNumber: 1 }] }, ['a.pdf'], {
+        native: true,
+      }),
+    /needs a title/,
+  )
+})
+
+it('rejects corrupt recognised metadata values and aliases in native read responses', () => {
+  for (const source of [
+    { title: 123 },
+    { author: null },
+    { keywords: ['a', 'b'] },
+    { Title: 'First', title: 'Second' },
+  ]) {
+    assert.throws(
+      () => importReadableMetadata({ 'report.pdf': source }, 'report.pdf', { standardOnly: true }),
+      /invalid metadata|Conflicting metadata aliases/,
+    )
+  }
+  assert.deepEqual(
+    JSON.parse(importReadableMetadata({ 'report.pdf': {} }, 'report.pdf', { standardOnly: true })),
+    {},
+  )
+  assert.deepEqual(
+    JSON.parse(
+      importReadableMetadata({ 'report.pdf': { title: 'Valid', futureTag: 1 } }, 'report.pdf', {
+        standardOnly: true,
+      }),
+    ),
+    { Title: 'Valid' },
+  )
 })

@@ -3,17 +3,33 @@
  */
 function cleanDownloadName(candidate: string, fallback: string): string {
   const basename = candidate.split(/[\\/]/).pop() ?? fallback
-  const normalized = basename.normalize('NFC')
+  const normalized = basename.replace(/\p{Cs}/gu, '\ufffd').normalize('NFC')
   const clean = normalized
-    .replace(/[\\/:*?"<>|\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '_')
-    .replace(/\p{Cc}/gu, '_')
+    // Match Gotenberg's portable character allowlist for names that leave
+    // the proxy, preserving the replacement character used for malformed text.
+    .replace(/[^\p{L}\p{M}\p{Nd} !#$%&'()+,.;=@[\]^_`{}~\ufffd-]/gu, '_')
     .replace(/^[. ]+|[. ]+$/g, '')
   const extension = /\.[\p{L}\p{N}]{1,16}$/u.exec(clean)?.[0] ?? ''
   const root = extension ? clean.slice(0, -extension.length) : clean
-  const safe = [...root].slice(0, 140 - [...extension].length).join('') + extension
-  const name = safe || fallback
-  const stem = name.split('.')[0] ?? name
-  return /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(stem) ? `file-${name}` : name
+  // Filesystems commonly limit basenames to 255 UTF-8 bytes, not characters.
+  // Keep the existing character budget as well and reserve room for the suffix.
+  const encoder = new TextEncoder()
+  const truncate = (prefix: string) => {
+    let remainingBytes = 255 - encoder.encode(extension).length
+    let remainingCharacters = 140 - [...extension].length
+    let result = ''
+    for (const char of prefix) {
+      remainingBytes -= encoder.encode(char).length
+      if (remainingBytes < 0 || remainingCharacters-- <= 0) break
+      result += char
+    }
+    return (result + extension).replace(/[. ]+$/u, '')
+  }
+  const name = truncate(root) || fallback
+  const stem = (name.split('.')[0] ?? name).replace(/ +$/u, '')
+  return /^(?:con|prn|aux|nul|conin\$|conout\$|(?:com|lpt)[0-9])$/i.test(stem)
+    ? truncate(`file-${root}`) || fallback
+    : name
 }
 
 /** Read only actual Content-Disposition parameters, not lookalikes inside quoted values. */
@@ -90,8 +106,13 @@ export function downloadFilename(header: string | null, fallback: string): strin
   )
 }
 
+/** Compare the media type itself, not a prefix of an unrelated type. */
+export function responseMediaType(contentType: string | null): string | undefined {
+  return contentType?.split(';')[0]?.trim().toLowerCase() || undefined
+}
+
 export function responseExtension(contentType: string | null): string {
-  const type = contentType?.split(';')[0]?.trim().toLowerCase()
+  const type = responseMediaType(contentType)
   if (type === 'application/pdf') return 'pdf'
   if (type === 'application/zip') return 'zip'
   if (type === 'application/json') return 'json'
@@ -130,7 +151,8 @@ export function safeAttachmentDisposition(
   const fallback = `${fallbackBase}.${extension}`
   const upstreamName = downloadFilename(upstreamDisposition, fallback)
   if (preserveOriginalName) return attachmentHeader(upstreamName)
-  const candidate = requestedBase ? `${requestedBase}.${extension}` : upstreamName
+  const effectiveBase = requestedBase?.replace(/^ +| +$/g, '')
+  const candidate = effectiveBase ? `${effectiveBase}.${extension}` : upstreamName
   const knownExtension =
     candidate.toLowerCase().endsWith(`.${extension}`) ||
     (extension === 'jpeg' && candidate.toLowerCase().endsWith('.jpg'))

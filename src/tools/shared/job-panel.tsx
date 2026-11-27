@@ -11,13 +11,23 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { codeOutputClasses } from '#/components/code-output'
+import { isPreviewableImage } from '#/components/image-result-preview'
 import { operationIcon } from '#/components/operation-icons'
 import { PdfResultPreview } from '#/components/pdf-result-preview'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader } from '#/components/ui/card'
 import { ZipResultPreview } from '#/components/zip-result-preview'
-import { MAX_UPLOAD_BYTES, remediationReviewNotice } from '#/lib/gotenberg-client'
+import {
+  MAX_UPLOAD_BYTES,
+  remediationReviewNotice,
+  WEBHOOK_NOT_ACCEPTED_NOTICE,
+} from '#/lib/gotenberg-client'
 import { parseGotenbergVersion } from '#/lib/gotenberg-version'
+import {
+  conversionPipelineResponseTypes,
+  parsePdfPipeline,
+  pipelineResponseTypes,
+} from '#/lib/pdf-pipeline'
 import { overlayUploads, type PostProcessFiles } from '#/lib/pdf-post-processing'
 import { formatBytes } from '#/lib/security'
 import { cn } from '#/lib/utils'
@@ -25,13 +35,57 @@ import type { Operation } from '#/tools/registry'
 import type { AcceptedWebhook, Download, Job } from '#/tools/shared/tool-jobs'
 import { V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
 
+function targetOutputLabel(
+  operation: Operation,
+  fields: Readonly<Record<string, string | boolean>>,
+  conversionStages: string | undefined,
+  backendVersion: string | undefined,
+): string {
+  const standalone = operation.id === 'pdf-pipeline'
+  const raw = standalone ? fields.stages : conversionStages
+  if (parseGotenbergVersion(backendVersion)?.major === 9 && typeof raw === 'string' && raw) {
+    try {
+      const stages = parsePdfPipeline(raw, { acknowledgedRedaction: true, allowEmpty: !standalone })
+      if (stages.length) {
+        const types = standalone
+          ? pipelineResponseTypes(stages)
+          : conversionPipelineResponseTypes(stages)
+        const labels: Record<string, string> = {
+          'application/pdf': 'PDF',
+          'application/zip': 'ZIP',
+          'image/png': 'PNG',
+          'image/jpeg': 'JPEG',
+          'text/plain': 'TXT',
+          'text/markdown': 'MD',
+          '*': 'Attachment',
+        }
+        return types.map((type) => labels[type] ?? type).join(' / ')
+      }
+    } catch {
+      // Invalid drafts are reported by the form's validation, not the overview.
+    }
+  }
+  if (operation.id === 'render-pages') return `${fields.format === 'jpeg' ? 'JPEG' : 'PNG'} / ZIP`
+  if (operation.id === 'extract-attachments') return 'Attachment / ZIP'
+  if (operation.id === 'extract-text') return `${fields.format === 'markdown' ? 'MD' : 'TXT'} / ZIP`
+  if (operation.output === 'image')
+    return fields.format === 'jpeg' ? 'JPEG' : fields.format === 'webp' ? 'WebP' : 'PNG'
+  if (operation.id === 'compose-pages') return 'PDF'
+  if (operation.output === 'pdf' || operation.id === 'split') return 'PDF / ZIP'
+  return operation.output
+}
+
 export function JobPanel({
   operation,
   backendVersion,
   files,
   auxFiles,
   postFiles,
-  source,
+  archives = [],
+  stageFiles = [],
+  documentText,
+  fields = {},
+  conversionStages,
   pending,
   lastDownload,
   acceptedWebhook,
@@ -43,7 +97,11 @@ export function JobPanel({
   files: File[]
   auxFiles: File[]
   postFiles: PostProcessFiles
-  source: string
+  archives?: File[]
+  stageFiles?: File[]
+  documentText: readonly string[]
+  fields?: Readonly<Record<string, string | boolean>>
+  conversionStages?: string
   pending: boolean
   lastDownload: Download | null
   acceptedWebhook: AcceptedWebhook | null
@@ -51,12 +109,27 @@ export function JobPanel({
   recent: Job[]
 }) {
   const Icon = operationIcon(operation.id)
+  const uploads = [
+    ...files,
+    ...auxFiles,
+    ...archives,
+    ...stageFiles,
+    ...(postFiles.embeds ?? []),
+    ...overlayUploads(postFiles, 'watermark'),
+    ...overlayUploads(postFiles, 'stamp'),
+    ...(postFiles.facturxXml ? [postFiles.facturxXml] : []),
+  ]
+  const encoder = new TextEncoder()
+  const uploadBytes =
+    uploads.reduce((sum, file) => sum + file.size, 0) +
+    documentText.reduce((sum, part) => sum + encoder.encode(part).byteLength, 0)
   const validationNeedsReview =
     operation.id === 'pdf-validate' &&
     (!lastDownload?.validation ||
       lastDownload.validation.some((report) => !report.compliant || report.totalViolations > 0))
   const remediationWarning = remediationReviewNotice(lastDownload?.remediation)
-  const downloadNeedsReview = validationNeedsReview || !!remediationWarning
+  const downloadNeedsReview =
+    validationNeedsReview || !!remediationWarning || lastDownload?.webhookNotAccepted
   return (
     <div className="space-y-5 lg:sticky lg:top-7 lg:self-start">
       <Card>
@@ -104,44 +177,19 @@ export function JobPanel({
             <div className="flex justify-between gap-4 text-xs">
               <span className="text-slate-500 dark:text-slate-400">Files selected</span>
               <span className="font-semibold text-slate-700 dark:text-slate-200">
-                {files.length +
-                  auxFiles.length +
-                  (postFiles.embeds?.length ?? 0) +
-                  overlayUploads(postFiles, 'watermark').length +
-                  overlayUploads(postFiles, 'stamp').length +
-                  Number(Boolean(postFiles.facturxXml))}
+                {uploads.length}
               </span>
             </div>
             <div className="flex justify-between gap-4 text-xs">
               <span className="text-slate-500 dark:text-slate-400">Upload size</span>
               <span className="font-semibold text-slate-700 dark:text-slate-200">
-                {formatBytes(
-                  [
-                    ...files,
-                    ...auxFiles,
-                    ...(postFiles.embeds ?? []),
-                    ...overlayUploads(postFiles, 'watermark'),
-                    ...overlayUploads(postFiles, 'stamp'),
-                    ...(postFiles.facturxXml ? [postFiles.facturxXml] : []),
-                  ].reduce((sum, file) => sum + file.size, 0) +
-                    new TextEncoder().encode(source).byteLength,
-                )}
+                {formatBytes(uploadBytes)}
               </span>
             </div>
             <div className="flex justify-between gap-4 text-xs">
               <span className="text-slate-500 dark:text-slate-400">Target output</span>
               <span className="font-semibold uppercase text-slate-700 dark:text-slate-200">
-                {operation.id === 'render-pages'
-                  ? 'PNG / JPEG / ZIP'
-                  : operation.id === 'extract-attachments'
-                    ? 'Attachment / ZIP'
-                    : operation.id === 'extract-text'
-                      ? 'TXT / ZIP'
-                      : operation.output === 'image'
-                        ? 'PNG / JPEG / WebP'
-                        : operation.output === 'pdf' || operation.id === 'split'
-                          ? 'PDF / ZIP'
-                          : operation.output}
+                {targetOutputLabel(operation, fields, conversionStages, backendVersion)}
               </span>
             </div>
           </div>
@@ -190,9 +238,16 @@ export function JobPanel({
                     Check the events receiver ({acceptedWebhook.eventsReceiverHost}) for processing
                     and failure events. Its callback status is not available inside Gotenui.
                   </p>
-                ) : (
+                ) : null}
+                {acceptedWebhook.errorReceiverHost && (
                   <p>
-                    No events callback was configured; check the external receiver and Gotenberg
+                    Check the error receiver ({acceptedWebhook.errorReceiverHost}) for conversion
+                    failures. Its callback status is not available inside Gotenui.
+                  </p>
+                )}
+                {!acceptedWebhook.eventsReceiverHost && !acceptedWebhook.errorReceiverHost && (
+                  <p>
+                    No failure callback was configured. Check the external receiver and Gotenberg
                     logs for failures.
                   </p>
                 )}
@@ -247,14 +302,24 @@ export function JobPanel({
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                         {formatBytes(lastDownload.size)} ·{' '}
-                        {downloadNeedsReview
-                          ? 'Report requires review'
-                          : operation.id === 'pdf-validate'
-                            ? 'Validation complete: compliant'
-                            : 'Ready'}
+                        {lastDownload.webhookNotAccepted
+                          ? 'Delivery requires review'
+                          : downloadNeedsReview
+                            ? 'Report requires review'
+                            : operation.id === 'pdf-validate'
+                              ? 'Reported PDFs: compliant'
+                              : 'Ready'}
                       </p>
                     </div>
                   </div>
+                  {lastDownload.webhookNotAccepted && (
+                    <p
+                      role="alert"
+                      className="mb-4 rounded-lg border border-amber-500/50 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+                    >
+                      {WEBHOOK_NOT_ACCEPTED_NOTICE}
+                    </p>
+                  )}
                   {remediationWarning && (
                     <p
                       role="alert"
@@ -285,7 +350,7 @@ export function JobPanel({
                               : 'border-amber-400 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200',
                           )}
                         >
-                          <p className="font-semibold">
+                          <p className="break-all font-semibold">
                             {result.filename}:{' '}
                             {result.compliant
                               ? result.totalViolations > 0
@@ -315,25 +380,31 @@ export function JobPanel({
                       ))}
                     </section>
                   )}
-                  {lastDownload.type === 'application/pdf' && (
-                    <PdfResultPreview
-                      key={lastDownload.url}
-                      url={lastDownload.url}
-                      name={lastDownload.name}
-                    />
-                  )}
-                  {lastDownload.type === 'application/zip' && lastDownload.blob && (
-                    <ZipResultPreview key={lastDownload.url} blob={lastDownload.blob} />
-                  )}
-                  {lastDownload.type.startsWith('image/') && (
-                    <img
-                      className="mb-4 max-h-52 w-full rounded-lg border border-slate-100 dark:border-slate-800 object-contain"
-                      src={lastDownload.url}
-                      alt={
-                        operation.id === 'render-pages' ? 'Rendered PDF page' : 'Latest screenshot'
-                      }
-                    />
-                  )}
+                  {lastDownload.binaryPreviewAllowed !== false &&
+                    lastDownload.type === 'application/pdf' && (
+                      <PdfResultPreview
+                        key={lastDownload.url}
+                        url={lastDownload.url}
+                        name={lastDownload.name}
+                      />
+                    )}
+                  {lastDownload.binaryPreviewAllowed !== false &&
+                    lastDownload.type === 'application/zip' &&
+                    lastDownload.blob && (
+                      <ZipResultPreview key={lastDownload.url} blob={lastDownload.blob} />
+                    )}
+                  {lastDownload.binaryPreviewAllowed !== false &&
+                    isPreviewableImage(lastDownload.type) && (
+                      <img
+                        className="mb-4 max-h-52 w-full rounded-lg border border-slate-100 dark:border-slate-800 object-contain"
+                        src={lastDownload.url}
+                        alt={
+                          operation.id === 'render-pages'
+                            ? 'Rendered PDF page'
+                            : 'Latest screenshot'
+                        }
+                      />
+                    )}
                   {lastDownload.preview && (
                     <pre
                       className={cn(codeOutputClasses, 'mb-4 max-h-56 rounded-lg p-3 text-[11px]')}

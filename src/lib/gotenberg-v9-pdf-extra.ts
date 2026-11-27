@@ -1,10 +1,17 @@
 /** Strict request mapping for the Gotenberg 9-only PDF workflows. */
 
-import { filenameKey } from '#/lib/file-names'
+import { filenameKey, forwardedRemoteFilenames } from '#/lib/file-names'
+import { reconcilePdfComposeSources } from '#/lib/pdf-compose-sources'
+import {
+  pdfValidationProfileIssue,
+  requestedPdfValidationProfiles,
+} from '#/lib/pdf-conformance-profiles'
 import { isPdfPageSelector } from '#/lib/pdf-page-selectors'
-import { normalizePdfStageAssets, parsePdfPipeline } from '#/lib/pdf-pipeline'
+import { composeStageFromFields, parsePdfPipeline } from '#/lib/pdf-pipeline'
 import { PDF_REWRITING_TOOLS, withSignatureRemoval } from '#/lib/pdf-signature-removal'
+import { isV9SourceDocument } from '#/lib/source-documents'
 import { timestampAuthorityUrl } from '#/lib/timestamp-authority'
+import { trimGoWhitespace } from '#/lib/unicode-text'
 import { type ConversionPayload, InputError } from '#/lib/validation'
 import { V9_PDF_IDS, V9_PDF_READ_ROUTES } from '#/tools/v9-pdf-config'
 
@@ -17,7 +24,7 @@ function jsonValue(raw: string, label: string): unknown {
 }
 
 function namedPages(value: string, label: string): string {
-  const normalized = value.trim()
+  const normalized = trimGoWhitespace(value)
   if (!isPdfPageSelector(normalized)) {
     throw new InputError(
       `${label} must use page numbers, ranges, !exclusions, odd, even, last or all.`,
@@ -51,23 +58,6 @@ function validateFields(payload: ConversionPayload, allowed: readonly string[]):
   }
 }
 
-const validProfile = new Set([
-  'PDF/A-1a',
-  'PDF/A-1b',
-  'PDF/A-2a',
-  'PDF/A-2b',
-  'PDF/A-2u',
-  'PDF/A-3a',
-  'PDF/A-3b',
-  'PDF/A-3u',
-  'PDF/A-4',
-  'PDF/A-4e',
-  'PDF/A-4f',
-  'PDF/UA-1',
-  'PDF/UA-2',
-  'Factur-X',
-])
-
 /** Returns null for existing tools so their v8/v9 adapter remains untouched. */
 export function adaptV9PdfExtra(
   operationId: string,
@@ -75,6 +65,7 @@ export function adaptV9PdfExtra(
   legacy: FormData,
   auxiliary: readonly File[],
   archives: readonly File[] = [],
+  archiveEntryNames: readonly string[] = [],
 ): { path: string; form: FormData } | null {
   if (!V9_PDF_IDS.has(operationId)) return null
   const fields = payload.fields
@@ -89,8 +80,9 @@ export function adaptV9PdfExtra(
   const stages: Record<string, unknown>[] = []
   const value = (name: string): string =>
     typeof fields[name] === 'string' ? fields[name].trim() : ''
-  // Passwords are opaque strings. Never trim or treat whitespace as absent.
-  const password = (name: 'password' | 'certificatePassword'): string | undefined => {
+  // Passwords and signature metadata are opaque strings. Never trim or treat
+  // whitespace as absent.
+  const nonemptyText = (name: string): string | undefined => {
     const text = fields[name]
     return typeof text === 'string' && text !== '' ? text : undefined
   }
@@ -112,29 +104,39 @@ export function adaptV9PdfExtra(
     uploaded.add(filenameKey(file.name))
     form.append('files', file, file.name)
   }
-  const requirePages = (name: string) => namedPages(value(name), name)
+  const pageValue = (name: string): string =>
+    typeof fields[name] === 'string' ? trimGoWhitespace(fields[name]) : ''
+  const requirePages = (name: string) => namedPages(pageValue(name), name)
 
   switch (operationId) {
     case 'compose-pages': {
       allow('paperSize', 'paperWidth', 'paperHeight', 'placements')
       onlyPdfInputs()
-      const placements = jsonValue(value('placements'), 'Page placements')
-      const stage = parsePdfPipeline(
-        JSON.stringify([
-          {
-            op: 'compose',
-            ...(value('paperSize') ? { paperSize: value('paperSize') } : {}),
-            ...(value('paperWidth') ? { paperWidth: value('paperWidth') } : {}),
-            ...(value('paperHeight') ? { paperHeight: value('paperHeight') } : {}),
-            placements,
-          },
-        ]),
-      )[0]
-      if (!stage) throw new InputError('Invalid page composition.')
+      const stage = composeStageFromFields(fields)
       for (const name of ['paperSize', 'paperWidth', 'paperHeight']) {
         if (stage[name]) form.set(name, String(stage[name]))
       }
-      form.set('placements', JSON.stringify(stage.placements))
+      const remotes = forwardedRemoteFilenames(form, payload.downloadFrom)
+      const localNames = form
+        .getAll('files')
+        .flatMap((file) => (file instanceof File ? [file.name] : []))
+      const names = [
+        ...remotes.filter((name): name is string => name !== undefined),
+        ...localNames,
+        ...archiveEntryNames,
+      ].filter((name) => isV9SourceDocument('pdf', name))
+      // The proxy has inspected every archive, including empty ones. Only
+      // unpinned downloads may introduce additional unknown source PDFs.
+      const unknownRemotes = remotes.filter((name) => name === undefined).length
+      const [reconciled] = reconcilePdfComposeSources([stage], {
+        inputs: names.map((name) => ({ original: name, forwarded: name })),
+        unknownInputs: unknownRemotes > 0,
+        singleInput: names.length + unknownRemotes === 1,
+        preserveNamedSingleSource: true,
+        registrationOrderKnown: !archiveEntryNames.length || !localNames.length,
+      })
+      if (!reconciled) throw new InputError('Invalid page composition.')
+      form.set('placements', JSON.stringify(reconciled.placements))
       if (fields.v9DropSignatures === true) form.set('dropSignatures', 'true')
       return { path: '/forms/pdf/compose', form }
     }
@@ -147,7 +149,7 @@ export function adaptV9PdfExtra(
       allow('pages', 'format', 'invisible', 'artifacts', 'annotations')
       onlyPdfInputs()
       if (value('format')) form.set('format', value('format'))
-      if (value('pages')) form.set('pages', requirePages('pages'))
+      if (pageValue('pages')) form.set('pages', requirePages('pages'))
       for (const name of ['invisible', 'artifacts', 'annotations'] as const) {
         if (fields[name] === true) form.set(name, 'true')
       }
@@ -160,24 +162,14 @@ export function adaptV9PdfExtra(
     case 'pdf-form':
       allow('password', 'pages')
       onlyPdfInputs()
-      if (value('pages')) form.set('pages', requirePages('pages'))
+      if (pageValue('pages')) form.set('pages', requirePages('pages'))
       break
     case 'pdf-validate': {
       allow('password', 'profile', 'additionalProfile')
       onlyPdfInputs()
-      const main = value('profile')
-      const additional = value('additionalProfile')
-      if (!validProfile.has(main)) throw new InputError('Choose a supported validation profile.')
-      if (additional) {
-        const paired = main.startsWith('PDF/A-4') ? 'PDF/UA-2' : 'PDF/UA-1'
-        if ((!main.startsWith('PDF/A-') && main !== 'Factur-X') || additional !== paired) {
-          throw new InputError(
-            `The additional PDF/UA profile must match the PDF/A version (${paired}).`,
-          )
-        }
-      }
-      form.append('profile', main)
-      if (additional) form.append('profile', additional)
+      const issue = pdfValidationProfileIssue(fields)
+      if (issue) throw new InputError(issue)
+      for (const profile of requestedPdfValidationProfiles(fields)) form.append('profile', profile)
       break
     }
     case 'select-pages':
@@ -203,7 +195,7 @@ export function adaptV9PdfExtra(
         op: 'insert',
         source: asset.name,
         at,
-        ...(value('sourcePages') ? { sourcePages: requirePages('sourcePages') } : {}),
+        ...(pageValue('sourcePages') ? { sourcePages: requirePages('sourcePages') } : {}),
       })
       break
     }
@@ -325,16 +317,16 @@ export function adaptV9PdfExtra(
       const certificate = auxiliary.find((file) => file !== key)
       if (!certificate) throw new InputError('Choose a signing certificate.')
       for (const file of auxiliary) addAsset(file)
-      const certificatePassword = password('certificatePassword')
+      const certificatePassword = nonemptyText('certificatePassword')
       stages.push({
         op: 'sign',
         certificate: certificate.name,
         ...(key ? { key: key.name } : {}),
         ...(certificatePassword !== undefined ? { certificatePassword } : {}),
-        ...(value('reason') ? { reason: fields.reason } : {}),
-        ...(value('location') ? { location: fields.location } : {}),
-        ...(value('contactInfo') ? { contactInfo: fields.contactInfo } : {}),
-        ...(value('signerName') ? { name: fields.signerName } : {}),
+        ...(nonemptyText('reason') !== undefined ? { reason: fields.reason } : {}),
+        ...(nonemptyText('location') !== undefined ? { location: fields.location } : {}),
+        ...(nonemptyText('contactInfo') !== undefined ? { contactInfo: fields.contactInfo } : {}),
+        ...(nonemptyText('signerName') !== undefined ? { name: fields.signerName } : {}),
         ...(fields.pades === true ? { pades: true } : {}),
         ...(value('timestampUrl')
           ? { timestampUrl: timestampAuthorityUrl(fields.timestampUrl as string) }
@@ -356,7 +348,7 @@ export function adaptV9PdfExtra(
       const format = value('format')
       if (!['png', 'jpeg'].includes(format)) throw new InputError('Choose PNG or JPEG rendering.')
       const stage: Record<string, unknown> = { op: 'render', format }
-      if (value('pages')) stage.pages = requirePages('pages')
+      if (pageValue('pages')) stage.pages = requirePages('pages')
       if (value('dpi')) {
         const dpi = decimal(fields.dpi, 'Render DPI')
         if (!Number.isSafeInteger(dpi) || dpi < 1)
@@ -378,14 +370,17 @@ export function adaptV9PdfExtra(
   }
   const route = V9_PDF_READ_ROUTES.get(operationId)
   if (route) {
-    const openPassword = password('password')
+    const openPassword = nonemptyText('password')
     if (openPassword !== undefined) form.set('password', openPassword)
     return { path: route, form }
   }
   form.set(
     'stages',
     JSON.stringify(
-      normalizePdfStageAssets(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+      parsePdfPipeline(
+        JSON.stringify(withSignatureRemoval(stages, fields.v9DropSignatures === true)),
+        { acknowledgedRedaction: fields.confirmRedaction === true },
+      ),
     ),
   )
   return { path: '/forms/pdf/pipe', form }
